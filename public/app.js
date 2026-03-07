@@ -50,7 +50,11 @@ function applyFrameOrder() {
 
 function updateFrameVisibility() {
   frameOrder.forEach((frame, orderIndex) => {
-    frame.style.display = orderIndex === 1 ? 'block' : 'none';
+    const isActive = orderIndex === 1;
+    frame.style.visibility = 'visible';
+    frame.style.opacity = isActive ? '1' : '0';
+    frame.style.pointerEvents = isActive ? 'auto' : 'none';
+    frame.style.zIndex = isActive ? '2' : '1';
   });
 }
 
