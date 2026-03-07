@@ -15,7 +15,11 @@
 
     <main class="main">
       <div class="topbar">PDF Review</div>
-      <iframe id="pdf-viewer" class="pdf-viewer" title="PDF Viewer"></iframe>
+      <div id="viewer-stack" class="viewer-stack">
+        <iframe class="pdf-viewer-frame"></iframe>
+        <iframe class="pdf-viewer-frame"></iframe>
+        <iframe class="pdf-viewer-frame"></iframe>
+      </div>
     </main>
   </div>
 

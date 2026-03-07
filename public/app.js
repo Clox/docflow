@@ -1,5 +1,10 @@
 const fileListEl = document.getElementById('file-list');
-const viewerEl = document.getElementById('pdf-viewer');
+const viewerStackEl = document.getElementById('viewer-stack');
+const viewerFrames = viewerStackEl.querySelectorAll('.pdf-viewer-frame');
+
+let files = [];
+let currentIndex = -1;
+let frameOrder = [viewerFrames[0], viewerFrames[1], viewerFrames[2]];
 
 function getFileItems() {
   return fileListEl.querySelectorAll('li.file-item');
@@ -13,9 +18,73 @@ function setSelectedItem(selectedLi) {
   }
 }
 
-function loadPdf(filename) {
-  const url = '/api/serve-pdf.php?file=' + encodeURIComponent(filename);
-  viewerEl.src = url;
+function getPdfUrl(index) {
+  return '/api/serve-pdf.php?file=' + encodeURIComponent(files[index]);
+}
+
+function setFramePdf(frameEl, index) {
+  const fileIndexValue = index >= 0 && index < files.length ? String(index) : '';
+  if (frameEl.dataset.fileIndex === fileIndexValue) {
+    return;
+  }
+
+  frameEl.dataset.fileIndex = fileIndexValue;
+
+  if (index < 0 || index >= files.length) {
+    frameEl.src = 'about:blank';
+    return;
+  }
+
+  frameEl.src = getPdfUrl(index);
+}
+
+function renderFrames() {
+  setFramePdf(frameOrder[0], currentIndex - 1);
+  setFramePdf(frameOrder[1], currentIndex);
+  setFramePdf(frameOrder[2], currentIndex + 1);
+}
+
+function applyFrameOrder() {
+  updateFrameVisibility();
+}
+
+function updateFrameVisibility() {
+  frameOrder.forEach((frame, orderIndex) => {
+    frame.style.display = orderIndex === 1 ? 'block' : 'none';
+  });
+}
+
+function updateSelectedList() {
+  const items = getFileItems();
+  items.forEach((item, index) => {
+    if (index === currentIndex) {
+      setSelectedItem(item);
+      item.scrollIntoView({ block: 'nearest' });
+    }
+  });
+}
+
+function selectIndex(index) {
+  if (index < 0 || index >= files.length || index === currentIndex) {
+    return;
+  }
+
+  if (index === currentIndex + 1) {
+    frameOrder = [frameOrder[1], frameOrder[2], frameOrder[0]];
+    applyFrameOrder();
+    currentIndex = index;
+    setFramePdf(frameOrder[2], currentIndex + 1);
+  } else if (index === currentIndex - 1) {
+    frameOrder = [frameOrder[2], frameOrder[0], frameOrder[1]];
+    applyFrameOrder();
+    currentIndex = index;
+    setFramePdf(frameOrder[0], currentIndex - 1);
+  } else {
+    currentIndex = index;
+    renderFrames();
+  }
+
+  updateSelectedList();
 }
 
 function showMessage(message) {
@@ -37,42 +106,25 @@ function renderFileList(files) {
     li.dataset.filename = filename;
 
     li.addEventListener('click', () => {
-      setSelectedItem(li);
-      loadPdf(filename);
+      selectIndex(index);
     });
 
     fileListEl.appendChild(li);
-
-    if (index === 0) {
-      setSelectedItem(li);
-      loadPdf(filename);
-    }
   });
+
+  currentIndex = 0;
+  applyFrameOrder();
+  renderFrames();
+  updateSelectedList();
 }
 
 function moveSelection(step) {
-  const items = getFileItems();
-  if (items.length === 0) {
+  if (files.length === 0) {
     return;
   }
 
-  let currentIndex = Array.from(items).findIndex((item) =>
-    item.classList.contains('selected')
-  );
-
-  if (currentIndex === -1) {
-    currentIndex = 0;
-  }
-
-  const nextIndex = Math.max(0, Math.min(items.length - 1, currentIndex + step));
-  const nextItem = items[nextIndex];
-  if (!nextItem) {
-    return;
-  }
-
-  setSelectedItem(nextItem);
-  loadPdf(nextItem.dataset.filename);
-  nextItem.scrollIntoView({ block: 'nearest' });
+  const nextIndex = Math.max(0, Math.min(files.length - 1, currentIndex + step));
+  selectIndex(nextIndex);
 }
 
 document.addEventListener('keydown', (event) => {
@@ -97,18 +149,23 @@ async function init() {
       throw new Error('Failed to fetch PDF list');
     }
 
-    const files = await response.json();
+    const fetchedFiles = await response.json();
 
-    if (!Array.isArray(files) || files.length === 0) {
+    if (!Array.isArray(fetchedFiles) || fetchedFiles.length === 0) {
       showMessage('No PDFs found.');
-      viewerEl.removeAttribute('src');
+      frameOrder.forEach((frame) => {
+        frame.src = 'about:blank';
+      });
       return;
     }
 
+    files = fetchedFiles;
     renderFileList(files);
   } catch (error) {
     showMessage('Could not load PDF list.');
-    viewerEl.removeAttribute('src');
+    frameOrder.forEach((frame) => {
+      frame.src = 'about:blank';
+    });
   }
 }
 
