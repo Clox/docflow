@@ -18,32 +18,14 @@ if ($raw === false) {
 }
 
 $payload = json_decode($raw, true);
-if (!is_array($payload) || !isset($payload['clients']) || !is_array($payload['clients'])) {
+if (!is_array($payload) || !isset($payload['text']) || !is_string($payload['text'])) {
     http_response_code(400);
     echo json_encode(['error' => 'Invalid JSON payload']);
     exit;
 }
 
-$clients = [];
-foreach ($payload['clients'] as $item) {
-    if (!is_string($item)) {
-        continue;
-    }
-
-    $value = trim($item);
-    if ($value !== '') {
-        $clients[] = $value;
-    }
-}
-
-$json = json_encode($clients, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-if ($json === false) {
-    http_response_code(500);
-    echo json_encode(['error' => 'Could not encode clients']);
-    exit;
-}
-
-if (file_put_contents(CLIENTS_FILE, $json . "\n", LOCK_EX) === false) {
+$text = $payload['text'];
+if (file_put_contents(CLIENTS_FILE, $text, LOCK_EX) === false) {
     http_response_code(500);
     echo json_encode(['error' => 'Could not save clients']);
     exit;

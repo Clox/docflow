@@ -15,7 +15,12 @@
 
     <main class="main">
       <div class="topbar">
-        <div>PDF Review</div>
+        <div class="topbar-left">
+          <div>PDF Review</div>
+          <select id="client-select">
+            <option value="">No clients</option>
+          </select>
+        </div>
         <div class="topbar-controls">
           <label for="view-mode">View:</label>
           <select id="view-mode">

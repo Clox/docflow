@@ -3,6 +3,7 @@ const viewerStackEl = document.getElementById('viewer-stack');
 const viewerFrames = viewerStackEl.querySelectorAll('.pdf-viewer-frame');
 const viewModeEl = document.getElementById('view-mode');
 const ocrViewEl = document.getElementById('ocr-view');
+const clientSelectEl = document.getElementById('client-select');
 const ocrTextEl = document.getElementById('ocr-text');
 const clientsButtonEl = document.getElementById('clients-button');
 const clientsModalEl = document.getElementById('clients-modal');
@@ -209,45 +210,34 @@ function closeClientsModal() {
   clientsModalEl.classList.add('hidden');
 }
 
-function clientsToText(clients) {
-  return clients.join('\n');
-}
-
-function textToClients(text) {
-  return text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
-
 async function loadClients() {
   const response = await fetch('/api/get-clients.php');
   if (!response.ok) {
     throw new Error('Failed to load clients');
   }
 
-  const clients = await response.json();
-  if (!Array.isArray(clients)) {
+  const payload = await response.json();
+  if (!payload || typeof payload.text !== 'string') {
     throw new Error('Invalid clients data');
   }
 
-  clientsTextareaEl.value = clientsToText(clients);
+  clientsTextareaEl.value = payload.text;
 }
 
 async function saveClients() {
-  const clients = textToClients(clientsTextareaEl.value);
   const response = await fetch('/api/save-clients.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ clients })
+    body: JSON.stringify({ text: clientsTextareaEl.value })
   });
 
   if (!response.ok) {
     throw new Error('Failed to save clients');
   }
 
+  await loadClientFolders();
   closeClientsModal();
 }
 
@@ -313,7 +303,34 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+async function loadClientFolders() {
+  try {
+    const response = await fetch('/api/list-client-folders.php');
+    if (!response.ok) {
+      throw new Error('Failed to load client folders');
+    }
+
+    const folders = await response.json();
+    if (!Array.isArray(folders) || folders.length === 0) {
+      clientSelectEl.innerHTML = '<option value="">No clients</option>';
+      return;
+    }
+
+    clientSelectEl.innerHTML = '';
+    folders.forEach((folderName) => {
+      const option = document.createElement('option');
+      option.value = folderName;
+      option.textContent = folderName;
+      clientSelectEl.appendChild(option);
+    });
+  } catch (error) {
+    clientSelectEl.innerHTML = '<option value="">No clients</option>';
+  }
+}
+
 async function init() {
+  await loadClientFolders();
+
   try {
     const response = await fetch('/api/list-pdfs.php');
     if (!response.ok) {
