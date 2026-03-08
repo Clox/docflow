@@ -1,6 +1,13 @@
 const fileListEl = document.getElementById('file-list');
 const viewerStackEl = document.getElementById('viewer-stack');
 const viewerFrames = viewerStackEl.querySelectorAll('.pdf-viewer-frame');
+const clientsButtonEl = document.getElementById('clients-button');
+const clientsModalEl = document.getElementById('clients-modal');
+const clientsTextareaEl = document.getElementById('clients-textarea');
+const clientsCancelEl = document.getElementById('clients-cancel');
+const clientsSaveEl = document.getElementById('clients-save');
+const clientsQueryEl = document.getElementById('clients-query');
+const copyQueryButtonEl = document.getElementById('copy-query-button');
 
 let files = [];
 let currentIndex = -1;
@@ -131,6 +138,96 @@ function moveSelection(step) {
   selectIndex(nextIndex);
 }
 
+function openClientsModal() {
+  clientsModalEl.classList.remove('hidden');
+}
+
+function closeClientsModal() {
+  clientsModalEl.classList.add('hidden');
+}
+
+function clientsToText(clients) {
+  return clients.join('\n');
+}
+
+function textToClients(text) {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+async function loadClients() {
+  const response = await fetch('/api/get-clients.php');
+  if (!response.ok) {
+    throw new Error('Failed to load clients');
+  }
+
+  const clients = await response.json();
+  if (!Array.isArray(clients)) {
+    throw new Error('Invalid clients data');
+  }
+
+  clientsTextareaEl.value = clientsToText(clients);
+}
+
+async function saveClients() {
+  const clients = textToClients(clientsTextareaEl.value);
+  const response = await fetch('/api/save-clients.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ clients })
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to save clients');
+  }
+
+  closeClientsModal();
+}
+
+clientsButtonEl.addEventListener('click', async () => {
+  try {
+    await loadClients();
+    openClientsModal();
+    clientsTextareaEl.focus();
+  } catch (error) {
+    alert('Could not load clients.');
+  }
+});
+
+clientsCancelEl.addEventListener('click', () => {
+  closeClientsModal();
+});
+
+clientsSaveEl.addEventListener('click', async () => {
+  try {
+    await saveClients();
+  } catch (error) {
+    alert('Could not save clients.');
+  }
+});
+
+clientsModalEl.addEventListener('click', (event) => {
+  if (event.target === clientsModalEl) {
+    closeClientsModal();
+  }
+});
+
+copyQueryButtonEl.addEventListener('click', async () => {
+  const query = clientsQueryEl.value;
+
+  try {
+    await navigator.clipboard.writeText(query);
+  } catch (error) {
+    clientsQueryEl.focus();
+    clientsQueryEl.select();
+    document.execCommand('copy');
+  }
+});
+
 document.addEventListener('keydown', (event) => {
   const tag = event.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || event.target.isContentEditable) {
@@ -143,6 +240,8 @@ document.addEventListener('keydown', (event) => {
   } else if (event.key === 'ArrowUp') {
     event.preventDefault();
     moveSelection(-1);
+  } else if (event.key === 'Escape' && !clientsModalEl.classList.contains('hidden')) {
+    closeClientsModal();
   }
 });
 

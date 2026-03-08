@@ -14,13 +14,43 @@
     </aside>
 
     <main class="main">
-      <div class="topbar">PDF Review</div>
+      <div class="topbar">
+        <div>PDF Review</div>
+        <button id="clients-button" type="button">Huvudmän</button>
+      </div>
       <div id="viewer-stack" class="viewer-stack">
         <iframe class="pdf-viewer-frame"></iframe>
         <iframe class="pdf-viewer-frame"></iframe>
         <iframe class="pdf-viewer-frame"></iframe>
       </div>
     </main>
+  </div>
+
+  <div id="clients-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2>Huvudmän</h2>
+      <details class="sql-help">
+        <summary>Hämta klienter med SQL (kopierbar)</summary>
+        <textarea id="clients-query" class="query-textarea" readonly>SELECT JSON_PRETTY(
+	JSON_ARRAYAGG(
+		JSON_OBJECT(
+			'firstName', first_name,
+			'lastName', last_name,
+			'personalIdentityNumber', personal_identity_number
+		)
+	)
+) AS clients_json
+FROM clients;</textarea>
+        <div class="sql-actions">
+          <button id="copy-query-button" type="button">Copy query</button>
+        </div>
+      </details>
+      <textarea id="clients-textarea" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
+      <div class="modal-actions">
+        <button id="clients-cancel" type="button">Cancel</button>
+        <button id="clients-save" type="button">OK</button>
+      </div>
+    </div>
   </div>
 
   <script src="/app.js"></script>
