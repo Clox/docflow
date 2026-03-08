@@ -16,12 +16,22 @@
     <main class="main">
       <div class="topbar">
         <div>PDF Review</div>
-        <button id="clients-button" type="button">Huvudmän</button>
+        <div class="topbar-controls">
+          <label for="view-mode">View:</label>
+          <select id="view-mode">
+            <option value="pdf" selected>PDF</option>
+            <option value="ocr">OCR-data</option>
+          </select>
+          <button id="clients-button" type="button">Huvudmän</button>
+        </div>
       </div>
       <div id="viewer-stack" class="viewer-stack">
         <iframe class="pdf-viewer-frame"></iframe>
         <iframe class="pdf-viewer-frame"></iframe>
         <iframe class="pdf-viewer-frame"></iframe>
+      </div>
+      <div id="ocr-view" class="ocr-view hidden">
+        <pre id="ocr-text" class="ocr-text"></pre>
       </div>
     </main>
   </div>

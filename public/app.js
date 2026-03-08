@@ -1,6 +1,9 @@
 const fileListEl = document.getElementById('file-list');
 const viewerStackEl = document.getElementById('viewer-stack');
 const viewerFrames = viewerStackEl.querySelectorAll('.pdf-viewer-frame');
+const viewModeEl = document.getElementById('view-mode');
+const ocrViewEl = document.getElementById('ocr-view');
+const ocrTextEl = document.getElementById('ocr-text');
 const clientsButtonEl = document.getElementById('clients-button');
 const clientsModalEl = document.getElementById('clients-modal');
 const clientsTextareaEl = document.getElementById('clients-textarea');
@@ -12,6 +15,8 @@ const copyQueryButtonEl = document.getElementById('copy-query-button');
 let files = [];
 let currentIndex = -1;
 let frameOrder = [viewerFrames[0], viewerFrames[1], viewerFrames[2]];
+let currentViewMode = 'pdf';
+let ocrRequestSeq = 0;
 
 function getFileItems() {
   return fileListEl.querySelectorAll('li.file-item');
@@ -43,6 +48,13 @@ function setFramePdf(frameEl, index) {
   }
 
   frameEl.src = getPdfUrl(index);
+}
+
+function getCurrentFilename() {
+  if (currentIndex < 0 || currentIndex >= files.length) {
+    return '';
+  }
+  return files[currentIndex];
 }
 
 function renderFrames() {
@@ -96,6 +108,7 @@ function selectIndex(index) {
   }
 
   updateSelectedList();
+  updateCurrentView();
 }
 
 function showMessage(message) {
@@ -136,6 +149,56 @@ function moveSelection(step) {
 
   const nextIndex = Math.max(0, Math.min(files.length - 1, currentIndex + step));
   selectIndex(nextIndex);
+}
+
+function setOcrText(text) {
+  ocrTextEl.textContent = text;
+}
+
+async function loadOcrForCurrentFile() {
+  const requestSeq = ++ocrRequestSeq;
+  const filename = getCurrentFilename();
+  if (!filename) {
+    setOcrText('No file selected.');
+    return;
+  }
+
+  setOcrText('Loading OCR data...');
+
+  try {
+    const response = await fetch('/api/get-ocr.php?file=' + encodeURIComponent(filename));
+    if (!response.ok) {
+      throw new Error('Failed to load OCR');
+    }
+
+    const payload = await response.json();
+    if (!payload || typeof payload.text !== 'string') {
+      throw new Error('Invalid OCR response');
+    }
+
+    if (requestSeq !== ocrRequestSeq) {
+      return;
+    }
+
+    setOcrText(payload.text || '(No OCR text found)');
+  } catch (error) {
+    if (requestSeq !== ocrRequestSeq) {
+      return;
+    }
+    setOcrText('Could not load OCR data.');
+  }
+}
+
+function updateCurrentView() {
+  if (currentViewMode === 'ocr') {
+    viewerStackEl.classList.add('hidden');
+    ocrViewEl.classList.remove('hidden');
+    loadOcrForCurrentFile();
+    return;
+  }
+
+  ocrViewEl.classList.add('hidden');
+  viewerStackEl.classList.remove('hidden');
 }
 
 function openClientsModal() {
@@ -228,6 +291,11 @@ copyQueryButtonEl.addEventListener('click', async () => {
   }
 });
 
+viewModeEl.addEventListener('change', () => {
+  currentViewMode = viewModeEl.value === 'ocr' ? 'ocr' : 'pdf';
+  updateCurrentView();
+});
+
 document.addEventListener('keydown', (event) => {
   const tag = event.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || event.target.isContentEditable) {
@@ -264,6 +332,7 @@ async function init() {
 
     files = fetchedFiles;
     renderFileList(files);
+    updateCurrentView();
   } catch (error) {
     showMessage('Could not load PDF list.');
     frameOrder.forEach((frame) => {

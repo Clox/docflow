@@ -80,6 +80,25 @@ body {
   font-weight: bold;
 }
 
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-controls label {
+  font-weight: normal;
+}
+
+#view-mode {
+  font: inherit;
+  font-weight: normal;
+  padding: 5px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+}
+
 .viewer-stack {
   flex: 1;
   position: relative;
@@ -93,6 +112,25 @@ body {
   height: 100%;
   border: 0;
   background: #fafafa;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.ocr-view {
+  flex: 1;
+  overflow: auto;
+  background: #fafafa;
+  border-top: 1px solid #eee;
+}
+
+.ocr-text {
+  margin: 0;
+  padding: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 14px/1.5 monospace;
 }
 
 #clients-button {
