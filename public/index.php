@@ -32,7 +32,7 @@
             <option value="pdf" selected>PDF</option>
             <option value="ocr">OCR-data</option>
           </select>
-          <button id="clients-button" type="button">Huvudmän</button>
+          <button id="settings-button" type="button">Inställningar</button>
         </div>
       </div>
 
@@ -43,19 +43,25 @@
     </main>
   </div>
 
-  <div id="clients-modal" class="modal-overlay hidden">
+  <div id="settings-modal" class="modal-overlay hidden">
     <div class="modal-card">
-      <h2>Huvudmän</h2>
-      <p>Edit data/clients.json content directly.</p>
-      <textarea
-        id="clients-textarea"
-        spellcheck="false"
-        autocorrect="off"
-        autocapitalize="off"
-      ></textarea>
+      <h2>Inställningar</h2>
+      <details class="settings-section">
+        <summary>Huvudmän</summary>
+        <p>Edit data/clients.json content directly.</p>
+        <textarea
+          id="clients-textarea"
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+        ></textarea>
+      </details>
+      <div class="settings-danger">
+        <button id="settings-reset-jobs" type="button">Reset all jobs</button>
+      </div>
       <div class="modal-actions">
-        <button id="clients-cancel" type="button">Cancel</button>
-        <button id="clients-save" type="button">OK</button>
+        <button id="settings-cancel" type="button">Cancel</button>
+        <button id="settings-save" type="button">OK</button>
       </div>
     </div>
   </div>

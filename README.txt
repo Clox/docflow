@@ -26,6 +26,9 @@ UI behavior:
 - State auto-refreshes every 3 seconds so new ready jobs appear automatically.
 - Selecting a ready job loads /api/get-job-pdf.php?id=<jobId> in the iframe.
 - Client select is populated from data/clients.json and auto-selects matched client for selected job.
+- "Inställningar" modal includes:
+  - expandable "Huvudmän" editor for data/clients.json
+  - "Reset all jobs" button that restores each job's source.pdf to inbox and removes job folders
 
 Configuration:
 - data/config.json
@@ -35,6 +38,9 @@ Configuration:
   - name: display label
   - dirName: matched client value
   - personalIdentityNumber: used for OCR text matching (hyphen/no-hyphen supported)
+
+Testing note:
+- Processing currently has an intentional delay of 10 seconds per claimed file to make spinner/processing-state behavior easy to verify.
 
 Run:
 chmod +x start.sh

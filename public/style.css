@@ -158,7 +158,7 @@ body {
   background: #fff;
 }
 
-#clients-button {
+#settings-button {
   font: inherit;
   padding: 6px 10px;
   border: 1px solid #ccc;
@@ -167,7 +167,7 @@ body {
   cursor: pointer;
 }
 
-#clients-button:hover {
+#settings-button:hover {
   background: #ebebeb;
 }
 
@@ -223,6 +223,34 @@ body {
   margin: 0 0 10px;
   color: #555;
   font-size: 14px;
+}
+
+.settings-section {
+  margin-top: 8px;
+}
+
+.settings-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.settings-danger {
+  margin-top: 14px;
+}
+
+#settings-reset-jobs {
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid #c44;
+  border-radius: 4px;
+  color: #a11;
+  background: #fff;
+  cursor: pointer;
+}
+
+#settings-reset-jobs:hover {
+  background: #fff1f1;
 }
 
 #clients-textarea {

@@ -357,6 +357,9 @@ function claim_and_process_inbox(array $config, array $clients): void
 
             write_json_file($jobDir . '/job.json', $jobData);
 
+            // Deliberate delay per file to make processing state visible in the UI.
+            sleep(4);
+
             process_claimed_job($jobDir, $sourcePdfPath, $inboxPdfPath, $clients);
 
             $jobData['status'] = 'ready';
@@ -466,4 +469,115 @@ function read_jobs_state(array $config): array
 function is_valid_job_id(string $id): bool
 {
     return preg_match('/^[A-Za-z0-9_-]+$/', $id) === 1;
+}
+
+function delete_directory_recursive(string $path): bool
+{
+    if (!is_dir($path)) {
+        return true;
+    }
+
+    $entries = scandir($path);
+    if ($entries === false) {
+        return false;
+    }
+
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+
+        $item = $path . DIRECTORY_SEPARATOR . $entry;
+        if (is_dir($item)) {
+            if (!delete_directory_recursive($item)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (!unlink($item)) {
+            return false;
+        }
+    }
+
+    return rmdir($path);
+}
+
+function unique_inbox_target_path(string $inboxDir, string $filename): string
+{
+    $base = pathinfo($filename, PATHINFO_FILENAME);
+    $ext = pathinfo($filename, PATHINFO_EXTENSION);
+    $suffix = '';
+    $counter = 1;
+
+    while (true) {
+        $candidateName = $base . $suffix . ($ext !== '' ? '.' . $ext : '');
+        $candidatePath = $inboxDir . DIRECTORY_SEPARATOR . $candidateName;
+        if (!file_exists($candidatePath)) {
+            return $candidatePath;
+        }
+
+        $suffix = '_restored_' . $counter;
+        $counter++;
+    }
+}
+
+function reset_all_jobs(array $config): array
+{
+    $jobsDir = $config['jobsDirectory'];
+    $inboxDir = $config['inboxDirectory'];
+
+    ensure_directory($jobsDir);
+    ensure_directory($inboxDir);
+
+    $entries = scandir($jobsDir);
+    if ($entries === false) {
+        throw new RuntimeException('Could not read jobs directory');
+    }
+
+    $restoredSources = 0;
+    $removedJobFolders = 0;
+    $errors = [];
+
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+
+        $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $entry;
+        if (!is_dir($jobDir)) {
+            continue;
+        }
+
+        $job = load_json_file($jobDir . '/job.json');
+        $originalFilename = is_array($job) && is_string($job['originalFilename'] ?? null)
+            ? trim((string) $job['originalFilename'])
+            : '';
+        if ($originalFilename === '') {
+            $originalFilename = $entry . '.pdf';
+        }
+
+        $sourcePath = $jobDir . '/source.pdf';
+        if (is_file($sourcePath)) {
+            $targetPath = unique_inbox_target_path($inboxDir, $originalFilename);
+            if (!rename($sourcePath, $targetPath)) {
+                $errors[] = 'Could not restore source.pdf for job ' . $entry;
+                continue;
+            }
+            $restoredSources++;
+        }
+
+        if (!delete_directory_recursive($jobDir)) {
+            $errors[] = 'Could not remove job directory ' . $entry;
+            continue;
+        }
+
+        $removedJobFolders++;
+    }
+
+    return [
+        'restoredSources' => $restoredSources,
+        'removedJobFolders' => $removedJobFolders,
+        'errors' => $errors,
+    ];
 }

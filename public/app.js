@@ -5,11 +5,12 @@ const viewModeEl = document.getElementById('view-mode');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
 const clientSelectEl = document.getElementById('client-select');
-const clientsButtonEl = document.getElementById('clients-button');
-const clientsModalEl = document.getElementById('clients-modal');
+const settingsButtonEl = document.getElementById('settings-button');
+const settingsModalEl = document.getElementById('settings-modal');
 const clientsTextareaEl = document.getElementById('clients-textarea');
-const clientsCancelEl = document.getElementById('clients-cancel');
-const clientsSaveEl = document.getElementById('clients-save');
+const settingsCancelEl = document.getElementById('settings-cancel');
+const settingsSaveEl = document.getElementById('settings-save');
+const settingsResetJobsEl = document.getElementById('settings-reset-jobs');
 
 let state = {
   processingJobs: [],
@@ -202,12 +203,12 @@ function applyState(nextState) {
   renderJobList(state.readyJobs);
 }
 
-function openClientsModal() {
-  clientsModalEl.classList.remove('hidden');
+function openSettingsModal() {
+  settingsModalEl.classList.remove('hidden');
 }
 
-function closeClientsModal() {
-  clientsModalEl.classList.add('hidden');
+function closeSettingsModal() {
+  settingsModalEl.classList.add('hidden');
 }
 
 async function loadClientsText() {
@@ -237,7 +238,31 @@ async function saveClientsText() {
     throw new Error('Failed to save clients');
   }
 
-  closeClientsModal();
+  closeSettingsModal();
+  await fetchState();
+}
+
+async function resetAllJobs() {
+  const response = await fetch('/api/reset-jobs.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to reset jobs');
+  }
+
+  const payload = await response.json();
+  if (!payload || payload.ok !== true) {
+    throw new Error('Reset jobs failed');
+  }
+
+  loadedJobId = '';
+  loadedOcrJobId = '';
+  selectedJobId = '';
+  closeSettingsModal();
   await fetchState();
 }
 
@@ -247,21 +272,21 @@ viewModeEl.addEventListener('change', () => {
   setViewerJob(selectedJobId);
 });
 
-clientsButtonEl.addEventListener('click', async () => {
+settingsButtonEl.addEventListener('click', async () => {
   try {
     await loadClientsText();
-    openClientsModal();
+    openSettingsModal();
     clientsTextareaEl.focus();
   } catch (error) {
     alert('Could not load clients.');
   }
 });
 
-clientsCancelEl.addEventListener('click', () => {
-  closeClientsModal();
+settingsCancelEl.addEventListener('click', () => {
+  closeSettingsModal();
 });
 
-clientsSaveEl.addEventListener('click', async () => {
+settingsSaveEl.addEventListener('click', async () => {
   try {
     await saveClientsText();
   } catch (error) {
@@ -269,15 +294,30 @@ clientsSaveEl.addEventListener('click', async () => {
   }
 });
 
-clientsModalEl.addEventListener('click', (event) => {
-  if (event.target === clientsModalEl) {
-    closeClientsModal();
+settingsResetJobsEl.addEventListener('click', async () => {
+  const confirmed = window.confirm(
+    'This will move all source.pdf files back to inbox and remove all job folders. Continue?'
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await resetAllJobs();
+  } catch (error) {
+    alert('Could not reset jobs.');
+  }
+});
+
+settingsModalEl.addEventListener('click', (event) => {
+  if (event.target === settingsModalEl) {
+    closeSettingsModal();
   }
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !clientsModalEl.classList.contains('hidden')) {
-    closeClientsModal();
+  if (event.key === 'Escape' && !settingsModalEl.classList.contains('hidden')) {
+    closeSettingsModal();
   }
 });
 
