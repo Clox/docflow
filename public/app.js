@@ -1,205 +1,205 @@
-const fileListEl = document.getElementById('file-list');
-const viewerStackEl = document.getElementById('viewer-stack');
-const viewerFrames = viewerStackEl.querySelectorAll('.pdf-viewer-frame');
-const viewModeEl = document.getElementById('view-mode');
+const jobListEl = document.getElementById('job-list');
+const viewerEl = document.getElementById('pdf-viewer');
 const ocrViewEl = document.getElementById('ocr-view');
+const viewModeEl = document.getElementById('view-mode');
+const processingIndicatorEl = document.getElementById('processing-indicator');
+const processingTextEl = document.getElementById('processing-text');
 const clientSelectEl = document.getElementById('client-select');
-const ocrTextEl = document.getElementById('ocr-text');
 const clientsButtonEl = document.getElementById('clients-button');
 const clientsModalEl = document.getElementById('clients-modal');
 const clientsTextareaEl = document.getElementById('clients-textarea');
 const clientsCancelEl = document.getElementById('clients-cancel');
 const clientsSaveEl = document.getElementById('clients-save');
-const clientsQueryEl = document.getElementById('clients-query');
-const copyQueryButtonEl = document.getElementById('copy-query-button');
 
-let files = [];
-let currentIndex = -1;
-let frameOrder = [viewerFrames[0], viewerFrames[1], viewerFrames[2]];
+let state = {
+  processingJobs: [],
+  readyJobs: [],
+  failedJobs: [],
+  clients: []
+};
+
+let selectedJobId = '';
+let loadedJobId = '';
+let loadedOcrJobId = '';
+let pollTimer = null;
+let pollInFlight = false;
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
 
-function getFileItems() {
-  return fileListEl.querySelectorAll('li.file-item');
-}
-
-function setSelectedItem(selectedLi) {
-  const items = getFileItems();
-  items.forEach((item) => item.classList.remove('selected'));
-  if (selectedLi) {
-    selectedLi.classList.add('selected');
-  }
-}
-
-function getPdfUrl(index) {
-  return '/api/serve-pdf.php?file=' + encodeURIComponent(files[index]);
-}
-
-function setFramePdf(frameEl, index) {
-  const fileIndexValue = index >= 0 && index < files.length ? String(index) : '';
-  if (frameEl.dataset.fileIndex === fileIndexValue) {
+function setProcessingInfo(processingJobs) {
+  if (!Array.isArray(processingJobs) || processingJobs.length === 0) {
+    processingIndicatorEl.classList.add('hidden');
+    processingTextEl.textContent = '';
     return;
   }
 
-  frameEl.dataset.fileIndex = fileIndexValue;
-
-  if (index < 0 || index >= files.length) {
-    frameEl.src = 'about:blank';
-    return;
-  }
-
-  frameEl.src = getPdfUrl(index);
+  processingIndicatorEl.classList.remove('hidden');
+  processingTextEl.textContent = `Processing ${processingJobs.length} file(s)...`;
 }
 
-function getCurrentFilename() {
-  if (currentIndex < 0 || currentIndex >= files.length) {
-    return '';
-  }
-  return files[currentIndex];
-}
+function renderClientSelect(clients) {
+  const currentValue = clientSelectEl.value;
+  clientSelectEl.innerHTML = '<option value="" hidden>Choose client</option>';
 
-function renderFrames() {
-  setFramePdf(frameOrder[0], currentIndex - 1);
-  setFramePdf(frameOrder[1], currentIndex);
-  setFramePdf(frameOrder[2], currentIndex + 1);
-}
-
-function applyFrameOrder() {
-  updateFrameVisibility();
-}
-
-function updateFrameVisibility() {
-  frameOrder.forEach((frame, orderIndex) => {
-    const isActive = orderIndex === 1;
-    frame.style.visibility = 'visible';
-    frame.style.opacity = isActive ? '1' : '0';
-    frame.style.pointerEvents = isActive ? 'auto' : 'none';
-    frame.style.zIndex = isActive ? '2' : '1';
+  clients.forEach((client) => {
+    const option = document.createElement('option');
+    option.value = client.dirName;
+    option.textContent = client.name;
+    clientSelectEl.appendChild(option);
   });
-}
 
-function updateSelectedList() {
-  const items = getFileItems();
-  items.forEach((item, index) => {
-    if (index === currentIndex) {
-      setSelectedItem(item);
-      item.scrollIntoView({ block: 'nearest' });
-    }
-  });
-}
-
-function selectIndex(index) {
-  if (index < 0 || index >= files.length || index === currentIndex) {
-    return;
-  }
-
-  if (index === currentIndex + 1) {
-    frameOrder = [frameOrder[1], frameOrder[2], frameOrder[0]];
-    applyFrameOrder();
-    currentIndex = index;
-    setFramePdf(frameOrder[2], currentIndex + 1);
-  } else if (index === currentIndex - 1) {
-    frameOrder = [frameOrder[2], frameOrder[0], frameOrder[1]];
-    applyFrameOrder();
-    currentIndex = index;
-    setFramePdf(frameOrder[0], currentIndex - 1);
+  if (currentValue && clients.some((client) => client.dirName === currentValue)) {
+    clientSelectEl.value = currentValue;
   } else {
-    currentIndex = index;
-    renderFrames();
+    clientSelectEl.value = '';
   }
-
-  updateSelectedList();
-  updateCurrentView();
 }
 
-function showMessage(message) {
-  fileListEl.innerHTML = '';
-  const li = document.createElement('li');
-  li.className = 'message';
-  li.textContent = message;
-  fileListEl.appendChild(li);
-}
-
-function renderFileList(files) {
-  fileListEl.innerHTML = '';
-
-  files.forEach((filename, index) => {
-    const li = document.createElement('li');
-    li.className = 'file-item';
-    li.textContent = filename;
-    li.title = filename;
-    li.dataset.filename = filename;
-
-    li.addEventListener('click', () => {
-      selectIndex(index);
-    });
-
-    fileListEl.appendChild(li);
-  });
-
-  currentIndex = 0;
-  applyFrameOrder();
-  renderFrames();
-  updateSelectedList();
-}
-
-function moveSelection(step) {
-  if (files.length === 0) {
+function setClientForJob(job) {
+  if (!job || !job.matchedClientDirName) {
+    clientSelectEl.value = '';
     return;
   }
 
-  const nextIndex = Math.max(0, Math.min(files.length - 1, currentIndex + step));
-  selectIndex(nextIndex);
+  const hasOption = Array.from(clientSelectEl.options).some(
+    (option) => option.value === job.matchedClientDirName
+  );
+
+  clientSelectEl.value = hasOption ? job.matchedClientDirName : '';
 }
 
-function setOcrText(text) {
-  ocrTextEl.textContent = text;
+function setViewerJob(jobId) {
+  if (currentViewMode === 'ocr') {
+    setViewerOcr(jobId);
+  } else {
+    setViewerPdf(jobId);
+  }
 }
 
-async function loadOcrForCurrentFile() {
+function setViewerPdf(jobId) {
+  ocrViewEl.classList.add('hidden');
+  viewerEl.classList.remove('hidden');
+
+  if (!jobId) {
+    loadedJobId = '';
+    viewerEl.removeAttribute('src');
+    return;
+  }
+
+  if (loadedJobId === jobId) {
+    return;
+  }
+
+  loadedJobId = jobId;
+  viewerEl.src = '/api/get-job-pdf.php?id=' + encodeURIComponent(jobId);
+}
+
+async function setViewerOcr(jobId) {
+  viewerEl.classList.add('hidden');
+  ocrViewEl.classList.remove('hidden');
+
+  if (!jobId) {
+    loadedOcrJobId = '';
+    ocrViewEl.textContent = '';
+    return;
+  }
+
+  if (loadedOcrJobId === jobId) {
+    return;
+  }
+
+  loadedOcrJobId = jobId;
   const requestSeq = ++ocrRequestSeq;
-  const filename = getCurrentFilename();
-  if (!filename) {
-    setOcrText('No file selected.');
-    return;
-  }
-
-  setOcrText('Loading OCR data...');
+  ocrViewEl.textContent = 'Loading OCR data...';
 
   try {
-    const response = await fetch('/api/get-ocr.php?file=' + encodeURIComponent(filename));
+    const response = await fetch('/api/get-job-ocr.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
     if (!response.ok) {
-      throw new Error('Failed to load OCR');
+      throw new Error('Failed to fetch OCR');
     }
 
     const payload = await response.json();
-    if (!payload || typeof payload.text !== 'string') {
-      throw new Error('Invalid OCR response');
-    }
-
     if (requestSeq !== ocrRequestSeq) {
       return;
     }
 
-    setOcrText(payload.text || '(No OCR text found)');
+    const text = payload && typeof payload.text === 'string' ? payload.text : '';
+    ocrViewEl.textContent = text || '(No OCR text found)';
   } catch (error) {
     if (requestSeq !== ocrRequestSeq) {
       return;
     }
-    setOcrText('Could not load OCR data.');
+    ocrViewEl.textContent = 'Could not load OCR data.';
   }
 }
 
-function updateCurrentView() {
-  if (currentViewMode === 'ocr') {
-    viewerStackEl.classList.add('hidden');
-    ocrViewEl.classList.remove('hidden');
-    loadOcrForCurrentFile();
+function renderJobList(readyJobs) {
+  jobListEl.innerHTML = '';
+
+  if (readyJobs.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'job-message';
+    li.textContent = 'No ready jobs yet.';
+    jobListEl.appendChild(li);
     return;
   }
 
-  ocrViewEl.classList.add('hidden');
-  viewerStackEl.classList.remove('hidden');
+  readyJobs.forEach((job) => {
+    const li = document.createElement('li');
+    li.className = 'job-item';
+    if (job.id === selectedJobId) {
+      li.classList.add('selected');
+    }
+
+    const name = document.createElement('div');
+    name.className = 'job-name';
+    name.textContent = job.originalFilename;
+    li.appendChild(name);
+
+    if (job.matchedClientDirName) {
+      const client = document.createElement('div');
+      client.className = 'job-client';
+      client.textContent = job.matchedClientDirName;
+      li.appendChild(client);
+    }
+
+    li.addEventListener('click', () => {
+      selectedJobId = job.id;
+      renderJobList(state.readyJobs);
+      setViewerJob(selectedJobId);
+      setClientForJob(job);
+    });
+
+    jobListEl.appendChild(li);
+  });
+}
+
+function refreshSelection() {
+  const readyJobs = state.readyJobs;
+
+  if (readyJobs.length === 0) {
+    selectedJobId = '';
+    setViewerJob('');
+    setClientForJob(null);
+    return;
+  }
+
+  const stillExists = readyJobs.some((job) => job.id === selectedJobId);
+  if (!stillExists) {
+    selectedJobId = readyJobs[0].id;
+  }
+
+  const selectedJob = readyJobs.find((job) => job.id === selectedJobId) || null;
+  setViewerJob(selectedJobId);
+  setClientForJob(selectedJob);
+}
+
+function applyState(nextState) {
+  state = nextState;
+  setProcessingInfo(state.processingJobs);
+  renderClientSelect(state.clients);
+  refreshSelection();
+  renderJobList(state.readyJobs);
 }
 
 function openClientsModal() {
@@ -210,21 +210,21 @@ function closeClientsModal() {
   clientsModalEl.classList.add('hidden');
 }
 
-async function loadClients() {
-  const response = await fetch('/api/get-clients.php');
+async function loadClientsText() {
+  const response = await fetch('/api/get-clients.php', { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Failed to load clients');
   }
 
   const payload = await response.json();
   if (!payload || typeof payload.text !== 'string') {
-    throw new Error('Invalid clients data');
+    throw new Error('Invalid clients response');
   }
 
   clientsTextareaEl.value = payload.text;
 }
 
-async function saveClients() {
+async function saveClientsText() {
   const response = await fetch('/api/save-clients.php', {
     method: 'POST',
     headers: {
@@ -237,13 +237,19 @@ async function saveClients() {
     throw new Error('Failed to save clients');
   }
 
-  await loadClientFolders();
   closeClientsModal();
+  await fetchState();
 }
+
+viewModeEl.addEventListener('change', () => {
+  currentViewMode = viewModeEl.value === 'ocr' ? 'ocr' : 'pdf';
+  loadedOcrJobId = '';
+  setViewerJob(selectedJobId);
+});
 
 clientsButtonEl.addEventListener('click', async () => {
   try {
-    await loadClients();
+    await loadClientsText();
     openClientsModal();
     clientsTextareaEl.focus();
   } catch (error) {
@@ -257,7 +263,7 @@ clientsCancelEl.addEventListener('click', () => {
 
 clientsSaveEl.addEventListener('click', async () => {
   try {
-    await saveClients();
+    await saveClientsText();
   } catch (error) {
     alert('Could not save clients.');
   }
@@ -269,93 +275,50 @@ clientsModalEl.addEventListener('click', (event) => {
   }
 });
 
-copyQueryButtonEl.addEventListener('click', async () => {
-  const query = clientsQueryEl.value;
-
-  try {
-    await navigator.clipboard.writeText(query);
-  } catch (error) {
-    clientsQueryEl.focus();
-    clientsQueryEl.select();
-    document.execCommand('copy');
-  }
-});
-
-viewModeEl.addEventListener('change', () => {
-  currentViewMode = viewModeEl.value === 'ocr' ? 'ocr' : 'pdf';
-  updateCurrentView();
-});
-
 document.addEventListener('keydown', (event) => {
-  const tag = event.target.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || event.target.isContentEditable) {
-    return;
-  }
-
-  if (event.key === 'ArrowDown') {
-    event.preventDefault();
-    moveSelection(1);
-  } else if (event.key === 'ArrowUp') {
-    event.preventDefault();
-    moveSelection(-1);
-  } else if (event.key === 'Escape' && !clientsModalEl.classList.contains('hidden')) {
+  if (event.key === 'Escape' && !clientsModalEl.classList.contains('hidden')) {
     closeClientsModal();
   }
 });
 
-async function loadClientFolders() {
+async function fetchState() {
+  if (pollInFlight) {
+    return;
+  }
+
+  pollInFlight = true;
   try {
-    const response = await fetch('/api/list-client-folders.php');
+    const response = await fetch('/api/get-state.php', { cache: 'no-store' });
     if (!response.ok) {
-      throw new Error('Failed to load client folders');
+      throw new Error('Failed to fetch state');
     }
 
-    const folders = await response.json();
-    if (!Array.isArray(folders) || folders.length === 0) {
-      clientSelectEl.innerHTML = '<option value="">No clients</option>';
-      return;
+    const nextState = await response.json();
+    if (!nextState || !Array.isArray(nextState.readyJobs) || !Array.isArray(nextState.clients)) {
+      throw new Error('Invalid state response');
     }
 
-    clientSelectEl.innerHTML = '';
-    folders.forEach((folderName) => {
-      const option = document.createElement('option');
-      option.value = folderName;
-      option.textContent = folderName;
-      clientSelectEl.appendChild(option);
+    applyState({
+      processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : [],
+      readyJobs: nextState.readyJobs,
+      failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : [],
+      clients: nextState.clients
     });
   } catch (error) {
-    clientSelectEl.innerHTML = '<option value="">No clients</option>';
+    setProcessingInfo([]);
+    jobListEl.innerHTML = '';
+    const li = document.createElement('li');
+    li.className = 'job-message';
+    li.textContent = 'Could not load state.';
+    jobListEl.appendChild(li);
+  } finally {
+    pollInFlight = false;
   }
 }
 
-async function init() {
-  await loadClientFolders();
-
-  try {
-    const response = await fetch('/api/list-pdfs.php');
-    if (!response.ok) {
-      throw new Error('Failed to fetch PDF list');
-    }
-
-    const fetchedFiles = await response.json();
-
-    if (!Array.isArray(fetchedFiles) || fetchedFiles.length === 0) {
-      showMessage('No PDFs found.');
-      frameOrder.forEach((frame) => {
-        frame.src = 'about:blank';
-      });
-      return;
-    }
-
-    files = fetchedFiles;
-    renderFileList(files);
-    updateCurrentView();
-  } catch (error) {
-    showMessage('Could not load PDF list.');
-    frameOrder.forEach((frame) => {
-      frame.src = 'about:blank';
-    });
-  }
+async function pollLoop() {
+  await fetchState();
+  pollTimer = window.setTimeout(pollLoop, 3000);
 }
 
-init();
+pollLoop();

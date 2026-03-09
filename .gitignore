@@ -1,3 +1,6 @@
 pdfs/*
 
 clients.json
+
+jobs/*
+!jobs/.gitkeep

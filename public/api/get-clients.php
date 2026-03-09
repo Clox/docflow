@@ -1,18 +1,19 @@
 <?php
+declare(strict_types=1);
 
-const CLIENTS_FILE = __DIR__ . '/../../clients.json';
+require_once __DIR__ . '/_bootstrap.php';
 
-header('Content-Type: application/json; charset=utf-8');
+$path = DATA_DIR . '/clients.json';
 
-if (!is_file(CLIENTS_FILE)) {
-    echo json_encode(['text' => '']);
+if (!is_file($path)) {
+    json_response(['text' => '']);
     exit;
 }
 
-$content = file_get_contents(CLIENTS_FILE);
-if ($content === false) {
-    http_response_code(500);
-    echo json_encode(['error' => 'Could not read clients file']);
+$text = file_get_contents($path);
+if ($text === false) {
+    json_response(['error' => 'Could not read clients file'], 500);
     exit;
 }
-echo json_encode(['text' => $content]);
+
+json_response(['text' => $text]);

@@ -1,21 +1,44 @@
-Simple local PHP PDF browser/viewer.
+Docflow (job-based skeleton)
 
-What it does:
-- Lists PDF files from one hardcoded directory.
-- Lets you click a file to view it in an iframe.
+This local PHP tool reviews PDFs through a job pipeline.
 
-Requirements:
-- PHP installed.
+How it works:
+- Inbox: incoming untouched PDFs (configured in data/config.json).
+- Jobs: each claimed PDF gets its own jobs/<jobId>/ folder.
+- job.json is the source of truth for job state.
+
+Job flow:
+1. Client calls /api/get-state.php.
+2. Server scans inbox for stable PDFs (older than 2 seconds).
+3. Each stable PDF is claimed into jobs/<jobId>/source.pdf.
+4. job.json is created with status "processing".
+5. review.pdf is created (copy of source.pdf).
+6. ocr.txt is created:
+   - uses pdftotext if available
+   - otherwise fallback to same-named .txt next to inbox PDF
+   - otherwise empty text
+7. extracted.json is written with matchedClientDirName from personal identity number matching.
+8. job.json is updated last to status "ready" (or "failed" on error).
+
+UI behavior:
+- Sidebar lists only ready jobs.
+- Header shows "PDF Files" plus a spinner and "Processing N file(s)..." while processing jobs exist.
+- State auto-refreshes every 3 seconds so new ready jobs appear automatically.
+- Selecting a ready job loads /api/get-job-pdf.php?id=<jobId> in the iframe.
+- Client select is populated from data/clients.json and auto-selects matched client for selected job.
+
+Configuration:
+- data/config.json
+  - inboxDirectory: absolute path to incoming PDFs
+  - jobsDirectory: absolute path to jobs root
+- data/clients.json
+  - name: display label
+  - dirName: matched client value
+  - personalIdentityNumber: used for OCR text matching (hyphen/no-hyphen supported)
 
 Run:
 chmod +x start.sh
 ./start.sh
 
-Then open:
+App URL:
 http://127.0.0.1:4321
-
-Notes:
-- The PDF source directory is hardcoded in:
-  - public/api/list-pdfs.php
-  - public/api/serve-pdf.php
-- Change the PDF_DIR constant in both files to your folder.

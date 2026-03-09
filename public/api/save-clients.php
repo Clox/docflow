@@ -1,34 +1,36 @@
 <?php
+declare(strict_types=1);
 
-const CLIENTS_FILE = __DIR__ . '/../../clients.json';
-
-header('Content-Type: application/json; charset=utf-8');
+require_once __DIR__ . '/_bootstrap.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['error' => 'Method not allowed']);
+    json_response(['error' => 'Method not allowed'], 405);
     exit;
 }
 
 $raw = file_get_contents('php://input');
 if ($raw === false) {
-    http_response_code(400);
-    echo json_encode(['error' => 'Invalid request body']);
+    json_response(['error' => 'Invalid request body'], 400);
     exit;
 }
 
 $payload = json_decode($raw, true);
 if (!is_array($payload) || !isset($payload['text']) || !is_string($payload['text'])) {
-    http_response_code(400);
-    echo json_encode(['error' => 'Invalid JSON payload']);
+    json_response(['error' => 'Invalid JSON payload'], 400);
     exit;
 }
 
 $text = $payload['text'];
-if (file_put_contents(CLIENTS_FILE, $text, LOCK_EX) === false) {
-    http_response_code(500);
-    echo json_encode(['error' => 'Could not save clients']);
+$decoded = json_decode($text, true);
+if (!is_array($decoded)) {
+    json_response(['error' => 'clients.json must be a JSON array'], 400);
     exit;
 }
 
-echo json_encode(['ok' => true]);
+$path = DATA_DIR . '/clients.json';
+if (file_put_contents($path, $text, LOCK_EX) === false) {
+    json_response(['error' => 'Could not save clients file'], 500);
+    exit;
+}
+
+json_response(['ok' => true]);
