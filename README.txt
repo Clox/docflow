@@ -20,6 +20,11 @@ Job flow:
 7. extracted.json is written with matchedClientDirName from personal identity number matching.
 8. job.json is updated last to status "ready" (or "failed" on error).
 
+Processing model:
+- get-state only claims stable inbox files and marks jobs as "processing".
+- Actual processing runs in a separate background worker process.
+- This keeps the UI responsive while processing continues.
+
 UI behavior:
 - Sidebar lists only ready jobs.
 - Header shows "PDF Files" plus a spinner and "Processing N file(s)..." while processing jobs exist.
@@ -40,7 +45,7 @@ Configuration:
   - personalIdentityNumber: used for OCR text matching (hyphen/no-hyphen supported)
 
 Testing note:
-- Processing currently has an intentional delay of 10 seconds per claimed file to make spinner/processing-state behavior easy to verify.
+- Processing currently has an intentional delay of 10 seconds per file in the worker to make spinner/processing-state behavior easy to verify.
 
 Run:
 chmod +x start.sh

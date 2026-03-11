@@ -8,6 +8,7 @@ try {
     $clients = load_clients();
 
     claim_and_process_inbox($config, $clients);
+    trigger_processing_worker();
     $jobsState = read_jobs_state($config);
 
     json_response([

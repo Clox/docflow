@@ -211,10 +211,9 @@ function extract_text_from_pdf(string $pdfPath): ?string
     return $text === false ? '' : $text;
 }
 
-function fallback_ocr_text_for_inbox_pdf(string $inboxPdfPath): string
+function fallback_ocr_text_from_path(?string $txtPath): string
 {
-    $txtPath = preg_replace('/\.pdf$/i', '.txt', $inboxPdfPath);
-    if (!is_string($txtPath) || !is_file($txtPath)) {
+    if (!is_string($txtPath) || $txtPath === '' || !is_file($txtPath)) {
         return '';
     }
 
@@ -251,11 +250,11 @@ function match_client_dir_name(string $ocrText, array $clients): ?string
     return null;
 }
 
-function initial_job_data(string $jobId, string $originalFilename): array
+function initial_job_data(string $jobId, string $originalFilename, ?string $fallbackTxtPath = null): array
 {
     $now = now_iso();
 
-    return [
+    $jobData = [
         'id' => $jobId,
         'status' => 'processing',
         'originalFilename' => $originalFilename,
@@ -268,15 +267,21 @@ function initial_job_data(string $jobId, string $originalFilename): array
             'extracted' => 'extracted.json',
         ],
     ];
+
+    if ($fallbackTxtPath !== null && $fallbackTxtPath !== '') {
+        $jobData['fallbackTxtPath'] = $fallbackTxtPath;
+    }
+
+    return $jobData;
 }
 
-function process_claimed_job(string $jobDir, string $sourcePdfPath, string $inboxPdfPath, array $clients): array
+function process_claimed_job(string $jobDir, string $sourcePdfPath, ?string $fallbackTxtPath, array $clients): array
 {
     $ocrText = '';
     $extracted = extract_text_from_pdf($sourcePdfPath);
 
     if ($extracted === null) {
-        $ocrText = fallback_ocr_text_for_inbox_pdf($inboxPdfPath);
+        $ocrText = fallback_ocr_text_from_path($fallbackTxtPath);
     } else {
         $ocrText = $extracted;
     }
@@ -337,6 +342,10 @@ function claim_and_process_inbox(array $config, array $clients): void
 
     foreach ($pdfPaths as $inboxPdfPath) {
         $originalFilename = basename($inboxPdfPath);
+        $fallbackTxtPath = preg_replace('/\.pdf$/i', '.txt', $inboxPdfPath);
+        if (!is_string($fallbackTxtPath) || !is_file($fallbackTxtPath)) {
+            $fallbackTxtPath = null;
+        }
 
         $jobId = generate_job_id();
         $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $jobId;
@@ -345,7 +354,7 @@ function claim_and_process_inbox(array $config, array $clients): void
             $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $jobId;
         }
 
-        $jobData = initial_job_data($jobId, $originalFilename);
+        $jobData = initial_job_data($jobId, $originalFilename, $fallbackTxtPath);
 
         try {
             ensure_directory($jobDir);
@@ -355,15 +364,6 @@ function claim_and_process_inbox(array $config, array $clients): void
                 throw new RuntimeException('Could not claim inbox PDF');
             }
 
-            write_json_file($jobDir . '/job.json', $jobData);
-
-            // Deliberate delay per file to make processing state visible in the UI.
-            sleep(4);
-
-            process_claimed_job($jobDir, $sourcePdfPath, $inboxPdfPath, $clients);
-
-            $jobData['status'] = 'ready';
-            $jobData['updatedAt'] = now_iso();
             write_json_file($jobDir . '/job.json', $jobData);
         } catch (Throwable $e) {
             $jobData['status'] = 'failed';
@@ -376,6 +376,146 @@ function claim_and_process_inbox(array $config, array $clients): void
             }
         }
     }
+}
+
+function next_processing_job_id(array $config): ?string
+{
+    $jobsDir = $config['jobsDirectory'];
+    ensure_directory($jobsDir);
+
+    $entries = scandir($jobsDir);
+    if ($entries === false) {
+        return null;
+    }
+
+    $processingJobs = [];
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+
+        $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $entry;
+        if (!is_dir($jobDir)) {
+            continue;
+        }
+
+        $job = load_json_file($jobDir . '/job.json');
+        if (!is_array($job)) {
+            continue;
+        }
+
+        if (($job['status'] ?? '') !== 'processing') {
+            continue;
+        }
+
+        $processingJobs[] = [
+            'id' => is_string($job['id'] ?? null) ? $job['id'] : $entry,
+            'createdAt' => is_string($job['createdAt'] ?? null) ? $job['createdAt'] : '',
+        ];
+    }
+
+    if (count($processingJobs) === 0) {
+        return null;
+    }
+
+    usort($processingJobs, static function (array $a, array $b): int {
+        return strcmp((string) $a['createdAt'], (string) $b['createdAt']);
+    });
+
+    return (string) $processingJobs[0]['id'];
+}
+
+function process_job_by_id(array $config, array $clients, string $jobId): void
+{
+    if (!is_valid_job_id($jobId)) {
+        return;
+    }
+
+    $jobsDir = $config['jobsDirectory'];
+    $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $jobId;
+    $jobJsonPath = $jobDir . '/job.json';
+    $sourcePdfPath = $jobDir . '/source.pdf';
+
+    $jobData = load_json_file($jobJsonPath);
+    if (!is_array($jobData)) {
+        return;
+    }
+
+    if (($jobData['status'] ?? '') !== 'processing') {
+        return;
+    }
+
+    try {
+        if (!is_file($sourcePdfPath)) {
+            throw new RuntimeException('Missing source.pdf');
+        }
+
+        // Deliberate delay per file to make processing state visible in the UI.
+        sleep(10);
+
+        $fallbackTxtPath = is_string($jobData['fallbackTxtPath'] ?? null)
+            ? (string) $jobData['fallbackTxtPath']
+            : null;
+
+        process_claimed_job($jobDir, $sourcePdfPath, $fallbackTxtPath, $clients);
+
+        $jobData['status'] = 'ready';
+        $jobData['updatedAt'] = now_iso();
+        write_json_file($jobJsonPath, $jobData);
+    } catch (Throwable $e) {
+        $jobData['status'] = 'failed';
+        $jobData['updatedAt'] = now_iso();
+        $jobData['error'] = $e->getMessage();
+        write_json_file($jobJsonPath, $jobData);
+    }
+}
+
+function run_processing_worker(array $config): void
+{
+    $jobsDir = $config['jobsDirectory'];
+    ensure_directory($jobsDir);
+
+    $lockPath = $jobsDir . DIRECTORY_SEPARATOR . '.worker.lock';
+    $lockHandle = fopen($lockPath, 'c+');
+    if ($lockHandle === false) {
+        return;
+    }
+
+    if (!flock($lockHandle, LOCK_EX | LOCK_NB)) {
+        fclose($lockHandle);
+        return;
+    }
+
+    try {
+        $clients = load_clients();
+
+        while (true) {
+            $jobId = next_processing_job_id($config);
+            if ($jobId === null) {
+                break;
+            }
+
+            process_job_by_id($config, $clients, $jobId);
+        }
+    } finally {
+        flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
+    }
+}
+
+function trigger_processing_worker(): void
+{
+    $scriptPath = PROJECT_ROOT . 'scripts/process-jobs.php';
+    if (!is_file($scriptPath)) {
+        return;
+    }
+
+    $command = escapeshellarg(PHP_BINARY)
+        . ' '
+        . escapeshellarg($scriptPath)
+        . ' > /dev/null 2>&1 &';
+
+    exec($command);
 }
 
 function read_jobs_state(array $config): array
