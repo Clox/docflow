@@ -62,7 +62,8 @@
       <aside class="settings-nav">
         <h2>Inställningar</h2>
         <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
-        <button class="settings-tab" data-settings-tab="categories" type="button">Kategorier</button>
+        <button class="settings-tab" data-settings-tab="matching" type="button">Matchningar</button>
+        <button class="settings-tab settings-subtab" data-settings-tab="categories" type="button">Kategorier</button>
         <button class="settings-tab" data-settings-tab="jobs" type="button">Jobs</button>
         <button class="settings-tab" data-settings-tab="paths" type="button">Paths</button>
       </aside>
@@ -79,6 +80,20 @@
           <div class="panel-actions">
             <button id="clients-cancel" type="button">Cancel</button>
             <button id="clients-apply" type="button">Apply</button>
+          </div>
+        </div>
+
+        <div id="settings-panel-matching" class="settings-panel hidden">
+          <h3>Matchningar</h3>
+          <p>Define OCR letter substitutions used during matching.</p>
+          <p>Example: map <code>é</code> to <code>ö</code> so <code>Férfallodatum</code> can match <code>Förfallodatum</code>.</p>
+          <div id="matching-list" class="matching-list"></div>
+          <div class="categories-actions">
+            <button id="matching-add-row" type="button">Add substitution</button>
+          </div>
+          <div class="panel-actions">
+            <button id="matching-cancel" type="button">Cancel</button>
+            <button id="matching-apply" type="button">Apply</button>
           </div>
         </div>
 

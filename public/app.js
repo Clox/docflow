@@ -12,6 +12,10 @@ const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]
 const clientsTextareaEl = document.getElementById('clients-textarea');
 const clientsCancelEl = document.getElementById('clients-cancel');
 const clientsApplyEl = document.getElementById('clients-apply');
+const matchingListEl = document.getElementById('matching-list');
+const matchingAddRowEl = document.getElementById('matching-add-row');
+const matchingCancelEl = document.getElementById('matching-cancel');
+const matchingApplyEl = document.getElementById('matching-apply');
 const categoriesListEl = document.getElementById('categories-list');
 const categoriesAddCategoryEl = document.getElementById('categories-add-category');
 const categoriesCancelEl = document.getElementById('categories-cancel');
@@ -39,8 +43,10 @@ let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
 let matchesRequestSeq = 0;
 let categoriesDraft = [];
+let matchingDraft = [];
 let activeSettingsTabId = 'clients';
 let clientsBaselineText = '';
+let matchingBaselineJson = '[]';
 let pathsBaselineValue = '';
 let categoriesBaselineJson = '[]';
 const selectedClientByJobId = new Map();
@@ -442,7 +448,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'categories', 'jobs', 'paths'];
+  const panelIds = ['clients', 'matching', 'categories', 'jobs', 'paths'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -454,11 +460,15 @@ function setSettingsTab(tabId) {
 }
 
 function isEditableSettingsTab(tabId) {
-  return tabId === 'clients' || tabId === 'categories' || tabId === 'paths';
+  return tabId === 'clients' || tabId === 'matching' || tabId === 'categories' || tabId === 'paths';
 }
 
 function normalizedPathValue(value) {
   return String(value).trim();
+}
+
+function normalizedMatchingJson(replacements) {
+  return JSON.stringify(replacements.map(sanitizeReplacement));
 }
 
 function normalizedCategoriesJson(categories) {
@@ -467,6 +477,10 @@ function normalizedCategoriesJson(categories) {
 
 function isClientsDirty() {
   return clientsTextareaEl.value !== clientsBaselineText;
+}
+
+function isMatchingDirty() {
+  return normalizedMatchingJson(matchingDraft) !== matchingBaselineJson;
 }
 
 function isCategoriesDirty() {
@@ -481,6 +495,9 @@ function isSettingsTabDirty(tabId) {
   if (tabId === 'clients') {
     return isClientsDirty();
   }
+  if (tabId === 'matching') {
+    return isMatchingDirty();
+  }
   if (tabId === 'categories') {
     return isCategoriesDirty();
   }
@@ -491,12 +508,15 @@ function isSettingsTabDirty(tabId) {
 }
 
 function hasAnyUnsavedSettingsChanges() {
-  return isClientsDirty() || isCategoriesDirty() || isPathsDirty();
+  return isClientsDirty() || isMatchingDirty() || isCategoriesDirty() || isPathsDirty();
 }
 
 function panelActionButtonsForTab(tabId) {
   if (tabId === 'clients') {
     return [clientsCancelEl, clientsApplyEl];
+  }
+  if (tabId === 'matching') {
+    return [matchingCancelEl, matchingApplyEl];
   }
   if (tabId === 'categories') {
     return [categoriesCancelEl, categoriesApplyEl];
@@ -509,11 +529,15 @@ function panelActionButtonsForTab(tabId) {
 
 function updateSettingsActionButtons() {
   const clientsDirty = isClientsDirty();
+  const matchingDirty = isMatchingDirty();
   const categoriesDirty = isCategoriesDirty();
   const pathsDirty = isPathsDirty();
 
   clientsCancelEl.disabled = !clientsDirty;
   clientsApplyEl.disabled = !clientsDirty;
+
+  matchingCancelEl.disabled = !matchingDirty;
+  matchingApplyEl.disabled = !matchingDirty;
 
   categoriesCancelEl.disabled = !categoriesDirty;
   categoriesApplyEl.disabled = !categoriesDirty;
@@ -571,6 +595,21 @@ function sanitizePositiveInt(value, fallback = 1) {
   return parsed < 1 ? 1 : parsed;
 }
 
+function defaultReplacement() {
+  return {
+    from: '',
+    to: ''
+  };
+}
+
+function sanitizeReplacement(row) {
+  const input = row && typeof row === 'object' ? row : {};
+  return {
+    from: typeof input.from === 'string' ? input.from : '',
+    to: typeof input.to === 'string' ? input.to : ''
+  };
+}
+
 function sanitizeRule(rule) {
   const input = rule && typeof rule === 'object' ? rule : {};
   return {
@@ -602,6 +641,68 @@ function createFloatingField(labelText, inputEl, extraClass = '') {
   wrapper.appendChild(label);
   wrapper.appendChild(inputEl);
   return wrapper;
+}
+
+function renderMatchingEditor() {
+  matchingListEl.innerHTML = '';
+
+  if (matchingDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'No substitutions yet.';
+    matchingListEl.appendChild(empty);
+    return;
+  }
+
+  matchingDraft.forEach((row, rowIndex) => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'matching-row';
+
+    const fromInput = document.createElement('input');
+    fromInput.type = 'text';
+    fromInput.placeholder = 'Ex: é';
+    fromInput.value = row.from;
+    fromInput.addEventListener('input', () => {
+      matchingDraft[rowIndex].from = fromInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const toInput = document.createElement('input');
+    toInput.type = 'text';
+    toInput.placeholder = 'Ex: ö';
+    toInput.value = row.to;
+    toInput.addEventListener('input', () => {
+      matchingDraft[rowIndex].to = toInput.value;
+      updateSettingsActionButtons();
+    });
+
+    rowEl.appendChild(createFloatingField('From', fromInput, 'matching-char-field'));
+    rowEl.appendChild(createFloatingField('To', toInput, 'matching-char-field'));
+
+    if (rowIndex > 0) {
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'rule-remove';
+      removeButton.textContent = 'Remove';
+      removeButton.addEventListener('click', () => {
+        matchingDraft.splice(rowIndex, 1);
+        if (matchingDraft.length === 0) {
+          matchingDraft.push(defaultReplacement());
+        }
+        renderMatchingEditor();
+        updateSettingsActionButtons();
+      });
+      rowEl.appendChild(removeButton);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'rule-remove-placeholder';
+      rowEl.appendChild(placeholder);
+    }
+
+    matchingListEl.appendChild(rowEl);
+  });
+
+  updateSettingsActionButtons();
 }
 
 function renderCategoriesEditor() {
@@ -762,6 +863,27 @@ async function loadClientsText() {
   updateSettingsActionButtons();
 }
 
+async function loadMatchingSettings() {
+  const response = await fetch('/api/get-matching-settings.php', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Failed to load matching settings');
+  }
+
+  const payload = await response.json();
+  if (!payload || !Array.isArray(payload.replacements)) {
+    throw new Error('Invalid matching settings response');
+  }
+
+  matchingDraft = payload.replacements.map(sanitizeReplacement);
+  if (matchingDraft.length === 0) {
+    matchingDraft = [defaultReplacement()];
+  }
+
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft);
+  renderMatchingEditor();
+  updateSettingsActionButtons();
+}
+
 async function loadPathSettings() {
   const response = await fetch('/api/get-config.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -811,6 +933,34 @@ async function saveClientsText() {
   clientsBaselineText = clientsTextareaEl.value;
   updateSettingsActionButtons();
   await fetchState();
+}
+
+async function saveMatchingSettings() {
+  const normalized = matchingDraft.map(sanitizeReplacement);
+  const response = await fetch('/api/save-matching-settings.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ replacements: normalized })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.replacements)) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Failed to save matching settings';
+    throw new Error(message);
+  }
+
+  matchingDraft = payload.replacements.map(sanitizeReplacement);
+  if (matchingDraft.length === 0) {
+    matchingDraft = [defaultReplacement()];
+  }
+
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft);
+  renderMatchingEditor();
+  updateSettingsActionButtons();
 }
 
 async function saveCategories() {
@@ -931,6 +1081,15 @@ settingsButtonEl.addEventListener('click', async () => {
     updateSettingsActionButtons();
   }
   try {
+    await loadMatchingSettings();
+  } catch (error) {
+    alert('Could not load matching settings.');
+    matchingDraft = [defaultReplacement()];
+    matchingBaselineJson = normalizedMatchingJson(matchingDraft);
+    renderMatchingEditor();
+    updateSettingsActionButtons();
+  }
+  try {
     await loadPathSettings();
   } catch (error) {
     alert('Could not load path settings.');
@@ -960,6 +1119,37 @@ clientsApplyEl.addEventListener('click', async () => {
     await saveClientsText();
   } catch (error) {
     alert('Could not save clients.');
+  }
+});
+
+matchingAddRowEl.addEventListener('click', () => {
+  matchingDraft.push(defaultReplacement());
+  renderMatchingEditor();
+  updateSettingsActionButtons();
+});
+
+matchingCancelEl.addEventListener('click', () => {
+  let parsed = [];
+  try {
+    parsed = JSON.parse(matchingBaselineJson);
+  } catch (error) {
+    parsed = [];
+  }
+
+  matchingDraft = Array.isArray(parsed) ? parsed.map(sanitizeReplacement) : [];
+  if (matchingDraft.length === 0) {
+    matchingDraft = [defaultReplacement()];
+  }
+
+  renderMatchingEditor();
+  updateSettingsActionButtons();
+});
+
+matchingApplyEl.addEventListener('click', async () => {
+  try {
+    await saveMatchingSettings();
+  } catch (error) {
+    alert(error.message || 'Could not save matching settings.');
   }
 });
 

@@ -200,6 +200,49 @@ function load_categories(): array
     return $categories;
 }
 
+function load_matching_settings(): array
+{
+    $path = DATA_DIR . '/matching.json';
+    if (!is_file($path)) {
+        return [];
+    }
+
+    $raw = file_get_contents($path);
+    if ($raw === false || trim($raw) === '') {
+        return [];
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return [];
+    }
+
+    $rows = $decoded['replacements'] ?? $decoded;
+    if (!is_array($rows)) {
+        return [];
+    }
+
+    $replacements = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $from = is_string($row['from'] ?? null) ? trim((string) $row['from']) : '';
+        $to = is_string($row['to'] ?? null) ? trim((string) $row['to']) : '';
+        if ($from === '' || $to === '') {
+            continue;
+        }
+
+        $replacements[] = [
+            'from' => $from,
+            'to' => $to,
+        ];
+    }
+
+    return $replacements;
+}
+
 function ensure_directory(string $path): void
 {
     if (is_dir($path)) {
@@ -352,9 +395,39 @@ function lowercase_text(string $text): string
     return strtolower($text);
 }
 
-function find_category_matches(string $ocrText, array $categories): array
+function replacement_map(array $matchingSettings): array
 {
-    $normalizedOcr = lowercase_text($ocrText);
+    $map = [];
+    foreach ($matchingSettings as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $from = is_string($row['from'] ?? null) ? trim((string) $row['from']) : '';
+        $to = is_string($row['to'] ?? null) ? trim((string) $row['to']) : '';
+        if ($from === '' || $to === '') {
+            continue;
+        }
+
+        $map[lowercase_text($from)] = lowercase_text($to);
+    }
+
+    return $map;
+}
+
+function normalize_for_matching(string $text, array $replacementMap): string
+{
+    $normalized = lowercase_text($text);
+    if (count($replacementMap) === 0) {
+        return $normalized;
+    }
+
+    return strtr($normalized, $replacementMap);
+}
+
+function find_category_matches(string $ocrText, array $categories, array $replacementMap): array
+{
+    $normalizedOcr = normalize_for_matching($ocrText, $replacementMap);
     $matches = [];
 
     foreach ($categories as $category) {
@@ -388,7 +461,7 @@ function find_category_matches(string $ocrText, array $categories): array
             }
 
             $ruleScore = positive_int($rule['score'] ?? 1, 1);
-            $ruleTextLower = lowercase_text($ruleText);
+            $ruleTextLower = normalize_for_matching($ruleText, $replacementMap);
 
             if (!str_contains($normalizedOcr, $ruleTextLower)) {
                 continue;
@@ -450,7 +523,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
     return $jobData;
 }
 
-function process_claimed_job(string $jobDir, string $sourcePdfPath, ?string $fallbackTxtPath, array $clients, array $categories): array
+function process_claimed_job(string $jobDir, string $sourcePdfPath, ?string $fallbackTxtPath, array $clients, array $categories, array $replacementMap): array
 {
     $ocrText = '';
     $extracted = extract_text_from_pdf($sourcePdfPath);
@@ -472,7 +545,7 @@ function process_claimed_job(string $jobDir, string $sourcePdfPath, ?string $fal
     }
 
     $matched = match_client_dir_name($ocrText, $clients);
-    $categoryMatches = find_category_matches($ocrText, $categories);
+    $categoryMatches = find_category_matches($ocrText, $categories, $replacementMap);
     $extractedData = [
         'matchedClientDirName' => $matched,
         'categoryMatches' => $categoryMatches,
@@ -602,7 +675,7 @@ function next_processing_job_id(array $config): ?string
     return (string) $processingJobs[0]['id'];
 }
 
-function process_job_by_id(array $config, array $clients, array $categories, string $jobId): void
+function process_job_by_id(array $config, array $clients, array $categories, array $matchingSettings, string $jobId): void
 {
     if (!is_valid_job_id($jobId)) {
         return;
@@ -627,14 +700,12 @@ function process_job_by_id(array $config, array $clients, array $categories, str
             throw new RuntimeException('Missing source.pdf');
         }
 
-        // Deliberate delay per file to make processing state visible in the UI.
-        sleep(10);
-
         $fallbackTxtPath = is_string($jobData['fallbackTxtPath'] ?? null)
             ? (string) $jobData['fallbackTxtPath']
             : null;
 
-        process_claimed_job($jobDir, $sourcePdfPath, $fallbackTxtPath, $clients, $categories);
+        $replacementMap = replacement_map($matchingSettings);
+        process_claimed_job($jobDir, $sourcePdfPath, $fallbackTxtPath, $clients, $categories, $replacementMap);
 
         $jobData['status'] = 'ready';
         $jobData['updatedAt'] = now_iso();
@@ -666,6 +737,7 @@ function run_processing_worker(array $config): void
     try {
         $clients = load_clients();
         $categories = load_categories();
+        $matchingSettings = load_matching_settings();
 
         while (true) {
             $jobId = next_processing_job_id($config);
@@ -673,7 +745,7 @@ function run_processing_worker(array $config): void
                 break;
             }
 
-            process_job_by_id($config, $clients, $categories, $jobId);
+            process_job_by_id($config, $clients, $categories, $matchingSettings, $jobId);
         }
     } finally {
         flock($lockHandle, LOCK_UN);

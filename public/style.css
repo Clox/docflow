@@ -355,6 +355,24 @@ body {
   border-color: #b6d2fd;
 }
 
+.settings-subtab {
+  margin-left: 12px;
+  padding-left: 16px;
+  position: relative;
+}
+
+.settings-subtab::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #888;
+  transform: translateY(-50%);
+}
+
 .settings-content {
   flex: 1;
   min-width: 0;
@@ -429,6 +447,31 @@ body {
   background: #fafafa;
   height: min(48vh, 420px);
   overflow: auto;
+}
+
+.matching-list {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 10px;
+  background: #fafafa;
+  height: min(34vh, 250px);
+  overflow: auto;
+}
+
+.matching-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 120px) minmax(80px, 120px) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.matching-row:last-child {
+  margin-bottom: 0;
+}
+
+.matching-char-field input {
+  width: 100%;
 }
 
 .categories-empty {
