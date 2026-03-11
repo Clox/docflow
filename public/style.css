@@ -510,6 +510,31 @@ body {
   background: #ebebeb;
 }
 
+.panel-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  background: #f5f5f5;
+}
+
+.panel-actions button.flash {
+  animation: unsaved-flash 0.22s linear 3;
+}
+
+@keyframes unsaved-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0);
+    border-color: #ccc;
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.25);
+    border-color: #c44;
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0);
+    border-color: #ccc;
+  }
+}
+
 .settings-close-row {
   display: flex;
   justify-content: flex-end;

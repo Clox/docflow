@@ -36,6 +36,10 @@ let pollInFlight = false;
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
 let categoriesDraft = [];
+let activeSettingsTabId = 'clients';
+let clientsBaselineText = '';
+let pathsBaselineValue = '';
+let categoriesBaselineJson = '[]';
 const selectedClientByJobId = new Map();
 
 clientSelectEl.disabled = true;
@@ -245,11 +249,18 @@ function openSettingsModal() {
   settingsModalEl.classList.remove('hidden');
 }
 
-function closeSettingsModal() {
+function closeSettingsModal(force = false) {
+  if (!force && !canLeaveCurrentSettingsView()) {
+    return false;
+  }
+
   settingsModalEl.classList.add('hidden');
+  return true;
 }
 
 function setSettingsTab(tabId) {
+  activeSettingsTabId = tabId;
+
   settingsTabEls.forEach((tabButton) => {
     const isActive = tabButton.dataset.settingsTab === tabId;
     tabButton.classList.toggle('active', isActive);
@@ -264,6 +275,100 @@ function setSettingsTab(tabId) {
     panel.classList.toggle('hidden', id !== tabId);
     panel.classList.toggle('active', id === tabId);
   });
+}
+
+function isEditableSettingsTab(tabId) {
+  return tabId === 'clients' || tabId === 'categories' || tabId === 'paths';
+}
+
+function normalizedPathValue(value) {
+  return String(value).trim();
+}
+
+function normalizedCategoriesJson(categories) {
+  return JSON.stringify(categories.map(sanitizeCategory));
+}
+
+function isClientsDirty() {
+  return clientsTextareaEl.value !== clientsBaselineText;
+}
+
+function isCategoriesDirty() {
+  return normalizedCategoriesJson(categoriesDraft) !== categoriesBaselineJson;
+}
+
+function isPathsDirty() {
+  return normalizedPathValue(outputBasePathEl.value) !== pathsBaselineValue;
+}
+
+function isSettingsTabDirty(tabId) {
+  if (tabId === 'clients') {
+    return isClientsDirty();
+  }
+  if (tabId === 'categories') {
+    return isCategoriesDirty();
+  }
+  if (tabId === 'paths') {
+    return isPathsDirty();
+  }
+  return false;
+}
+
+function hasAnyUnsavedSettingsChanges() {
+  return isClientsDirty() || isCategoriesDirty() || isPathsDirty();
+}
+
+function panelActionButtonsForTab(tabId) {
+  if (tabId === 'clients') {
+    return [clientsCancelEl, clientsApplyEl];
+  }
+  if (tabId === 'categories') {
+    return [categoriesCancelEl, categoriesApplyEl];
+  }
+  if (tabId === 'paths') {
+    return [pathsCancelEl, pathsApplyEl];
+  }
+  return [];
+}
+
+function updateSettingsActionButtons() {
+  const clientsDirty = isClientsDirty();
+  const categoriesDirty = isCategoriesDirty();
+  const pathsDirty = isPathsDirty();
+
+  clientsCancelEl.disabled = !clientsDirty;
+  clientsApplyEl.disabled = !clientsDirty;
+
+  categoriesCancelEl.disabled = !categoriesDirty;
+  categoriesApplyEl.disabled = !categoriesDirty;
+
+  pathsCancelEl.disabled = !pathsDirty;
+  pathsApplyEl.disabled = !pathsDirty;
+}
+
+function flashPanelActions(tabId) {
+  const buttons = panelActionButtonsForTab(tabId);
+  buttons.forEach((button) => {
+    button.classList.remove('flash');
+    void button.offsetWidth;
+    button.classList.add('flash');
+    window.setTimeout(() => {
+      button.classList.remove('flash');
+    }, 700);
+  });
+}
+
+function canLeaveCurrentSettingsView() {
+  if (!isEditableSettingsTab(activeSettingsTabId)) {
+    return true;
+  }
+
+  if (!isSettingsTabDirty(activeSettingsTabId)) {
+    return true;
+  }
+
+  flashPanelActions(activeSettingsTabId);
+  return false;
 }
 
 function defaultRule() {
@@ -349,6 +454,7 @@ function renderCategoriesEditor() {
     removeCategoryButton.addEventListener('click', () => {
       categoriesDraft.splice(categoryIndex, 1);
       renderCategoriesEditor();
+      updateSettingsActionButtons();
     });
     header.appendChild(title);
     header.appendChild(removeCategoryButton);
@@ -363,6 +469,7 @@ function renderCategoriesEditor() {
     nameInput.value = category.name;
     nameInput.addEventListener('input', () => {
       categoriesDraft[categoryIndex].name = nameInput.value;
+      updateSettingsActionButtons();
     });
 
     const pathInput = document.createElement('input');
@@ -371,6 +478,7 @@ function renderCategoriesEditor() {
     pathInput.value = category.path;
     pathInput.addEventListener('input', () => {
       categoriesDraft[categoryIndex].path = pathInput.value;
+      updateSettingsActionButtons();
     });
 
     const minScoreInput = document.createElement('input');
@@ -381,6 +489,7 @@ function renderCategoriesEditor() {
     minScoreInput.value = String(category.minScore);
     minScoreInput.addEventListener('input', () => {
       categoriesDraft[categoryIndex].minScore = sanitizePositiveInt(minScoreInput.value, 1);
+      updateSettingsActionButtons();
     });
 
     fields.appendChild(createFloatingField('Name', nameInput));
@@ -401,6 +510,7 @@ function renderCategoriesEditor() {
       textInput.value = rule.text;
       textInput.addEventListener('input', () => {
         categoriesDraft[categoryIndex].rules[ruleIndex].text = textInput.value;
+        updateSettingsActionButtons();
       });
 
       const scoreInput = document.createElement('input');
@@ -410,6 +520,7 @@ function renderCategoriesEditor() {
       scoreInput.value = String(rule.score);
       scoreInput.addEventListener('input', () => {
         categoriesDraft[categoryIndex].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+        updateSettingsActionButtons();
       });
 
       ruleRow.appendChild(createFloatingField('Match text', textInput));
@@ -426,6 +537,7 @@ function renderCategoriesEditor() {
             categoriesDraft[categoryIndex].rules.push(defaultRule());
           }
           renderCategoriesEditor();
+          updateSettingsActionButtons();
         });
         ruleRow.appendChild(removeRuleButton);
       } else {
@@ -447,12 +559,15 @@ function renderCategoriesEditor() {
     addRuleButton.addEventListener('click', () => {
       categoriesDraft[categoryIndex].rules.push(defaultRule());
       renderCategoriesEditor();
+      updateSettingsActionButtons();
     });
     ruleActions.appendChild(addRuleButton);
     card.appendChild(ruleActions);
 
     categoriesListEl.appendChild(card);
   });
+
+  updateSettingsActionButtons();
 }
 
 async function loadClientsText() {
@@ -467,6 +582,8 @@ async function loadClientsText() {
   }
 
   clientsTextareaEl.value = payload.text;
+  clientsBaselineText = payload.text;
+  updateSettingsActionButtons();
 }
 
 async function loadPathSettings() {
@@ -481,6 +598,8 @@ async function loadPathSettings() {
   }
 
   outputBasePathEl.value = payload.outputBaseDirectory;
+  pathsBaselineValue = normalizedPathValue(payload.outputBaseDirectory);
+  updateSettingsActionButtons();
 }
 
 async function loadCategories() {
@@ -495,7 +614,9 @@ async function loadCategories() {
   }
 
   categoriesDraft = payload.categories.map(sanitizeCategory);
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
   renderCategoriesEditor();
+  updateSettingsActionButtons();
 }
 
 async function saveClientsText() {
@@ -511,7 +632,8 @@ async function saveClientsText() {
     throw new Error('Failed to save clients');
   }
 
-  closeSettingsModal();
+  clientsBaselineText = clientsTextareaEl.value;
+  updateSettingsActionButtons();
   await fetchState();
 }
 
@@ -534,7 +656,9 @@ async function saveCategories() {
   }
 
   categoriesDraft = normalized;
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
   renderCategoriesEditor();
+  updateSettingsActionButtons();
 }
 
 async function savePathSettings() {
@@ -553,6 +677,10 @@ async function savePathSettings() {
       : 'Failed to save path settings';
     throw new Error(message);
   }
+
+  pathsBaselineValue = normalizedPathValue(outputBasePathEl.value);
+  outputBasePathEl.value = pathsBaselineValue;
+  updateSettingsActionButtons();
 }
 
 async function resetAllJobs() {
@@ -599,6 +727,14 @@ clientSelectEl.addEventListener('change', () => {
   selectedClientByJobId.set(selectedJobId, value);
 });
 
+clientsTextareaEl.addEventListener('input', () => {
+  updateSettingsActionButtons();
+});
+
+outputBasePathEl.addEventListener('input', () => {
+  updateSettingsActionButtons();
+});
+
 settingsButtonEl.addEventListener('click', async () => {
   openSettingsModal();
   setSettingsTab('clients');
@@ -606,24 +742,32 @@ settingsButtonEl.addEventListener('click', async () => {
     await loadClientsText();
   } catch (error) {
     alert('Could not load clients.');
+    clientsBaselineText = clientsTextareaEl.value;
+    updateSettingsActionButtons();
   }
   try {
     await loadPathSettings();
   } catch (error) {
     alert('Could not load path settings.');
+    pathsBaselineValue = normalizedPathValue(outputBasePathEl.value);
+    updateSettingsActionButtons();
   }
   try {
     await loadCategories();
   } catch (error) {
     alert('Could not load categories.');
     categoriesDraft = [];
+    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
     renderCategoriesEditor();
+    updateSettingsActionButtons();
   }
   clientsTextareaEl.focus();
+  updateSettingsActionButtons();
 });
 
 clientsCancelEl.addEventListener('click', () => {
-  closeSettingsModal();
+  clientsTextareaEl.value = clientsBaselineText;
+  updateSettingsActionButtons();
 });
 
 clientsApplyEl.addEventListener('click', async () => {
@@ -637,14 +781,19 @@ clientsApplyEl.addEventListener('click', async () => {
 categoriesAddCategoryEl.addEventListener('click', () => {
   categoriesDraft.push(defaultCategory());
   renderCategoriesEditor();
+  updateSettingsActionButtons();
 });
 
-categoriesCancelEl.addEventListener('click', async () => {
+categoriesCancelEl.addEventListener('click', () => {
+  let parsed = [];
   try {
-    await loadCategories();
+    parsed = JSON.parse(categoriesBaselineJson);
   } catch (error) {
-    alert('Could not reload categories.');
+    parsed = [];
   }
+  categoriesDraft = Array.isArray(parsed) ? parsed.map(sanitizeCategory) : [];
+  renderCategoriesEditor();
+  updateSettingsActionButtons();
 });
 
 categoriesApplyEl.addEventListener('click', async () => {
@@ -661,6 +810,12 @@ settingsTabEls.forEach((tabButton) => {
     if (!tabId) {
       return;
     }
+    if (tabId === activeSettingsTabId) {
+      return;
+    }
+    if (!canLeaveCurrentSettingsView()) {
+      return;
+    }
     setSettingsTab(tabId);
   });
 });
@@ -669,12 +824,9 @@ settingsCloseEl.addEventListener('click', () => {
   closeSettingsModal();
 });
 
-pathsCancelEl.addEventListener('click', async () => {
-  try {
-    await loadPathSettings();
-  } catch (error) {
-    alert('Could not reload path settings.');
-  }
+pathsCancelEl.addEventListener('click', () => {
+  outputBasePathEl.value = pathsBaselineValue;
+  updateSettingsActionButtons();
 });
 
 pathsApplyEl.addEventListener('click', async () => {
@@ -710,6 +862,15 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !settingsModalEl.classList.contains('hidden')) {
     closeSettingsModal();
   }
+});
+
+window.addEventListener('beforeunload', (event) => {
+  if (!hasAnyUnsavedSettingsChanges()) {
+    return;
+  }
+
+  event.preventDefault();
+  event.returnValue = 'You have unsaved changes.';
 });
 
 async function fetchState() {
@@ -752,4 +913,5 @@ async function pollLoop() {
   pollTimer = window.setTimeout(pollLoop, 3000);
 }
 
+updateSettingsActionButtons();
 pollLoop();
