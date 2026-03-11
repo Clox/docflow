@@ -34,7 +34,13 @@
             <option value="pdf" selected>PDF</option>
             <option value="ocr">OCR-data</option>
           </select>
-          <button id="settings-button" type="button">Inställningar</button>
+          <button id="settings-button" type="button" aria-label="Inställningar" title="Inställningar">
+            <span class="hamburger" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+          </button>
         </div>
       </div>
 
