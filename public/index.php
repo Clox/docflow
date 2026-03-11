@@ -9,7 +9,13 @@
 <body>
   <div class="app">
     <aside class="sidebar">
-      <h1 class="sidebar-title">Ready Jobs</h1>
+      <h1 class="sidebar-title">
+        <span>Ready Jobs</span>
+        <span id="processing-indicator" class="processing hidden">
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="processing-text"></span>
+        </span>
+      </h1>
       <ul id="job-list" class="job-list"></ul>
     </aside>
 
@@ -17,10 +23,6 @@
       <div class="topbar">
         <div class="topbar-left">
           <span class="title">PDF Files</span>
-          <span id="processing-indicator" class="processing hidden">
-            <span class="spinner" aria-hidden="true"></span>
-            <span id="processing-text"></span>
-          </span>
           <label for="client-select">Client</label>
           <select id="client-select">
             <option value="" hidden>Choose client</option>
