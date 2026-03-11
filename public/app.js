@@ -11,8 +11,15 @@ const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]
 const clientsTextareaEl = document.getElementById('clients-textarea');
 const clientsCancelEl = document.getElementById('clients-cancel');
 const clientsApplyEl = document.getElementById('clients-apply');
+const categoriesListEl = document.getElementById('categories-list');
+const categoriesAddCategoryEl = document.getElementById('categories-add-category');
+const categoriesCancelEl = document.getElementById('categories-cancel');
+const categoriesApplyEl = document.getElementById('categories-apply');
 const settingsResetJobsEl = document.getElementById('settings-reset-jobs');
 const settingsCloseEl = document.getElementById('settings-close');
+const outputBasePathEl = document.getElementById('output-base-path');
+const pathsCancelEl = document.getElementById('paths-cancel');
+const pathsApplyEl = document.getElementById('paths-apply');
 
 let state = {
   processingJobs: [],
@@ -28,6 +35,7 @@ let pollTimer = null;
 let pollInFlight = false;
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
+let categoriesDraft = [];
 const selectedClientByJobId = new Map();
 
 clientSelectEl.disabled = true;
@@ -247,7 +255,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'jobs', 'paths'];
+  const panelIds = ['clients', 'categories', 'jobs', 'paths'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -255,6 +263,195 @@ function setSettingsTab(tabId) {
     }
     panel.classList.toggle('hidden', id !== tabId);
     panel.classList.toggle('active', id === tabId);
+  });
+}
+
+function defaultRule() {
+  return {
+    text: '',
+    score: 1
+  };
+}
+
+function defaultCategory() {
+  return {
+    name: '',
+    path: '',
+    minScore: 1,
+    rules: [defaultRule()]
+  };
+}
+
+function sanitizePositiveInt(value, fallback = 1) {
+  const parsed = parseInt(String(value), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return parsed < 1 ? 1 : parsed;
+}
+
+function sanitizeRule(rule) {
+  const input = rule && typeof rule === 'object' ? rule : {};
+  return {
+    text: typeof input.text === 'string' ? input.text : '',
+    score: sanitizePositiveInt(input.score, 1)
+  };
+}
+
+function sanitizeCategory(category) {
+  const input = category && typeof category === 'object' ? category : {};
+  const rawRules = Array.isArray(input.rules) ? input.rules : [];
+  const rules = rawRules.map(sanitizeRule);
+  return {
+    name: typeof input.name === 'string' ? input.name : '',
+    path: typeof input.path === 'string' ? input.path : '',
+    minScore: sanitizePositiveInt(input.minScore, 1),
+    rules: rules.length > 0 ? rules : [defaultRule()]
+  };
+}
+
+function createFloatingField(labelText, inputEl, extraClass = '') {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'floating-input-group' + (extraClass ? ' ' + extraClass : '');
+
+  const label = document.createElement('label');
+  label.className = 'floating-input-label';
+  label.textContent = labelText;
+
+  wrapper.appendChild(label);
+  wrapper.appendChild(inputEl);
+  return wrapper;
+}
+
+function renderCategoriesEditor() {
+  categoriesListEl.innerHTML = '';
+
+  if (categoriesDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'No categories yet.';
+    categoriesListEl.appendChild(empty);
+    return;
+  }
+
+  categoriesDraft.forEach((category, categoryIndex) => {
+    const card = document.createElement('div');
+    card.className = 'category-card';
+
+    const header = document.createElement('div');
+    header.className = 'category-header';
+    const title = document.createElement('span');
+    title.textContent = `Category ${categoryIndex + 1}`;
+    const removeCategoryButton = document.createElement('button');
+    removeCategoryButton.type = 'button';
+    removeCategoryButton.className = 'category-remove';
+    removeCategoryButton.textContent = 'Remove';
+    removeCategoryButton.addEventListener('click', () => {
+      categoriesDraft.splice(categoryIndex, 1);
+      renderCategoriesEditor();
+    });
+    header.appendChild(title);
+    header.appendChild(removeCategoryButton);
+    card.appendChild(header);
+
+    const fields = document.createElement('div');
+    fields.className = 'category-fields';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Ex: "Fakturor"';
+    nameInput.value = category.name;
+    nameInput.addEventListener('input', () => {
+      categoriesDraft[categoryIndex].name = nameInput.value;
+    });
+
+    const pathInput = document.createElement('input');
+    pathInput.type = 'text';
+    pathInput.placeholder = 'Ex: "dokument/fakturor"';
+    pathInput.value = category.path;
+    pathInput.addEventListener('input', () => {
+      categoriesDraft[categoryIndex].path = pathInput.value;
+    });
+
+    const minScoreInput = document.createElement('input');
+    minScoreInput.type = 'number';
+    minScoreInput.step = '1';
+    minScoreInput.min = '1';
+    minScoreInput.placeholder = 'Min score';
+    minScoreInput.value = String(category.minScore);
+    minScoreInput.addEventListener('input', () => {
+      categoriesDraft[categoryIndex].minScore = sanitizePositiveInt(minScoreInput.value, 1);
+    });
+
+    fields.appendChild(createFloatingField('Name', nameInput));
+    fields.appendChild(createFloatingField('Path', pathInput));
+    fields.appendChild(createFloatingField('Min score', minScoreInput, 'score-field'));
+    card.appendChild(fields);
+
+    const ruleList = document.createElement('div');
+    ruleList.className = 'rule-list';
+
+    category.rules.forEach((rule, ruleIndex) => {
+      const ruleRow = document.createElement('div');
+      ruleRow.className = 'rule-row';
+
+      const textInput = document.createElement('input');
+      textInput.type = 'text';
+      textInput.placeholder = 'Ex: "Förfallodatum"';
+      textInput.value = rule.text;
+      textInput.addEventListener('input', () => {
+        categoriesDraft[categoryIndex].rules[ruleIndex].text = textInput.value;
+      });
+
+      const scoreInput = document.createElement('input');
+      scoreInput.type = 'number';
+      scoreInput.step = '1';
+      scoreInput.min = '1';
+      scoreInput.value = String(rule.score);
+      scoreInput.addEventListener('input', () => {
+        categoriesDraft[categoryIndex].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+      });
+
+      ruleRow.appendChild(createFloatingField('Match text', textInput));
+      ruleRow.appendChild(createFloatingField('Score', scoreInput, 'score-field'));
+
+      if (ruleIndex > 0) {
+        const removeRuleButton = document.createElement('button');
+        removeRuleButton.type = 'button';
+        removeRuleButton.className = 'rule-remove';
+        removeRuleButton.textContent = 'Remove';
+        removeRuleButton.addEventListener('click', () => {
+          categoriesDraft[categoryIndex].rules.splice(ruleIndex, 1);
+          if (categoriesDraft[categoryIndex].rules.length === 0) {
+            categoriesDraft[categoryIndex].rules.push(defaultRule());
+          }
+          renderCategoriesEditor();
+        });
+        ruleRow.appendChild(removeRuleButton);
+      } else {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'rule-remove-placeholder';
+        ruleRow.appendChild(placeholder);
+      }
+
+      ruleList.appendChild(ruleRow);
+    });
+
+    card.appendChild(ruleList);
+
+    const ruleActions = document.createElement('div');
+    ruleActions.className = 'category-rule-actions';
+    const addRuleButton = document.createElement('button');
+    addRuleButton.type = 'button';
+    addRuleButton.textContent = 'Add rule';
+    addRuleButton.addEventListener('click', () => {
+      categoriesDraft[categoryIndex].rules.push(defaultRule());
+      renderCategoriesEditor();
+    });
+    ruleActions.appendChild(addRuleButton);
+    card.appendChild(ruleActions);
+
+    categoriesListEl.appendChild(card);
   });
 }
 
@@ -272,6 +469,35 @@ async function loadClientsText() {
   clientsTextareaEl.value = payload.text;
 }
 
+async function loadPathSettings() {
+  const response = await fetch('/api/get-config.php', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Failed to load config');
+  }
+
+  const payload = await response.json();
+  if (!payload || typeof payload.outputBaseDirectory !== 'string') {
+    throw new Error('Invalid config response');
+  }
+
+  outputBasePathEl.value = payload.outputBaseDirectory;
+}
+
+async function loadCategories() {
+  const response = await fetch('/api/get-categories.php', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Failed to load categories');
+  }
+
+  const payload = await response.json();
+  if (!payload || !Array.isArray(payload.categories)) {
+    throw new Error('Invalid categories response');
+  }
+
+  categoriesDraft = payload.categories.map(sanitizeCategory);
+  renderCategoriesEditor();
+}
+
 async function saveClientsText() {
   const response = await fetch('/api/save-clients.php', {
     method: 'POST',
@@ -287,6 +513,46 @@ async function saveClientsText() {
 
   closeSettingsModal();
   await fetchState();
+}
+
+async function saveCategories() {
+  const normalized = categoriesDraft.map(sanitizeCategory);
+  const response = await fetch('/api/save-categories.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ categories: normalized })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Failed to save categories';
+    throw new Error(message);
+  }
+
+  categoriesDraft = normalized;
+  renderCategoriesEditor();
+}
+
+async function savePathSettings() {
+  const response = await fetch('/api/save-config.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ outputBaseDirectory: outputBasePathEl.value })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Failed to save path settings';
+    throw new Error(message);
+  }
 }
 
 async function resetAllJobs() {
@@ -334,14 +600,26 @@ clientSelectEl.addEventListener('change', () => {
 });
 
 settingsButtonEl.addEventListener('click', async () => {
+  openSettingsModal();
+  setSettingsTab('clients');
   try {
     await loadClientsText();
-    setSettingsTab('clients');
-    openSettingsModal();
-    clientsTextareaEl.focus();
   } catch (error) {
     alert('Could not load clients.');
   }
+  try {
+    await loadPathSettings();
+  } catch (error) {
+    alert('Could not load path settings.');
+  }
+  try {
+    await loadCategories();
+  } catch (error) {
+    alert('Could not load categories.');
+    categoriesDraft = [];
+    renderCategoriesEditor();
+  }
+  clientsTextareaEl.focus();
 });
 
 clientsCancelEl.addEventListener('click', () => {
@@ -353,6 +631,27 @@ clientsApplyEl.addEventListener('click', async () => {
     await saveClientsText();
   } catch (error) {
     alert('Could not save clients.');
+  }
+});
+
+categoriesAddCategoryEl.addEventListener('click', () => {
+  categoriesDraft.push(defaultCategory());
+  renderCategoriesEditor();
+});
+
+categoriesCancelEl.addEventListener('click', async () => {
+  try {
+    await loadCategories();
+  } catch (error) {
+    alert('Could not reload categories.');
+  }
+});
+
+categoriesApplyEl.addEventListener('click', async () => {
+  try {
+    await saveCategories();
+  } catch (error) {
+    alert(error.message || 'Could not save categories.');
   }
 });
 
@@ -368,6 +667,22 @@ settingsTabEls.forEach((tabButton) => {
 
 settingsCloseEl.addEventListener('click', () => {
   closeSettingsModal();
+});
+
+pathsCancelEl.addEventListener('click', async () => {
+  try {
+    await loadPathSettings();
+  } catch (error) {
+    alert('Could not reload path settings.');
+  }
+});
+
+pathsApplyEl.addEventListener('click', async () => {
+  try {
+    await savePathSettings();
+  } catch (error) {
+    alert(error.message || 'Could not save path settings.');
+  }
 });
 
 settingsResetJobsEl.addEventListener('click', async () => {

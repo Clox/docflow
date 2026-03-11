@@ -13,9 +13,14 @@ function now_iso(): string
     return date(DATE_ATOM);
 }
 
-function load_config(): array
+function config_file_path(): string
 {
-    $configPath = DATA_DIR . '/config.json';
+    return DATA_DIR . '/config.json';
+}
+
+function load_raw_config(): array
+{
+    $configPath = config_file_path();
     if (!is_file($configPath)) {
         throw new RuntimeException('Missing data/config.json');
     }
@@ -30,8 +35,21 @@ function load_config(): array
         throw new RuntimeException('Invalid config.json');
     }
 
+    return $config;
+}
+
+function save_raw_config(array $config): void
+{
+    write_json_file(config_file_path(), $config);
+}
+
+function load_config(): array
+{
+    $config = load_raw_config();
+
     $inboxDirectory = $config['inboxDirectory'] ?? '';
     $jobsDirectory = $config['jobsDirectory'] ?? '';
+    $outputBaseDirectory = $config['outputBaseDirectory'] ?? '';
 
     if (!is_string($inboxDirectory) || $inboxDirectory === '') {
         throw new RuntimeException('config.json: inboxDirectory is required');
@@ -39,10 +57,14 @@ function load_config(): array
     if (!is_string($jobsDirectory) || $jobsDirectory === '') {
         throw new RuntimeException('config.json: jobsDirectory is required');
     }
+    if (!is_string($outputBaseDirectory)) {
+        $outputBaseDirectory = '';
+    }
 
     return [
         'inboxDirectory' => $inboxDirectory,
         'jobsDirectory' => $jobsDirectory,
+        'outputBaseDirectory' => trim($outputBaseDirectory),
     ];
 }
 

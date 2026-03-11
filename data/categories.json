@@ -1,0 +1,13 @@
+[
+    {
+        "name": "Fakturor",
+        "path": "dokument/fakturor",
+        "minScore": 1,
+        "rules": [
+            {
+                "text": "förfallodatum",
+                "score": 1
+            }
+        ]
+    }
+]

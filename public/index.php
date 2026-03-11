@@ -60,6 +60,7 @@
       <aside class="settings-nav">
         <h2>Inställningar</h2>
         <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
+        <button class="settings-tab" data-settings-tab="categories" type="button">Kategorier</button>
         <button class="settings-tab" data-settings-tab="jobs" type="button">Jobs</button>
         <button class="settings-tab" data-settings-tab="paths" type="button">Paths</button>
       </aside>
@@ -79,6 +80,19 @@
           </div>
         </div>
 
+        <div id="settings-panel-categories" class="settings-panel hidden">
+          <h3>Kategorier</h3>
+          <p>Add categories and matching rules for future commit routing.</p>
+          <div id="categories-list" class="categories-list"></div>
+          <div class="categories-actions">
+            <button id="categories-add-category" type="button">Add category</button>
+          </div>
+          <div class="panel-actions">
+            <button id="categories-cancel" type="button">Cancel</button>
+            <button id="categories-apply" type="button">Apply</button>
+          </div>
+        </div>
+
         <div id="settings-panel-jobs" class="settings-panel hidden">
           <h3>Jobs</h3>
           <p>Invalidate all jobs and restore source files back to inbox.</p>
@@ -89,7 +103,21 @@
 
         <div id="settings-panel-paths" class="settings-panel hidden">
           <h3>Paths</h3>
-          <p>Path settings will be added here later.</p>
+          <p>Set the base output path (your Huvudmän/Clients folder).</p>
+          <p>There should be one subfolder per client inside, and each subfolder name should match that client's <code>folderName</code>.</p>
+          <label class="settings-label" for="output-base-path">Base output path</label>
+          <input
+            id="output-base-path"
+            type="text"
+            placeholder="/absolute/path/to/Huvudmän"
+            spellcheck="false"
+            autocorrect="off"
+            autocapitalize="off"
+          >
+          <div class="panel-actions">
+            <button id="paths-cancel" type="button">Cancel</button>
+            <button id="paths-apply" type="button">Apply</button>
+          </div>
         </div>
 
         <div class="settings-close-row">
