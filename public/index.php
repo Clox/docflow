@@ -23,17 +23,21 @@
       <div class="topbar">
         <div class="topbar-left">
           <span class="title">PDF Files</span>
-          <label for="client-select">Client</label>
-          <select id="client-select">
-            <option value="" hidden>Choose client</option>
-          </select>
+          <div class="field-group">
+            <label class="floating-label" for="client-select">Client</label>
+            <select id="client-select">
+              <option value="" hidden>Choose client</option>
+            </select>
+          </div>
         </div>
         <div class="topbar-right">
-          <label for="view-mode">View</label>
-          <select id="view-mode">
-            <option value="pdf" selected>PDF</option>
-            <option value="ocr">OCR-data</option>
-          </select>
+          <div class="field-group">
+            <label class="floating-label" for="view-mode">View</label>
+            <select id="view-mode">
+              <option value="pdf" selected>PDF</option>
+              <option value="ocr">OCR-data</option>
+            </select>
+          </div>
           <button id="settings-button" type="button" aria-label="Inställningar" title="Inställningar">
             <span class="hamburger" aria-hidden="true">
               <span></span>
