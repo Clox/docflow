@@ -559,10 +559,11 @@ function find_category_matches(string $ocrText, array $categories, array $replac
                 continue;
             }
 
+            $sourceText = find_source_text_for_rule($ocrText, $ruleText, $inverseMap);
             $score += $ruleScore;
             $matchedRules[] = [
                 'text' => $ruleText,
-                'sourceText' => find_source_text_for_rule($ocrText, $ruleText, $inverseMap),
+                'sourceText' => $sourceText,
                 'score' => $ruleScore,
             ];
         }

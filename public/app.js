@@ -274,7 +274,7 @@ function renderMatchesContent(categories) {
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Kategori', 'Totalpoäng', 'Minpoäng', 'Matchad text', 'Från text', 'Regelpoäng'].forEach((label) => {
+  ['Kategori', 'Totalpoäng', 'Minpoäng', 'Regeltext', 'Matchad text', 'Regelpoäng'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Regelpoäng' || label === 'Totalpoäng' || label === 'Minpoäng') {
@@ -337,7 +337,7 @@ function renderMatchesContent(categories) {
       const text = rule && typeof rule.text === 'string' ? rule.text : '';
       const sourceText = rule && typeof rule.sourceText === 'string' && rule.sourceText !== ''
         ? rule.sourceText
-        : text;
+        : '';
       const ruleScore = rule && Number.isFinite(Number(rule.score)) ? Number(rule.score) : 0;
 
       const tr = document.createElement('tr');
