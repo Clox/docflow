@@ -29,6 +29,12 @@
               <option value="" hidden>Choose client</option>
             </select>
           </div>
+          <div class="field-group">
+            <label class="floating-label" for="category-select">Category</label>
+            <select id="category-select">
+              <option value="" hidden>Choose category</option>
+            </select>
+          </div>
         </div>
         <div class="topbar-right">
           <div class="field-group">

@@ -6,6 +6,7 @@ const viewModeEl = document.getElementById('view-mode');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
 const clientSelectEl = document.getElementById('client-select');
+const categorySelectEl = document.getElementById('category-select');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
 const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]'));
@@ -30,7 +31,8 @@ let state = {
   processingJobs: [],
   readyJobs: [],
   failedJobs: [],
-  clients: []
+  clients: [],
+  categories: []
 };
 
 let selectedJobId = '';
@@ -50,8 +52,10 @@ let matchingBaselineJson = '[]';
 let pathsBaselineValue = '';
 let categoriesBaselineJson = '[]';
 const selectedClientByJobId = new Map();
+const selectedCategoryByJobId = new Map();
 
 clientSelectEl.disabled = true;
+categorySelectEl.disabled = true;
 
 function setProcessingInfo(processingJobs) {
   if (!Array.isArray(processingJobs) || processingJobs.length === 0) {
@@ -79,6 +83,39 @@ function renderClientSelect(clients) {
     clientSelectEl.value = currentValue;
   } else {
     clientSelectEl.value = '';
+  }
+}
+
+function categoryDisplayName(category) {
+  if (category && typeof category.name === 'string' && category.name.trim() !== '') {
+    return category.name.trim();
+  }
+  if (category && typeof category.path === 'string' && category.path.trim() !== '') {
+    return category.path.trim();
+  }
+  return '';
+}
+
+function renderCategorySelect(categories) {
+  const currentValue = categorySelectEl.value;
+  categorySelectEl.innerHTML = '<option value="" hidden>Choose category</option>';
+
+  categories.forEach((category) => {
+    const displayName = categoryDisplayName(category);
+    if (displayName === '') {
+      return;
+    }
+
+    const option = document.createElement('option');
+    option.value = displayName;
+    option.textContent = displayName;
+    categorySelectEl.appendChild(option);
+  });
+
+  if (currentValue && Array.from(categorySelectEl.options).some((option) => option.value === currentValue)) {
+    categorySelectEl.value = currentValue;
+  } else {
+    categorySelectEl.value = '';
   }
 }
 
@@ -111,6 +148,38 @@ function setClientForJob(job) {
   );
 
   clientSelectEl.value = hasOption ? job.matchedClientDirName : '';
+}
+
+function setCategoryForJob(job) {
+  categorySelectEl.disabled = !job;
+
+  if (!job) {
+    categorySelectEl.value = '';
+    return;
+  }
+
+  const manualValue = selectedCategoryByJobId.get(job.id);
+  if (manualValue) {
+    const hasManualOption = Array.from(categorySelectEl.options).some(
+      (option) => option.value === manualValue
+    );
+    if (hasManualOption) {
+      categorySelectEl.value = manualValue;
+      return;
+    }
+  }
+
+  const topScore = Number(job.topMatchedCategoryScore ?? 0);
+  const topName = typeof job.topMatchedCategoryName === 'string' ? job.topMatchedCategoryName : '';
+  if (!(topScore > 0) || topName === '') {
+    categorySelectEl.value = '';
+    return;
+  }
+
+  const hasOption = Array.from(categorySelectEl.options).some(
+    (option) => option.value === topName
+  );
+  categorySelectEl.value = hasOption ? topName : '';
 }
 
 function setViewerJob(jobId) {
@@ -205,7 +274,7 @@ function renderMatchesContent(categories) {
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Kategori', 'Totalpoäng', 'Minpoäng', 'Matchat ord', 'Regelpoäng'].forEach((label) => {
+  ['Kategori', 'Totalpoäng', 'Minpoäng', 'Matchad text', 'Från text', 'Regelpoäng'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Regelpoäng' || label === 'Totalpoäng' || label === 'Minpoäng') {
@@ -251,6 +320,10 @@ function renderMatchesContent(categories) {
       ruleCell.textContent = '(Inga ord matchade)';
       tr.appendChild(ruleCell);
 
+      const sourceCell = document.createElement('td');
+      sourceCell.textContent = '';
+      tr.appendChild(sourceCell);
+
       const ruleScoreCell = document.createElement('td');
       ruleScoreCell.className = 'is-numeric';
       ruleScoreCell.textContent = '0';
@@ -262,6 +335,9 @@ function renderMatchesContent(categories) {
 
     rules.forEach((rule, ruleIndex) => {
       const text = rule && typeof rule.text === 'string' ? rule.text : '';
+      const sourceText = rule && typeof rule.sourceText === 'string' && rule.sourceText !== ''
+        ? rule.sourceText
+        : text;
       const ruleScore = rule && Number.isFinite(Number(rule.score)) ? Number(rule.score) : 0;
 
       const tr = document.createElement('tr');
@@ -288,6 +364,10 @@ function renderMatchesContent(categories) {
       const ruleCell = document.createElement('td');
       ruleCell.textContent = text;
       tr.appendChild(ruleCell);
+
+      const sourceCell = document.createElement('td');
+      sourceCell.textContent = sourceText;
+      tr.appendChild(sourceCell);
 
       const ruleScoreCell = document.createElement('td');
       ruleScoreCell.className = 'is-numeric';
@@ -386,6 +466,7 @@ function renderJobList(readyJobs) {
       renderJobList(state.readyJobs);
       setViewerJob(selectedJobId);
       setClientForJob(job);
+      setCategoryForJob(job);
     });
 
     jobListEl.appendChild(li);
@@ -399,6 +480,7 @@ function refreshSelection() {
     selectedJobId = '';
     setViewerJob('');
     setClientForJob(null);
+    setCategoryForJob(null);
     return;
   }
 
@@ -410,6 +492,7 @@ function refreshSelection() {
   const selectedJob = readyJobs.find((job) => job.id === selectedJobId) || null;
   setViewerJob(selectedJobId);
   setClientForJob(selectedJob);
+  setCategoryForJob(selectedJob);
 }
 
 function applyState(nextState) {
@@ -420,9 +503,15 @@ function applyState(nextState) {
       selectedClientByJobId.delete(jobId);
     }
   });
+  Array.from(selectedCategoryByJobId.keys()).forEach((jobId) => {
+    if (!validJobIds.has(jobId)) {
+      selectedCategoryByJobId.delete(jobId);
+    }
+  });
 
   setProcessingInfo(state.processingJobs);
   renderClientSelect(state.clients);
+  renderCategorySelect(state.categories);
   refreshSelection();
   renderJobList(state.readyJobs);
 }
@@ -1062,6 +1151,20 @@ clientSelectEl.addEventListener('change', () => {
   selectedClientByJobId.set(selectedJobId, value);
 });
 
+categorySelectEl.addEventListener('change', () => {
+  if (!selectedJobId) {
+    return;
+  }
+
+  const value = categorySelectEl.value;
+  if (!value) {
+    selectedCategoryByJobId.delete(selectedJobId);
+    return;
+  }
+
+  selectedCategoryByJobId.set(selectedJobId, value);
+});
+
 clientsTextareaEl.addEventListener('input', () => {
   updateSettingsActionButtons();
 });
@@ -1269,7 +1372,8 @@ async function fetchState() {
       processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : [],
       readyJobs: nextState.readyJobs,
       failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : [],
-      clients: nextState.clients
+      clients: nextState.clients,
+      categories: Array.isArray(nextState.categories) ? nextState.categories : []
     });
   } catch (error) {
     setProcessingInfo([]);

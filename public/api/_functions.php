@@ -395,6 +395,97 @@ function lowercase_text(string $text): string
     return strtolower($text);
 }
 
+function utf8_chars(string $text): array
+{
+    $chars = preg_split('//u', $text, -1, PREG_SPLIT_NO_EMPTY);
+    return is_array($chars) ? $chars : [];
+}
+
+function build_inverse_single_char_map(array $replacementMap): array
+{
+    $inverse = [];
+    foreach ($replacementMap as $from => $to) {
+        if (!is_string($from) || !is_string($to) || $from === '' || $to === '') {
+            continue;
+        }
+
+        if (count(utf8_chars($from)) !== 1 || count(utf8_chars($to)) !== 1) {
+            continue;
+        }
+
+        if (!isset($inverse[$to])) {
+            $inverse[$to] = [];
+        }
+
+        if (!in_array($from, $inverse[$to], true)) {
+            $inverse[$to][] = $from;
+        }
+    }
+
+    return $inverse;
+}
+
+function build_rule_match_pattern(string $ruleText, array $inverseMap): ?string
+{
+    $chars = utf8_chars($ruleText);
+    if (count($chars) === 0) {
+        return null;
+    }
+
+    $parts = [];
+    foreach ($chars as $char) {
+        if (preg_match('/\s/u', $char) === 1) {
+            $parts[] = '\s+';
+            continue;
+        }
+
+        $choices = [$char];
+        $lower = lowercase_text($char);
+        if (isset($inverseMap[$lower]) && is_array($inverseMap[$lower])) {
+            foreach ($inverseMap[$lower] as $fromChar) {
+                if (is_string($fromChar) && $fromChar !== '') {
+                    $choices[] = $fromChar;
+                }
+            }
+        }
+
+        $choices = array_values(array_unique($choices));
+        if (count($choices) === 1) {
+            $parts[] = preg_quote($choices[0], '/');
+            continue;
+        }
+
+        $charClass = '';
+        foreach ($choices as $choice) {
+            $charClass .= preg_quote($choice, '/');
+        }
+        $parts[] = '[' . $charClass . ']';
+    }
+
+    return '/' . implode('', $parts) . '/iu';
+}
+
+function find_source_text_for_rule(string $ocrText, string $ruleText, array $inverseMap): string
+{
+    if ($ruleText === '') {
+        return '';
+    }
+
+    $pattern = build_rule_match_pattern($ruleText, $inverseMap);
+    if (is_string($pattern) && @preg_match($pattern, $ocrText, $matches) === 1) {
+        $match = $matches[0] ?? '';
+        return is_string($match) && $match !== '' ? $match : $ruleText;
+    }
+
+    $literal = '/' . preg_quote($ruleText, '/') . '/iu';
+    if (@preg_match($literal, $ocrText, $matches) === 1) {
+        $match = $matches[0] ?? '';
+        return is_string($match) && $match !== '' ? $match : $ruleText;
+    }
+
+    return $ruleText;
+}
+
 function replacement_map(array $matchingSettings): array
 {
     $map = [];
@@ -428,9 +519,10 @@ function normalize_for_matching(string $text, array $replacementMap): string
 function find_category_matches(string $ocrText, array $categories, array $replacementMap): array
 {
     $normalizedOcr = normalize_for_matching($ocrText, $replacementMap);
+    $inverseMap = build_inverse_single_char_map($replacementMap);
     $matches = [];
 
-    foreach ($categories as $category) {
+    foreach ($categories as $categoryIndex => $category) {
         if (!is_array($category)) {
             continue;
         }
@@ -470,6 +562,7 @@ function find_category_matches(string $ocrText, array $categories, array $replac
             $score += $ruleScore;
             $matchedRules[] = [
                 'text' => $ruleText,
+                'sourceText' => find_source_text_for_rule($ocrText, $ruleText, $inverseMap),
                 'score' => $ruleScore,
             ];
         }
@@ -484,6 +577,7 @@ function find_category_matches(string $ocrText, array $categories, array $replac
             'minScore' => $minScore,
             'score' => $score,
             'matchedRules' => $matchedRules,
+            '_categoryOrder' => is_int($categoryIndex) ? $categoryIndex : 0,
         ];
     }
 
@@ -492,8 +586,13 @@ function find_category_matches(string $ocrText, array $categories, array $replac
         if ($scoreCompare !== 0) {
             return $scoreCompare;
         }
-        return strcmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? ''));
+        return (int) ($a['_categoryOrder'] ?? 0) <=> (int) ($b['_categoryOrder'] ?? 0);
     });
+
+    foreach ($matches as &$match) {
+        unset($match['_categoryOrder']);
+    }
+    unset($match);
 
     return $matches;
 }
@@ -772,6 +871,22 @@ function read_jobs_state(array $config): array
 {
     $jobsDir = $config['jobsDirectory'];
     ensure_directory($jobsDir);
+    $categories = load_categories();
+    $categoryOrderByName = [];
+    foreach ($categories as $index => $category) {
+        if (!is_array($category)) {
+            continue;
+        }
+
+        $name = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
+        $path = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
+        $displayName = $name !== '' ? $name : $path;
+        if ($displayName === '' || isset($categoryOrderByName[$displayName])) {
+            continue;
+        }
+
+        $categoryOrderByName[$displayName] = is_int($index) ? $index : 999999;
+    }
 
     $entries = scandir($jobsDir);
     if ($entries === false) {
@@ -808,11 +923,46 @@ function read_jobs_state(array $config): array
 
         if ($status === 'ready') {
             $matchedClientDirName = null;
+            $topMatchedCategoryName = null;
+            $topMatchedCategoryScore = null;
             $extracted = load_json_file($jobDir . '/extracted.json');
             if (is_array($extracted) && array_key_exists('matchedClientDirName', $extracted)) {
                 $value = $extracted['matchedClientDirName'];
                 if (is_string($value) || $value === null) {
                     $matchedClientDirName = $value;
+                }
+            }
+
+            if (is_array($extracted) && isset($extracted['categoryMatches']) && is_array($extracted['categoryMatches'])) {
+                $bestOrder = 999999;
+                foreach ($extracted['categoryMatches'] as $categoryMatch) {
+                    if (!is_array($categoryMatch)) {
+                        continue;
+                    }
+
+                    $name = is_string($categoryMatch['name'] ?? null) ? trim((string) $categoryMatch['name']) : '';
+                    $score = $categoryMatch['score'] ?? null;
+                    $numericScore = is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))
+                        ? (float) $score
+                        : null;
+
+                    if ($name === '' || $numericScore === null || $numericScore <= 0) {
+                        continue;
+                    }
+
+                    $order = isset($categoryOrderByName[$name]) ? (int) $categoryOrderByName[$name] : 999999;
+                    if ($topMatchedCategoryScore === null || $numericScore > $topMatchedCategoryScore) {
+                        $topMatchedCategoryName = $name;
+                        $topMatchedCategoryScore = $numericScore;
+                        $bestOrder = $order;
+                        continue;
+                    }
+
+                    if ($numericScore === $topMatchedCategoryScore && $order < $bestOrder) {
+                        $topMatchedCategoryName = $name;
+                        $topMatchedCategoryScore = $numericScore;
+                        $bestOrder = $order;
+                    }
                 }
             }
 
@@ -822,6 +972,8 @@ function read_jobs_state(array $config): array
                 'status' => 'ready',
                 'createdAt' => $createdAt,
                 'matchedClientDirName' => $matchedClientDirName,
+                'topMatchedCategoryName' => $topMatchedCategoryName,
+                'topMatchedCategoryScore' => $topMatchedCategoryScore,
             ];
         } elseif ($status === 'processing') {
             $processing[] = [
