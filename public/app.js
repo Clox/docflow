@@ -26,6 +26,7 @@ let pollTimer = null;
 let pollInFlight = false;
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
+const selectedClientByJobId = new Map();
 
 clientSelectEl.disabled = true;
 
@@ -61,7 +62,23 @@ function renderClientSelect(clients) {
 function setClientForJob(job) {
   clientSelectEl.disabled = !job;
 
-  if (!job || !job.matchedClientDirName) {
+  if (!job) {
+    clientSelectEl.value = '';
+    return;
+  }
+
+  const manualValue = selectedClientByJobId.get(job.id);
+  if (manualValue) {
+    const hasManualOption = Array.from(clientSelectEl.options).some(
+      (option) => option.value === manualValue
+    );
+    if (hasManualOption) {
+      clientSelectEl.value = manualValue;
+      return;
+    }
+  }
+
+  if (!job.matchedClientDirName) {
     clientSelectEl.value = '';
     return;
   }
@@ -201,6 +218,13 @@ function refreshSelection() {
 
 function applyState(nextState) {
   state = nextState;
+  const validJobIds = new Set(state.readyJobs.map((job) => job.id));
+  Array.from(selectedClientByJobId.keys()).forEach((jobId) => {
+    if (!validJobIds.has(jobId)) {
+      selectedClientByJobId.delete(jobId);
+    }
+  });
+
   setProcessingInfo(state.processingJobs);
   renderClientSelect(state.clients);
   refreshSelection();
@@ -274,6 +298,20 @@ viewModeEl.addEventListener('change', () => {
   currentViewMode = viewModeEl.value === 'ocr' ? 'ocr' : 'pdf';
   loadedOcrJobId = '';
   setViewerJob(selectedJobId);
+});
+
+clientSelectEl.addEventListener('change', () => {
+  if (!selectedJobId) {
+    return;
+  }
+
+  const value = clientSelectEl.value;
+  if (!value) {
+    selectedClientByJobId.delete(selectedJobId);
+    return;
+  }
+
+  selectedClientByJobId.set(selectedJobId, value);
 });
 
 settingsButtonEl.addEventListener('click', async () => {
