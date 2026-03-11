@@ -27,6 +27,8 @@ let pollInFlight = false;
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
 
+clientSelectEl.disabled = true;
+
 function setProcessingInfo(processingJobs) {
   if (!Array.isArray(processingJobs) || processingJobs.length === 0) {
     processingIndicatorEl.classList.add('hidden');
@@ -57,6 +59,8 @@ function renderClientSelect(clients) {
 }
 
 function setClientForJob(job) {
+  clientSelectEl.disabled = !job;
+
   if (!job || !job.matchedClientDirName) {
     clientSelectEl.value = '';
     return;
