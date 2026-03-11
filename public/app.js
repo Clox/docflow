@@ -7,10 +7,12 @@ const processingTextEl = document.getElementById('processing-text');
 const clientSelectEl = document.getElementById('client-select');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
+const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]'));
 const clientsTextareaEl = document.getElementById('clients-textarea');
-const settingsCancelEl = document.getElementById('settings-cancel');
-const settingsSaveEl = document.getElementById('settings-save');
+const clientsCancelEl = document.getElementById('clients-cancel');
+const clientsApplyEl = document.getElementById('clients-apply');
 const settingsResetJobsEl = document.getElementById('settings-reset-jobs');
+const settingsCloseEl = document.getElementById('settings-close');
 
 let state = {
   processingJobs: [],
@@ -239,6 +241,23 @@ function closeSettingsModal() {
   settingsModalEl.classList.add('hidden');
 }
 
+function setSettingsTab(tabId) {
+  settingsTabEls.forEach((tabButton) => {
+    const isActive = tabButton.dataset.settingsTab === tabId;
+    tabButton.classList.toggle('active', isActive);
+  });
+
+  const panelIds = ['clients', 'jobs', 'paths'];
+  panelIds.forEach((id) => {
+    const panel = document.getElementById('settings-panel-' + id);
+    if (!panel) {
+      return;
+    }
+    panel.classList.toggle('hidden', id !== tabId);
+    panel.classList.toggle('active', id === tabId);
+  });
+}
+
 async function loadClientsText() {
   const response = await fetch('/api/get-clients.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -317,6 +336,7 @@ clientSelectEl.addEventListener('change', () => {
 settingsButtonEl.addEventListener('click', async () => {
   try {
     await loadClientsText();
+    setSettingsTab('clients');
     openSettingsModal();
     clientsTextareaEl.focus();
   } catch (error) {
@@ -324,16 +344,30 @@ settingsButtonEl.addEventListener('click', async () => {
   }
 });
 
-settingsCancelEl.addEventListener('click', () => {
+clientsCancelEl.addEventListener('click', () => {
   closeSettingsModal();
 });
 
-settingsSaveEl.addEventListener('click', async () => {
+clientsApplyEl.addEventListener('click', async () => {
   try {
     await saveClientsText();
   } catch (error) {
     alert('Could not save clients.');
   }
+});
+
+settingsTabEls.forEach((tabButton) => {
+  tabButton.addEventListener('click', () => {
+    const tabId = tabButton.dataset.settingsTab;
+    if (!tabId) {
+      return;
+    }
+    setSettingsTab(tabId);
+  });
+});
+
+settingsCloseEl.addEventListener('click', () => {
+  closeSettingsModal();
 });
 
 settingsResetJobsEl.addEventListener('click', async () => {

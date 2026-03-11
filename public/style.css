@@ -248,33 +248,72 @@ body {
   z-index: 50;
 }
 
-.modal-card {
-  width: min(780px, 94vw);
+.settings-dialog {
+  width: min(980px, 96vw);
+  min-height: min(620px, 90vh);
   background: #fff;
   border-radius: 8px;
-  padding: 16px;
+  overflow: hidden;
+  display: flex;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
 }
 
-.modal-card h2 {
+.settings-nav {
+  width: 220px;
+  border-right: 1px solid #ddd;
+  background: #f7f7f7;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-nav h2 {
   margin: 0 0 8px;
   font-size: 18px;
 }
 
-.modal-card p {
+.settings-tab {
+  text-align: left;
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-tab:hover {
+  background: #ececec;
+}
+
+.settings-tab.active {
+  background: #dbeafe;
+  border-color: #b6d2fd;
+}
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-panel h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.settings-panel p {
   margin: 0 0 10px;
   color: #555;
   font-size: 14px;
-}
-
-.settings-section {
-  margin-top: 8px;
-}
-
-.settings-section summary {
-  cursor: pointer;
-  font-weight: 600;
-  margin-bottom: 10px;
 }
 
 .settings-danger {
@@ -297,7 +336,7 @@ body {
 
 #clients-textarea {
   width: 100%;
-  height: min(60vh, 460px);
+  height: min(58vh, 460px);
   resize: vertical;
   border: 1px solid #ccc;
   border-radius: 6px;
@@ -305,14 +344,15 @@ body {
   font: 13px/1.45 monospace;
 }
 
-.modal-actions {
+.panel-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
 }
 
-.modal-actions button {
+.panel-actions button,
+.settings-close-row button {
   font: inherit;
   padding: 6px 12px;
   border: 1px solid #ccc;
@@ -321,6 +361,14 @@ body {
   cursor: pointer;
 }
 
-.modal-actions button:hover {
+.panel-actions button:hover,
+.settings-close-row button:hover {
   background: #ebebeb;
+}
+
+.settings-close-row {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
 }
