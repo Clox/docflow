@@ -5,7 +5,11 @@
         "minScore": 1,
         "rules": [
             {
-                "text": "förfallodatum",
+                "text": "belopp",
+                "score": 1
+            },
+            {
+                "text": "autogiro",
                 "score": 1
             }
         ]

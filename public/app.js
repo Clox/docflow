@@ -1,6 +1,7 @@
 const jobListEl = document.getElementById('job-list');
 const viewerEl = document.getElementById('pdf-viewer');
 const ocrViewEl = document.getElementById('ocr-view');
+const matchesViewEl = document.getElementById('matches-view');
 const viewModeEl = document.getElementById('view-mode');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
@@ -31,10 +32,12 @@ let state = {
 let selectedJobId = '';
 let loadedJobId = '';
 let loadedOcrJobId = '';
+let loadedMatchesJobId = '';
 let pollTimer = null;
 let pollInFlight = false;
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
+let matchesRequestSeq = 0;
 let categoriesDraft = [];
 let activeSettingsTabId = 'clients';
 let clientsBaselineText = '';
@@ -107,6 +110,8 @@ function setClientForJob(job) {
 function setViewerJob(jobId) {
   if (currentViewMode === 'ocr') {
     setViewerOcr(jobId);
+  } else if (currentViewMode === 'matches') {
+    setViewerMatches(jobId);
   } else {
     setViewerPdf(jobId);
   }
@@ -114,6 +119,7 @@ function setViewerJob(jobId) {
 
 function setViewerPdf(jobId) {
   ocrViewEl.classList.add('hidden');
+  matchesViewEl.classList.add('hidden');
   viewerEl.classList.remove('hidden');
 
   if (!jobId) {
@@ -131,6 +137,7 @@ function setViewerPdf(jobId) {
 }
 
 async function setViewerOcr(jobId) {
+  matchesViewEl.classList.add('hidden');
   viewerEl.classList.add('hidden');
   ocrViewEl.classList.remove('hidden');
 
@@ -166,6 +173,175 @@ async function setViewerOcr(jobId) {
       return;
     }
     ocrViewEl.textContent = 'Could not load OCR data.';
+  }
+}
+
+function renderMatchesContent(categories) {
+  matchesViewEl.innerHTML = '';
+
+  const header = document.createElement('h3');
+  header.className = 'matches-header';
+  header.textContent = 'Kategorier';
+  matchesViewEl.appendChild(header);
+
+  if (!Array.isArray(categories) || categories.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'matches-empty';
+    empty.textContent = 'Inga kategorimatchningar hittades.';
+    matchesViewEl.appendChild(empty);
+    return;
+  }
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'matches-table-wrap';
+  const table = document.createElement('table');
+  table.className = 'matches-table';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  ['Kategori', 'Totalpoäng', 'Minpoäng', 'Matchat ord', 'Regelpoäng'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    if (label === 'Regelpoäng' || label === 'Totalpoäng' || label === 'Minpoäng') {
+      th.className = 'is-numeric';
+    }
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+
+  categories.forEach((category) => {
+    const name = category && typeof category.name === 'string' && category.name !== ''
+      ? category.name
+      : 'Unnamed category';
+    const score = category && Number.isFinite(Number(category.score))
+      ? Number(category.score)
+      : 0;
+    const minScore = category && Number.isFinite(Number(category.minScore))
+      ? Number(category.minScore)
+      : 1;
+
+    const rules = category && Array.isArray(category.matchedRules) ? category.matchedRules : [];
+    if (rules.length === 0) {
+      const tr = document.createElement('tr');
+
+      const categoryCell = document.createElement('td');
+      categoryCell.textContent = name;
+      tr.appendChild(categoryCell);
+
+      const totalCell = document.createElement('td');
+      totalCell.className = 'is-numeric';
+      totalCell.textContent = String(score);
+      tr.appendChild(totalCell);
+
+      const minCell = document.createElement('td');
+      minCell.className = 'is-numeric';
+      minCell.textContent = String(minScore);
+      tr.appendChild(minCell);
+
+      const ruleCell = document.createElement('td');
+      ruleCell.textContent = '(Inga ord matchade)';
+      tr.appendChild(ruleCell);
+
+      const ruleScoreCell = document.createElement('td');
+      ruleScoreCell.className = 'is-numeric';
+      ruleScoreCell.textContent = '0';
+      tr.appendChild(ruleScoreCell);
+
+      tbody.appendChild(tr);
+      return;
+    }
+
+    rules.forEach((rule, ruleIndex) => {
+      const text = rule && typeof rule.text === 'string' ? rule.text : '';
+      const ruleScore = rule && Number.isFinite(Number(rule.score)) ? Number(rule.score) : 0;
+
+      const tr = document.createElement('tr');
+
+      if (ruleIndex === 0) {
+        const categoryCell = document.createElement('td');
+        categoryCell.textContent = name;
+        categoryCell.rowSpan = rules.length;
+        tr.appendChild(categoryCell);
+
+        const totalCell = document.createElement('td');
+        totalCell.className = 'is-numeric summary-cell';
+        totalCell.textContent = String(score);
+        totalCell.rowSpan = rules.length;
+        tr.appendChild(totalCell);
+
+        const minCell = document.createElement('td');
+        minCell.className = 'is-numeric summary-cell';
+        minCell.textContent = String(minScore);
+        minCell.rowSpan = rules.length;
+        tr.appendChild(minCell);
+      }
+
+      const ruleCell = document.createElement('td');
+      ruleCell.textContent = text;
+      tr.appendChild(ruleCell);
+
+      const ruleScoreCell = document.createElement('td');
+      ruleScoreCell.className = 'is-numeric';
+      ruleScoreCell.textContent = String(ruleScore);
+      tr.appendChild(ruleScoreCell);
+
+      tbody.appendChild(tr);
+    });
+  });
+
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  matchesViewEl.appendChild(tableWrap);
+}
+
+async function setViewerMatches(jobId) {
+  viewerEl.classList.add('hidden');
+  ocrViewEl.classList.add('hidden');
+  matchesViewEl.classList.remove('hidden');
+
+  if (!jobId) {
+    loadedMatchesJobId = '';
+    matchesViewEl.innerHTML = '';
+    return;
+  }
+
+  if (loadedMatchesJobId === jobId) {
+    return;
+  }
+
+  loadedMatchesJobId = jobId;
+  const requestSeq = ++matchesRequestSeq;
+  matchesViewEl.innerHTML = '';
+  const loading = document.createElement('div');
+  loading.className = 'matches-empty';
+  loading.textContent = 'Loading matches...';
+  matchesViewEl.appendChild(loading);
+
+  try {
+    const response = await fetch('/api/get-job-matches.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch matches');
+    }
+
+    const payload = await response.json();
+    if (requestSeq !== matchesRequestSeq) {
+      return;
+    }
+
+    const categories = payload && Array.isArray(payload.categories) ? payload.categories : [];
+    renderMatchesContent(categories);
+  } catch (error) {
+    if (requestSeq !== matchesRequestSeq) {
+      return;
+    }
+    matchesViewEl.innerHTML = '';
+    const fail = document.createElement('div');
+    fail.className = 'matches-empty';
+    fail.textContent = 'Could not load match data.';
+    matchesViewEl.appendChild(fail);
   }
 }
 
@@ -702,14 +878,23 @@ async function resetAllJobs() {
 
   loadedJobId = '';
   loadedOcrJobId = '';
+  loadedMatchesJobId = '';
   selectedJobId = '';
   closeSettingsModal();
   await fetchState();
 }
 
 viewModeEl.addEventListener('change', () => {
-  currentViewMode = viewModeEl.value === 'ocr' ? 'ocr' : 'pdf';
+  if (viewModeEl.value === 'ocr') {
+    currentViewMode = 'ocr';
+  } else if (viewModeEl.value === 'matches') {
+    currentViewMode = 'matches';
+  } else {
+    currentViewMode = 'pdf';
+  }
+
   loadedOcrJobId = '';
+  loadedMatchesJobId = '';
   setViewerJob(selectedJobId);
 });
 

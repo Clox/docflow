@@ -129,6 +129,77 @@ function load_clients(): array
     return $clients;
 }
 
+function positive_int(mixed $value, int $fallback = 1): int
+{
+    if (is_int($value)) {
+        return $value < 1 ? 1 : $value;
+    }
+
+    if (is_float($value)) {
+        $intValue = (int) floor($value);
+        return $intValue < 1 ? 1 : $intValue;
+    }
+
+    if (is_string($value) && trim($value) !== '') {
+        $parsed = filter_var($value, FILTER_VALIDATE_INT);
+        if ($parsed !== false) {
+            $intValue = (int) $parsed;
+            return $intValue < 1 ? 1 : $intValue;
+        }
+    }
+
+    return $fallback;
+}
+
+function load_categories(): array
+{
+    $categoriesPath = DATA_DIR . '/categories.json';
+    if (!is_file($categoriesPath)) {
+        return [];
+    }
+
+    $raw = file_get_contents($categoriesPath);
+    if ($raw === false || trim($raw) === '') {
+        return [];
+    }
+
+    $data = json_decode($raw, true);
+    if (!is_array($data)) {
+        return [];
+    }
+
+    $categories = [];
+    foreach ($data as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $rulesIn = $row['rules'] ?? [];
+        $rules = [];
+        if (is_array($rulesIn)) {
+            foreach ($rulesIn as $ruleIn) {
+                if (!is_array($ruleIn)) {
+                    continue;
+                }
+
+                $rules[] = [
+                    'text' => is_string($ruleIn['text'] ?? null) ? trim((string) $ruleIn['text']) : '',
+                    'score' => positive_int($ruleIn['score'] ?? 1, 1),
+                ];
+            }
+        }
+
+        $categories[] = [
+            'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
+            'path' => is_string($row['path'] ?? null) ? trim((string) $row['path']) : '',
+            'minScore' => positive_int($row['minScore'] ?? 1, 1),
+            'rules' => $rules,
+        ];
+    }
+
+    return $categories;
+}
+
 function ensure_directory(string $path): void
 {
     if (is_dir($path)) {
@@ -272,6 +343,88 @@ function match_client_dir_name(string $ocrText, array $clients): ?string
     return null;
 }
 
+function lowercase_text(string $text): string
+{
+    if (function_exists('mb_strtolower')) {
+        return mb_strtolower($text, 'UTF-8');
+    }
+
+    return strtolower($text);
+}
+
+function find_category_matches(string $ocrText, array $categories): array
+{
+    $normalizedOcr = lowercase_text($ocrText);
+    $matches = [];
+
+    foreach ($categories as $category) {
+        if (!is_array($category)) {
+            continue;
+        }
+
+        $rules = $category['rules'] ?? [];
+        if (!is_array($rules) || count($rules) === 0) {
+            continue;
+        }
+
+        $minScore = positive_int($category['minScore'] ?? 1, 1);
+        $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
+        $categoryPath = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
+        if ($categoryName === '') {
+            $categoryName = $categoryPath !== '' ? $categoryPath : 'Unnamed category';
+        }
+
+        $score = 0;
+        $matchedRules = [];
+
+        foreach ($rules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+
+            $ruleText = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
+            if ($ruleText === '') {
+                continue;
+            }
+
+            $ruleScore = positive_int($rule['score'] ?? 1, 1);
+            $ruleTextLower = lowercase_text($ruleText);
+
+            if (!str_contains($normalizedOcr, $ruleTextLower)) {
+                continue;
+            }
+
+            $score += $ruleScore;
+            $matchedRules[] = [
+                'text' => $ruleText,
+                'score' => $ruleScore,
+            ];
+        }
+
+        if ($score < $minScore || count($matchedRules) === 0) {
+            continue;
+        }
+
+        $matches[] = [
+            'name' => $categoryName,
+            'path' => $categoryPath,
+            'minScore' => $minScore,
+            'score' => $score,
+            'matchedRules' => $matchedRules,
+        ];
+    }
+
+    usort($matches, static function (array $a, array $b): int {
+        $scoreCompare = (int) ($b['score'] ?? 0) <=> (int) ($a['score'] ?? 0);
+        if ($scoreCompare !== 0) {
+            return $scoreCompare;
+        }
+        return strcmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? ''));
+    });
+
+    return $matches;
+}
+
 function initial_job_data(string $jobId, string $originalFilename, ?string $fallbackTxtPath = null): array
 {
     $now = now_iso();
@@ -297,7 +450,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
     return $jobData;
 }
 
-function process_claimed_job(string $jobDir, string $sourcePdfPath, ?string $fallbackTxtPath, array $clients): array
+function process_claimed_job(string $jobDir, string $sourcePdfPath, ?string $fallbackTxtPath, array $clients, array $categories): array
 {
     $ocrText = '';
     $extracted = extract_text_from_pdf($sourcePdfPath);
@@ -319,8 +472,10 @@ function process_claimed_job(string $jobDir, string $sourcePdfPath, ?string $fal
     }
 
     $matched = match_client_dir_name($ocrText, $clients);
+    $categoryMatches = find_category_matches($ocrText, $categories);
     $extractedData = [
         'matchedClientDirName' => $matched,
+        'categoryMatches' => $categoryMatches,
     ];
 
     write_json_file($jobDir . '/extracted.json', $extractedData);
@@ -447,7 +602,7 @@ function next_processing_job_id(array $config): ?string
     return (string) $processingJobs[0]['id'];
 }
 
-function process_job_by_id(array $config, array $clients, string $jobId): void
+function process_job_by_id(array $config, array $clients, array $categories, string $jobId): void
 {
     if (!is_valid_job_id($jobId)) {
         return;
@@ -479,7 +634,7 @@ function process_job_by_id(array $config, array $clients, string $jobId): void
             ? (string) $jobData['fallbackTxtPath']
             : null;
 
-        process_claimed_job($jobDir, $sourcePdfPath, $fallbackTxtPath, $clients);
+        process_claimed_job($jobDir, $sourcePdfPath, $fallbackTxtPath, $clients, $categories);
 
         $jobData['status'] = 'ready';
         $jobData['updatedAt'] = now_iso();
@@ -510,6 +665,7 @@ function run_processing_worker(array $config): void
 
     try {
         $clients = load_clients();
+        $categories = load_categories();
 
         while (true) {
             $jobId = next_processing_job_id($config);
@@ -517,7 +673,7 @@ function run_processing_worker(array $config): void
                 break;
             }
 
-            process_job_by_id($config, $clients, $jobId);
+            process_job_by_id($config, $clients, $categories, $jobId);
         }
     } finally {
         flock($lockHandle, LOCK_UN);

@@ -36,6 +36,7 @@
             <select id="view-mode">
               <option value="pdf" selected>PDF</option>
               <option value="ocr">OCR-data</option>
+              <option value="matches">Matches</option>
             </select>
           </div>
           <button id="settings-button" type="button" aria-label="Inställningar" title="Inställningar">
@@ -51,6 +52,7 @@
       <div class="viewer-wrap">
         <iframe id="pdf-viewer" class="pdf-viewer" title="PDF Viewer"></iframe>
         <pre id="ocr-view" class="ocr-view hidden"></pre>
+        <div id="matches-view" class="matches-view hidden"></div>
       </div>
     </main>
   </div>
