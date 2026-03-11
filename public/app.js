@@ -47,7 +47,7 @@ function renderClientSelect(clients) {
   clients.forEach((client) => {
     const option = document.createElement('option');
     option.value = client.dirName;
-    option.textContent = client.name;
+    option.textContent = client.dirName;
     clientSelectEl.appendChild(option);
   });
 
