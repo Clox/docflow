@@ -43,6 +43,7 @@
               <option value="pdf" selected>PDF</option>
               <option value="ocr">OCR-data</option>
               <option value="matches">Matches</option>
+              <option value="meta">Meta</option>
             </select>
           </div>
           <button id="settings-button" type="button" aria-label="Inställningar" title="Inställningar">
@@ -59,6 +60,7 @@
         <iframe id="pdf-viewer" class="pdf-viewer" title="PDF Viewer"></iframe>
         <pre id="ocr-view" class="ocr-view hidden"></pre>
         <div id="matches-view" class="matches-view hidden"></div>
+        <pre id="meta-view" class="meta-view hidden"></pre>
       </div>
     </main>
   </div>

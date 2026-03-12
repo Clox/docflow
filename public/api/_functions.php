@@ -879,6 +879,37 @@ function find_category_matches(string $ocrText, array $categories, array $replac
     return $matches;
 }
 
+function split_categories_for_processing(array $categories): array
+{
+    $normalCategories = [];
+    $invoiceSystemCategories = [];
+
+    foreach ($categories as $category) {
+        if (!is_array($category)) {
+            continue;
+        }
+
+        $isSystemCategory = ($category['isSystemCategory'] ?? false) === true;
+        $systemKey = is_string($category['systemCategoryKey'] ?? null)
+            ? trim((string) $category['systemCategoryKey'])
+            : '';
+
+        if ($isSystemCategory) {
+            if ($systemKey === 'invoice') {
+                $invoiceSystemCategories[] = $category;
+            }
+            continue;
+        }
+
+        $normalCategories[] = $category;
+    }
+
+    return [
+        'normalCategories' => $normalCategories,
+        'invoiceSystemCategories' => $invoiceSystemCategories,
+    ];
+}
+
 function initial_job_data(string $jobId, string $originalFilename, ?string $fallbackTxtPath = null): array
 {
     $now = now_iso();
@@ -889,6 +920,9 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
         'originalFilename' => $originalFilename,
         'createdAt' => $now,
         'updatedAt' => $now,
+        'analysis' => [
+            'invoice' => false,
+        ],
         'files' => [
             'sourcePdf' => 'source.pdf',
             'reviewPdf' => 'review.pdf',
@@ -925,16 +959,26 @@ function process_claimed_job(string $jobDir, string $sourcePdfPath, ?string $fal
         throw new RuntimeException('Could not write ocr.txt');
     }
 
+    $categoryGroups = split_categories_for_processing($categories);
+    $invoiceMatches = find_category_matches($ocrText, $categoryGroups['invoiceSystemCategories'], $replacementMap);
+    $isInvoice = count($invoiceMatches) > 0;
+
     $matched = match_client_dir_name($ocrText, $clients);
-    $categoryMatches = find_category_matches($ocrText, $categories, $replacementMap);
+    $categoryMatches = find_category_matches($ocrText, $categoryGroups['normalCategories'], $replacementMap);
     $extractedData = [
         'matchedClientDirName' => $matched,
         'categoryMatches' => $categoryMatches,
+        'systemCategoryMatches' => $invoiceMatches,
     ];
 
     write_json_file($jobDir . '/extracted.json', $extractedData);
 
-    return $extractedData;
+    return [
+        'extractedData' => $extractedData,
+        'analysis' => [
+            'invoice' => $isInvoice,
+        ],
+    ];
 }
 
 function claim_and_process_inbox(array $config, array $clients): void
@@ -1086,7 +1130,15 @@ function process_job_by_id(array $config, array $clients, array $categories, arr
             : null;
 
         $replacementMap = replacement_map($matchingSettings);
-        process_claimed_job($jobDir, $sourcePdfPath, $fallbackTxtPath, $clients, $categories, $replacementMap);
+        $result = process_claimed_job($jobDir, $sourcePdfPath, $fallbackTxtPath, $clients, $categories, $replacementMap);
+
+        $analysis = $result['analysis'] ?? null;
+        if (is_array($analysis)) {
+            $invoiceValue = ($analysis['invoice'] ?? false) === true;
+            $jobData['analysis'] = [
+                'invoice' => $invoiceValue,
+            ];
+        }
 
         $jobData['status'] = 'ready';
         $jobData['updatedAt'] = now_iso();

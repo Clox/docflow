@@ -32,7 +32,18 @@ try {
         $categories = [];
     }
 
-    json_response(['categories' => $categories]);
+    $systemCategories = $extracted['systemCategoryMatches'] ?? [];
+    if (!is_array($systemCategories)) {
+        $systemCategories = [];
+    }
+
+    json_response([
+        'categories' => $categories,
+        'systemCategories' => $systemCategories,
+    ]);
 } catch (Throwable $e) {
-    json_response(['categories' => []], 500);
+    json_response([
+        'categories' => [],
+        'systemCategories' => [],
+    ], 500);
 }

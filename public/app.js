@@ -2,6 +2,7 @@ const jobListEl = document.getElementById('job-list');
 const viewerEl = document.getElementById('pdf-viewer');
 const ocrViewEl = document.getElementById('ocr-view');
 const matchesViewEl = document.getElementById('matches-view');
+const metaViewEl = document.getElementById('meta-view');
 const viewModeEl = document.getElementById('view-mode');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
@@ -64,11 +65,13 @@ let selectedJobId = '';
 let loadedJobId = '';
 let loadedOcrJobId = '';
 let loadedMatchesJobId = '';
+let loadedMetaJobId = '';
 let pollTimer = null;
 let pollInFlight = false;
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
 let matchesRequestSeq = 0;
+let metaRequestSeq = 0;
 let categoriesDraft = [];
 let systemCategoriesDraft = createDefaultSystemCategories();
 let matchingDraft = [];
@@ -221,6 +224,8 @@ function setViewerJob(jobId) {
     setViewerOcr(jobId);
   } else if (currentViewMode === 'matches') {
     setViewerMatches(jobId);
+  } else if (currentViewMode === 'meta') {
+    setViewerMeta(jobId);
   } else {
     setViewerPdf(jobId);
   }
@@ -229,6 +234,7 @@ function setViewerJob(jobId) {
 function setViewerPdf(jobId) {
   ocrViewEl.classList.add('hidden');
   matchesViewEl.classList.add('hidden');
+  metaViewEl.classList.add('hidden');
   viewerEl.classList.remove('hidden');
 
   if (!jobId) {
@@ -247,6 +253,7 @@ function setViewerPdf(jobId) {
 
 async function setViewerOcr(jobId) {
   matchesViewEl.classList.add('hidden');
+  metaViewEl.classList.add('hidden');
   viewerEl.classList.add('hidden');
   ocrViewEl.classList.remove('hidden');
 
@@ -285,19 +292,17 @@ async function setViewerOcr(jobId) {
   }
 }
 
-function renderMatchesContent(categories) {
-  matchesViewEl.innerHTML = '';
-
+function appendMatchesSection(container, title, categories, emptyText) {
   const header = document.createElement('h3');
   header.className = 'matches-header';
-  header.textContent = 'Kategorier';
-  matchesViewEl.appendChild(header);
+  header.textContent = title;
+  container.appendChild(header);
 
   if (!Array.isArray(categories) || categories.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
-    empty.textContent = 'Inga kategorimatchningar hittades.';
-    matchesViewEl.appendChild(empty);
+    empty.textContent = emptyText;
+    container.appendChild(empty);
     return;
   }
 
@@ -414,12 +419,23 @@ function renderMatchesContent(categories) {
 
   table.appendChild(tbody);
   tableWrap.appendChild(table);
-  matchesViewEl.appendChild(tableWrap);
+  container.appendChild(tableWrap);
+}
+
+function renderMatchesContent(payload) {
+  matchesViewEl.innerHTML = '';
+
+  const categories = payload && Array.isArray(payload.categories) ? payload.categories : [];
+  const systemCategories = payload && Array.isArray(payload.systemCategories) ? payload.systemCategories : [];
+
+  appendMatchesSection(matchesViewEl, 'Kategorier', categories, 'Inga kategorimatchningar hittades.');
+  appendMatchesSection(matchesViewEl, 'Systemkategorier', systemCategories, 'Inga systemkategorimatchningar hittades.');
 }
 
 async function setViewerMatches(jobId) {
   viewerEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
+  metaViewEl.classList.add('hidden');
   matchesViewEl.classList.remove('hidden');
 
   if (!jobId) {
@@ -451,8 +467,7 @@ async function setViewerMatches(jobId) {
       return;
     }
 
-    const categories = payload && Array.isArray(payload.categories) ? payload.categories : [];
-    renderMatchesContent(categories);
+    renderMatchesContent(payload);
   } catch (error) {
     if (requestSeq !== matchesRequestSeq) {
       return;
@@ -462,6 +477,47 @@ async function setViewerMatches(jobId) {
     fail.className = 'matches-empty';
     fail.textContent = 'Could not load match data.';
     matchesViewEl.appendChild(fail);
+  }
+}
+
+async function setViewerMeta(jobId) {
+  viewerEl.classList.add('hidden');
+  ocrViewEl.classList.add('hidden');
+  matchesViewEl.classList.add('hidden');
+  metaViewEl.classList.remove('hidden');
+
+  if (!jobId) {
+    loadedMetaJobId = '';
+    metaViewEl.textContent = '';
+    return;
+  }
+
+  if (loadedMetaJobId === jobId) {
+    return;
+  }
+
+  loadedMetaJobId = jobId;
+  const requestSeq = ++metaRequestSeq;
+  metaViewEl.textContent = 'Loading metadata...';
+
+  try {
+    const response = await fetch('/api/get-job-meta.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch metadata');
+    }
+
+    const payload = await response.json();
+    if (requestSeq !== metaRequestSeq) {
+      return;
+    }
+
+    const job = payload && payload.job && typeof payload.job === 'object' ? payload.job : null;
+    metaViewEl.textContent = job ? JSON.stringify(job, null, 2) : '{}';
+  } catch (error) {
+    if (requestSeq !== metaRequestSeq) {
+      return;
+    }
+    metaViewEl.textContent = 'Could not load metadata.';
   }
 }
 
@@ -1496,6 +1552,7 @@ async function resetAllJobs() {
   loadedJobId = '';
   loadedOcrJobId = '';
   loadedMatchesJobId = '';
+  loadedMetaJobId = '';
   selectedJobId = '';
   closeSettingsModal();
   await fetchState();
@@ -1506,12 +1563,15 @@ viewModeEl.addEventListener('change', () => {
     currentViewMode = 'ocr';
   } else if (viewModeEl.value === 'matches') {
     currentViewMode = 'matches';
+  } else if (viewModeEl.value === 'meta') {
+    currentViewMode = 'meta';
   } else {
     currentViewMode = 'pdf';
   }
 
   loadedOcrJobId = '';
   loadedMatchesJobId = '';
+  loadedMetaJobId = '';
   setViewerJob(selectedJobId);
 });
 
