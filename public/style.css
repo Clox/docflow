@@ -491,11 +491,11 @@ body {
   position: relative;
 }
 
-.categories-list > .tree-section {
+.categories-list > .tree-folder {
   margin-bottom: 12px;
 }
 
-.categories-list > .tree-section:last-child {
+.categories-list > .tree-folder:last-child {
   margin-bottom: 0;
 }
 
@@ -517,7 +517,7 @@ body {
   flex: 0 0 auto;
 }
 
-.tree-section > .tree-row > .tree-dot {
+.tree-folder > .tree-row > .tree-dot {
   background: #fff;
   border-color: #111;
 }
@@ -568,7 +568,7 @@ body {
   flex: 1;
 }
 
-.section-body {
+.folder-body {
   border: 1px solid #cdd7ea;
   border-radius: 6px;
   background: #f4f8ff;
@@ -599,14 +599,14 @@ body {
   margin-top: 8px;
 }
 
-.section-fields {
+.folder-fields {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
   gap: 8px;
   align-items: start;
 }
 
-.section-fields input {
+.folder-fields input {
   width: 100%;
   font: inherit;
   padding: 6px 8px;
@@ -686,7 +686,7 @@ body {
 
 .category-rule-actions button,
 .categories-actions button,
-.section-actions button {
+.folder-actions button {
   font: inherit;
   padding: 6px 12px;
   border: 1px solid #ccc;
@@ -697,7 +697,7 @@ body {
 
 .category-rule-actions button:hover,
 .categories-actions button:hover,
-.section-actions button:hover {
+.folder-actions button:hover {
   background: #ebebeb;
 }
 
@@ -705,7 +705,7 @@ body {
   margin-top: 10px;
 }
 
-.section-actions {
+.folder-actions {
   margin-top: 10px;
 }
 

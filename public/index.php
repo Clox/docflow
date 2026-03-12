@@ -105,10 +105,10 @@
 
         <div id="settings-panel-categories" class="settings-panel hidden">
           <h3>Arkivstruktur</h3>
-          <p>Bygg upp sektioner med kategorier och regler (Sektion → Kategori → Regel).</p>
+          <p>Bygg upp mappar med kategorier och regler (Mapp → Kategori → Regel).</p>
           <div id="categories-list" class="categories-list"></div>
           <div class="categories-actions">
-            <button id="categories-add-category" type="button">Lägg till sektion</button>
+            <button id="categories-add-category" type="button">Lägg till mapp</button>
           </div>
           <div class="panel-actions">
             <button id="categories-cancel" type="button">Cancel</button>

@@ -565,7 +565,7 @@ function normalizedMatchingJson(replacements) {
 }
 
 function normalizedCategoriesJson(categories) {
-  return JSON.stringify(categories.map(sanitizeSection));
+  return JSON.stringify(categories.map(sanitizeArchiveFolder));
 }
 
 function isClientsDirty() {
@@ -679,7 +679,7 @@ function defaultCategory() {
   };
 }
 
-function defaultSection() {
+function defaultArchiveFolder() {
   return {
     name: '',
     path: '',
@@ -729,8 +729,8 @@ function sanitizeCategory(category) {
   };
 }
 
-function sanitizeSection(section) {
-  const input = section && typeof section === 'object' ? section : {};
+function sanitizeArchiveFolder(archiveFolder) {
+  const input = archiveFolder && typeof archiveFolder === 'object' ? archiveFolder : {};
   const rawCategories = Array.isArray(input.categories) ? input.categories : [];
   const categories = rawCategories.map(sanitizeCategory);
   return {
@@ -821,65 +821,65 @@ function renderCategoriesEditor() {
   if (categoriesDraft.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
-    empty.textContent = 'Inga sektioner ännu.';
+    empty.textContent = 'Inga mappar ännu.';
     categoriesListEl.appendChild(empty);
     return;
   }
 
-  categoriesDraft.forEach((section, sectionIndex) => {
-    const sectionNode = document.createElement('div');
-    sectionNode.className = 'tree-node tree-section';
+  categoriesDraft.forEach((archiveFolder, archiveFolderIndex) => {
+    const archiveFolderNode = document.createElement('div');
+    archiveFolderNode.className = 'tree-node tree-folder';
 
-    const sectionRow = document.createElement('div');
-    sectionRow.className = 'tree-row';
+    const archiveFolderRow = document.createElement('div');
+    archiveFolderRow.className = 'tree-row';
 
-    const sectionDot = document.createElement('span');
-    sectionDot.className = 'tree-dot';
-    sectionRow.appendChild(sectionDot);
+    const archiveFolderDot = document.createElement('span');
+    archiveFolderDot.className = 'tree-dot';
+    archiveFolderRow.appendChild(archiveFolderDot);
 
-    const sectionBody = document.createElement('div');
-    sectionBody.className = 'tree-body section-body';
+    const archiveFolderBody = document.createElement('div');
+    archiveFolderBody.className = 'tree-body folder-body';
 
-    const sectionFields = document.createElement('div');
-    sectionFields.className = 'section-fields';
+    const archiveFolderFields = document.createElement('div');
+    archiveFolderFields.className = 'folder-fields';
 
-    const sectionNameInput = document.createElement('input');
-    sectionNameInput.type = 'text';
-    sectionNameInput.placeholder = 'Ex: "Dokument"';
-    sectionNameInput.value = section.name;
-    sectionNameInput.addEventListener('input', () => {
-      categoriesDraft[sectionIndex].name = sectionNameInput.value;
+    const archiveFolderNameInput = document.createElement('input');
+    archiveFolderNameInput.type = 'text';
+    archiveFolderNameInput.placeholder = 'Ex: "Dokument"';
+    archiveFolderNameInput.value = archiveFolder.name;
+    archiveFolderNameInput.addEventListener('input', () => {
+      categoriesDraft[archiveFolderIndex].name = archiveFolderNameInput.value;
       updateSettingsActionButtons();
     });
 
-    const sectionPathInput = document.createElement('input');
-    sectionPathInput.type = 'text';
-    sectionPathInput.placeholder = 'Ex: "dokument"';
-    sectionPathInput.value = section.path;
-    sectionPathInput.addEventListener('input', () => {
-      categoriesDraft[sectionIndex].path = sectionPathInput.value;
+    const archiveFolderPathInput = document.createElement('input');
+    archiveFolderPathInput.type = 'text';
+    archiveFolderPathInput.placeholder = 'Ex: "dokument"';
+    archiveFolderPathInput.value = archiveFolder.path;
+    archiveFolderPathInput.addEventListener('input', () => {
+      categoriesDraft[archiveFolderIndex].path = archiveFolderPathInput.value;
       updateSettingsActionButtons();
     });
 
-    const removeSectionButton = document.createElement('button');
-    removeSectionButton.type = 'button';
-    removeSectionButton.className = 'category-remove';
-    removeSectionButton.textContent = 'Ta bort sektion';
-    removeSectionButton.addEventListener('click', () => {
-      categoriesDraft.splice(sectionIndex, 1);
+    const removeArchiveFolderButton = document.createElement('button');
+    removeArchiveFolderButton.type = 'button';
+    removeArchiveFolderButton.className = 'category-remove';
+    removeArchiveFolderButton.textContent = 'Ta bort mapp';
+    removeArchiveFolderButton.addEventListener('click', () => {
+      categoriesDraft.splice(archiveFolderIndex, 1);
       renderCategoriesEditor();
       updateSettingsActionButtons();
     });
 
-    sectionFields.appendChild(createFloatingField('Namn', sectionNameInput));
-    sectionFields.appendChild(createFloatingField('Sökväg', sectionPathInput));
-    sectionFields.appendChild(removeSectionButton);
-    sectionBody.appendChild(sectionFields);
+    archiveFolderFields.appendChild(createFloatingField('Namn', archiveFolderNameInput));
+    archiveFolderFields.appendChild(createFloatingField('Sökväg', archiveFolderPathInput));
+    archiveFolderFields.appendChild(removeArchiveFolderButton);
+    archiveFolderBody.appendChild(archiveFolderFields);
 
-    const sectionCategories = document.createElement('div');
-    sectionCategories.className = 'tree-children';
+    const archiveFolderCategories = document.createElement('div');
+    archiveFolderCategories.className = 'tree-children';
 
-    section.categories.forEach((category, categoryIndex) => {
+    archiveFolder.categories.forEach((category, categoryIndex) => {
       const categoryNode = document.createElement('div');
       categoryNode.className = 'tree-node tree-category has-parent';
 
@@ -898,9 +898,9 @@ function renderCategoriesEditor() {
       removeCategoryButton.className = 'category-remove';
       removeCategoryButton.textContent = 'Ta bort kategori';
       removeCategoryButton.addEventListener('click', () => {
-        categoriesDraft[sectionIndex].categories.splice(categoryIndex, 1);
-        if (categoriesDraft[sectionIndex].categories.length === 0) {
-          categoriesDraft[sectionIndex].categories.push(defaultCategory());
+        categoriesDraft[archiveFolderIndex].categories.splice(categoryIndex, 1);
+        if (categoriesDraft[archiveFolderIndex].categories.length === 0) {
+          categoriesDraft[archiveFolderIndex].categories.push(defaultCategory());
         }
         renderCategoriesEditor();
         updateSettingsActionButtons();
@@ -914,7 +914,7 @@ function renderCategoriesEditor() {
       categoryNameInput.placeholder = 'Ex: "Fakturor"';
       categoryNameInput.value = category.name;
       categoryNameInput.addEventListener('input', () => {
-        categoriesDraft[sectionIndex].categories[categoryIndex].name = categoryNameInput.value;
+        categoriesDraft[archiveFolderIndex].categories[categoryIndex].name = categoryNameInput.value;
         updateSettingsActionButtons();
       });
 
@@ -924,7 +924,7 @@ function renderCategoriesEditor() {
       minScoreInput.min = '1';
       minScoreInput.value = String(category.minScore);
       minScoreInput.addEventListener('input', () => {
-        categoriesDraft[sectionIndex].categories[categoryIndex].minScore = sanitizePositiveInt(minScoreInput.value, 1);
+        categoriesDraft[archiveFolderIndex].categories[categoryIndex].minScore = sanitizePositiveInt(minScoreInput.value, 1);
         updateSettingsActionButtons();
       });
 
@@ -958,7 +958,7 @@ function renderCategoriesEditor() {
         textInput.placeholder = 'Ex: "Förfallodatum"';
         textInput.value = rule.text;
         textInput.addEventListener('input', () => {
-          categoriesDraft[sectionIndex].categories[categoryIndex].rules[ruleIndex].text = textInput.value;
+          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].text = textInput.value;
           updateSettingsActionButtons();
         });
 
@@ -968,7 +968,7 @@ function renderCategoriesEditor() {
         scoreInput.min = '1';
         scoreInput.value = String(rule.score);
         scoreInput.addEventListener('input', () => {
-          categoriesDraft[sectionIndex].categories[categoryIndex].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
           updateSettingsActionButtons();
         });
 
@@ -981,9 +981,9 @@ function renderCategoriesEditor() {
           removeRuleButton.className = 'rule-remove';
           removeRuleButton.textContent = 'Ta bort';
           removeRuleButton.addEventListener('click', () => {
-            categoriesDraft[sectionIndex].categories[categoryIndex].rules.splice(ruleIndex, 1);
-            if (categoriesDraft[sectionIndex].categories[categoryIndex].rules.length === 0) {
-              categoriesDraft[sectionIndex].categories[categoryIndex].rules.push(defaultRule());
+            categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules.splice(ruleIndex, 1);
+            if (categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules.length === 0) {
+              categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules.push(defaultRule());
             }
             renderCategoriesEditor();
             updateSettingsActionButtons();
@@ -1009,7 +1009,7 @@ function renderCategoriesEditor() {
       addRuleButton.type = 'button';
       addRuleButton.textContent = 'Lägg till regel';
       addRuleButton.addEventListener('click', () => {
-        categoriesDraft[sectionIndex].categories[categoryIndex].rules.push(defaultRule());
+        categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules.push(defaultRule());
         renderCategoriesEditor();
         updateSettingsActionButtons();
       });
@@ -1018,27 +1018,27 @@ function renderCategoriesEditor() {
 
       categoryRow.appendChild(categoryBody);
       categoryNode.appendChild(categoryRow);
-      sectionCategories.appendChild(categoryNode);
+      archiveFolderCategories.appendChild(categoryNode);
     });
 
-    sectionBody.appendChild(sectionCategories);
+    archiveFolderBody.appendChild(archiveFolderCategories);
 
     const categoryActions = document.createElement('div');
-    categoryActions.className = 'section-actions';
+    categoryActions.className = 'folder-actions';
     const addCategoryButton = document.createElement('button');
     addCategoryButton.type = 'button';
     addCategoryButton.textContent = 'Lägg till kategori';
     addCategoryButton.addEventListener('click', () => {
-      categoriesDraft[sectionIndex].categories.push(defaultCategory());
+      categoriesDraft[archiveFolderIndex].categories.push(defaultCategory());
       renderCategoriesEditor();
       updateSettingsActionButtons();
     });
     categoryActions.appendChild(addCategoryButton);
-    sectionBody.appendChild(categoryActions);
+    archiveFolderBody.appendChild(categoryActions);
 
-    sectionRow.appendChild(sectionBody);
-    sectionNode.appendChild(sectionRow);
-    categoriesListEl.appendChild(sectionNode);
+    archiveFolderRow.appendChild(archiveFolderBody);
+    archiveFolderNode.appendChild(archiveFolderRow);
+    categoriesListEl.appendChild(archiveFolderNode);
   });
 
   updateSettingsActionButtons();
@@ -1104,11 +1104,11 @@ async function loadCategories() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.sections)) {
+  if (!payload || !Array.isArray(payload.archiveFolders)) {
     throw new Error('Invalid archive structure response');
   }
 
-  categoriesDraft = payload.sections.map(sanitizeSection);
+  categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
   renderCategoriesEditor();
   updateSettingsActionButtons();
@@ -1161,24 +1161,24 @@ async function saveMatchingSettings() {
 }
 
 async function saveCategories() {
-  const normalized = categoriesDraft.map(sanitizeSection);
+  const normalized = categoriesDraft.map(sanitizeArchiveFolder);
   const response = await fetch('/api/save-categories.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ sections: normalized })
+    body: JSON.stringify({ archiveFolders: normalized })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.sections)) {
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.archiveFolders)) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Failed to save archive structure';
     throw new Error(message);
   }
 
-  categoriesDraft = payload.sections.map(sanitizeSection);
+  categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
   renderCategoriesEditor();
   updateSettingsActionButtons();
@@ -1365,7 +1365,7 @@ matchingApplyEl.addEventListener('click', async () => {
 });
 
 categoriesAddCategoryEl.addEventListener('click', () => {
-  categoriesDraft.push(defaultSection());
+  categoriesDraft.push(defaultArchiveFolder());
   renderCategoriesEditor();
   updateSettingsActionButtons();
 });
@@ -1377,7 +1377,7 @@ categoriesCancelEl.addEventListener('click', () => {
   } catch (error) {
     parsed = [];
   }
-  categoriesDraft = Array.isArray(parsed) ? parsed.map(sanitizeSection) : [];
+  categoriesDraft = Array.isArray(parsed) ? parsed.map(sanitizeArchiveFolder) : [];
   renderCategoriesEditor();
   updateSettingsActionButtons();
 });

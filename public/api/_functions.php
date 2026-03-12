@@ -153,22 +153,22 @@ function positive_int(mixed $value, int $fallback = 1): int
 
 function load_categories(): array
 {
-    $sections = load_archive_structure();
+    $archiveFolders = load_archive_structure();
     $categories = [];
 
-    foreach ($sections as $sectionIndex => $section) {
-        if (!is_array($section)) {
+    foreach ($archiveFolders as $archiveFolderIndex => $archiveFolder) {
+        if (!is_array($archiveFolder)) {
             continue;
         }
 
-        $sectionName = is_string($section['name'] ?? null) ? trim((string) $section['name']) : '';
-        $sectionPath = is_string($section['path'] ?? null) ? trim((string) $section['path']) : '';
-        $sectionCategories = $section['categories'] ?? [];
-        if (!is_array($sectionCategories)) {
+        $archiveFolderName = is_string($archiveFolder['name'] ?? null) ? trim((string) $archiveFolder['name']) : '';
+        $archiveFolderPath = is_string($archiveFolder['path'] ?? null) ? trim((string) $archiveFolder['path']) : '';
+        $archiveFolderCategories = $archiveFolder['categories'] ?? [];
+        if (!is_array($archiveFolderCategories)) {
             continue;
         }
 
-        foreach ($sectionCategories as $categoryIndex => $category) {
+        foreach ($archiveFolderCategories as $categoryIndex => $category) {
             if (!is_array($category)) {
                 continue;
             }
@@ -189,10 +189,10 @@ function load_categories(): array
             }
 
             $categories[] = [
-                'id' => 's' . $sectionIndex . '_c' . $categoryIndex,
+                'id' => 'f' . $archiveFolderIndex . '_c' . $categoryIndex,
                 'name' => is_string($category['name'] ?? null) ? trim((string) $category['name']) : '',
-                'path' => $sectionPath,
-                'sectionName' => $sectionName,
+                'path' => $archiveFolderPath,
+                'archiveFolderName' => $archiveFolderName,
                 'minScore' => positive_int($category['minScore'] ?? 1, 1),
                 'rules' => $rules,
             ];
@@ -224,20 +224,20 @@ function load_archive_structure(): array
 
 function normalize_archive_structure(array $input): array
 {
-    $sections = [];
+    $archiveFolders = [];
     foreach ($input as $row) {
         if (!is_array($row)) {
             continue;
         }
 
-        $sections[] = [
+        $archiveFolders[] = [
             'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
             'path' => is_string($row['path'] ?? null) ? trim((string) $row['path']) : '',
             'categories' => normalize_archive_categories($row['categories'] ?? []),
         ];
     }
 
-    return $sections;
+    return $archiveFolders;
 }
 
 function normalize_archive_categories(mixed $input): array
@@ -624,7 +624,7 @@ function find_category_matches(string $ocrText, array $categories, array $replac
         $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
         $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
         $categoryPath = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
-        $sectionName = is_string($category['sectionName'] ?? null) ? trim((string) $category['sectionName']) : '';
+        $archiveFolderName = is_string($category['archiveFolderName'] ?? null) ? trim((string) $category['archiveFolderName']) : '';
         if ($categoryId === '') {
             continue;
         }
@@ -669,7 +669,7 @@ function find_category_matches(string $ocrText, array $categories, array $replac
             'id' => $categoryId,
             'name' => $categoryName,
             'path' => $categoryPath,
-            'sectionName' => $sectionName,
+            'archiveFolderName' => $archiveFolderName,
             'minScore' => $minScore,
             'score' => $score,
             'matchedRules' => $matchedRules,

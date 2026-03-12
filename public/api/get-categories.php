@@ -5,11 +5,11 @@ require_once __DIR__ . '/_bootstrap.php';
 
 try {
     json_response([
-        'sections' => load_archive_structure(),
+        'archiveFolders' => load_archive_structure(),
     ]);
 } catch (Throwable $e) {
     json_response([
-        'sections' => [],
+        'archiveFolders' => [],
         'error' => $e->getMessage(),
     ], 500);
 }
