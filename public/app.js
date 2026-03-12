@@ -826,6 +826,11 @@ function renderCategoriesEditor() {
     return;
   }
 
+  const foldersLabel = document.createElement('div');
+  foldersLabel.className = 'archive-folders-label';
+  foldersLabel.textContent = 'Mappar';
+  categoriesListEl.appendChild(foldersLabel);
+
   categoriesDraft.forEach((archiveFolder, archiveFolderIndex) => {
     const archiveFolderNode = document.createElement('div');
     archiveFolderNode.className = 'tree-node tree-folder';
@@ -878,6 +883,11 @@ function renderCategoriesEditor() {
 
     const archiveFolderCategories = document.createElement('div');
     archiveFolderCategories.className = 'tree-children';
+
+    const categoriesLabel = document.createElement('div');
+    categoriesLabel.className = 'archive-level-label';
+    categoriesLabel.textContent = 'Kategorier';
+    archiveFolderCategories.appendChild(categoriesLabel);
 
     archiveFolder.categories.forEach((category, categoryIndex) => {
       const categoryNode = document.createElement('div');
@@ -935,6 +945,11 @@ function renderCategoriesEditor() {
 
       const ruleList = document.createElement('div');
       ruleList.className = 'tree-children';
+
+      const rulesLabel = document.createElement('div');
+      rulesLabel.className = 'archive-level-label';
+      rulesLabel.textContent = 'Regler';
+      ruleList.appendChild(rulesLabel);
 
       category.rules.forEach((rule, ruleIndex) => {
         const ruleNode = document.createElement('div');
