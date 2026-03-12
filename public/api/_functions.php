@@ -151,9 +151,106 @@ function positive_int(mixed $value, int $fallback = 1): int
     return $fallback;
 }
 
+function system_archive_categories_definitions(): array
+{
+    return [
+        'invoice' => [
+            'name' => 'Faktura',
+            'minScore' => 2,
+            'rules' => [
+                ['text' => 'faktura', 'score' => 4],
+                ['text' => 'förfallodatum', 'score' => 3],
+                ['text' => 'faktura', 'score' => 2],
+                ['text' => 'förfallodatum', 'score' => 3],
+                ['text' => 'bankgiro', 'score' => 5],
+                ['text' => 'plusgiro', 'score' => 5],
+                ['text' => 'ocr', 'score' => 5],
+                ['text' => 'ocr-nummer', 'score' => 5],
+                ['text' => 'fakturanummer', 'score' => 5],
+                ['text' => 'autogiro', 'score' => 3],
+                ['text' => 'e-faktura', 'score' => 4],
+                ['text' => 'betalningsmottagare', 'score' => 2],
+            ],
+        ],
+    ];
+}
+
+function normalize_system_archive_category_with_defaults(mixed $input, array $defaults): array
+{
+    $category = is_array($input) ? $input : [];
+    $name = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
+    if ($name === '') {
+        $name = is_string($defaults['name'] ?? null) ? trim((string) $defaults['name']) : '';
+    }
+
+    $defaultMinScore = positive_int($defaults['minScore'] ?? 1, 1);
+    $defaultRules = [];
+    if (is_array($defaults['rules'] ?? null)) {
+        foreach ($defaults['rules'] as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            $defaultRules[] = [
+                'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
+                'score' => positive_int($rule['score'] ?? 1, 1),
+            ];
+        }
+    }
+
+    $rawRules = $category['rules'] ?? [];
+    $rules = [];
+    if (is_array($rawRules)) {
+        foreach ($rawRules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+
+            $rules[] = [
+                'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
+                'score' => positive_int($rule['score'] ?? 1, 1),
+            ];
+        }
+    }
+    if (count($rules) === 0) {
+        $rules = $defaultRules;
+    }
+
+    return [
+        'name' => $name,
+        'isSystemCategory' => true,
+        'minScore' => positive_int($category['minScore'] ?? $defaultMinScore, $defaultMinScore),
+        'rules' => $rules,
+    ];
+}
+
+function system_archive_categories_template(): array
+{
+    $definitions = system_archive_categories_definitions();
+    $categories = [];
+    foreach ($definitions as $key => $defaults) {
+        $categories[$key] = normalize_system_archive_category_with_defaults([], $defaults);
+    }
+    return $categories;
+}
+
+function normalize_system_archive_categories(mixed $input): array
+{
+    $decoded = is_array($input) ? $input : [];
+    $definitions = system_archive_categories_definitions();
+    $categories = [];
+    foreach ($definitions as $key => $defaults) {
+        $categories[$key] = normalize_system_archive_category_with_defaults($decoded[$key] ?? [], $defaults);
+    }
+    return $categories;
+}
+
 function load_categories(): array
 {
-    $archiveFolders = load_archive_structure();
+    $structure = load_archive_structure_data();
+    $archiveFolders = $structure['archiveFolders'];
+    $systemCategories = is_array($structure['systemCategories'] ?? null)
+        ? $structure['systemCategories']
+        : system_archive_categories_template();
     $categories = [];
 
     foreach ($archiveFolders as $archiveFolderIndex => $archiveFolder) {
@@ -193,33 +290,45 @@ function load_categories(): array
                 'name' => is_string($category['name'] ?? null) ? trim((string) $category['name']) : '',
                 'path' => $archiveFolderPath,
                 'archiveFolderName' => $archiveFolderName,
+                'isSystemCategory' => false,
                 'minScore' => positive_int($category['minScore'] ?? 1, 1),
                 'rules' => $rules,
             ];
         }
     }
 
+    foreach ($systemCategories as $systemKey => $systemCategory) {
+        if (!is_array($systemCategory)) {
+            continue;
+        }
+
+        $systemRules = [];
+        $rawSystemRules = $systemCategory['rules'] ?? [];
+        if (is_array($rawSystemRules)) {
+            foreach ($rawSystemRules as $rule) {
+                if (!is_array($rule)) {
+                    continue;
+                }
+                $systemRules[] = [
+                    'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
+                    'score' => positive_int($rule['score'] ?? 1, 1),
+                ];
+            }
+        }
+
+        $categories[] = [
+            'id' => 'system_' . $systemKey,
+            'name' => is_string($systemCategory['name'] ?? null) ? trim((string) $systemCategory['name']) : '',
+            'path' => '',
+            'archiveFolderName' => 'Systemkategorier',
+            'isSystemCategory' => true,
+            'systemCategoryKey' => (string) $systemKey,
+            'minScore' => positive_int($systemCategory['minScore'] ?? 1, 1),
+            'rules' => $systemRules,
+        ];
+    }
+
     return $categories;
-}
-
-function load_archive_structure(): array
-{
-    $archivePath = DATA_DIR . '/archive-structure.json';
-    if (!is_file($archivePath)) {
-        return [];
-    }
-
-    $raw = file_get_contents($archivePath);
-    if ($raw === false || trim($raw) === '') {
-        return [];
-    }
-
-    $decoded = json_decode($raw, true);
-    if (!is_array($decoded)) {
-        return [];
-    }
-
-    return normalize_archive_structure($decoded);
 }
 
 function normalize_archive_structure(array $input): array
@@ -238,6 +347,83 @@ function normalize_archive_structure(array $input): array
     }
 
     return $archiveFolders;
+}
+
+function normalize_archive_structure_data(mixed $input): array
+{
+    $decoded = is_array($input) ? $input : [];
+
+    $rawArchiveFolders = is_array($decoded['archiveFolders'] ?? null) ? $decoded['archiveFolders'] : [];
+    $rawSystemCategories = is_array($decoded['systemCategories'] ?? null) ? $decoded['systemCategories'] : [];
+
+    $archiveFolders = normalize_archive_structure($rawArchiveFolders);
+    $systemCategories = normalize_system_archive_categories($rawSystemCategories);
+
+    return [
+        'archiveFolders' => $archiveFolders,
+        'systemCategories' => $systemCategories,
+    ];
+}
+
+function load_archive_structure_data(): array
+{
+    $archivePath = DATA_DIR . '/archive-structure.json';
+    if (!is_file($archivePath)) {
+        $initial = normalize_archive_structure_data([]);
+        try {
+            write_json_file($archivePath, $initial);
+        } catch (Throwable $ignored) {
+            // Keep runtime resilient if file cannot be created right now.
+        }
+        return $initial;
+    }
+
+    $raw = file_get_contents($archivePath);
+    if ($raw === false || trim($raw) === '') {
+        $initial = normalize_archive_structure_data([]);
+        try {
+            write_json_file($archivePath, $initial);
+        } catch (Throwable $ignored) {
+            // Keep runtime resilient if file cannot be repaired right now.
+        }
+        return $initial;
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        $initial = normalize_archive_structure_data([]);
+        try {
+            write_json_file($archivePath, $initial);
+        } catch (Throwable $ignored) {
+            // Keep runtime resilient if file cannot be repaired right now.
+        }
+        return $initial;
+    }
+
+    $normalized = normalize_archive_structure_data($decoded);
+    if (json_encode($decoded) !== json_encode($normalized)) {
+        try {
+            write_json_file($archivePath, $normalized);
+        } catch (Throwable $ignored) {
+            // Keep runtime resilient if file cannot be updated right now.
+        }
+    }
+
+    return $normalized;
+}
+
+function load_archive_structure(): array
+{
+    $structure = load_archive_structure_data();
+    return is_array($structure['archiveFolders'] ?? null) ? $structure['archiveFolders'] : [];
+}
+
+function load_system_archive_categories(): array
+{
+    $structure = load_archive_structure_data();
+    return is_array($structure['systemCategories'] ?? null)
+        ? $structure['systemCategories']
+        : system_archive_categories_template();
 }
 
 function normalize_archive_categories(mixed $input): array

@@ -15,18 +15,28 @@ if ($raw === false) {
 }
 
 $payload = json_decode($raw, true);
-if (!is_array($payload) || !array_key_exists('archiveFolders', $payload) || !is_array($payload['archiveFolders'])) {
+if (
+    !is_array($payload)
+    || !array_key_exists('archiveFolders', $payload)
+    || !is_array($payload['archiveFolders'])
+    || !array_key_exists('systemCategories', $payload)
+    || !is_array($payload['systemCategories'])
+) {
     json_response(['error' => 'Invalid JSON payload'], 400);
     exit;
 }
 
-$normalized = normalize_archive_structure($payload['archiveFolders']);
+$normalized = [
+    'archiveFolders' => normalize_archive_structure($payload['archiveFolders']),
+    'systemCategories' => normalize_system_archive_categories($payload['systemCategories']),
+];
 
 try {
     write_json_file(DATA_DIR . '/archive-structure.json', $normalized);
     json_response([
         'ok' => true,
-        'archiveFolders' => $normalized,
+        'archiveFolders' => $normalized['archiveFolders'],
+        'systemCategories' => $normalized['systemCategories'],
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

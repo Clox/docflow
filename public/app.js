@@ -18,9 +18,13 @@ const matchingAddRowEl = document.getElementById('matching-add-row');
 const matchingCancelEl = document.getElementById('matching-cancel');
 const matchingApplyEl = document.getElementById('matching-apply');
 const categoriesListEl = document.getElementById('categories-list');
+const systemCategoryEditorEl = document.getElementById('system-category-editor');
 const categoriesAddCategoryEl = document.getElementById('categories-add-category');
 const categoriesCancelEl = document.getElementById('categories-cancel');
 const categoriesApplyEl = document.getElementById('categories-apply');
+const archiveTabEls = Array.from(document.querySelectorAll('[data-archive-tab]'));
+const archiveViewCategoriesEl = document.getElementById('archive-view-categories');
+const archiveViewSystemEl = document.getElementById('archive-view-system');
 const settingsResetJobsEl = document.getElementById('settings-reset-jobs');
 const settingsCloseEl = document.getElementById('settings-close');
 const outputBasePathEl = document.getElementById('output-base-path');
@@ -35,6 +39,27 @@ let state = {
   categories: []
 };
 
+const SYSTEM_CATEGORIES = {
+  invoice: {
+    name: 'Faktura',
+    minScore: 2,
+    rules: [
+      { text: 'faktura', score: 4 },
+      { text: 'förfallodatum', score: 3 },
+      { text: 'faktura', score: 2 },
+      { text: 'förfallodatum', score: 3 },
+      { text: 'bankgiro', score: 5 },
+      { text: 'plusgiro', score: 5 },
+      { text: 'ocr', score: 5 },
+      { text: 'ocr-nummer', score: 5 },
+      { text: 'fakturanummer', score: 5 },
+      { text: 'autogiro', score: 3 },
+      { text: 'e-faktura', score: 4 },
+      { text: 'betalningsmottagare', score: 2 }
+    ]
+  }
+};
+
 let selectedJobId = '';
 let loadedJobId = '';
 let loadedOcrJobId = '';
@@ -45,12 +70,17 @@ let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
 let matchesRequestSeq = 0;
 let categoriesDraft = [];
+let systemCategoriesDraft = createDefaultSystemCategories();
 let matchingDraft = [];
 let activeSettingsTabId = 'clients';
+let activeArchiveTabId = 'categories';
 let clientsBaselineText = '';
 let matchingBaselineJson = '[]';
 let pathsBaselineValue = '';
-let categoriesBaselineJson = '[]';
+let categoriesBaselineJson = JSON.stringify({
+  archiveFolders: [],
+  systemCategories: systemCategoriesDraft
+});
 const selectedClientByJobId = new Map();
 const selectedCategoryByJobId = new Map();
 
@@ -564,8 +594,11 @@ function normalizedMatchingJson(replacements) {
   return JSON.stringify(replacements.map(sanitizeReplacement));
 }
 
-function normalizedCategoriesJson(categories) {
-  return JSON.stringify(categories.map(sanitizeArchiveFolder));
+function normalizedCategoriesJson(categories, systemCategories) {
+  return JSON.stringify({
+    archiveFolders: categories.map(sanitizeArchiveFolder),
+    systemCategories: sanitizeSystemCategories(systemCategories)
+  });
 }
 
 function isClientsDirty() {
@@ -577,7 +610,7 @@ function isMatchingDirty() {
 }
 
 function isCategoriesDirty() {
-  return normalizedCategoriesJson(categoriesDraft) !== categoriesBaselineJson;
+  return normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft) !== categoriesBaselineJson;
 }
 
 function isPathsDirty() {
@@ -740,6 +773,38 @@ function sanitizeArchiveFolder(archiveFolder) {
   };
 }
 
+function sanitizeSystemCategoryByKey(key, category) {
+  const defaults = SYSTEM_CATEGORIES[key];
+  const input = category && typeof category === 'object' ? category : {};
+  const rawRules = Array.isArray(input.rules) ? input.rules : [];
+  const rules = rawRules.map(sanitizeRule);
+  return {
+    name: typeof input.name === 'string' && input.name.trim() !== ''
+      ? input.name
+      : defaults.name,
+    isSystemCategory: true,
+    minScore: sanitizePositiveInt(input.minScore, sanitizePositiveInt(defaults.minScore, 1)),
+    rules: rules.length > 0 ? rules : defaults.rules.map(sanitizeRule)
+  };
+}
+
+function createDefaultSystemCategories() {
+  const categories = {};
+  Object.keys(SYSTEM_CATEGORIES).forEach((key) => {
+    categories[key] = sanitizeSystemCategoryByKey(key, SYSTEM_CATEGORIES[key]);
+  });
+  return categories;
+}
+
+function sanitizeSystemCategories(systemCategories) {
+  const input = systemCategories && typeof systemCategories === 'object' ? systemCategories : {};
+  const categories = {};
+  Object.keys(SYSTEM_CATEGORIES).forEach((key) => {
+    categories[key] = sanitizeSystemCategoryByKey(key, input[key]);
+  });
+  return categories;
+}
+
 function createFloatingField(labelText, inputEl, extraClass = '') {
   const wrapper = document.createElement('div');
   wrapper.className = 'floating-input-group' + (extraClass ? ' ' + extraClass : '');
@@ -818,6 +883,11 @@ function renderMatchingEditor() {
 function renderCategoriesEditor() {
   categoriesListEl.innerHTML = '';
 
+  const foldersLabel = document.createElement('div');
+  foldersLabel.className = 'archive-folders-label';
+  foldersLabel.textContent = 'Mappar';
+  categoriesListEl.appendChild(foldersLabel);
+
   if (categoriesDraft.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
@@ -825,11 +895,6 @@ function renderCategoriesEditor() {
     categoriesListEl.appendChild(empty);
     return;
   }
-
-  const foldersLabel = document.createElement('div');
-  foldersLabel.className = 'archive-folders-label';
-  foldersLabel.textContent = 'Mappar';
-  categoriesListEl.appendChild(foldersLabel);
 
   categoriesDraft.forEach((archiveFolder, archiveFolderIndex) => {
     const archiveFolderNode = document.createElement('div');
@@ -1059,6 +1124,181 @@ function renderCategoriesEditor() {
   updateSettingsActionButtons();
 }
 
+function renderSystemCategoryEditor() {
+  systemCategoryEditorEl.innerHTML = '';
+
+  const categoryKey = 'invoice';
+  const defaultCategory = SYSTEM_CATEGORIES[categoryKey];
+  const systemCategories = sanitizeSystemCategories(systemCategoriesDraft);
+  systemCategoriesDraft = systemCategories;
+  const category = systemCategories[categoryKey];
+
+  const label = document.createElement('div');
+  label.className = 'archive-folders-label';
+  label.textContent = 'Systemkategorier';
+  systemCategoryEditorEl.appendChild(label);
+
+  const categoryNode = document.createElement('div');
+  categoryNode.className = 'tree-node tree-category';
+  categoryNode.dataset.system = 'true';
+  categoryNode.dataset.systemCategory = 'true';
+
+  const categoryRow = document.createElement('div');
+  categoryRow.className = 'tree-row';
+
+  const categoryDot = document.createElement('span');
+  categoryDot.className = 'tree-dot';
+  categoryRow.appendChild(categoryDot);
+
+  const categoryBody = document.createElement('div');
+  categoryBody.className = 'tree-body category-body';
+
+  const fields = document.createElement('div');
+  fields.className = 'category-fields';
+
+  const categoryNameInput = document.createElement('input');
+  categoryNameInput.type = 'text';
+  categoryNameInput.placeholder = 'Ex: "Faktura"';
+  categoryNameInput.value = category.name;
+  categoryNameInput.addEventListener('input', () => {
+    systemCategoriesDraft[categoryKey].name = categoryNameInput.value;
+    updateSettingsActionButtons();
+  });
+
+  const minScoreInput = document.createElement('input');
+  minScoreInput.type = 'number';
+  minScoreInput.step = '1';
+  minScoreInput.min = '1';
+  minScoreInput.value = String(category.minScore);
+  minScoreInput.addEventListener('input', () => {
+    systemCategoriesDraft[categoryKey].minScore = sanitizePositiveInt(minScoreInput.value, 1);
+    updateSettingsActionButtons();
+  });
+
+  const spacer = document.createElement('div');
+  spacer.className = 'rule-remove-placeholder';
+
+  fields.appendChild(createFloatingField('Namn', categoryNameInput));
+  fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
+  fields.appendChild(spacer);
+  categoryBody.appendChild(fields);
+
+  const ruleList = document.createElement('div');
+  ruleList.className = 'tree-children';
+
+  const rulesLabel = document.createElement('div');
+  rulesLabel.className = 'archive-level-label';
+  rulesLabel.textContent = 'Regler';
+  ruleList.appendChild(rulesLabel);
+
+  category.rules.forEach((rule, ruleIndex) => {
+    const ruleNode = document.createElement('div');
+    ruleNode.className = 'tree-node tree-rule has-parent';
+
+    const ruleRow = document.createElement('div');
+    ruleRow.className = 'tree-row';
+
+    const ruleDot = document.createElement('span');
+    ruleDot.className = 'tree-dot';
+    ruleRow.appendChild(ruleDot);
+
+    const ruleBody = document.createElement('div');
+    ruleBody.className = 'tree-body rule-body';
+
+    const ruleFields = document.createElement('div');
+    ruleFields.className = 'rule-fields';
+
+    const textInput = document.createElement('input');
+    textInput.type = 'text';
+    textInput.placeholder = 'Ex: "Förfallodatum"';
+    textInput.value = rule.text;
+    textInput.addEventListener('input', () => {
+      systemCategoriesDraft[categoryKey].rules[ruleIndex].text = textInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const scoreInput = document.createElement('input');
+    scoreInput.type = 'number';
+    scoreInput.step = '1';
+    scoreInput.min = '1';
+    scoreInput.value = String(rule.score);
+    scoreInput.addEventListener('input', () => {
+      systemCategoriesDraft[categoryKey].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+      updateSettingsActionButtons();
+    });
+
+    ruleFields.appendChild(createFloatingField('Regeltext', textInput));
+    ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
+
+    if (ruleIndex > 0) {
+      const removeRuleButton = document.createElement('button');
+      removeRuleButton.type = 'button';
+      removeRuleButton.className = 'rule-remove';
+      removeRuleButton.textContent = 'Ta bort';
+      removeRuleButton.addEventListener('click', () => {
+        systemCategoriesDraft[categoryKey].rules.splice(ruleIndex, 1);
+        if (systemCategoriesDraft[categoryKey].rules.length === 0) {
+          systemCategoriesDraft[categoryKey].rules.push(defaultRule());
+        }
+        renderSystemCategoryEditor();
+        updateSettingsActionButtons();
+      });
+      ruleFields.appendChild(removeRuleButton);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'rule-remove-placeholder';
+      ruleFields.appendChild(placeholder);
+    }
+
+    ruleBody.appendChild(ruleFields);
+    ruleRow.appendChild(ruleBody);
+    ruleNode.appendChild(ruleRow);
+    ruleList.appendChild(ruleNode);
+  });
+
+  categoryBody.appendChild(ruleList);
+
+  const ruleActions = document.createElement('div');
+  ruleActions.className = 'category-rule-actions';
+
+  const addRuleButton = document.createElement('button');
+  addRuleButton.type = 'button';
+  addRuleButton.textContent = 'Lägg till regel';
+  addRuleButton.addEventListener('click', () => {
+    systemCategoriesDraft[categoryKey].rules.push(defaultRule());
+    renderSystemCategoryEditor();
+    updateSettingsActionButtons();
+  });
+
+  const restoreButton = document.createElement('button');
+  restoreButton.type = 'button';
+  restoreButton.textContent = 'Återställ';
+  restoreButton.addEventListener('click', () => {
+    systemCategoriesDraft[categoryKey].rules = defaultCategory.rules.map(sanitizeRule);
+    renderSystemCategoryEditor();
+    updateSettingsActionButtons();
+  });
+
+  ruleActions.appendChild(addRuleButton);
+  ruleActions.appendChild(restoreButton);
+  categoryBody.appendChild(ruleActions);
+
+  categoryRow.appendChild(categoryBody);
+  categoryNode.appendChild(categoryRow);
+  systemCategoryEditorEl.appendChild(categoryNode);
+}
+
+function setArchiveTab(tabId) {
+  activeArchiveTabId = tabId === 'system' ? 'system' : 'categories';
+  archiveTabEls.forEach((button) => {
+    const isActive = button.dataset.archiveTab === activeArchiveTabId;
+    button.classList.toggle('active', isActive);
+  });
+
+  archiveViewCategoriesEl.classList.toggle('hidden', activeArchiveTabId !== 'categories');
+  archiveViewSystemEl.classList.toggle('hidden', activeArchiveTabId !== 'system');
+}
+
 async function loadClientsText() {
   const response = await fetch('/api/get-clients.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -1119,13 +1359,15 @@ async function loadCategories() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.archiveFolders)) {
+  if (!payload || !Array.isArray(payload.archiveFolders) || !payload.systemCategories || typeof payload.systemCategories !== 'object') {
     throw new Error('Invalid archive structure response');
   }
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+  systemCategoriesDraft = sanitizeSystemCategories(payload.systemCategories);
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
   renderCategoriesEditor();
+  renderSystemCategoryEditor();
   updateSettingsActionButtons();
 }
 
@@ -1177,16 +1419,27 @@ async function saveMatchingSettings() {
 
 async function saveCategories() {
   const normalized = categoriesDraft.map(sanitizeArchiveFolder);
+  const normalizedSystemCategories = sanitizeSystemCategories(systemCategoriesDraft);
   const response = await fetch('/api/save-categories.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ archiveFolders: normalized })
+    body: JSON.stringify({
+      archiveFolders: normalized,
+      systemCategories: normalizedSystemCategories
+    })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.archiveFolders)) {
+  if (
+    !response.ok
+    || !payload
+    || payload.ok !== true
+    || !Array.isArray(payload.archiveFolders)
+    || !payload.systemCategories
+    || typeof payload.systemCategories !== 'object'
+  ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Failed to save archive structure';
@@ -1194,8 +1447,10 @@ async function saveCategories() {
   }
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+  systemCategoriesDraft = sanitizeSystemCategories(payload.systemCategories);
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
   renderCategoriesEditor();
+  renderSystemCategoryEditor();
   updateSettingsActionButtons();
 }
 
@@ -1327,10 +1582,13 @@ settingsButtonEl.addEventListener('click', async () => {
   } catch (error) {
     alert('Could not load archive structure.');
     categoriesDraft = [];
-    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+    systemCategoriesDraft = createDefaultSystemCategories();
+    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
     renderCategoriesEditor();
+    renderSystemCategoryEditor();
     updateSettingsActionButtons();
   }
+  setArchiveTab('categories');
   clientsTextareaEl.focus();
   updateSettingsActionButtons();
 });
@@ -1386,14 +1644,21 @@ categoriesAddCategoryEl.addEventListener('click', () => {
 });
 
 categoriesCancelEl.addEventListener('click', () => {
-  let parsed = [];
+  let parsed = {};
   try {
     parsed = JSON.parse(categoriesBaselineJson);
   } catch (error) {
-    parsed = [];
+    parsed = {};
   }
-  categoriesDraft = Array.isArray(parsed) ? parsed.map(sanitizeArchiveFolder) : [];
+  const archiveFolders = Array.isArray(parsed.archiveFolders) ? parsed.archiveFolders : [];
+  const systemCategories = parsed.systemCategories && typeof parsed.systemCategories === 'object'
+    ? parsed.systemCategories
+    : createDefaultSystemCategories();
+
+  categoriesDraft = archiveFolders.map(sanitizeArchiveFolder);
+  systemCategoriesDraft = sanitizeSystemCategories(systemCategories);
   renderCategoriesEditor();
+  renderSystemCategoryEditor();
   updateSettingsActionButtons();
 });
 
@@ -1403,6 +1668,16 @@ categoriesApplyEl.addEventListener('click', async () => {
   } catch (error) {
     alert(error.message || 'Could not save archive structure.');
   }
+});
+
+archiveTabEls.forEach((tabButton) => {
+  tabButton.addEventListener('click', () => {
+    const tabId = tabButton.dataset.archiveTab;
+    if (!tabId || tabId === activeArchiveTabId) {
+      return;
+    }
+    setArchiveTab(tabId);
+  });
 });
 
 settingsTabEls.forEach((tabButton) => {

@@ -106,10 +106,22 @@
         <div id="settings-panel-categories" class="settings-panel hidden">
           <h3>Arkivstruktur</h3>
           <p>Bygg upp mappar med kategorier och regler (Mapp → Kategori → Regel).</p>
-          <div id="categories-list" class="categories-list"></div>
-          <div class="categories-actions">
-            <button id="categories-add-category" type="button">Lägg till mapp</button>
+          <div class="archive-subtabs">
+            <button id="archive-tab-categories" class="archive-subtab active" type="button" data-archive-tab="categories">Kategorier</button>
+            <button id="archive-tab-system" class="archive-subtab" type="button" data-archive-tab="system">Systemkategorier</button>
           </div>
+
+          <div id="archive-view-categories" class="archive-view">
+            <div id="categories-list" class="categories-list"></div>
+            <div class="categories-actions">
+              <button id="categories-add-category" type="button">Lägg till mapp</button>
+            </div>
+          </div>
+
+          <div id="archive-view-system" class="archive-view hidden">
+            <div id="system-category-editor" class="categories-list"></div>
+          </div>
+
           <div class="panel-actions">
             <button id="categories-cancel" type="button">Cancel</button>
             <button id="categories-apply" type="button">Apply</button>

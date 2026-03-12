@@ -457,6 +457,34 @@ body {
   overflow: auto;
 }
 
+.archive-subtabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.archive-subtab {
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f3f4f6;
+  cursor: pointer;
+}
+
+.archive-subtab:hover {
+  background: #eaecef;
+}
+
+.archive-subtab.active {
+  background: #dbeafe;
+  border-color: #b6d2fd;
+}
+
+.archive-view {
+  min-height: 0;
+}
+
 .matching-list {
   border: 1px solid #ddd;
   border-radius: 6px;
@@ -654,6 +682,12 @@ body {
   padding: 6px 8px;
   border: 1px solid #ccc;
   border-radius: 4px;
+}
+
+.folder-fields input:disabled,
+.category-fields input:disabled {
+  background: #f3f4f6;
+  color: #444;
 }
 
 .rule-fields {
