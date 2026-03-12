@@ -827,27 +827,18 @@ function renderCategoriesEditor() {
   }
 
   categoriesDraft.forEach((section, sectionIndex) => {
-    const sectionCard = document.createElement('div');
-    sectionCard.className = 'section-card';
+    const sectionNode = document.createElement('div');
+    sectionNode.className = 'tree-node tree-section';
 
-    const sectionHeader = document.createElement('div');
-    sectionHeader.className = 'section-header';
+    const sectionRow = document.createElement('div');
+    sectionRow.className = 'tree-row';
 
-    const sectionTitle = document.createElement('span');
-    sectionTitle.textContent = `Sektion ${sectionIndex + 1}`;
-    sectionHeader.appendChild(sectionTitle);
+    const sectionDot = document.createElement('span');
+    sectionDot.className = 'tree-dot';
+    sectionRow.appendChild(sectionDot);
 
-    const removeSectionButton = document.createElement('button');
-    removeSectionButton.type = 'button';
-    removeSectionButton.className = 'category-remove';
-    removeSectionButton.textContent = 'Ta bort sektion';
-    removeSectionButton.addEventListener('click', () => {
-      categoriesDraft.splice(sectionIndex, 1);
-      renderCategoriesEditor();
-      updateSettingsActionButtons();
-    });
-    sectionHeader.appendChild(removeSectionButton);
-    sectionCard.appendChild(sectionHeader);
+    const sectionBody = document.createElement('div');
+    sectionBody.className = 'tree-body section-body';
 
     const sectionFields = document.createElement('div');
     sectionFields.className = 'section-fields';
@@ -870,22 +861,37 @@ function renderCategoriesEditor() {
       updateSettingsActionButtons();
     });
 
+    const removeSectionButton = document.createElement('button');
+    removeSectionButton.type = 'button';
+    removeSectionButton.className = 'category-remove';
+    removeSectionButton.textContent = 'Ta bort sektion';
+    removeSectionButton.addEventListener('click', () => {
+      categoriesDraft.splice(sectionIndex, 1);
+      renderCategoriesEditor();
+      updateSettingsActionButtons();
+    });
+
     sectionFields.appendChild(createFloatingField('Namn', sectionNameInput));
     sectionFields.appendChild(createFloatingField('Sökväg', sectionPathInput));
-    sectionCard.appendChild(sectionFields);
+    sectionFields.appendChild(removeSectionButton);
+    sectionBody.appendChild(sectionFields);
 
     const sectionCategories = document.createElement('div');
-    sectionCategories.className = 'section-categories';
+    sectionCategories.className = 'tree-children';
 
     section.categories.forEach((category, categoryIndex) => {
-      const card = document.createElement('div');
-      card.className = 'category-card';
+      const categoryNode = document.createElement('div');
+      categoryNode.className = 'tree-node tree-category has-parent';
 
-      const header = document.createElement('div');
-      header.className = 'category-header';
-      const title = document.createElement('span');
-      title.textContent = `Kategori ${categoryIndex + 1}`;
-      header.appendChild(title);
+      const categoryRow = document.createElement('div');
+      categoryRow.className = 'tree-row';
+
+      const categoryDot = document.createElement('span');
+      categoryDot.className = 'tree-dot';
+      categoryRow.appendChild(categoryDot);
+
+      const categoryBody = document.createElement('div');
+      categoryBody.className = 'tree-body category-body';
 
       const removeCategoryButton = document.createElement('button');
       removeCategoryButton.type = 'button';
@@ -899,8 +905,6 @@ function renderCategoriesEditor() {
         renderCategoriesEditor();
         updateSettingsActionButtons();
       });
-      header.appendChild(removeCategoryButton);
-      card.appendChild(header);
 
       const fields = document.createElement('div');
       fields.className = 'category-fields';
@@ -926,14 +930,28 @@ function renderCategoriesEditor() {
 
       fields.appendChild(createFloatingField('Namn', categoryNameInput));
       fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
-      card.appendChild(fields);
+      fields.appendChild(removeCategoryButton);
+      categoryBody.appendChild(fields);
 
       const ruleList = document.createElement('div');
-      ruleList.className = 'rule-list';
+      ruleList.className = 'tree-children';
 
       category.rules.forEach((rule, ruleIndex) => {
+        const ruleNode = document.createElement('div');
+        ruleNode.className = 'tree-node tree-rule has-parent';
+
         const ruleRow = document.createElement('div');
-        ruleRow.className = 'rule-row';
+        ruleRow.className = 'tree-row';
+
+        const ruleDot = document.createElement('span');
+        ruleDot.className = 'tree-dot';
+        ruleRow.appendChild(ruleDot);
+
+        const ruleBody = document.createElement('div');
+        ruleBody.className = 'tree-body rule-body';
+
+        const ruleFields = document.createElement('div');
+        ruleFields.className = 'rule-fields';
 
         const textInput = document.createElement('input');
         textInput.type = 'text';
@@ -954,8 +972,8 @@ function renderCategoriesEditor() {
           updateSettingsActionButtons();
         });
 
-        ruleRow.appendChild(createFloatingField('Regeltext', textInput));
-        ruleRow.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
+        ruleFields.appendChild(createFloatingField('Regeltext', textInput));
+        ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
 
         if (ruleIndex > 0) {
           const removeRuleButton = document.createElement('button');
@@ -970,17 +988,20 @@ function renderCategoriesEditor() {
             renderCategoriesEditor();
             updateSettingsActionButtons();
           });
-          ruleRow.appendChild(removeRuleButton);
+          ruleFields.appendChild(removeRuleButton);
         } else {
           const placeholder = document.createElement('div');
           placeholder.className = 'rule-remove-placeholder';
-          ruleRow.appendChild(placeholder);
+          ruleFields.appendChild(placeholder);
         }
 
-        ruleList.appendChild(ruleRow);
+        ruleBody.appendChild(ruleFields);
+        ruleRow.appendChild(ruleBody);
+        ruleNode.appendChild(ruleRow);
+        ruleList.appendChild(ruleNode);
       });
 
-      card.appendChild(ruleList);
+      categoryBody.appendChild(ruleList);
 
       const ruleActions = document.createElement('div');
       ruleActions.className = 'category-rule-actions';
@@ -993,12 +1014,14 @@ function renderCategoriesEditor() {
         updateSettingsActionButtons();
       });
       ruleActions.appendChild(addRuleButton);
-      card.appendChild(ruleActions);
+      categoryBody.appendChild(ruleActions);
 
-      sectionCategories.appendChild(card);
+      categoryRow.appendChild(categoryBody);
+      categoryNode.appendChild(categoryRow);
+      sectionCategories.appendChild(categoryNode);
     });
 
-    sectionCard.appendChild(sectionCategories);
+    sectionBody.appendChild(sectionCategories);
 
     const categoryActions = document.createElement('div');
     categoryActions.className = 'section-actions';
@@ -1011,9 +1034,11 @@ function renderCategoriesEditor() {
       updateSettingsActionButtons();
     });
     categoryActions.appendChild(addCategoryButton);
-    sectionCard.appendChild(categoryActions);
+    sectionBody.appendChild(categoryActions);
 
-    categoriesListEl.appendChild(sectionCard);
+    sectionRow.appendChild(sectionBody);
+    sectionNode.appendChild(sectionRow);
+    categoriesListEl.appendChild(sectionNode);
   });
 
   updateSettingsActionButtons();
