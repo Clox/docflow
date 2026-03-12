@@ -153,51 +153,139 @@ function positive_int(mixed $value, int $fallback = 1): int
 
 function load_categories(): array
 {
-    $categoriesPath = DATA_DIR . '/categories.json';
-    if (!is_file($categoriesPath)) {
+    $sections = load_archive_structure();
+    $categories = [];
+
+    foreach ($sections as $sectionIndex => $section) {
+        if (!is_array($section)) {
+            continue;
+        }
+
+        $sectionName = is_string($section['name'] ?? null) ? trim((string) $section['name']) : '';
+        $sectionPath = is_string($section['path'] ?? null) ? trim((string) $section['path']) : '';
+        $sectionCategories = $section['categories'] ?? [];
+        if (!is_array($sectionCategories)) {
+            continue;
+        }
+
+        foreach ($sectionCategories as $categoryIndex => $category) {
+            if (!is_array($category)) {
+                continue;
+            }
+
+            $rulesIn = $category['rules'] ?? [];
+            $rules = [];
+            if (is_array($rulesIn)) {
+                foreach ($rulesIn as $ruleIn) {
+                    if (!is_array($ruleIn)) {
+                        continue;
+                    }
+
+                    $rules[] = [
+                        'text' => is_string($ruleIn['text'] ?? null) ? trim((string) $ruleIn['text']) : '',
+                        'score' => positive_int($ruleIn['score'] ?? 1, 1),
+                    ];
+                }
+            }
+
+            $categories[] = [
+                'id' => 's' . $sectionIndex . '_c' . $categoryIndex,
+                'name' => is_string($category['name'] ?? null) ? trim((string) $category['name']) : '',
+                'path' => $sectionPath,
+                'sectionName' => $sectionName,
+                'minScore' => positive_int($category['minScore'] ?? 1, 1),
+                'rules' => $rules,
+            ];
+        }
+    }
+
+    return $categories;
+}
+
+function load_archive_structure(): array
+{
+    $archivePath = DATA_DIR . '/archive-structure.json';
+    if (!is_file($archivePath)) {
         return [];
     }
 
-    $raw = file_get_contents($categoriesPath);
+    $raw = file_get_contents($archivePath);
     if ($raw === false || trim($raw) === '') {
         return [];
     }
 
-    $data = json_decode($raw, true);
-    if (!is_array($data)) {
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
         return [];
     }
 
-    $categories = [];
-    foreach ($data as $row) {
+    return normalize_archive_structure($decoded);
+}
+
+function normalize_archive_structure(array $input): array
+{
+    $sections = [];
+    foreach ($input as $row) {
         if (!is_array($row)) {
             continue;
         }
 
-        $rulesIn = $row['rules'] ?? [];
-        $rules = [];
-        if (is_array($rulesIn)) {
-            foreach ($rulesIn as $ruleIn) {
-                if (!is_array($ruleIn)) {
-                    continue;
-                }
-
-                $rules[] = [
-                    'text' => is_string($ruleIn['text'] ?? null) ? trim((string) $ruleIn['text']) : '',
-                    'score' => positive_int($ruleIn['score'] ?? 1, 1),
-                ];
-            }
-        }
-
-        $categories[] = [
+        $sections[] = [
             'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
             'path' => is_string($row['path'] ?? null) ? trim((string) $row['path']) : '',
-            'minScore' => positive_int($row['minScore'] ?? 1, 1),
-            'rules' => $rules,
+            'categories' => normalize_archive_categories($row['categories'] ?? []),
         ];
     }
 
+    return $sections;
+}
+
+function normalize_archive_categories(mixed $input): array
+{
+    if (!is_array($input)) {
+        return [];
+    }
+
+    $categories = [];
+    foreach ($input as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $categories[] = normalize_archive_category($row);
+    }
+
     return $categories;
+}
+
+function normalize_archive_category(array $input): array
+{
+    $rulesIn = $input['rules'] ?? [];
+    $rules = [];
+    if (is_array($rulesIn)) {
+        foreach ($rulesIn as $ruleIn) {
+            if (!is_array($ruleIn)) {
+                continue;
+            }
+
+            $rules[] = [
+                'text' => is_string($ruleIn['text'] ?? null) ? trim((string) $ruleIn['text']) : '',
+                'score' => positive_int($ruleIn['score'] ?? 1, 1),
+            ];
+        }
+    }
+
+    if (count($rules) === 0) {
+        $rules[] = [
+            'text' => '',
+            'score' => 1,
+        ];
+    }
+
+    return [
+        'name' => is_string($input['name'] ?? null) ? trim((string) $input['name']) : '',
+        'minScore' => positive_int($input['minScore'] ?? 1, 1),
+        'rules' => $rules,
+    ];
 }
 
 function load_matching_settings(): array
@@ -533,10 +621,15 @@ function find_category_matches(string $ocrText, array $categories, array $replac
         }
 
         $minScore = positive_int($category['minScore'] ?? 1, 1);
+        $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
         $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
         $categoryPath = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
+        $sectionName = is_string($category['sectionName'] ?? null) ? trim((string) $category['sectionName']) : '';
+        if ($categoryId === '') {
+            continue;
+        }
         if ($categoryName === '') {
-            $categoryName = $categoryPath !== '' ? $categoryPath : 'Unnamed category';
+            $categoryName = 'Unnamed category';
         }
 
         $score = 0;
@@ -573,8 +666,10 @@ function find_category_matches(string $ocrText, array $categories, array $replac
         }
 
         $matches[] = [
+            'id' => $categoryId,
             'name' => $categoryName,
             'path' => $categoryPath,
+            'sectionName' => $sectionName,
             'minScore' => $minScore,
             'score' => $score,
             'matchedRules' => $matchedRules,
@@ -873,20 +968,20 @@ function read_jobs_state(array $config): array
     $jobsDir = $config['jobsDirectory'];
     ensure_directory($jobsDir);
     $categories = load_categories();
-    $categoryOrderByName = [];
+    $categoryOrderById = [];
+    $categoryNameById = [];
     foreach ($categories as $index => $category) {
         if (!is_array($category)) {
             continue;
         }
 
-        $name = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
-        $path = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
-        $displayName = $name !== '' ? $name : $path;
-        if ($displayName === '' || isset($categoryOrderByName[$displayName])) {
-            continue;
-        }
+        $id = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
+        $order = is_int($index) ? $index : 999999;
 
-        $categoryOrderByName[$displayName] = is_int($index) ? $index : 999999;
+        if ($id !== '' && !isset($categoryOrderById[$id])) {
+            $categoryOrderById[$id] = $order;
+            $categoryNameById[$id] = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
+        }
     }
 
     $entries = scandir($jobsDir);
@@ -918,12 +1013,16 @@ function read_jobs_state(array $config): array
         }
 
         $status = $job['status'] ?? '';
-        $id = is_string($job['id'] ?? null) ? $job['id'] : $entry;
+        $id = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+        if ($id === '') {
+            $id = $entry;
+        }
         $originalFilename = is_string($job['originalFilename'] ?? null) ? $job['originalFilename'] : 'unknown.pdf';
         $createdAt = is_string($job['createdAt'] ?? null) ? $job['createdAt'] : '';
 
         if ($status === 'ready') {
             $matchedClientDirName = null;
+            $topMatchedCategoryId = null;
             $topMatchedCategoryName = null;
             $topMatchedCategoryScore = null;
             $extracted = load_json_file($jobDir . '/extracted.json');
@@ -941,26 +1040,30 @@ function read_jobs_state(array $config): array
                         continue;
                     }
 
-                    $name = is_string($categoryMatch['name'] ?? null) ? trim((string) $categoryMatch['name']) : '';
+                    $categoryId = is_string($categoryMatch['id'] ?? null) ? trim((string) $categoryMatch['id']) : '';
                     $score = $categoryMatch['score'] ?? null;
                     $numericScore = is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))
                         ? (float) $score
                         : null;
 
-                    if ($name === '' || $numericScore === null || $numericScore <= 0) {
+                    if ($categoryId === '' || $numericScore === null || $numericScore <= 0) {
                         continue;
                     }
 
-                    $order = isset($categoryOrderByName[$name]) ? (int) $categoryOrderByName[$name] : 999999;
+                    $order = isset($categoryOrderById[$categoryId]) ? (int) $categoryOrderById[$categoryId] : 999999;
+                    $resolvedName = isset($categoryNameById[$categoryId]) ? (string) $categoryNameById[$categoryId] : '';
+
                     if ($topMatchedCategoryScore === null || $numericScore > $topMatchedCategoryScore) {
-                        $topMatchedCategoryName = $name;
+                        $topMatchedCategoryId = $categoryId;
+                        $topMatchedCategoryName = $resolvedName;
                         $topMatchedCategoryScore = $numericScore;
                         $bestOrder = $order;
                         continue;
                     }
 
                     if ($numericScore === $topMatchedCategoryScore && $order < $bestOrder) {
-                        $topMatchedCategoryName = $name;
+                        $topMatchedCategoryId = $categoryId;
+                        $topMatchedCategoryName = $resolvedName;
                         $topMatchedCategoryScore = $numericScore;
                         $bestOrder = $order;
                     }
@@ -973,6 +1076,7 @@ function read_jobs_state(array $config): array
                 'status' => 'ready',
                 'createdAt' => $createdAt,
                 'matchedClientDirName' => $matchedClientDirName,
+                'topMatchedCategoryId' => $topMatchedCategoryId,
                 'topMatchedCategoryName' => $topMatchedCategoryName,
                 'topMatchedCategoryScore' => $topMatchedCategoryScore,
             ];

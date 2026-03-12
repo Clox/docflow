@@ -102,12 +102,16 @@ function renderCategorySelect(categories) {
 
   categories.forEach((category) => {
     const displayName = categoryDisplayName(category);
+    const id = category && typeof category.id === 'string' ? category.id.trim() : '';
+    if (id === '') {
+      return;
+    }
     if (displayName === '') {
       return;
     }
 
     const option = document.createElement('option');
-    option.value = displayName;
+    option.value = id;
     option.textContent = displayName;
     categorySelectEl.appendChild(option);
   });
@@ -170,16 +174,16 @@ function setCategoryForJob(job) {
   }
 
   const topScore = Number(job.topMatchedCategoryScore ?? 0);
-  const topName = typeof job.topMatchedCategoryName === 'string' ? job.topMatchedCategoryName : '';
-  if (!(topScore > 0) || topName === '') {
+  const topId = typeof job.topMatchedCategoryId === 'string' ? job.topMatchedCategoryId : '';
+  if (!(topScore > 0) || topId === '') {
     categorySelectEl.value = '';
     return;
   }
 
-  const hasOption = Array.from(categorySelectEl.options).some(
-    (option) => option.value === topName
+  const hasOptionById = Array.from(categorySelectEl.options).some(
+    (option) => option.value === topId
   );
-  categorySelectEl.value = hasOption ? topName : '';
+  categorySelectEl.value = hasOptionById ? topId : '';
 }
 
 function setViewerJob(jobId) {
@@ -561,7 +565,7 @@ function normalizedMatchingJson(replacements) {
 }
 
 function normalizedCategoriesJson(categories) {
-  return JSON.stringify(categories.map(sanitizeCategory));
+  return JSON.stringify(categories.map(sanitizeSection));
 }
 
 function isClientsDirty() {
@@ -670,9 +674,16 @@ function defaultRule() {
 function defaultCategory() {
   return {
     name: '',
-    path: '',
     minScore: 1,
     rules: [defaultRule()]
+  };
+}
+
+function defaultSection() {
+  return {
+    name: '',
+    path: '',
+    categories: [defaultCategory()]
   };
 }
 
@@ -713,9 +724,19 @@ function sanitizeCategory(category) {
   const rules = rawRules.map(sanitizeRule);
   return {
     name: typeof input.name === 'string' ? input.name : '',
-    path: typeof input.path === 'string' ? input.path : '',
     minScore: sanitizePositiveInt(input.minScore, 1),
     rules: rules.length > 0 ? rules : [defaultRule()]
+  };
+}
+
+function sanitizeSection(section) {
+  const input = section && typeof section === 'object' ? section : {};
+  const rawCategories = Array.isArray(input.categories) ? input.categories : [];
+  const categories = rawCategories.map(sanitizeCategory);
+  return {
+    name: typeof input.name === 'string' ? input.name : '',
+    path: typeof input.path === 'string' ? input.path : '',
+    categories: categories.length > 0 ? categories : [defaultCategory()]
   };
 }
 
@@ -800,137 +821,199 @@ function renderCategoriesEditor() {
   if (categoriesDraft.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
-    empty.textContent = 'No categories yet.';
+    empty.textContent = 'Inga sektioner ännu.';
     categoriesListEl.appendChild(empty);
     return;
   }
 
-  categoriesDraft.forEach((category, categoryIndex) => {
-    const card = document.createElement('div');
-    card.className = 'category-card';
+  categoriesDraft.forEach((section, sectionIndex) => {
+    const sectionCard = document.createElement('div');
+    sectionCard.className = 'section-card';
 
-    const header = document.createElement('div');
-    header.className = 'category-header';
-    const title = document.createElement('span');
-    title.textContent = `Category ${categoryIndex + 1}`;
-    const removeCategoryButton = document.createElement('button');
-    removeCategoryButton.type = 'button';
-    removeCategoryButton.className = 'category-remove';
-    removeCategoryButton.textContent = 'Remove';
-    removeCategoryButton.addEventListener('click', () => {
-      categoriesDraft.splice(categoryIndex, 1);
+    const sectionHeader = document.createElement('div');
+    sectionHeader.className = 'section-header';
+
+    const sectionTitle = document.createElement('span');
+    sectionTitle.textContent = `Sektion ${sectionIndex + 1}`;
+    sectionHeader.appendChild(sectionTitle);
+
+    const removeSectionButton = document.createElement('button');
+    removeSectionButton.type = 'button';
+    removeSectionButton.className = 'category-remove';
+    removeSectionButton.textContent = 'Ta bort sektion';
+    removeSectionButton.addEventListener('click', () => {
+      categoriesDraft.splice(sectionIndex, 1);
       renderCategoriesEditor();
       updateSettingsActionButtons();
     });
-    header.appendChild(title);
-    header.appendChild(removeCategoryButton);
-    card.appendChild(header);
+    sectionHeader.appendChild(removeSectionButton);
+    sectionCard.appendChild(sectionHeader);
 
-    const fields = document.createElement('div');
-    fields.className = 'category-fields';
+    const sectionFields = document.createElement('div');
+    sectionFields.className = 'section-fields';
 
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.placeholder = 'Ex: "Fakturor"';
-    nameInput.value = category.name;
-    nameInput.addEventListener('input', () => {
-      categoriesDraft[categoryIndex].name = nameInput.value;
+    const sectionNameInput = document.createElement('input');
+    sectionNameInput.type = 'text';
+    sectionNameInput.placeholder = 'Ex: "Dokument"';
+    sectionNameInput.value = section.name;
+    sectionNameInput.addEventListener('input', () => {
+      categoriesDraft[sectionIndex].name = sectionNameInput.value;
       updateSettingsActionButtons();
     });
 
-    const pathInput = document.createElement('input');
-    pathInput.type = 'text';
-    pathInput.placeholder = 'Ex: "dokument/fakturor"';
-    pathInput.value = category.path;
-    pathInput.addEventListener('input', () => {
-      categoriesDraft[categoryIndex].path = pathInput.value;
+    const sectionPathInput = document.createElement('input');
+    sectionPathInput.type = 'text';
+    sectionPathInput.placeholder = 'Ex: "dokument"';
+    sectionPathInput.value = section.path;
+    sectionPathInput.addEventListener('input', () => {
+      categoriesDraft[sectionIndex].path = sectionPathInput.value;
       updateSettingsActionButtons();
     });
 
-    const minScoreInput = document.createElement('input');
-    minScoreInput.type = 'number';
-    minScoreInput.step = '1';
-    minScoreInput.min = '1';
-    minScoreInput.placeholder = 'Min score';
-    minScoreInput.value = String(category.minScore);
-    minScoreInput.addEventListener('input', () => {
-      categoriesDraft[categoryIndex].minScore = sanitizePositiveInt(minScoreInput.value, 1);
-      updateSettingsActionButtons();
-    });
+    sectionFields.appendChild(createFloatingField('Namn', sectionNameInput));
+    sectionFields.appendChild(createFloatingField('Sökväg', sectionPathInput));
+    sectionCard.appendChild(sectionFields);
 
-    fields.appendChild(createFloatingField('Name', nameInput));
-    fields.appendChild(createFloatingField('Path', pathInput));
-    fields.appendChild(createFloatingField('Min score', minScoreInput, 'score-field'));
-    card.appendChild(fields);
+    const sectionCategories = document.createElement('div');
+    sectionCategories.className = 'section-categories';
 
-    const ruleList = document.createElement('div');
-    ruleList.className = 'rule-list';
+    section.categories.forEach((category, categoryIndex) => {
+      const card = document.createElement('div');
+      card.className = 'category-card';
 
-    category.rules.forEach((rule, ruleIndex) => {
-      const ruleRow = document.createElement('div');
-      ruleRow.className = 'rule-row';
+      const header = document.createElement('div');
+      header.className = 'category-header';
+      const title = document.createElement('span');
+      title.textContent = `Kategori ${categoryIndex + 1}`;
+      header.appendChild(title);
 
-      const textInput = document.createElement('input');
-      textInput.type = 'text';
-      textInput.placeholder = 'Ex: "Förfallodatum"';
-      textInput.value = rule.text;
-      textInput.addEventListener('input', () => {
-        categoriesDraft[categoryIndex].rules[ruleIndex].text = textInput.value;
+      const removeCategoryButton = document.createElement('button');
+      removeCategoryButton.type = 'button';
+      removeCategoryButton.className = 'category-remove';
+      removeCategoryButton.textContent = 'Ta bort kategori';
+      removeCategoryButton.addEventListener('click', () => {
+        categoriesDraft[sectionIndex].categories.splice(categoryIndex, 1);
+        if (categoriesDraft[sectionIndex].categories.length === 0) {
+          categoriesDraft[sectionIndex].categories.push(defaultCategory());
+        }
+        renderCategoriesEditor();
+        updateSettingsActionButtons();
+      });
+      header.appendChild(removeCategoryButton);
+      card.appendChild(header);
+
+      const fields = document.createElement('div');
+      fields.className = 'category-fields';
+
+      const categoryNameInput = document.createElement('input');
+      categoryNameInput.type = 'text';
+      categoryNameInput.placeholder = 'Ex: "Fakturor"';
+      categoryNameInput.value = category.name;
+      categoryNameInput.addEventListener('input', () => {
+        categoriesDraft[sectionIndex].categories[categoryIndex].name = categoryNameInput.value;
         updateSettingsActionButtons();
       });
 
-      const scoreInput = document.createElement('input');
-      scoreInput.type = 'number';
-      scoreInput.step = '1';
-      scoreInput.min = '1';
-      scoreInput.value = String(rule.score);
-      scoreInput.addEventListener('input', () => {
-        categoriesDraft[categoryIndex].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+      const minScoreInput = document.createElement('input');
+      minScoreInput.type = 'number';
+      minScoreInput.step = '1';
+      minScoreInput.min = '1';
+      minScoreInput.value = String(category.minScore);
+      minScoreInput.addEventListener('input', () => {
+        categoriesDraft[sectionIndex].categories[categoryIndex].minScore = sanitizePositiveInt(minScoreInput.value, 1);
         updateSettingsActionButtons();
       });
 
-      ruleRow.appendChild(createFloatingField('Match text', textInput));
-      ruleRow.appendChild(createFloatingField('Score', scoreInput, 'score-field'));
+      fields.appendChild(createFloatingField('Namn', categoryNameInput));
+      fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
+      card.appendChild(fields);
 
-      if (ruleIndex > 0) {
-        const removeRuleButton = document.createElement('button');
-        removeRuleButton.type = 'button';
-        removeRuleButton.className = 'rule-remove';
-        removeRuleButton.textContent = 'Remove';
-        removeRuleButton.addEventListener('click', () => {
-          categoriesDraft[categoryIndex].rules.splice(ruleIndex, 1);
-          if (categoriesDraft[categoryIndex].rules.length === 0) {
-            categoriesDraft[categoryIndex].rules.push(defaultRule());
-          }
-          renderCategoriesEditor();
+      const ruleList = document.createElement('div');
+      ruleList.className = 'rule-list';
+
+      category.rules.forEach((rule, ruleIndex) => {
+        const ruleRow = document.createElement('div');
+        ruleRow.className = 'rule-row';
+
+        const textInput = document.createElement('input');
+        textInput.type = 'text';
+        textInput.placeholder = 'Ex: "Förfallodatum"';
+        textInput.value = rule.text;
+        textInput.addEventListener('input', () => {
+          categoriesDraft[sectionIndex].categories[categoryIndex].rules[ruleIndex].text = textInput.value;
           updateSettingsActionButtons();
         });
-        ruleRow.appendChild(removeRuleButton);
-      } else {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'rule-remove-placeholder';
-        ruleRow.appendChild(placeholder);
-      }
 
-      ruleList.appendChild(ruleRow);
+        const scoreInput = document.createElement('input');
+        scoreInput.type = 'number';
+        scoreInput.step = '1';
+        scoreInput.min = '1';
+        scoreInput.value = String(rule.score);
+        scoreInput.addEventListener('input', () => {
+          categoriesDraft[sectionIndex].categories[categoryIndex].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+          updateSettingsActionButtons();
+        });
+
+        ruleRow.appendChild(createFloatingField('Regeltext', textInput));
+        ruleRow.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
+
+        if (ruleIndex > 0) {
+          const removeRuleButton = document.createElement('button');
+          removeRuleButton.type = 'button';
+          removeRuleButton.className = 'rule-remove';
+          removeRuleButton.textContent = 'Ta bort';
+          removeRuleButton.addEventListener('click', () => {
+            categoriesDraft[sectionIndex].categories[categoryIndex].rules.splice(ruleIndex, 1);
+            if (categoriesDraft[sectionIndex].categories[categoryIndex].rules.length === 0) {
+              categoriesDraft[sectionIndex].categories[categoryIndex].rules.push(defaultRule());
+            }
+            renderCategoriesEditor();
+            updateSettingsActionButtons();
+          });
+          ruleRow.appendChild(removeRuleButton);
+        } else {
+          const placeholder = document.createElement('div');
+          placeholder.className = 'rule-remove-placeholder';
+          ruleRow.appendChild(placeholder);
+        }
+
+        ruleList.appendChild(ruleRow);
+      });
+
+      card.appendChild(ruleList);
+
+      const ruleActions = document.createElement('div');
+      ruleActions.className = 'category-rule-actions';
+      const addRuleButton = document.createElement('button');
+      addRuleButton.type = 'button';
+      addRuleButton.textContent = 'Lägg till regel';
+      addRuleButton.addEventListener('click', () => {
+        categoriesDraft[sectionIndex].categories[categoryIndex].rules.push(defaultRule());
+        renderCategoriesEditor();
+        updateSettingsActionButtons();
+      });
+      ruleActions.appendChild(addRuleButton);
+      card.appendChild(ruleActions);
+
+      sectionCategories.appendChild(card);
     });
 
-    card.appendChild(ruleList);
+    sectionCard.appendChild(sectionCategories);
 
-    const ruleActions = document.createElement('div');
-    ruleActions.className = 'category-rule-actions';
-    const addRuleButton = document.createElement('button');
-    addRuleButton.type = 'button';
-    addRuleButton.textContent = 'Add rule';
-    addRuleButton.addEventListener('click', () => {
-      categoriesDraft[categoryIndex].rules.push(defaultRule());
+    const categoryActions = document.createElement('div');
+    categoryActions.className = 'section-actions';
+    const addCategoryButton = document.createElement('button');
+    addCategoryButton.type = 'button';
+    addCategoryButton.textContent = 'Lägg till kategori';
+    addCategoryButton.addEventListener('click', () => {
+      categoriesDraft[sectionIndex].categories.push(defaultCategory());
       renderCategoriesEditor();
       updateSettingsActionButtons();
     });
-    ruleActions.appendChild(addRuleButton);
-    card.appendChild(ruleActions);
+    categoryActions.appendChild(addCategoryButton);
+    sectionCard.appendChild(categoryActions);
 
-    categoriesListEl.appendChild(card);
+    categoriesListEl.appendChild(sectionCard);
   });
 
   updateSettingsActionButtons();
@@ -992,15 +1075,15 @@ async function loadPathSettings() {
 async function loadCategories() {
   const response = await fetch('/api/get-categories.php', { cache: 'no-store' });
   if (!response.ok) {
-    throw new Error('Failed to load categories');
+    throw new Error('Failed to load archive structure');
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.categories)) {
-    throw new Error('Invalid categories response');
+  if (!payload || !Array.isArray(payload.sections)) {
+    throw new Error('Invalid archive structure response');
   }
 
-  categoriesDraft = payload.categories.map(sanitizeCategory);
+  categoriesDraft = payload.sections.map(sanitizeSection);
   categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
   renderCategoriesEditor();
   updateSettingsActionButtons();
@@ -1053,24 +1136,24 @@ async function saveMatchingSettings() {
 }
 
 async function saveCategories() {
-  const normalized = categoriesDraft.map(sanitizeCategory);
+  const normalized = categoriesDraft.map(sanitizeSection);
   const response = await fetch('/api/save-categories.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ categories: normalized })
+    body: JSON.stringify({ sections: normalized })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true) {
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.sections)) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
-      : 'Failed to save categories';
+      : 'Failed to save archive structure';
     throw new Error(message);
   }
 
-  categoriesDraft = normalized;
+  categoriesDraft = payload.sections.map(sanitizeSection);
   categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
   renderCategoriesEditor();
   updateSettingsActionButtons();
@@ -1202,7 +1285,7 @@ settingsButtonEl.addEventListener('click', async () => {
   try {
     await loadCategories();
   } catch (error) {
-    alert('Could not load categories.');
+    alert('Could not load archive structure.');
     categoriesDraft = [];
     categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
     renderCategoriesEditor();
@@ -1257,7 +1340,7 @@ matchingApplyEl.addEventListener('click', async () => {
 });
 
 categoriesAddCategoryEl.addEventListener('click', () => {
-  categoriesDraft.push(defaultCategory());
+  categoriesDraft.push(defaultSection());
   renderCategoriesEditor();
   updateSettingsActionButtons();
 });
@@ -1269,7 +1352,7 @@ categoriesCancelEl.addEventListener('click', () => {
   } catch (error) {
     parsed = [];
   }
-  categoriesDraft = Array.isArray(parsed) ? parsed.map(sanitizeCategory) : [];
+  categoriesDraft = Array.isArray(parsed) ? parsed.map(sanitizeSection) : [];
   renderCategoriesEditor();
   updateSettingsActionButtons();
 });
@@ -1278,7 +1361,7 @@ categoriesApplyEl.addEventListener('click', async () => {
   try {
     await saveCategories();
   } catch (error) {
-    alert(error.message || 'Could not save categories.');
+    alert(error.message || 'Could not save archive structure.');
   }
 });
 

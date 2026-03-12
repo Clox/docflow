@@ -68,8 +68,8 @@
       <aside class="settings-nav">
         <h2>Inställningar</h2>
         <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
-        <button class="settings-tab" data-settings-tab="matching" type="button">Matchningar</button>
-        <button class="settings-tab settings-subtab" data-settings-tab="categories" type="button">Kategorier</button>
+        <button class="settings-tab" data-settings-tab="matching" type="button">OCR-matchning</button>
+        <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
         <button class="settings-tab" data-settings-tab="jobs" type="button">Jobs</button>
         <button class="settings-tab" data-settings-tab="paths" type="button">Paths</button>
       </aside>
@@ -90,12 +90,12 @@
         </div>
 
         <div id="settings-panel-matching" class="settings-panel hidden">
-          <h3>Matchningar</h3>
-          <p>Define OCR letter substitutions used during matching.</p>
-          <p>Example: map <code>é</code> to <code>ö</code> so <code>Férfallodatum</code> can match <code>Förfallodatum</code>.</p>
+          <h3>OCR-matchning</h3>
+          <p>Definiera teckenersättningar för OCR-text före matchning.</p>
+          <p>Exempel: mappa <code>é</code> till <code>ö</code> så att <code>Férfallodatum</code> kan matcha <code>Förfallodatum</code>.</p>
           <div id="matching-list" class="matching-list"></div>
           <div class="categories-actions">
-            <button id="matching-add-row" type="button">Add substitution</button>
+            <button id="matching-add-row" type="button">Lägg till ersättning</button>
           </div>
           <div class="panel-actions">
             <button id="matching-cancel" type="button">Cancel</button>
@@ -104,11 +104,11 @@
         </div>
 
         <div id="settings-panel-categories" class="settings-panel hidden">
-          <h3>Kategorier</h3>
-          <p>Add categories and matching rules for future commit routing.</p>
+          <h3>Arkivstruktur</h3>
+          <p>Bygg upp sektioner med kategorier och regler (Sektion → Kategori → Regel).</p>
           <div id="categories-list" class="categories-list"></div>
           <div class="categories-actions">
-            <button id="categories-add-category" type="button">Add category</button>
+            <button id="categories-add-category" type="button">Lägg till sektion</button>
           </div>
           <div class="panel-actions">
             <button id="categories-cancel" type="button">Cancel</button>
