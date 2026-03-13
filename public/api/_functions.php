@@ -1174,6 +1174,7 @@ function empty_invoice_fields(): array
         'dueDate' => null,
         'bankgiro' => null,
         'plusgiro' => null,
+        'supplier' => null,
         'payee' => null,
         'iban' => null,
         'swift' => null,
@@ -1444,6 +1445,7 @@ function empty_invoice_field_confidence(): array
         'dueDate' => 0.0,
         'bankgiro' => 0.0,
         'plusgiro' => 0.0,
+        'supplier' => 0.0,
         'payee' => 0.0,
         'iban' => 0.0,
         'swift' => 0.0,
@@ -2178,6 +2180,18 @@ function extract_invoice_payee_result(array $lines, array $replacementMap): arra
     return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
 }
 
+function extract_invoice_supplier_result(array $lines, array $replacementMap): array
+{
+    $result = select_best_labeled_candidate(
+        $lines,
+        ['leverantör', 'leverantor'],
+        $replacementMap,
+        'invoice_payee_candidates_from_text',
+        1
+    );
+    return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
+}
+
 function extract_invoice_iban_result(array $lines, array $replacementMap): array
 {
     $result = select_best_labeled_candidate($lines, ['iban'], $replacementMap, 'invoice_iban_candidates_from_text', 1);
@@ -2227,6 +2241,12 @@ function extract_invoice_payee(array $lines, array $replacementMap): ?string
     return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
 }
 
+function extract_invoice_supplier(array $lines, array $replacementMap): ?string
+{
+    $result = extract_invoice_supplier_result($lines, $replacementMap);
+    return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
+}
+
 function extract_invoice_iban(array $lines, array $replacementMap): ?string
 {
     $result = extract_invoice_iban_result($lines, $replacementMap);
@@ -2255,6 +2275,7 @@ function extract_invoice_data_with_confidence(string $ocrText, array $replacemen
     $dueDate = extract_invoice_due_date_result($lines, $replacementMap);
     $bankgiro = extract_invoice_bankgiro_result($lines, $replacementMap);
     $plusgiro = extract_invoice_plusgiro_result($lines, $replacementMap);
+    $supplier = extract_invoice_supplier_result($lines, $replacementMap);
     $payee = extract_invoice_payee_result($lines, $replacementMap);
     $iban = extract_invoice_iban_result($lines, $replacementMap);
     $swift = extract_invoice_swift_result($lines, $replacementMap);
@@ -2268,6 +2289,7 @@ function extract_invoice_data_with_confidence(string $ocrText, array $replacemen
         'dueDate' => is_string($dueDate['value'] ?? null) ? (string) $dueDate['value'] : null,
         'bankgiro' => is_string($bankgiro['value'] ?? null) ? (string) $bankgiro['value'] : null,
         'plusgiro' => is_string($plusgiro['value'] ?? null) ? (string) $plusgiro['value'] : null,
+        'supplier' => is_string($supplier['value'] ?? null) ? (string) $supplier['value'] : null,
         'payee' => is_string($payee['value'] ?? null) ? (string) $payee['value'] : null,
         'iban' => is_string($iban['value'] ?? null) ? (string) $iban['value'] : null,
         'swift' => is_string($swift['value'] ?? null) ? (string) $swift['value'] : null,
@@ -2279,6 +2301,7 @@ function extract_invoice_data_with_confidence(string $ocrText, array $replacemen
         'dueDate' => clamp_confidence((float) ($dueDate['confidence'] ?? 0.0)),
         'bankgiro' => clamp_confidence((float) ($bankgiro['confidence'] ?? 0.0)),
         'plusgiro' => clamp_confidence((float) ($plusgiro['confidence'] ?? 0.0)),
+        'supplier' => clamp_confidence((float) ($supplier['confidence'] ?? 0.0)),
         'payee' => clamp_confidence((float) ($payee['confidence'] ?? 0.0)),
         'iban' => clamp_confidence((float) ($iban['confidence'] ?? 0.0)),
         'swift' => clamp_confidence((float) ($swift['confidence'] ?? 0.0)),
