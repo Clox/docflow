@@ -25,9 +25,17 @@ Processing model:
 - Actual processing runs in a separate background worker process.
 - This keeps the UI responsive while processing continues.
 
+SQLite sender lookup:
+- SQLite file: data/docflow.sqlite
+- Used for sender lookup data (senders + bankgiro/plusgiro metadata).
+- Archive structure still stays in data/archive-structure.json.
+- Requires PHP extension: pdo_sqlite
+- Run DB migrations:
+  ./scripts/migrate.php
+
 UI behavior:
 - Sidebar lists only ready jobs.
-- Header shows "PDF Files" plus a spinner and "Processing N file(s)..." while processing jobs exist.
+- Header shows "PDF-filer" plus a spinner and "Bearbetar N fil(er)..." while processing jobs exist.
 - State auto-refreshes every 3 seconds so new ready jobs appear automatically.
 - Selecting a ready job loads /api/get-job-pdf.php?id=<jobId> in the iframe.
 - Client select is populated from data/clients.json and auto-selects matched client for selected job.

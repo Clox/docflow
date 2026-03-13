@@ -213,6 +213,12 @@ Priority order:
 3. plusgiro
 4. sender name rules
 
+Sender lookup data is stored in SQLite (`data/docflow.sqlite`) using:
+- `senders` (organization-level sender rows)
+- `sender_payment_numbers` (bankgiro/plusgiro + metadata)
+
+Archive structure and rule configuration remain in JSON (`data/archive-structure.json`).
+
 The system should always extract organisation numbers, bankgiro numbers, and plusgiro numbers before attempting text matching.
 
 Sender is not a raw document property. It is an interpretation derived from raw properties.

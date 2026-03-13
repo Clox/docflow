@@ -129,6 +129,150 @@ function load_clients(): array
     return $clients;
 }
 
+function sender_repository_instance(): ?\Docflow\Senders\SenderRepository
+{
+    static $initialized = false;
+    static $repository = null;
+
+    if ($initialized) {
+        return $repository;
+    }
+
+    $initialized = true;
+    try {
+        $pdo = \Docflow\Database\Connection::make();
+        $repository = new \Docflow\Senders\SenderRepository($pdo);
+    } catch (Throwable $e) {
+        $repository = null;
+    }
+
+    return $repository;
+}
+
+function detect_org_number_from_ocr_text(string $ocrText): ?string
+{
+    $pattern = '/\b(?:\d{6}[-\s]?\d{4}|(?:19|20)\d{2}[-\s]?\d{2}[-\s]?\d{2}[-\s]?\d{4})\b/u';
+    $labelPattern = '/organisations?(?:nummer|nr)|org\\.?\\s*nr/iu';
+    $lines = preg_split('/\R/u', $ocrText);
+    if (is_array($lines)) {
+        foreach ($lines as $line) {
+            if (!is_string($line)) {
+                continue;
+            }
+
+            if (@preg_match($labelPattern, $line) !== 1) {
+                continue;
+            }
+
+            $matches = [];
+            if (@preg_match_all($pattern, $line, $matches) < 1) {
+                continue;
+            }
+
+            $candidates = is_array($matches[0] ?? null) ? $matches[0] : [];
+            foreach ($candidates as $candidate) {
+                if (!is_string($candidate)) {
+                    continue;
+                }
+                $normalized = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($candidate);
+                if ($normalized !== null) {
+                    return $normalized;
+                }
+            }
+        }
+    }
+
+    $matches = [];
+    if (@preg_match_all($pattern, $ocrText, $matches) < 1) {
+        return null;
+    }
+
+    $candidates = is_array($matches[0] ?? null) ? $matches[0] : [];
+    foreach ($candidates as $candidate) {
+        if (!is_string($candidate)) {
+            continue;
+        }
+        $normalized = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($candidate);
+        if ($normalized !== null) {
+            return $normalized;
+        }
+    }
+
+    return null;
+}
+
+function sender_lookup_result(?string $orgNumber, ?string $bankgiro, ?string $plusgiro): array
+{
+    $repository = sender_repository_instance();
+
+    $query = [
+        'orgNumber' => $orgNumber,
+        'bankgiro' => $bankgiro,
+        'plusgiro' => $plusgiro,
+    ];
+
+    if ($repository === null) {
+        return [
+            'query' => $query,
+            'matched' => false,
+            'matchedBy' => null,
+            'matchedValue' => null,
+            'sender' => null,
+        ];
+    }
+
+    try {
+        $match = $repository->findByDocumentIdentifiers($orgNumber, $bankgiro, $plusgiro);
+    } catch (Throwable $e) {
+        return [
+            'query' => $query,
+            'matched' => false,
+            'matchedBy' => null,
+            'matchedValue' => null,
+            'sender' => null,
+            'error' => $e->getMessage(),
+        ];
+    }
+
+    if (!is_array($match)) {
+        return [
+            'query' => $query,
+            'matched' => false,
+            'matchedBy' => null,
+            'matchedValue' => null,
+            'sender' => null,
+        ];
+    }
+
+    $sender = [
+        'id' => isset($match['id']) ? (int) $match['id'] : 0,
+        'name' => is_string($match['name'] ?? null) ? $match['name'] : '',
+        'slug' => is_string($match['slug'] ?? null) ? $match['slug'] : '',
+        'orgNumber' => is_string($match['org_number'] ?? null) ? $match['org_number'] : null,
+        'domain' => is_string($match['domain'] ?? null) ? $match['domain'] : null,
+        'kind' => is_string($match['kind'] ?? null) ? $match['kind'] : null,
+        'confidence' => isset($match['confidence']) ? (float) $match['confidence'] : 1.0,
+    ];
+
+    if (array_key_exists('payment_requires_ocr', $match)) {
+        $sender['paymentRequiresOcr'] = ((int) $match['payment_requires_ocr']) === 1;
+    }
+    if (is_string($match['payment_source'] ?? null)) {
+        $sender['paymentSource'] = $match['payment_source'];
+    }
+    if (array_key_exists('payment_confidence', $match)) {
+        $sender['paymentConfidence'] = (float) $match['payment_confidence'];
+    }
+
+    return [
+        'query' => $query,
+        'matched' => true,
+        'matchedBy' => is_string($match['matchedBy'] ?? null) ? $match['matchedBy'] : null,
+        'matchedValue' => is_string($match['matchedValue'] ?? null) ? $match['matchedValue'] : null,
+        'sender' => $sender,
+    ];
+}
+
 function positive_int(mixed $value, int $fallback = 1): int
 {
     if (is_int($value)) {
@@ -2183,6 +2327,17 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
             ],
             'invoice' => null,
             'invoiceConfidence' => empty_invoice_field_confidence(),
+            'senderLookup' => [
+                'query' => [
+                    'orgNumber' => null,
+                    'bankgiro' => null,
+                    'plusgiro' => null,
+                ],
+                'matched' => false,
+                'matchedBy' => null,
+                'matchedValue' => null,
+                'sender' => null,
+            ],
         ],
         'files' => [
             'sourcePdf' => 'source.pdf',
@@ -2230,13 +2385,18 @@ function process_claimed_job(
 
     $categoryGroups = split_categories_for_processing($categories);
     $invoiceSignalMatches = find_category_signal_matches($ocrText, $categoryGroups['invoiceSystemCategories'], $replacementMap);
-    $invoiceMatches = filter_category_matches_by_threshold($invoiceSignalMatches);
     $invoiceDetection = build_invoice_detection($invoiceSignalMatches, $replacementMap);
     $invoiceExtraction = extract_invoice_data_with_confidence($ocrText, $replacementMap, $invoiceFieldMinConfidence);
     $invoiceData = is_array($invoiceExtraction['fields'] ?? null) ? $invoiceExtraction['fields'] : empty_invoice_fields();
     $invoiceConfidence = is_array($invoiceExtraction['confidence'] ?? null)
         ? $invoiceExtraction['confidence']
         : empty_invoice_field_confidence();
+    $orgNumber = detect_org_number_from_ocr_text($ocrText);
+    $senderLookup = sender_lookup_result(
+        $orgNumber,
+        is_string($invoiceData['bankgiro'] ?? null) ? (string) $invoiceData['bankgiro'] : null,
+        is_string($invoiceData['plusgiro'] ?? null) ? (string) $invoiceData['plusgiro'] : null
+    );
 
     $matched = match_client_dir_name($ocrText, $clients);
     $categoryMatches = find_category_matches($ocrText, $categoryGroups['normalCategories'], $replacementMap);
@@ -2248,6 +2408,7 @@ function process_claimed_job(
         'invoiceConfidence' => $invoiceConfidence,
         'invoiceFieldMinConfidence' => $invoiceFieldMinConfidence,
         'invoiceDetection' => $invoiceDetection,
+        'senderLookup' => $senderLookup,
     ];
 
     write_json_file($jobDir . '/extracted.json', $extractedData);
@@ -2259,6 +2420,7 @@ function process_claimed_job(
             'invoice' => $invoiceData,
             'invoiceConfidence' => $invoiceConfidence,
             'invoiceFieldMinConfidence' => $invoiceFieldMinConfidence,
+            'senderLookup' => $senderLookup,
         ],
     ];
 }
