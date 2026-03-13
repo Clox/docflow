@@ -513,6 +513,34 @@ body {
   overflow: auto;
 }
 
+.matching-replacements-section {
+  margin-bottom: 12px;
+}
+
+.matching-threshold-section {
+  margin: 0 0 10px;
+}
+
+.matching-threshold-section p {
+  margin: 0 0 6px;
+}
+
+.matching-threshold-row {
+  margin: 0;
+}
+
+.matching-threshold-field {
+  max-width: 210px;
+}
+
+.matching-threshold-field input {
+  width: 100%;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
 .matching-row {
   display: grid;
   grid-template-columns: minmax(80px, 120px) minmax(80px, 120px) auto;

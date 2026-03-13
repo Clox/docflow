@@ -90,22 +90,35 @@
             autocapitalize="off"
           ></textarea>
           <div class="panel-actions">
-            <button id="clients-cancel" type="button">Cancel</button>
-            <button id="clients-apply" type="button">Apply</button>
+            <button id="clients-cancel" type="button">Avbryt</button>
+            <button id="clients-apply" type="button">Spara</button>
           </div>
         </div>
 
         <div id="settings-panel-matching" class="settings-panel hidden">
           <h3>OCR-matchning</h3>
-          <p>Definiera teckenersättningar för OCR-text före matchning.</p>
-          <p>Exempel: mappa <code>é</code> till <code>ö</code> så att <code>Férfallodatum</code> kan matcha <code>Förfallodatum</code>.</p>
-          <div id="matching-list" class="matching-list"></div>
-          <div class="categories-actions">
-            <button id="matching-add-row" type="button">Lägg till ersättning</button>
+          <div class="matching-replacements-section">
+            <p>Definiera teckenersättningar för OCR-text före matchning.</p>
+            <p>Exempel: mappa <code>é</code> till <code>ö</code> så att <code>Férfallodatum</code> kan matcha <code>Förfallodatum</code>.</p>
+            <div id="matching-list" class="matching-list"></div>
+            <div class="categories-actions">
+              <button id="matching-add-row" type="button">Lägg till ersättning</button>
+            </div>
           </div>
+
+          <div class="matching-threshold-section">
+            <p>Ange lägsta säkerhetspoäng (confidence) för att extraherat fakturadatafält ska accepteras (0.00 - 1.00).</p>
+            <div class="matching-threshold-row">
+              <div class="floating-input-group matching-threshold-field">
+                <label class="floating-input-label" for="matching-invoice-threshold">Tröskel för fakturadata-extraktion</label>
+                <input id="matching-invoice-threshold" type="number" min="0" max="1" step="0.01">
+              </div>
+            </div>
+          </div>
+
           <div class="panel-actions">
-            <button id="matching-cancel" type="button">Cancel</button>
-            <button id="matching-apply" type="button">Apply</button>
+            <button id="matching-cancel" type="button">Avbryt</button>
+            <button id="matching-apply" type="button">Spara</button>
           </div>
         </div>
 
@@ -129,8 +142,8 @@
           </div>
 
           <div class="panel-actions">
-            <button id="categories-cancel" type="button">Cancel</button>
-            <button id="categories-apply" type="button">Apply</button>
+            <button id="categories-cancel" type="button">Avbryt</button>
+            <button id="categories-apply" type="button">Spara</button>
           </div>
         </div>
 
@@ -156,13 +169,13 @@
             autocapitalize="off"
           >
           <div class="panel-actions">
-            <button id="paths-cancel" type="button">Cancel</button>
-            <button id="paths-apply" type="button">Apply</button>
+            <button id="paths-cancel" type="button">Avbryt</button>
+            <button id="paths-apply" type="button">Spara</button>
           </div>
         </div>
 
         <div class="settings-close-row">
-          <button id="settings-close" type="button">Close</button>
+          <button id="settings-close" type="button">Stäng</button>
         </div>
       </section>
     </div>

@@ -20,6 +20,11 @@ if (!is_array($payload) || !array_key_exists('replacements', $payload) || !is_ar
     exit;
 }
 
+$invoiceFieldMinConfidence = sanitize_invoice_field_min_confidence(
+    $payload['invoiceFieldMinConfidence'] ?? null,
+    default_invoice_field_min_confidence()
+);
+
 $normalized = [];
 foreach ($payload['replacements'] as $row) {
     if (!is_array($row)) {
@@ -41,11 +46,13 @@ foreach ($payload['replacements'] as $row) {
 try {
     write_json_file(DATA_DIR . '/matching.json', [
         'replacements' => $normalized,
+        'invoiceFieldMinConfidence' => $invoiceFieldMinConfidence,
     ]);
 
     json_response([
         'ok' => true,
         'replacements' => $normalized,
+        'invoiceFieldMinConfidence' => $invoiceFieldMinConfidence,
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

@@ -19,6 +19,7 @@ const matchingListEl = document.getElementById('matching-list');
 const matchingAddRowEl = document.getElementById('matching-add-row');
 const matchingCancelEl = document.getElementById('matching-cancel');
 const matchingApplyEl = document.getElementById('matching-apply');
+const matchingInvoiceThresholdEl = document.getElementById('matching-invoice-threshold');
 const categoriesListEl = document.getElementById('categories-list');
 const systemCategoryEditorEl = document.getElementById('system-category-editor');
 const categoriesAddCategoryEl = document.getElementById('categories-add-category');
@@ -76,10 +77,14 @@ let metaRequestSeq = 0;
 let categoriesDraft = [];
 let systemCategoriesDraft = createDefaultSystemCategories();
 let matchingDraft = [];
+let matchingInvoiceFieldMinConfidenceDraft = 0.7;
 let activeSettingsTabId = 'clients';
 let activeArchiveTabId = 'categories';
 let clientsBaselineText = '';
-let matchingBaselineJson = '[]';
+let matchingBaselineJson = JSON.stringify({
+  replacements: [],
+  invoiceFieldMinConfidence: 0.7
+});
 let pathsBaselineValue = '';
 let categoriesBaselineJson = JSON.stringify({
   archiveFolders: [],
@@ -90,6 +95,7 @@ const selectedCategoryByJobId = new Map();
 
 clientSelectEl.disabled = true;
 categorySelectEl.disabled = true;
+matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
 
 function setProcessingInfo(processingJobs) {
   if (!Array.isArray(processingJobs) || processingJobs.length === 0) {
@@ -760,8 +766,25 @@ function normalizedPathValue(value) {
   return String(value).trim();
 }
 
-function normalizedMatchingJson(replacements) {
-  return JSON.stringify(replacements.map(sanitizeReplacement));
+function sanitizeInvoiceFieldMinConfidence(value, fallback = 0.7) {
+  const parsed = Number.parseFloat(String(value));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  if (parsed < 0) {
+    return 0;
+  }
+  if (parsed > 1) {
+    return 1;
+  }
+  return Math.round(parsed * 1000) / 1000;
+}
+
+function normalizedMatchingJson(replacements, invoiceFieldMinConfidence) {
+  return JSON.stringify({
+    replacements: replacements.map(sanitizeReplacement),
+    invoiceFieldMinConfidence: sanitizeInvoiceFieldMinConfidence(invoiceFieldMinConfidence, 0.7)
+  });
 }
 
 function normalizedCategoriesJson(categories, systemCategories) {
@@ -776,7 +799,7 @@ function isClientsDirty() {
 }
 
 function isMatchingDirty() {
-  return normalizedMatchingJson(matchingDraft) !== matchingBaselineJson;
+  return normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft) !== matchingBaselineJson;
 }
 
 function isCategoriesDirty() {
@@ -1021,8 +1044,8 @@ function renderMatchingEditor() {
       updateSettingsActionButtons();
     });
 
-    rowEl.appendChild(createFloatingField('From', fromInput, 'matching-char-field'));
-    rowEl.appendChild(createFloatingField('To', toInput, 'matching-char-field'));
+    rowEl.appendChild(createFloatingField('Från', fromInput, 'matching-char-field'));
+    rowEl.appendChild(createFloatingField('Till', toInput, 'matching-char-field'));
 
     if (rowIndex > 0) {
       const removeButton = document.createElement('button');
@@ -1500,8 +1523,10 @@ async function loadMatchingSettings() {
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
+  matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(payload.invoiceFieldMinConfidence, 0.7);
+  matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
 
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -1561,12 +1586,16 @@ async function saveClientsText() {
 
 async function saveMatchingSettings() {
   const normalized = matchingDraft.map(sanitizeReplacement);
+  const invoiceFieldMinConfidence = sanitizeInvoiceFieldMinConfidence(matchingInvoiceFieldMinConfidenceDraft, 0.7);
   const response = await fetch('/api/save-matching-settings.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ replacements: normalized })
+    body: JSON.stringify({
+      replacements: normalized,
+      invoiceFieldMinConfidence
+    })
   });
 
   const payload = await response.json().catch(() => null);
@@ -1581,8 +1610,10 @@ async function saveMatchingSettings() {
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
+  matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(payload.invoiceFieldMinConfidence, 0.7);
+  matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
 
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -1721,6 +1752,11 @@ clientsTextareaEl.addEventListener('input', () => {
   updateSettingsActionButtons();
 });
 
+matchingInvoiceThresholdEl.addEventListener('input', () => {
+  matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(matchingInvoiceThresholdEl.value, 0.7);
+  updateSettingsActionButtons();
+});
+
 outputBasePathEl.addEventListener('input', () => {
   updateSettingsActionButtons();
 });
@@ -1740,7 +1776,9 @@ settingsButtonEl.addEventListener('click', async () => {
   } catch (error) {
     alert('Could not load matching settings.');
     matchingDraft = [defaultReplacement()];
-    matchingBaselineJson = normalizedMatchingJson(matchingDraft);
+    matchingInvoiceFieldMinConfidenceDraft = 0.7;
+    matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
+    matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft);
     renderMatchingEditor();
     updateSettingsActionButtons();
   }
@@ -1787,17 +1825,20 @@ matchingAddRowEl.addEventListener('click', () => {
 });
 
 matchingCancelEl.addEventListener('click', () => {
-  let parsed = [];
+  let parsed = {};
   try {
     parsed = JSON.parse(matchingBaselineJson);
   } catch (error) {
-    parsed = [];
+    parsed = {};
   }
 
-  matchingDraft = Array.isArray(parsed) ? parsed.map(sanitizeReplacement) : [];
+  const replacements = Array.isArray(parsed.replacements) ? parsed.replacements : [];
+  matchingDraft = replacements.map(sanitizeReplacement);
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
+  matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(parsed.invoiceFieldMinConfidence, 0.7);
+  matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
 
   renderMatchingEditor();
   updateSettingsActionButtons();
