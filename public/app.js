@@ -1,5 +1,6 @@
 const jobListEl = document.getElementById('job-list');
-const viewerEl = document.getElementById('pdf-viewer');
+const pdfStackEl = document.getElementById('pdf-stack');
+const pdfFrameEls = Array.from(document.querySelectorAll('.pdf-frame'));
 const ocrViewEl = document.getElementById('ocr-view');
 const matchesViewEl = document.getElementById('matches-view');
 const metaViewEl = document.getElementById('meta-view');
@@ -62,10 +63,10 @@ const SYSTEM_CATEGORIES = {
 };
 
 let selectedJobId = '';
-let loadedJobId = '';
 let loadedOcrJobId = '';
 let loadedMatchesJobId = '';
 let loadedMetaJobId = '';
+let pdfFrameJobIds = pdfFrameEls.map(() => '');
 let pollTimer = null;
 let pollInFlight = false;
 let currentViewMode = 'pdf';
@@ -219,6 +220,110 @@ function setCategoryForJob(job) {
   categorySelectEl.value = hasOptionById ? topId : '';
 }
 
+function pdfUrlForJob(jobId) {
+  return '/api/get-job-pdf.php?id=' + encodeURIComponent(jobId);
+}
+
+function clearPdfFrames() {
+  pdfFrameEls.forEach((frameEl, frameIndex) => {
+    frameEl.classList.remove('active');
+    if (pdfFrameJobIds[frameIndex] !== '') {
+      frameEl.removeAttribute('src');
+      pdfFrameJobIds[frameIndex] = '';
+    }
+  });
+}
+
+function setPdfFrameJob(frameIndex, jobId) {
+  const frameEl = pdfFrameEls[frameIndex];
+  if (!frameEl) {
+    return;
+  }
+
+  const normalizedJobId = typeof jobId === 'string' ? jobId : '';
+  if (pdfFrameJobIds[frameIndex] === normalizedJobId) {
+    return;
+  }
+
+  pdfFrameJobIds[frameIndex] = normalizedJobId;
+  if (normalizedJobId === '') {
+    frameEl.removeAttribute('src');
+    return;
+  }
+
+  frameEl.src = pdfUrlForJob(normalizedJobId);
+}
+
+function updatePdfFrameWindow(jobId) {
+  if (!jobId) {
+    clearPdfFrames();
+    return;
+  }
+
+  const selectedIndex = state.readyJobs.findIndex((job) => job.id === jobId);
+  if (selectedIndex < 0) {
+    clearPdfFrames();
+    return;
+  }
+
+  const prevId = selectedIndex > 0 ? state.readyJobs[selectedIndex - 1].id : '';
+  const currId = state.readyJobs[selectedIndex].id;
+  const nextId = selectedIndex < state.readyJobs.length - 1 ? state.readyJobs[selectedIndex + 1].id : '';
+  const slotJobIds = [prevId, currId, nextId];
+  const slotFrameIndexes = [-1, -1, -1];
+  const freeFrameIndexes = pdfFrameEls.map((_, index) => index);
+  const slotOrder = [1, 0, 2];
+
+  slotOrder.forEach((slotIndex) => {
+    const targetJobId = slotJobIds[slotIndex];
+    if (!targetJobId) {
+      return;
+    }
+
+    const existingFrameIndex = pdfFrameJobIds.findIndex(
+      (loadedJobId, frameIndex) => loadedJobId === targetJobId && freeFrameIndexes.includes(frameIndex)
+    );
+    if (existingFrameIndex < 0) {
+      return;
+    }
+
+    slotFrameIndexes[slotIndex] = existingFrameIndex;
+    const freeIndex = freeFrameIndexes.indexOf(existingFrameIndex);
+    if (freeIndex >= 0) {
+      freeFrameIndexes.splice(freeIndex, 1);
+    }
+  });
+
+  slotOrder.forEach((slotIndex) => {
+    const targetJobId = slotJobIds[slotIndex];
+    if (!targetJobId || slotFrameIndexes[slotIndex] >= 0) {
+      return;
+    }
+
+    const nextFreeFrame = freeFrameIndexes.shift();
+    if (typeof nextFreeFrame !== 'number') {
+      return;
+    }
+    slotFrameIndexes[slotIndex] = nextFreeFrame;
+  });
+
+  const targetJobIdsByFrame = pdfFrameEls.map(() => '');
+  slotFrameIndexes.forEach((frameIndex, slotIndex) => {
+    if (frameIndex < 0) {
+      return;
+    }
+    targetJobIdsByFrame[frameIndex] = slotJobIds[slotIndex];
+  });
+
+  targetJobIdsByFrame.forEach((targetJobId, frameIndex) => {
+    setPdfFrameJob(frameIndex, targetJobId);
+  });
+
+  pdfFrameEls.forEach((frameEl, frameIndex) => {
+    frameEl.classList.toggle('active', frameIndex === slotFrameIndexes[1]);
+  });
+}
+
 function setViewerJob(jobId) {
   if (currentViewMode === 'ocr') {
     setViewerOcr(jobId);
@@ -235,26 +340,14 @@ function setViewerPdf(jobId) {
   ocrViewEl.classList.add('hidden');
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
-  viewerEl.classList.remove('hidden');
-
-  if (!jobId) {
-    loadedJobId = '';
-    viewerEl.removeAttribute('src');
-    return;
-  }
-
-  if (loadedJobId === jobId) {
-    return;
-  }
-
-  loadedJobId = jobId;
-  viewerEl.src = '/api/get-job-pdf.php?id=' + encodeURIComponent(jobId);
+  pdfStackEl.classList.remove('hidden');
+  updatePdfFrameWindow(jobId);
 }
 
 async function setViewerOcr(jobId) {
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
-  viewerEl.classList.add('hidden');
+  pdfStackEl.classList.add('hidden');
   ocrViewEl.classList.remove('hidden');
 
   if (!jobId) {
@@ -433,7 +526,7 @@ function renderMatchesContent(payload) {
 }
 
 async function setViewerMatches(jobId) {
-  viewerEl.classList.add('hidden');
+  pdfStackEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
   matchesViewEl.classList.remove('hidden');
@@ -481,7 +574,7 @@ async function setViewerMatches(jobId) {
 }
 
 async function setViewerMeta(jobId) {
-  viewerEl.classList.add('hidden');
+  pdfStackEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.remove('hidden');
@@ -552,25 +645,51 @@ function renderJobList(readyJobs) {
     }
 
     li.addEventListener('click', () => {
-      selectedJobId = job.id;
-      renderJobList(state.readyJobs);
-      setViewerJob(selectedJobId);
-      setClientForJob(job);
-      setCategoryForJob(job);
+      applySelectedJobId(job.id);
     });
 
     jobListEl.appendChild(li);
   });
 }
 
+function applySelectedJobId(jobId) {
+  const selectedJob = state.readyJobs.find((job) => job.id === jobId) || null;
+  selectedJobId = selectedJob ? selectedJob.id : '';
+  renderJobList(state.readyJobs);
+  setViewerJob(selectedJobId);
+  setClientForJob(selectedJob);
+  setCategoryForJob(selectedJob);
+}
+
+function moveSelectionBy(offset) {
+  if (!Number.isInteger(offset) || offset === 0) {
+    return;
+  }
+
+  if (!Array.isArray(state.readyJobs) || state.readyJobs.length === 0) {
+    return;
+  }
+
+  const currentIndex = state.readyJobs.findIndex((job) => job.id === selectedJobId);
+  const safeCurrent = currentIndex >= 0 ? currentIndex : 0;
+  const nextIndex = Math.max(0, Math.min(state.readyJobs.length - 1, safeCurrent + offset));
+  if (nextIndex === safeCurrent && currentIndex >= 0) {
+    return;
+  }
+
+  const targetJob = state.readyJobs[nextIndex];
+  if (!targetJob) {
+    return;
+  }
+
+  applySelectedJobId(targetJob.id);
+}
+
 function refreshSelection() {
   const readyJobs = state.readyJobs;
 
   if (readyJobs.length === 0) {
-    selectedJobId = '';
-    setViewerJob('');
-    setClientForJob(null);
-    setCategoryForJob(null);
+    applySelectedJobId('');
     return;
   }
 
@@ -578,11 +697,7 @@ function refreshSelection() {
   if (!stillExists) {
     selectedJobId = readyJobs[0].id;
   }
-
-  const selectedJob = readyJobs.find((job) => job.id === selectedJobId) || null;
-  setViewerJob(selectedJobId);
-  setClientForJob(selectedJob);
-  setCategoryForJob(selectedJob);
+  applySelectedJobId(selectedJobId);
 }
 
 function applyState(nextState) {
@@ -603,7 +718,6 @@ function applyState(nextState) {
   renderClientSelect(state.clients);
   renderCategorySelect(state.categories);
   refreshSelection();
-  renderJobList(state.readyJobs);
 }
 
 function openSettingsModal() {
@@ -1549,10 +1663,10 @@ async function resetAllJobs() {
     throw new Error('Reset jobs failed');
   }
 
-  loadedJobId = '';
   loadedOcrJobId = '';
   loadedMatchesJobId = '';
   loadedMetaJobId = '';
+  clearPdfFrames();
   selectedJobId = '';
   closeSettingsModal();
   await fetchState();
@@ -1797,7 +1911,24 @@ settingsModalEl.addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !settingsModalEl.classList.contains('hidden')) {
     closeSettingsModal();
+    return;
   }
+
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
+    return;
+  }
+
+  if (!settingsModalEl.classList.contains('hidden')) {
+    return;
+  }
+
+  const target = event.target;
+  if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable="true"]')) {
+    return;
+  }
+
+  event.preventDefault();
+  moveSelectionBy(event.key === 'ArrowDown' ? 1 : -1);
 });
 
 window.addEventListener('beforeunload', (event) => {

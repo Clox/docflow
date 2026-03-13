@@ -57,7 +57,11 @@
       </div>
 
       <div class="viewer-wrap">
-        <iframe id="pdf-viewer" class="pdf-viewer" title="PDF Viewer"></iframe>
+        <div id="pdf-stack" class="pdf-stack">
+          <iframe class="pdf-frame"></iframe>
+          <iframe class="pdf-frame"></iframe>
+          <iframe class="pdf-frame"></iframe>
+        </div>
         <pre id="ocr-view" class="ocr-view hidden"></pre>
         <div id="matches-view" class="matches-view hidden"></div>
         <pre id="meta-view" class="meta-view hidden"></pre>
