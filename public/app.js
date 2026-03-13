@@ -105,12 +105,12 @@ function setProcessingInfo(processingJobs) {
   }
 
   processingIndicatorEl.classList.remove('hidden');
-  processingTextEl.textContent = `Processing ${processingJobs.length} file(s)...`;
+  processingTextEl.textContent = `Bearbetar ${processingJobs.length} fil(er)...`;
 }
 
 function renderClientSelect(clients) {
   const currentValue = clientSelectEl.value;
-  clientSelectEl.innerHTML = '<option value="" hidden>Choose client</option>';
+  clientSelectEl.innerHTML = '<option value="" hidden>Välj huvudman</option>';
 
   clients.forEach((client) => {
     const option = document.createElement('option');
@@ -138,7 +138,7 @@ function categoryDisplayName(category) {
 
 function renderCategorySelect(categories) {
   const currentValue = categorySelectEl.value;
-  categorySelectEl.innerHTML = '<option value="" hidden>Choose category</option>';
+  categorySelectEl.innerHTML = '<option value="" hidden>Välj kategori</option>';
 
   categories.forEach((category) => {
     const displayName = categoryDisplayName(category);
@@ -368,12 +368,12 @@ async function setViewerOcr(jobId) {
 
   loadedOcrJobId = jobId;
   const requestSeq = ++ocrRequestSeq;
-  ocrViewEl.textContent = 'Loading OCR data...';
+  ocrViewEl.textContent = 'Laddar OCR-data...';
 
   try {
     const response = await fetch('/api/get-job-ocr.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
     if (!response.ok) {
-      throw new Error('Failed to fetch OCR');
+      throw new Error('Kunde inte hämta OCR-data');
     }
 
     const payload = await response.json();
@@ -382,12 +382,12 @@ async function setViewerOcr(jobId) {
     }
 
     const text = payload && typeof payload.text === 'string' ? payload.text : '';
-    ocrViewEl.textContent = text || '(No OCR text found)';
+    ocrViewEl.textContent = text || '(Ingen OCR-text hittades)';
   } catch (error) {
     if (requestSeq !== ocrRequestSeq) {
       return;
     }
-    ocrViewEl.textContent = 'Could not load OCR data.';
+    ocrViewEl.textContent = 'Kunde inte ladda OCR-data.';
   }
 }
 
@@ -428,7 +428,7 @@ function appendMatchesSection(container, title, categories, emptyText) {
   categories.forEach((category) => {
     const name = category && typeof category.name === 'string' && category.name !== ''
       ? category.name
-      : 'Unnamed category';
+      : 'Namnlös kategori';
     const score = category && Number.isFinite(Number(category.score))
       ? Number(category.score)
       : 0;
@@ -552,13 +552,13 @@ async function setViewerMatches(jobId) {
   matchesViewEl.innerHTML = '';
   const loading = document.createElement('div');
   loading.className = 'matches-empty';
-  loading.textContent = 'Loading matches...';
+  loading.textContent = 'Laddar matchningar...';
   matchesViewEl.appendChild(loading);
 
   try {
     const response = await fetch('/api/get-job-matches.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
     if (!response.ok) {
-      throw new Error('Failed to fetch matches');
+      throw new Error('Kunde inte hämta matchningar');
     }
 
     const payload = await response.json();
@@ -574,7 +574,7 @@ async function setViewerMatches(jobId) {
     matchesViewEl.innerHTML = '';
     const fail = document.createElement('div');
     fail.className = 'matches-empty';
-    fail.textContent = 'Could not load match data.';
+    fail.textContent = 'Kunde inte ladda matchningsdata.';
     matchesViewEl.appendChild(fail);
   }
 }
@@ -597,12 +597,12 @@ async function setViewerMeta(jobId) {
 
   loadedMetaJobId = jobId;
   const requestSeq = ++metaRequestSeq;
-  metaViewEl.textContent = 'Loading metadata...';
+  metaViewEl.textContent = 'Laddar metadata...';
 
   try {
     const response = await fetch('/api/get-job-meta.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
     if (!response.ok) {
-      throw new Error('Failed to fetch metadata');
+      throw new Error('Kunde inte hämta metadata');
     }
 
     const payload = await response.json();
@@ -616,7 +616,7 @@ async function setViewerMeta(jobId) {
     if (requestSeq !== metaRequestSeq) {
       return;
     }
-    metaViewEl.textContent = 'Could not load metadata.';
+    metaViewEl.textContent = 'Kunde inte ladda metadata.';
   }
 }
 
@@ -626,7 +626,7 @@ function renderJobList(readyJobs) {
   if (readyJobs.length === 0) {
     const li = document.createElement('li');
     li.className = 'job-message';
-    li.textContent = 'No ready jobs yet.';
+    li.textContent = 'Inga klara jobb ännu.';
     jobListEl.appendChild(li);
     return;
   }
@@ -1017,7 +1017,7 @@ function renderMatchingEditor() {
   if (matchingDraft.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
-    empty.textContent = 'No substitutions yet.';
+    empty.textContent = 'Inga ersättningar ännu.';
     matchingListEl.appendChild(empty);
     return;
   }
@@ -1051,7 +1051,7 @@ function renderMatchingEditor() {
       const removeButton = document.createElement('button');
       removeButton.type = 'button';
       removeButton.className = 'rule-remove';
-      removeButton.textContent = 'Remove';
+      removeButton.textContent = 'Ta bort';
       removeButton.addEventListener('click', () => {
         matchingDraft.splice(rowIndex, 1);
         if (matchingDraft.length === 0) {
@@ -1495,12 +1495,12 @@ function setArchiveTab(tabId) {
 async function loadClientsText() {
   const response = await fetch('/api/get-clients.php', { cache: 'no-store' });
   if (!response.ok) {
-    throw new Error('Failed to load clients');
+    throw new Error('Kunde inte ladda huvudmän');
   }
 
   const payload = await response.json();
   if (!payload || typeof payload.text !== 'string') {
-    throw new Error('Invalid clients response');
+    throw new Error('Ogiltigt svar för huvudmän');
   }
 
   clientsTextareaEl.value = payload.text;
@@ -1511,12 +1511,12 @@ async function loadClientsText() {
 async function loadMatchingSettings() {
   const response = await fetch('/api/get-matching-settings.php', { cache: 'no-store' });
   if (!response.ok) {
-    throw new Error('Failed to load matching settings');
+    throw new Error('Kunde inte ladda matchningsinställningar');
   }
 
   const payload = await response.json();
   if (!payload || !Array.isArray(payload.replacements)) {
-    throw new Error('Invalid matching settings response');
+    throw new Error('Ogiltigt svar för matchningsinställningar');
   }
 
   matchingDraft = payload.replacements.map(sanitizeReplacement);
@@ -1534,12 +1534,12 @@ async function loadMatchingSettings() {
 async function loadPathSettings() {
   const response = await fetch('/api/get-config.php', { cache: 'no-store' });
   if (!response.ok) {
-    throw new Error('Failed to load config');
+    throw new Error('Kunde inte ladda konfiguration');
   }
 
   const payload = await response.json();
   if (!payload || typeof payload.outputBaseDirectory !== 'string') {
-    throw new Error('Invalid config response');
+    throw new Error('Ogiltigt svar för konfiguration');
   }
 
   outputBasePathEl.value = payload.outputBaseDirectory;
@@ -1550,12 +1550,12 @@ async function loadPathSettings() {
 async function loadCategories() {
   const response = await fetch('/api/get-categories.php', { cache: 'no-store' });
   if (!response.ok) {
-    throw new Error('Failed to load archive structure');
+    throw new Error('Kunde inte ladda arkivstruktur');
   }
 
   const payload = await response.json();
   if (!payload || !Array.isArray(payload.archiveFolders) || !payload.systemCategories || typeof payload.systemCategories !== 'object') {
-    throw new Error('Invalid archive structure response');
+    throw new Error('Ogiltigt svar för arkivstruktur');
   }
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
@@ -1576,7 +1576,7 @@ async function saveClientsText() {
   });
 
   if (!response.ok) {
-    throw new Error('Failed to save clients');
+    throw new Error('Kunde inte spara huvudmän');
   }
 
   clientsBaselineText = clientsTextareaEl.value;
@@ -1602,7 +1602,7 @@ async function saveMatchingSettings() {
   if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.replacements)) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
-      : 'Failed to save matching settings';
+      : 'Kunde inte spara matchningsinställningar';
     throw new Error(message);
   }
 
@@ -1643,7 +1643,7 @@ async function saveCategories() {
   ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
-      : 'Failed to save archive structure';
+      : 'Kunde inte spara arkivstruktur';
     throw new Error(message);
   }
 
@@ -1668,7 +1668,7 @@ async function savePathSettings() {
   if (!response.ok || !payload || payload.ok !== true) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
-      : 'Failed to save path settings';
+      : 'Kunde inte spara sökvägsinställningar';
     throw new Error(message);
   }
 
@@ -1686,7 +1686,7 @@ async function resetAllJobs() {
   });
 
   if (!response.ok) {
-    throw new Error('Failed to reset jobs');
+    throw new Error('Kunde inte återställa jobb');
   }
 
   const payload = await response.json();
@@ -1767,14 +1767,14 @@ settingsButtonEl.addEventListener('click', async () => {
   try {
     await loadClientsText();
   } catch (error) {
-    alert('Could not load clients.');
+    alert('Kunde inte ladda huvudmän.');
     clientsBaselineText = clientsTextareaEl.value;
     updateSettingsActionButtons();
   }
   try {
     await loadMatchingSettings();
   } catch (error) {
-    alert('Could not load matching settings.');
+    alert('Kunde inte ladda matchningsinställningar.');
     matchingDraft = [defaultReplacement()];
     matchingInvoiceFieldMinConfidenceDraft = 0.7;
     matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
@@ -1785,14 +1785,14 @@ settingsButtonEl.addEventListener('click', async () => {
   try {
     await loadPathSettings();
   } catch (error) {
-    alert('Could not load path settings.');
+    alert('Kunde inte ladda sökvägsinställningar.');
     pathsBaselineValue = normalizedPathValue(outputBasePathEl.value);
     updateSettingsActionButtons();
   }
   try {
     await loadCategories();
   } catch (error) {
-    alert('Could not load archive structure.');
+    alert('Kunde inte ladda arkivstruktur.');
     categoriesDraft = [];
     systemCategoriesDraft = createDefaultSystemCategories();
     categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
@@ -1814,7 +1814,7 @@ clientsApplyEl.addEventListener('click', async () => {
   try {
     await saveClientsText();
   } catch (error) {
-    alert('Could not save clients.');
+    alert('Kunde inte spara huvudmän.');
   }
 });
 
@@ -1848,7 +1848,7 @@ matchingApplyEl.addEventListener('click', async () => {
   try {
     await saveMatchingSettings();
   } catch (error) {
-    alert(error.message || 'Could not save matching settings.');
+    alert(error.message || 'Kunde inte spara matchningsinställningar.');
   }
 });
 
@@ -1881,7 +1881,7 @@ categoriesApplyEl.addEventListener('click', async () => {
   try {
     await saveCategories();
   } catch (error) {
-    alert(error.message || 'Could not save archive structure.');
+    alert(error.message || 'Kunde inte spara arkivstruktur.');
   }
 });
 
@@ -1924,13 +1924,13 @@ pathsApplyEl.addEventListener('click', async () => {
   try {
     await savePathSettings();
   } catch (error) {
-    alert(error.message || 'Could not save path settings.');
+    alert(error.message || 'Kunde inte spara sökvägsinställningar.');
   }
 });
 
 settingsResetJobsEl.addEventListener('click', async () => {
   const confirmed = window.confirm(
-    'This will move all source.pdf files back to inbox and remove all job folders. Continue?'
+    'Detta flyttar tillbaka alla source.pdf till inbox och tar bort alla jobbmappar. Fortsätta?'
   );
   if (!confirmed) {
     return;
@@ -1939,7 +1939,7 @@ settingsResetJobsEl.addEventListener('click', async () => {
   try {
     await resetAllJobs();
   } catch (error) {
-    alert('Could not reset jobs.');
+    alert('Kunde inte återställa jobb.');
   }
 });
 
@@ -1978,7 +1978,7 @@ window.addEventListener('beforeunload', (event) => {
   }
 
   event.preventDefault();
-  event.returnValue = 'You have unsaved changes.';
+  event.returnValue = 'Du har osparade ändringar.';
 });
 
 async function fetchState() {
@@ -1990,12 +1990,12 @@ async function fetchState() {
   try {
     const response = await fetch('/api/get-state.php', { cache: 'no-store' });
     if (!response.ok) {
-      throw new Error('Failed to fetch state');
+      throw new Error('Kunde inte hämta status');
     }
 
     const nextState = await response.json();
     if (!nextState || !Array.isArray(nextState.readyJobs) || !Array.isArray(nextState.clients)) {
-      throw new Error('Invalid state response');
+      throw new Error('Ogiltigt statussvar');
     }
 
     applyState({
@@ -2010,7 +2010,7 @@ async function fetchState() {
     jobListEl.innerHTML = '';
     const li = document.createElement('li');
     li.className = 'job-message';
-    li.textContent = 'Could not load state.';
+    li.textContent = 'Kunde inte ladda status.';
     jobListEl.appendChild(li);
   } finally {
     pollInFlight = false;

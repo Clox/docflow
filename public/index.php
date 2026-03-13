@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="sv">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,7 +10,7 @@
   <div class="app">
     <aside class="sidebar">
       <h1 class="sidebar-title">
-        <span>Ready Jobs</span>
+        <span>Klara jobb</span>
         <span id="processing-indicator" class="processing hidden">
           <span class="spinner" aria-hidden="true"></span>
           <span id="processing-text"></span>
@@ -22,27 +22,27 @@
     <main class="main">
       <div class="topbar">
         <div class="topbar-left">
-          <span class="title">PDF Files</span>
+          <span class="title">PDF-filer</span>
           <div class="field-group">
-            <label class="floating-label" for="client-select">Client</label>
+            <label class="floating-label" for="client-select">Huvudman</label>
             <select id="client-select">
-              <option value="" hidden>Choose client</option>
+              <option value="" hidden>Välj huvudman</option>
             </select>
           </div>
           <div class="field-group">
-            <label class="floating-label" for="category-select">Category</label>
+            <label class="floating-label" for="category-select">Kategori</label>
             <select id="category-select">
-              <option value="" hidden>Choose category</option>
+              <option value="" hidden>Välj kategori</option>
             </select>
           </div>
         </div>
         <div class="topbar-right">
           <div class="field-group">
-            <label class="floating-label" for="view-mode">View</label>
+            <label class="floating-label" for="view-mode">Vy</label>
             <select id="view-mode">
               <option value="pdf" selected>PDF</option>
               <option value="ocr">OCR-data</option>
-              <option value="matches">Matches</option>
+              <option value="matches">Matchningar</option>
               <option value="meta">Meta</option>
             </select>
           </div>
@@ -76,13 +76,13 @@
         <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
         <button class="settings-tab" data-settings-tab="matching" type="button">OCR-matchning</button>
         <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
-        <button class="settings-tab" data-settings-tab="jobs" type="button">Jobs</button>
-        <button class="settings-tab" data-settings-tab="paths" type="button">Paths</button>
+        <button class="settings-tab" data-settings-tab="jobs" type="button">Jobb</button>
+        <button class="settings-tab" data-settings-tab="paths" type="button">Sökvägar</button>
       </aside>
       <section class="settings-content">
         <div id="settings-panel-clients" class="settings-panel active">
           <h3>Huvudmän</h3>
-          <p>Edit data/clients.json content directly.</p>
+          <p>Redigera innehållet i <code>data/clients.json</code> direkt.</p>
           <textarea
             id="clients-textarea"
             spellcheck="false"
@@ -148,18 +148,18 @@
         </div>
 
         <div id="settings-panel-jobs" class="settings-panel hidden">
-          <h3>Jobs</h3>
-          <p>Invalidate all jobs and restore source files back to inbox.</p>
+          <h3>Jobb</h3>
+          <p>Ogiltigförklara alla jobb och flytta tillbaka <code>source.pdf</code> till inbox.</p>
           <div class="settings-danger">
-            <button id="settings-reset-jobs" type="button">Reset all jobs</button>
+            <button id="settings-reset-jobs" type="button">Återställ alla jobb</button>
           </div>
         </div>
 
         <div id="settings-panel-paths" class="settings-panel hidden">
-          <h3>Paths</h3>
-          <p>Set the base output path (your Huvudmän/Clients folder).</p>
-          <p>There should be one subfolder per client inside, and each subfolder name should match that client's <code>folderName</code>.</p>
-          <label class="settings-label" for="output-base-path">Base output path</label>
+          <h3>Sökvägar</h3>
+          <p>Ange grundsökväg för utdata (din Huvudmän-mapp).</p>
+          <p>Det ska finnas en undermapp per huvudman, och varje mappnamn ska matcha huvudmannens <code>folderName</code>.</p>
+          <label class="settings-label" for="output-base-path">Bas-sökväg för utdata</label>
           <input
             id="output-base-path"
             type="text"
