@@ -790,7 +790,7 @@ function normalize_for_matching(string $text, array $replacementMap): string
     return strtr($normalized, $replacementMap);
 }
 
-function find_category_matches(string $ocrText, array $categories, array $replacementMap): array
+function find_category_signal_matches(string $ocrText, array $categories, array $replacementMap): array
 {
     $normalizedOcr = normalize_for_matching($ocrText, $replacementMap);
     $inverseMap = build_inverse_single_char_map($replacementMap);
@@ -847,7 +847,7 @@ function find_category_matches(string $ocrText, array $categories, array $replac
             ];
         }
 
-        if ($score < $minScore || count($matchedRules) === 0) {
+        if (count($matchedRules) === 0) {
             continue;
         }
 
@@ -877,6 +877,35 @@ function find_category_matches(string $ocrText, array $categories, array $replac
     unset($match);
 
     return $matches;
+}
+
+function filter_category_matches_by_threshold(array $matches): array
+{
+    $filtered = [];
+    foreach ($matches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+
+        $score = $match['score'] ?? null;
+        $numericScore = is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))
+            ? (float) $score
+            : null;
+        $minScore = positive_int($match['minScore'] ?? 1, 1);
+        if ($numericScore === null || $numericScore < $minScore) {
+            continue;
+        }
+
+        $filtered[] = $match;
+    }
+
+    return $filtered;
+}
+
+function find_category_matches(string $ocrText, array $categories, array $replacementMap): array
+{
+    $signalMatches = find_category_signal_matches($ocrText, $categories, $replacementMap);
+    return filter_category_matches_by_threshold($signalMatches);
 }
 
 function split_categories_for_processing(array $categories): array
@@ -1554,8 +1583,6 @@ function build_invoice_detection(array $invoiceMatches, array $replacementMap): 
         return $detection;
     }
 
-    $detection['matched'] = true;
-
     $score = $bestMatch['score'] ?? 0;
     if (is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))) {
         $detection['score'] = max(0, (int) round((float) $score));
@@ -1582,6 +1609,7 @@ function build_invoice_detection(array $invoiceMatches, array $replacementMap): 
     }
 
     $detection['matchedSignals'] = array_values(array_unique($matchedSignals));
+    $detection['matched'] = $detection['score'] >= $detection['minScore'] && count($detection['matchedSignals']) > 0;
     return $detection;
 }
 
@@ -1602,7 +1630,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
                 'minScore' => 0,
                 'matchedSignals' => [],
             ],
-            'invoice' => empty_invoice_fields(),
+            'invoice' => null,
         ],
         'files' => [
             'sourcePdf' => 'source.pdf',
@@ -1641,19 +1669,20 @@ function process_claimed_job(string $jobDir, string $sourcePdfPath, ?string $fal
     }
 
     $categoryGroups = split_categories_for_processing($categories);
-    $invoiceMatches = find_category_matches($ocrText, $categoryGroups['invoiceSystemCategories'], $replacementMap);
-    $invoiceDetection = build_invoice_detection($invoiceMatches, $replacementMap);
+    $invoiceSignalMatches = find_category_signal_matches($ocrText, $categoryGroups['invoiceSystemCategories'], $replacementMap);
+    $invoiceMatches = filter_category_matches_by_threshold($invoiceSignalMatches);
+    $invoiceDetection = build_invoice_detection($invoiceSignalMatches, $replacementMap);
     $isInvoice = ($invoiceDetection['matched'] ?? false) === true;
     $invoiceData = $isInvoice
         ? extract_invoice_data($ocrText, $replacementMap)
-        : empty_invoice_fields();
+        : null;
 
     $matched = match_client_dir_name($ocrText, $clients);
     $categoryMatches = find_category_matches($ocrText, $categoryGroups['normalCategories'], $replacementMap);
     $extractedData = [
         'matchedClientDirName' => $matched,
         'categoryMatches' => $categoryMatches,
-        'systemCategoryMatches' => $invoiceMatches,
+        'systemCategoryMatches' => $invoiceSignalMatches,
         'invoice' => $invoiceData,
         'invoiceDetection' => $invoiceDetection,
     ];
