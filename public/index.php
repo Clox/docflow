@@ -68,7 +68,14 @@
           <iframe class="pdf-frame"></iframe>
           <iframe class="pdf-frame"></iframe>
         </div>
-        <pre id="ocr-view" class="ocr-view hidden"></pre>
+        <textarea
+          id="ocr-view"
+          class="ocr-view hidden"
+          readonly
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+        ></textarea>
         <div id="matches-view" class="matches-view hidden"></div>
         <pre id="meta-view" class="meta-view hidden"></pre>
       </div>

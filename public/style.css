@@ -262,6 +262,13 @@ body {
   font: 14px/1.45 monospace;
 }
 
+.ocr-view {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  resize: none;
+}
+
 .matches-view {
   position: absolute;
   inset: 0;

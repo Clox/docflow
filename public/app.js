@@ -95,6 +95,9 @@ let categoriesBaselineJson = JSON.stringify({
 let clientOptionsSignature = '';
 let senderOptionsSignature = '';
 let categoryOptionsSignature = '';
+let hasLoadedClients = false;
+let hasLoadedSenders = false;
+let hasLoadedCategories = false;
 const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
 const selectedCategoryByJobId = new Map();
@@ -408,7 +411,7 @@ async function setViewerOcr(jobId) {
 
   if (!jobId) {
     loadedOcrJobId = '';
-    ocrViewEl.textContent = '';
+    ocrViewEl.value = '';
     return;
   }
 
@@ -418,7 +421,7 @@ async function setViewerOcr(jobId) {
 
   loadedOcrJobId = jobId;
   const requestSeq = ++ocrRequestSeq;
-  ocrViewEl.textContent = 'Laddar OCR-data...';
+  ocrViewEl.value = 'Laddar OCR-data...';
 
   try {
     const response = await fetch('/api/get-job-ocr.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
@@ -432,12 +435,12 @@ async function setViewerOcr(jobId) {
     }
 
     const text = payload && typeof payload.text === 'string' ? payload.text : '';
-    ocrViewEl.textContent = text || '(Ingen OCR-text hittades)';
+    ocrViewEl.value = text || '(Ingen OCR-text hittades)';
   } catch (error) {
     if (requestSeq !== ocrRequestSeq) {
       return;
     }
-    ocrViewEl.textContent = 'Kunde inte ladda OCR-data.';
+    ocrViewEl.value = 'Kunde inte ladda OCR-data.';
   }
 }
 
@@ -758,7 +761,19 @@ function refreshSelection() {
 }
 
 function applyState(nextState) {
-  state = nextState;
+  const shouldUpdateClients = Array.isArray(nextState.clients);
+  const shouldUpdateSenders = Array.isArray(nextState.senders);
+  const shouldUpdateCategories = Array.isArray(nextState.categories);
+
+  state = {
+    processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : state.processingJobs,
+    readyJobs: Array.isArray(nextState.readyJobs) ? nextState.readyJobs : state.readyJobs,
+    failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : state.failedJobs,
+    clients: shouldUpdateClients ? nextState.clients : state.clients,
+    senders: shouldUpdateSenders ? nextState.senders : state.senders,
+    categories: shouldUpdateCategories ? nextState.categories : state.categories
+  };
+
   const validJobIds = new Set(state.readyJobs.map((job) => job.id));
   Array.from(selectedClientByJobId.keys()).forEach((jobId) => {
     if (!validJobIds.has(jobId)) {
@@ -777,9 +792,15 @@ function applyState(nextState) {
   });
 
   setProcessingInfo(state.processingJobs);
-  renderClientSelect(state.clients);
-  renderSenderSelect(state.senders);
-  renderCategorySelect(state.categories);
+  if (shouldUpdateClients) {
+    renderClientSelect(state.clients);
+  }
+  if (shouldUpdateSenders) {
+    renderSenderSelect(state.senders);
+  }
+  if (shouldUpdateCategories) {
+    renderCategorySelect(state.categories);
+  }
   refreshSelection();
 }
 
@@ -1638,7 +1659,7 @@ async function saveClientsText() {
 
   clientsBaselineText = clientsTextareaEl.value;
   updateSettingsActionButtons();
-  await fetchState();
+  await fetchState({ refreshClients: true });
 }
 
 async function saveMatchingSettings() {
@@ -1710,6 +1731,7 @@ async function saveCategories() {
   renderCategoriesEditor();
   renderSystemCategoryEditor();
   updateSettingsActionButtons();
+  await fetchState({ refreshCategories: true });
 }
 
 async function savePathSettings() {
@@ -2052,10 +2074,17 @@ window.addEventListener('beforeunload', (event) => {
   event.returnValue = 'Du har osparade ändringar.';
 });
 
-async function fetchState() {
+async function fetchState(options = {}) {
   if (pollInFlight) {
     return;
   }
+
+  const refreshClients = options.refreshClients === true;
+  const refreshSenders = options.refreshSenders === true;
+  const refreshCategories = options.refreshCategories === true;
+  const includeClients = !hasLoadedClients || refreshClients;
+  const includeSenders = !hasLoadedSenders || refreshSenders;
+  const includeCategories = !hasLoadedCategories || refreshCategories;
 
   pollInFlight = true;
   try {
@@ -2073,10 +2102,20 @@ async function fetchState() {
       processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : [],
       readyJobs: nextState.readyJobs,
       failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : [],
-      clients: nextState.clients,
-      senders: Array.isArray(nextState.senders) ? nextState.senders : [],
-      categories: Array.isArray(nextState.categories) ? nextState.categories : []
+      clients: includeClients && Array.isArray(nextState.clients) ? nextState.clients : undefined,
+      senders: includeSenders && Array.isArray(nextState.senders) ? nextState.senders : undefined,
+      categories: includeCategories && Array.isArray(nextState.categories) ? nextState.categories : undefined
     });
+
+    if (includeClients) {
+      hasLoadedClients = true;
+    }
+    if (includeSenders) {
+      hasLoadedSenders = true;
+    }
+    if (includeCategories) {
+      hasLoadedCategories = true;
+    }
   } catch (error) {
     setProcessingInfo([]);
     jobListEl.innerHTML = '';
