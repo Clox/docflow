@@ -273,6 +273,42 @@ function sender_lookup_result(?string $orgNumber, ?string $bankgiro, ?string $pl
     ];
 }
 
+function load_senders(): array
+{
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        return [];
+    }
+
+    try {
+        $rows = $repository->listAll();
+    } catch (Throwable $e) {
+        return [];
+    }
+
+    $senders = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $id = isset($row['id']) ? (int) $row['id'] : 0;
+        $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
+        $slug = is_string($row['slug'] ?? null) ? trim((string) $row['slug']) : '';
+        if ($id < 1 || $name === '' || $slug === '') {
+            continue;
+        }
+
+        $senders[] = [
+            'id' => $id,
+            'name' => $name,
+            'slug' => $slug,
+        ];
+    }
+
+    return $senders;
+}
+
 function positive_int(mixed $value, int $fallback = 1): int
 {
     if (is_int($value)) {
@@ -2727,6 +2763,7 @@ function read_jobs_state(array $config): array
 
         if ($status === 'ready') {
             $matchedClientDirName = null;
+            $matchedSenderSlug = null;
             $topMatchedCategoryId = null;
             $topMatchedCategoryName = null;
             $topMatchedCategoryScore = null;
@@ -2735,6 +2772,15 @@ function read_jobs_state(array $config): array
                 $value = $extracted['matchedClientDirName'];
                 if (is_string($value) || $value === null) {
                     $matchedClientDirName = $value;
+                }
+            }
+
+            if (is_array($extracted) && is_array($extracted['senderLookup'] ?? null)) {
+                $senderLookup = $extracted['senderLookup'];
+                $sender = is_array($senderLookup['sender'] ?? null) ? $senderLookup['sender'] : null;
+                $slug = is_array($sender) && is_string($sender['slug'] ?? null) ? trim((string) $sender['slug']) : '';
+                if ($slug !== '') {
+                    $matchedSenderSlug = $slug;
                 }
             }
 
@@ -2781,6 +2827,7 @@ function read_jobs_state(array $config): array
                 'status' => 'ready',
                 'createdAt' => $createdAt,
                 'matchedClientDirName' => $matchedClientDirName,
+                'matchedSenderSlug' => $matchedSenderSlug,
                 'topMatchedCategoryId' => $topMatchedCategoryId,
                 'topMatchedCategoryName' => $topMatchedCategoryName,
                 'topMatchedCategoryScore' => $topMatchedCategoryScore,

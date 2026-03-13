@@ -163,7 +163,8 @@ body {
   z-index: 1;
 }
 
-#client-select {
+#client-select,
+#sender-select {
   min-width: 220px;
   font: inherit;
   padding: 6px 8px;

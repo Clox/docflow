@@ -8,6 +8,7 @@ const viewModeEl = document.getElementById('view-mode');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
 const clientSelectEl = document.getElementById('client-select');
+const senderSelectEl = document.getElementById('sender-select');
 const categorySelectEl = document.getElementById('category-select');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
@@ -39,6 +40,7 @@ let state = {
   readyJobs: [],
   failedJobs: [],
   clients: [],
+  senders: [],
   categories: []
 };
 
@@ -90,10 +92,15 @@ let categoriesBaselineJson = JSON.stringify({
   archiveFolders: [],
   systemCategories: systemCategoriesDraft
 });
+let clientOptionsSignature = '';
+let senderOptionsSignature = '';
+let categoryOptionsSignature = '';
 const selectedClientByJobId = new Map();
+const selectedSenderByJobId = new Map();
 const selectedCategoryByJobId = new Map();
 
 clientSelectEl.disabled = true;
+senderSelectEl.disabled = true;
 categorySelectEl.disabled = true;
 matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
 
@@ -108,22 +115,52 @@ function setProcessingInfo(processingJobs) {
   processingTextEl.textContent = `Bearbetar ${processingJobs.length} fil(er)...`;
 }
 
-function renderClientSelect(clients) {
-  const currentValue = clientSelectEl.value;
-  clientSelectEl.innerHTML = '<option value="" hidden>Välj huvudman</option>';
+function syncSelectOptions(selectEl, placeholderText, options, lastSignature) {
+  const signature = JSON.stringify(options);
+  if (signature === lastSignature) {
+    return lastSignature;
+  }
 
-  clients.forEach((client) => {
+  const currentValue = selectEl.value;
+  selectEl.innerHTML = '';
+
+  const placeholderOption = document.createElement('option');
+  placeholderOption.value = '';
+  placeholderOption.hidden = true;
+  placeholderOption.textContent = placeholderText;
+  selectEl.appendChild(placeholderOption);
+
+  options.forEach((item) => {
     const option = document.createElement('option');
-    option.value = client.dirName;
-    option.textContent = client.dirName;
-    clientSelectEl.appendChild(option);
+    option.value = item.value;
+    option.textContent = item.label;
+    selectEl.appendChild(option);
   });
 
-  if (currentValue && clients.some((client) => client.dirName === currentValue)) {
-    clientSelectEl.value = currentValue;
-  } else {
-    clientSelectEl.value = '';
-  }
+  const hasCurrentValue = options.some((item) => item.value === currentValue);
+  selectEl.value = hasCurrentValue ? currentValue : '';
+
+  return signature;
+}
+
+function renderClientSelect(clients) {
+  const options = clients
+    .filter((client) => client && typeof client.dirName === 'string' && client.dirName.trim() !== '')
+    .map((client) => ({
+      value: client.dirName,
+      label: client.dirName
+    }));
+  clientOptionsSignature = syncSelectOptions(clientSelectEl, 'Välj huvudman', options, clientOptionsSignature);
+}
+
+function renderSenderSelect(senders) {
+  const options = senders
+    .map((sender) => ({
+      value: sender && typeof sender.slug === 'string' ? sender.slug.trim() : '',
+      label: sender && typeof sender.name === 'string' ? sender.name.trim() : ''
+    }))
+    .filter((sender) => sender.value !== '' && sender.label !== '');
+  senderOptionsSignature = syncSelectOptions(senderSelectEl, 'Välj avsändare', options, senderOptionsSignature);
 }
 
 function categoryDisplayName(category) {
@@ -137,30 +174,13 @@ function categoryDisplayName(category) {
 }
 
 function renderCategorySelect(categories) {
-  const currentValue = categorySelectEl.value;
-  categorySelectEl.innerHTML = '<option value="" hidden>Välj kategori</option>';
-
-  categories.forEach((category) => {
-    const displayName = categoryDisplayName(category);
-    const id = category && typeof category.id === 'string' ? category.id.trim() : '';
-    if (id === '') {
-      return;
-    }
-    if (displayName === '') {
-      return;
-    }
-
-    const option = document.createElement('option');
-    option.value = id;
-    option.textContent = displayName;
-    categorySelectEl.appendChild(option);
-  });
-
-  if (currentValue && Array.from(categorySelectEl.options).some((option) => option.value === currentValue)) {
-    categorySelectEl.value = currentValue;
-  } else {
-    categorySelectEl.value = '';
-  }
+  const options = categories
+    .map((category) => ({
+      value: category && typeof category.id === 'string' ? category.id.trim() : '',
+      label: categoryDisplayName(category)
+    }))
+    .filter((category) => category.value !== '' && category.label !== '');
+  categoryOptionsSignature = syncSelectOptions(categorySelectEl, 'Välj kategori', options, categoryOptionsSignature);
 }
 
 function setClientForJob(job) {
@@ -192,6 +212,36 @@ function setClientForJob(job) {
   );
 
   clientSelectEl.value = hasOption ? job.matchedClientDirName : '';
+}
+
+function setSenderForJob(job) {
+  senderSelectEl.disabled = !job;
+
+  if (!job) {
+    senderSelectEl.value = '';
+    return;
+  }
+
+  const manualValue = selectedSenderByJobId.get(job.id);
+  if (manualValue) {
+    const hasManualOption = Array.from(senderSelectEl.options).some(
+      (option) => option.value === manualValue
+    );
+    if (hasManualOption) {
+      senderSelectEl.value = manualValue;
+      return;
+    }
+  }
+
+  if (!job.matchedSenderSlug) {
+    senderSelectEl.value = '';
+    return;
+  }
+
+  const hasOption = Array.from(senderSelectEl.options).some(
+    (option) => option.value === job.matchedSenderSlug
+  );
+  senderSelectEl.value = hasOption ? job.matchedSenderSlug : '';
 }
 
 function setCategoryForJob(job) {
@@ -664,6 +714,7 @@ function applySelectedJobId(jobId) {
   renderJobList(state.readyJobs);
   setViewerJob(selectedJobId);
   setClientForJob(selectedJob);
+  setSenderForJob(selectedJob);
   setCategoryForJob(selectedJob);
 }
 
@@ -714,6 +765,11 @@ function applyState(nextState) {
       selectedClientByJobId.delete(jobId);
     }
   });
+  Array.from(selectedSenderByJobId.keys()).forEach((jobId) => {
+    if (!validJobIds.has(jobId)) {
+      selectedSenderByJobId.delete(jobId);
+    }
+  });
   Array.from(selectedCategoryByJobId.keys()).forEach((jobId) => {
     if (!validJobIds.has(jobId)) {
       selectedCategoryByJobId.delete(jobId);
@@ -722,6 +778,7 @@ function applyState(nextState) {
 
   setProcessingInfo(state.processingJobs);
   renderClientSelect(state.clients);
+  renderSenderSelect(state.senders);
   renderCategorySelect(state.categories);
   refreshSelection();
 }
@@ -1734,6 +1791,20 @@ clientSelectEl.addEventListener('change', () => {
   selectedClientByJobId.set(selectedJobId, value);
 });
 
+senderSelectEl.addEventListener('change', () => {
+  if (!selectedJobId) {
+    return;
+  }
+
+  const value = senderSelectEl.value;
+  if (!value) {
+    selectedSenderByJobId.delete(selectedJobId);
+    return;
+  }
+
+  selectedSenderByJobId.set(selectedJobId, value);
+});
+
 categorySelectEl.addEventListener('change', () => {
   if (!selectedJobId) {
     return;
@@ -2003,6 +2074,7 @@ async function fetchState() {
       readyJobs: nextState.readyJobs,
       failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : [],
       clients: nextState.clients,
+      senders: Array.isArray(nextState.senders) ? nextState.senders : [],
       categories: Array.isArray(nextState.categories) ? nextState.categories : []
     });
   } catch (error) {

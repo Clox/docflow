@@ -6,6 +6,7 @@ require_once __DIR__ . '/_bootstrap.php';
 try {
     $config = load_config();
     $clients = load_clients();
+    $senders = load_senders();
     $categories = load_categories();
 
     claim_and_process_inbox($config, $clients);
@@ -17,6 +18,7 @@ try {
         'readyJobs' => $jobsState['readyJobs'],
         'failedJobs' => $jobsState['failedJobs'],
         'clients' => $clients,
+        'senders' => $senders,
         'categories' => $categories,
     ]);
 } catch (Throwable $e) {
@@ -25,6 +27,7 @@ try {
         'readyJobs' => [],
         'failedJobs' => [],
         'clients' => [],
+        'senders' => [],
         'categories' => [],
         'error' => $e->getMessage(),
     ], 500);

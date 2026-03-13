@@ -30,6 +30,12 @@
             </select>
           </div>
           <div class="field-group">
+            <label class="floating-label" for="sender-select">Avsändare</label>
+            <select id="sender-select">
+              <option value="" hidden>Välj avsändare</option>
+            </select>
+          </div>
+          <div class="field-group">
             <label class="floating-label" for="category-select">Kategori</label>
             <select id="category-select">
               <option value="" hidden>Välj kategori</option>

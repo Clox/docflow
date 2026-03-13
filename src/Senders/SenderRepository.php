@@ -39,6 +39,17 @@ final class SenderRepository
         return $this->findByPaymentNumber('plusgiro', $plusgiro);
     }
 
+    public function listAll(): array
+    {
+        $statement = $this->pdo->query(
+            'SELECT id, name, slug, org_number, domain, kind, notes, confidence, created_at, updated_at
+            FROM senders
+            ORDER BY name ASC, slug ASC'
+        );
+        $rows = $statement->fetchAll();
+        return is_array($rows) ? $rows : [];
+    }
+
     public function findByDocumentIdentifiers(?string $orgNumber, ?string $bankgiro, ?string $plusgiro): ?array
     {
         if (is_string($orgNumber) && trim($orgNumber) !== '') {
