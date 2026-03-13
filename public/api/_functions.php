@@ -2363,6 +2363,8 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
             ],
             'invoice' => null,
             'invoiceConfidence' => empty_invoice_field_confidence(),
+            'preselectedClient' => null,
+            'preselectedSender' => null,
             'senderLookup' => [
                 'query' => [
                     'orgNumber' => null,
@@ -2435,6 +2437,27 @@ function process_claimed_job(
     );
 
     $matched = match_client_dir_name($ocrText, $clients);
+    $preselectedClient = null;
+    if (is_string($matched) && trim($matched) !== '') {
+        $preselectedClient = [
+            'dirName' => trim($matched),
+        ];
+    }
+
+    $preselectedSender = null;
+    if (($senderLookup['matched'] ?? false) === true && is_array($senderLookup['sender'] ?? null)) {
+        $sender = $senderLookup['sender'];
+        $slug = is_string($sender['slug'] ?? null) ? trim((string) $sender['slug']) : '';
+        if ($slug !== '') {
+            $preselectedSender = [
+                'slug' => $slug,
+                'name' => is_string($sender['name'] ?? null) ? trim((string) $sender['name']) : '',
+                'matchedBy' => is_string($senderLookup['matchedBy'] ?? null) ? $senderLookup['matchedBy'] : null,
+                'matchedValue' => is_string($senderLookup['matchedValue'] ?? null) ? $senderLookup['matchedValue'] : null,
+            ];
+        }
+    }
+
     $categoryMatches = find_category_matches($ocrText, $categoryGroups['normalCategories'], $replacementMap);
     $extractedData = [
         'matchedClientDirName' => $matched,
@@ -2444,6 +2467,8 @@ function process_claimed_job(
         'invoiceConfidence' => $invoiceConfidence,
         'invoiceFieldMinConfidence' => $invoiceFieldMinConfidence,
         'invoiceDetection' => $invoiceDetection,
+        'preselectedClient' => $preselectedClient,
+        'preselectedSender' => $preselectedSender,
         'senderLookup' => $senderLookup,
     ];
 
@@ -2456,6 +2481,8 @@ function process_claimed_job(
             'invoice' => $invoiceData,
             'invoiceConfidence' => $invoiceConfidence,
             'invoiceFieldMinConfidence' => $invoiceFieldMinConfidence,
+            'preselectedClient' => $preselectedClient,
+            'preselectedSender' => $preselectedSender,
             'senderLookup' => $senderLookup,
         ],
     ];
@@ -2767,15 +2794,33 @@ function read_jobs_state(array $config): array
             $topMatchedCategoryId = null;
             $topMatchedCategoryName = null;
             $topMatchedCategoryScore = null;
+            $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
             $extracted = load_json_file($jobDir . '/extracted.json');
-            if (is_array($extracted) && array_key_exists('matchedClientDirName', $extracted)) {
+
+            $preselectedClient = is_array($analysis['preselectedClient'] ?? null)
+                ? $analysis['preselectedClient']
+                : null;
+            if (is_array($preselectedClient) && is_string($preselectedClient['dirName'] ?? null)) {
+                $value = trim((string) $preselectedClient['dirName']);
+                if ($value !== '') {
+                    $matchedClientDirName = $value;
+                }
+            } elseif (is_array($extracted) && array_key_exists('matchedClientDirName', $extracted)) {
                 $value = $extracted['matchedClientDirName'];
                 if (is_string($value) || $value === null) {
                     $matchedClientDirName = $value;
                 }
             }
 
-            if (is_array($extracted) && is_array($extracted['senderLookup'] ?? null)) {
+            $preselectedSender = is_array($analysis['preselectedSender'] ?? null)
+                ? $analysis['preselectedSender']
+                : null;
+            if (is_array($preselectedSender) && is_string($preselectedSender['slug'] ?? null)) {
+                $slug = trim((string) $preselectedSender['slug']);
+                if ($slug !== '') {
+                    $matchedSenderSlug = $slug;
+                }
+            } elseif (is_array($extracted) && is_array($extracted['senderLookup'] ?? null)) {
                 $senderLookup = $extracted['senderLookup'];
                 $sender = is_array($senderLookup['sender'] ?? null) ? $senderLookup['sender'] : null;
                 $slug = is_array($sender) && is_string($sender['slug'] ?? null) ? trim((string) $sender['slug']) : '';
