@@ -109,9 +109,11 @@ let categoryOptionsSignature = '';
 let hasLoadedClients = false;
 let hasLoadedSenders = false;
 let hasLoadedCategories = false;
+let hasLoadedInitialJobsState = false;
 const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
 const selectedCategoryByJobId = new Map();
+const seenFailedJobKeys = new Set();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
 
@@ -763,10 +765,19 @@ async function setViewerMeta(jobId) {
   }
 }
 
-function renderJobList(readyJobs) {
-  jobListEl.innerHTML = '';
+function appendJobListSectionLabel(text) {
+  const li = document.createElement('li');
+  li.className = 'job-section-label';
+  li.textContent = text;
+  jobListEl.appendChild(li);
+}
 
-  if (readyJobs.length === 0) {
+function renderJobList(readyJobs, failedJobs) {
+  jobListEl.innerHTML = '';
+  const hasReadyJobs = Array.isArray(readyJobs) && readyJobs.length > 0;
+  const hasFailedJobs = Array.isArray(failedJobs) && failedJobs.length > 0;
+
+  if (!hasReadyJobs && !hasFailedJobs) {
     const li = document.createElement('li');
     li.className = 'job-message';
     li.textContent = 'Inga klara jobb ännu.';
@@ -774,37 +785,92 @@ function renderJobList(readyJobs) {
     return;
   }
 
-  readyJobs.forEach((job) => {
-    const li = document.createElement('li');
-    li.className = 'job-item';
-    if (job.id === selectedJobId) {
-      li.classList.add('selected');
-    }
+  if (hasReadyJobs) {
+    readyJobs.forEach((job) => {
+      const li = document.createElement('li');
+      li.className = 'job-item';
+      if (job.id === selectedJobId) {
+        li.classList.add('selected');
+      }
 
-    const name = document.createElement('div');
-    name.className = 'job-name';
-    name.textContent = job.originalFilename;
-    li.appendChild(name);
+      const name = document.createElement('div');
+      name.className = 'job-name';
+      name.textContent = job.originalFilename;
+      li.appendChild(name);
 
-    if (job.matchedClientDirName) {
-      const client = document.createElement('div');
-      client.className = 'job-client';
-      client.textContent = job.matchedClientDirName;
-      li.appendChild(client);
-    }
+      if (job.matchedClientDirName) {
+        const client = document.createElement('div');
+        client.className = 'job-client';
+        client.textContent = job.matchedClientDirName;
+        li.appendChild(client);
+      }
 
-    li.addEventListener('click', () => {
-      applySelectedJobId(job.id);
+      li.addEventListener('click', () => {
+        applySelectedJobId(job.id);
+      });
+
+      jobListEl.appendChild(li);
     });
+  }
 
-    jobListEl.appendChild(li);
+  if (hasFailedJobs) {
+    if (hasReadyJobs) {
+      appendJobListSectionLabel('Misslyckade jobb');
+    }
+
+    failedJobs.forEach((job) => {
+      const li = document.createElement('li');
+      li.className = 'job-item failed';
+
+      const name = document.createElement('div');
+      name.className = 'job-name';
+      name.textContent = job.originalFilename;
+      li.appendChild(name);
+
+      if (job.error) {
+        const error = document.createElement('div');
+        error.className = 'job-error';
+        error.textContent = job.error;
+        li.appendChild(error);
+      }
+
+      jobListEl.appendChild(li);
+    });
+  }
+}
+
+function notifyFailedJobs(failedJobs) {
+  if (!Array.isArray(failedJobs)) {
+    return;
+  }
+
+  const freshFailures = [];
+  failedJobs.forEach((job) => {
+    const errorText = typeof job.error === 'string' ? job.error.trim() : '';
+    const key = `${job.id || ''}::${errorText}`;
+    if (!seenFailedJobKeys.has(key)) {
+      seenFailedJobKeys.add(key);
+      if (hasLoadedInitialJobsState) {
+        freshFailures.push({
+          filename: typeof job.originalFilename === 'string' ? job.originalFilename : 'okänd fil',
+          error: errorText || 'Okänt fel'
+        });
+      }
+    }
   });
+
+  if (freshFailures.length === 0) {
+    return;
+  }
+
+  const lines = freshFailures.map((failure) => `${failure.filename}: ${failure.error}`);
+  alert('Ett eller flera jobb misslyckades.\n\n' + lines.join('\n\n'));
 }
 
 function applySelectedJobId(jobId) {
   const selectedJob = state.readyJobs.find((job) => job.id === jobId) || null;
   selectedJobId = selectedJob ? selectedJob.id : '';
-  renderJobList(state.readyJobs);
+  renderJobList(state.readyJobs, state.failedJobs);
   setViewerJob(selectedJobId);
   setClientForJob(selectedJob);
   setSenderForJob(selectedJob);
@@ -882,6 +948,7 @@ function applyState(nextState) {
   });
 
   setProcessingInfo(state.processingJobs);
+  notifyFailedJobs(state.failedJobs);
   if (shouldUpdateClients) {
     renderClientSelect(state.clients);
   }
@@ -892,6 +959,9 @@ function applyState(nextState) {
     renderCategorySelect(state.categories);
   }
   refreshSelection();
+  if (!hasLoadedInitialJobsState) {
+    hasLoadedInitialJobsState = true;
+  }
 }
 
 function openSettingsModal() {
@@ -1739,8 +1809,9 @@ function setArchiveTab(tabId) {
 function renderOcrProcessingCommand() {
   const modeFlag = ocrSkipExistingTextEl.checked ? '--mode skip' : '--mode redo';
   const optimizeLevel = sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1);
+  const deskewSegment = ocrSkipExistingTextEl.checked ? '--deskew ' : '';
   ocrProcessingCommandEl.textContent =
-    'ocrmypdf -l swe --deskew --oversample 400 --tesseract-thresholding sauvola '
+    'ocrmypdf -l swe ' + deskewSegment + '--oversample 400 --tesseract-thresholding sauvola '
     + '--tesseract-pagesegmode 6 --output-type pdf '
     + '-O' + optimizeLevel
     + ' '

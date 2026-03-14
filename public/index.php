@@ -159,7 +159,7 @@
             <input id="ocr-skip-existing-text" type="checkbox" checked>
             <span>Hoppa över dokument som redan har OCR-text</span>
           </label>
-          <p class="settings-help">Ikryssad använder <code>--mode skip</code>. Avmarkerad använder <code>--mode redo</code>.</p>
+          <p class="settings-help">Ikryssad använder <code>--mode skip</code>. Avmarkerad använder <code>--mode redo</code>. I <code>redo</code>-läge utelämnas <code>--deskew</code> eftersom OCRmyPDF 17 inte tillåter den kombinationen.</p>
           <div class="settings-group">
             <label class="settings-label" for="ocr-optimize-level">Komprimeringsnivå</label>
             <select id="ocr-optimize-level" class="settings-select">
