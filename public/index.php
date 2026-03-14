@@ -73,11 +73,22 @@
       </div>
 
       <div class="viewer-wrap">
+        <div id="ocr-search-bar" class="ocr-search-bar hidden">
+          <input id="ocr-search-input" type="text" placeholder="Sök i OCR-data">
+          <label class="ocr-search-toggle" for="ocr-search-regex">
+            <input id="ocr-search-regex" type="checkbox">
+            <span>Regex</span>
+          </label>
+          <button id="ocr-search-prev" type="button" aria-label="Föregående träff">↑</button>
+          <button id="ocr-search-next" type="button" aria-label="Nästa träff">↓</button>
+          <span id="ocr-search-status" class="ocr-search-status"></span>
+        </div>
         <div id="pdf-stack" class="pdf-stack">
           <iframe class="pdf-frame"></iframe>
           <iframe class="pdf-frame"></iframe>
           <iframe class="pdf-frame"></iframe>
         </div>
+        <pre id="ocr-highlight-view" class="ocr-highlight-view hidden" aria-hidden="true"></pre>
         <textarea
           id="ocr-view"
           class="ocr-view hidden"

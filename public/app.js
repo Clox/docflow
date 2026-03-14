@@ -2,9 +2,16 @@ const jobListEl = document.getElementById('job-list');
 const pdfStackEl = document.getElementById('pdf-stack');
 const pdfFrameEls = Array.from(document.querySelectorAll('.pdf-frame'));
 const ocrViewEl = document.getElementById('ocr-view');
+const ocrHighlightViewEl = document.getElementById('ocr-highlight-view');
 const matchesViewEl = document.getElementById('matches-view');
 const metaViewEl = document.getElementById('meta-view');
 const viewModeEl = document.getElementById('view-mode');
+const ocrSearchBarEl = document.getElementById('ocr-search-bar');
+const ocrSearchInputEl = document.getElementById('ocr-search-input');
+const ocrSearchRegexEl = document.getElementById('ocr-search-regex');
+const ocrSearchPrevEl = document.getElementById('ocr-search-prev');
+const ocrSearchNextEl = document.getElementById('ocr-search-next');
+const ocrSearchStatusEl = document.getElementById('ocr-search-status');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
 const clientSelectEl = document.getElementById('client-select');
@@ -91,6 +98,9 @@ let pollTimer = null;
 let pollInFlight = false;
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
+let ocrSearchMatches = [];
+let ocrSearchActiveIndex = -1;
+let ocrSearchDragState = null;
 let matchesRequestSeq = 0;
 let metaRequestSeq = 0;
 let categoriesDraft = [];
@@ -135,6 +145,8 @@ matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft
 ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
 ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
 ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+setOcrSearchButtonsEnabled(false);
+setOcrSearchStatus('');
 
 function setProcessingInfo(processingJobs) {
   if (!Array.isArray(processingJobs) || processingJobs.length === 0) {
@@ -500,6 +512,8 @@ function setViewerJob(jobId) {
 }
 
 function setViewerPdf(jobId) {
+  setOcrSearchVisible(false);
+  ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
@@ -508,14 +522,17 @@ function setViewerPdf(jobId) {
 }
 
 async function setViewerOcr(jobId) {
+  setOcrSearchVisible(true);
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
+  ocrHighlightViewEl.classList.remove('hidden');
   ocrViewEl.classList.remove('hidden');
 
   if (!jobId) {
     loadedOcrJobId = '';
     ocrViewEl.value = '';
+    refreshOcrSearch();
     return;
   }
 
@@ -526,6 +543,7 @@ async function setViewerOcr(jobId) {
   loadedOcrJobId = jobId;
   const requestSeq = ++ocrRequestSeq;
   ocrViewEl.value = 'Laddar OCR-data...';
+  refreshOcrSearch();
 
   try {
     const response = await fetch('/api/get-job-ocr.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
@@ -540,11 +558,13 @@ async function setViewerOcr(jobId) {
 
     const text = payload && typeof payload.text === 'string' ? payload.text : '';
     ocrViewEl.value = text || '(Ingen OCR-text hittades)';
+    refreshOcrSearch();
   } catch (error) {
     if (requestSeq !== ocrRequestSeq) {
       return;
     }
     ocrViewEl.value = 'Kunde inte ladda OCR-data.';
+    refreshOcrSearch();
   }
 }
 
@@ -689,7 +709,9 @@ function renderMatchesContent(payload) {
 }
 
 async function setViewerMatches(jobId) {
+  setOcrSearchVisible(false);
   pdfStackEl.classList.add('hidden');
+  ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
   matchesViewEl.classList.remove('hidden');
@@ -737,7 +759,9 @@ async function setViewerMatches(jobId) {
 }
 
 async function setViewerMeta(jobId) {
+  setOcrSearchVisible(false);
   pdfStackEl.classList.add('hidden');
+  ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.remove('hidden');
@@ -923,6 +947,267 @@ function notifyFailedJobs(failedJobs) {
 
   const lines = freshFailures.map((failure) => `${failure.filename}: ${failure.error}`);
   alert('Ett eller flera jobb misslyckades.\n\n' + lines.join('\n\n'));
+}
+
+function setOcrSearchVisible(visible) {
+  ocrSearchBarEl.classList.toggle('hidden', !visible);
+}
+
+function clamp(value, minValue, maxValue) {
+  if (value < minValue) {
+    return minValue;
+  }
+  if (value > maxValue) {
+    return maxValue;
+  }
+  return value;
+}
+
+function getViewerWrapRect() {
+  return ocrSearchBarEl.parentElement.getBoundingClientRect();
+}
+
+function ensureOcrSearchAbsolutePosition() {
+  if (ocrSearchBarEl.style.left !== '' && ocrSearchBarEl.style.top !== '') {
+    return;
+  }
+
+  const viewerRect = getViewerWrapRect();
+  const barRect = ocrSearchBarEl.getBoundingClientRect();
+  ocrSearchBarEl.style.left = `${Math.max(0, barRect.left - viewerRect.left)}px`;
+  ocrSearchBarEl.style.top = `${Math.max(0, barRect.top - viewerRect.top)}px`;
+  ocrSearchBarEl.style.right = 'auto';
+}
+
+function startOcrSearchDrag(event) {
+  if (event.target !== ocrSearchBarEl) {
+    return;
+  }
+
+  ensureOcrSearchAbsolutePosition();
+  const viewerRect = getViewerWrapRect();
+  const barRect = ocrSearchBarEl.getBoundingClientRect();
+  ocrSearchDragState = {
+    offsetX: event.clientX - barRect.left,
+    offsetY: event.clientY - barRect.top,
+    viewerWidth: viewerRect.width,
+    viewerHeight: viewerRect.height
+  };
+  ocrSearchBarEl.classList.add('is-dragging');
+  event.preventDefault();
+}
+
+function moveOcrSearchDrag(event) {
+  if (!ocrSearchDragState) {
+    return;
+  }
+
+  const viewerRect = getViewerWrapRect();
+  const barWidth = ocrSearchBarEl.offsetWidth;
+  const barHeight = ocrSearchBarEl.offsetHeight;
+  const nextLeft = clamp(
+    event.clientX - viewerRect.left - ocrSearchDragState.offsetX,
+    0,
+    Math.max(0, viewerRect.width - barWidth)
+  );
+  const nextTop = clamp(
+    event.clientY - viewerRect.top - ocrSearchDragState.offsetY,
+    0,
+    Math.max(0, viewerRect.height - barHeight)
+  );
+  ocrSearchBarEl.style.left = `${nextLeft}px`;
+  ocrSearchBarEl.style.top = `${nextTop}px`;
+  ocrSearchBarEl.style.right = 'auto';
+}
+
+function stopOcrSearchDrag() {
+  if (!ocrSearchDragState) {
+    return;
+  }
+  ocrSearchDragState = null;
+  ocrSearchBarEl.classList.remove('is-dragging');
+}
+
+function setOcrSearchStatus(text, isError = false) {
+  ocrSearchStatusEl.textContent = text;
+  ocrSearchStatusEl.classList.toggle('is-error', isError);
+}
+
+function setOcrSearchButtonsEnabled(enabled) {
+  ocrSearchPrevEl.disabled = !enabled;
+  ocrSearchNextEl.disabled = !enabled;
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function buildOcrSearchMatches(text, query, useRegex) {
+  if (!query) {
+    return [];
+  }
+
+  if (!useRegex) {
+    const matches = [];
+    let startIndex = 0;
+    while (startIndex <= text.length) {
+      const foundIndex = text.indexOf(query, startIndex);
+      if (foundIndex < 0) {
+        break;
+      }
+      matches.push({
+        start: foundIndex,
+        end: foundIndex + query.length
+      });
+      startIndex = foundIndex + Math.max(query.length, 1);
+    }
+    return matches;
+  }
+
+  const regex = new RegExp(query, 'gm');
+  const matches = [];
+  let found;
+  while ((found = regex.exec(text)) !== null) {
+    const matchedText = typeof found[0] === 'string' ? found[0] : '';
+    matches.push({
+      start: found.index,
+      end: found.index + matchedText.length
+    });
+    if (matchedText.length === 0) {
+      regex.lastIndex += 1;
+    }
+  }
+  return matches;
+}
+
+function applyOcrSearchMatch(index) {
+  if (index < 0 || index >= ocrSearchMatches.length) {
+    ocrSearchActiveIndex = -1;
+    renderOcrHighlightLayer();
+    return;
+  }
+
+  const match = ocrSearchMatches[index];
+  ocrSearchActiveIndex = index;
+  setOcrSearchStatus(`${index + 1} / ${ocrSearchMatches.length}`);
+  renderOcrHighlightLayer();
+  scrollOcrMatchIntoView(match);
+}
+
+function refreshOcrSearch() {
+  const query = ocrSearchInputEl.value;
+  const text = ocrViewEl.value || '';
+
+  if (!query) {
+    ocrSearchMatches = [];
+    ocrSearchActiveIndex = -1;
+    setOcrSearchButtonsEnabled(false);
+    setOcrSearchStatus('');
+    renderOcrHighlightLayer();
+    return;
+  }
+
+  try {
+    ocrSearchMatches = buildOcrSearchMatches(text, query, ocrSearchRegexEl.checked);
+  } catch (error) {
+    ocrSearchMatches = [];
+    ocrSearchActiveIndex = -1;
+    setOcrSearchButtonsEnabled(false);
+    setOcrSearchStatus('Ogiltig regex', true);
+    renderOcrHighlightLayer();
+    return;
+  }
+
+  if (ocrSearchMatches.length === 0) {
+    ocrSearchActiveIndex = -1;
+    setOcrSearchButtonsEnabled(false);
+    setOcrSearchStatus('0 träffar');
+    renderOcrHighlightLayer();
+    return;
+  }
+
+  setOcrSearchButtonsEnabled(true);
+  ocrSearchActiveIndex = -1;
+  setOcrSearchStatus(`${ocrSearchMatches.length} träffar`);
+  renderOcrHighlightLayer();
+}
+
+function stepOcrSearch(direction) {
+  if (ocrSearchMatches.length === 0) {
+    return;
+  }
+
+  const lastIndex = ocrSearchMatches.length - 1;
+  let nextIndex = ocrSearchActiveIndex;
+
+  if (nextIndex < 0) {
+    nextIndex = direction > 0 ? 0 : lastIndex;
+  } else {
+    nextIndex += direction;
+    if (nextIndex > lastIndex) {
+      nextIndex = 0;
+    } else if (nextIndex < 0) {
+      nextIndex = lastIndex;
+    }
+  }
+
+  applyOcrSearchMatch(nextIndex);
+}
+
+function renderOcrHighlightLayer() {
+  const text = ocrViewEl.value || '';
+  if (ocrSearchMatches.length === 0) {
+    ocrHighlightViewEl.textContent = text;
+    syncOcrHighlightScroll();
+    return;
+  }
+
+  let html = '';
+  let cursor = 0;
+
+  ocrSearchMatches.forEach((match, index) => {
+    if (match.start > cursor) {
+      html += escapeHtml(text.slice(cursor, match.start));
+    }
+
+    const matchedText = text.slice(match.start, match.end);
+    const className = index === ocrSearchActiveIndex ? ' class="is-active"' : '';
+    html += `<mark${className}>${escapeHtml(matchedText)}</mark>`;
+    cursor = match.end;
+  });
+
+  if (cursor < text.length) {
+    html += escapeHtml(text.slice(cursor));
+  }
+
+  ocrHighlightViewEl.innerHTML = html;
+  syncOcrHighlightScroll();
+}
+
+function syncOcrHighlightScroll() {
+  ocrHighlightViewEl.scrollTop = ocrViewEl.scrollTop;
+  ocrHighlightViewEl.scrollLeft = ocrViewEl.scrollLeft;
+}
+
+function scrollOcrMatchIntoView(match) {
+  const textBeforeMatch = ocrViewEl.value.slice(0, match.start);
+  const lineIndex = textBeforeMatch.split('\n').length - 1;
+  const lineStart = textBeforeMatch.lastIndexOf('\n') + 1;
+  const columnIndex = match.start - lineStart;
+  const styles = window.getComputedStyle(ocrViewEl);
+  const lineHeight = parseFloat(styles.lineHeight) || 17.4;
+  const fontSize = parseFloat(styles.fontSize) || 12;
+  const approxCharWidth = fontSize * 0.6;
+  const topPadding = parseFloat(styles.paddingTop) || 0;
+  const leftPadding = parseFloat(styles.paddingLeft) || 0;
+  const targetTop = Math.max(0, topPadding + (lineIndex * lineHeight) - (ocrViewEl.clientHeight / 3));
+  const targetLeft = Math.max(0, leftPadding + (columnIndex * approxCharWidth) - 40);
+  ocrViewEl.scrollTop = targetTop;
+  ocrViewEl.scrollLeft = targetLeft;
+  syncOcrHighlightScroll();
 }
 
 function applySelectedJobId(jobId) {
@@ -2706,6 +2991,50 @@ selectedJobReprocessEl.addEventListener('click', async () => {
 
 selectedJobRerunOcrEl.addEventListener('click', async () => {
   await handleSelectedJobReprocess('full');
+});
+
+ocrSearchInputEl.addEventListener('input', () => {
+  refreshOcrSearch();
+});
+
+ocrSearchRegexEl.addEventListener('change', () => {
+  refreshOcrSearch();
+});
+
+ocrSearchPrevEl.addEventListener('click', () => {
+  stepOcrSearch(-1);
+});
+
+ocrSearchNextEl.addEventListener('click', () => {
+  stepOcrSearch(1);
+});
+
+ocrSearchInputEl.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  event.preventDefault();
+  if (event.shiftKey) {
+    stepOcrSearch(-1);
+    return;
+  }
+  stepOcrSearch(1);
+});
+
+ocrViewEl.addEventListener('scroll', () => {
+  syncOcrHighlightScroll();
+});
+
+ocrSearchBarEl.addEventListener('mousedown', (event) => {
+  startOcrSearchDrag(event);
+});
+
+window.addEventListener('mousemove', (event) => {
+  moveOcrSearchDrag(event);
+});
+
+window.addEventListener('mouseup', () => {
+  stopOcrSearchDrag();
 });
 
 settingsModalEl.addEventListener('click', (event) => {
