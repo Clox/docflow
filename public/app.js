@@ -112,6 +112,7 @@ let hasLoadedCategories = false;
 const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
 const selectedCategoryByJobId = new Map();
+const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 
 clientSelectEl.disabled = true;
 senderSelectEl.disabled = true;
@@ -166,7 +167,44 @@ function renderClientSelect(clients) {
       value: client.dirName,
       label: client.dirName
     }));
-  clientOptionsSignature = syncSelectOptions(clientSelectEl, 'Välj huvudman', options, clientOptionsSignature);
+  const signature = JSON.stringify({
+    action: EDIT_CLIENTS_OPTION_VALUE,
+    options
+  });
+  if (signature === clientOptionsSignature) {
+    return;
+  }
+
+  const currentValue = clientSelectEl.value;
+  clientSelectEl.innerHTML = '';
+
+  const placeholderOption = document.createElement('option');
+  placeholderOption.value = '';
+  placeholderOption.hidden = true;
+  placeholderOption.textContent = 'Välj huvudman';
+  clientSelectEl.appendChild(placeholderOption);
+
+  const editOption = document.createElement('option');
+  editOption.value = EDIT_CLIENTS_OPTION_VALUE;
+  editOption.textContent = 'Redigera huvudmän...';
+  clientSelectEl.appendChild(editOption);
+
+  const separatorOption = document.createElement('option');
+  separatorOption.value = '__separator__';
+  separatorOption.textContent = '──────────';
+  separatorOption.disabled = true;
+  clientSelectEl.appendChild(separatorOption);
+
+  options.forEach((item) => {
+    const option = document.createElement('option');
+    option.value = item.value;
+    option.textContent = item.label;
+    clientSelectEl.appendChild(option);
+  });
+
+  const hasCurrentValue = options.some((item) => item.value === currentValue);
+  clientSelectEl.value = hasCurrentValue ? currentValue : '';
+  clientOptionsSignature = signature;
 }
 
 function renderSenderSelect(senders) {
@@ -819,6 +857,28 @@ function applyState(nextState) {
 
 function openSettingsModal() {
   settingsModalEl.classList.remove('hidden');
+}
+
+async function openClientsSettingsDirect() {
+  if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
+    return false;
+  }
+
+  openSettingsModal();
+  setSettingsTab('clients');
+
+  try {
+    await loadClientsText();
+  } catch (error) {
+    alert('Kunde inte ladda huvudmän.');
+    clientsBaselineText = clientsTextareaEl.value;
+    updateSettingsActionButtons();
+    return false;
+  }
+
+  clientsTextareaEl.focus();
+  updateSettingsActionButtons();
+  return true;
 }
 
 function closeSettingsModal(force = false) {
@@ -1964,6 +2024,14 @@ viewModeEl.addEventListener('change', () => {
 });
 
 clientSelectEl.addEventListener('change', () => {
+  if (clientSelectEl.value === EDIT_CLIENTS_OPTION_VALUE) {
+    const selectedJob = state.readyJobs.find((job) => job.id === selectedJobId) || null;
+    openClientsSettingsDirect().finally(() => {
+      setClientForJob(selectedJob);
+    });
+    return;
+  }
+
   if (!selectedJobId) {
     return;
   }
@@ -2030,15 +2098,7 @@ outputBasePathEl.addEventListener('input', () => {
 });
 
 settingsButtonEl.addEventListener('click', async () => {
-  openSettingsModal();
-  setSettingsTab('clients');
-  try {
-    await loadClientsText();
-  } catch (error) {
-    alert('Kunde inte ladda huvudmän.');
-    clientsBaselineText = clientsTextareaEl.value;
-    updateSettingsActionButtons();
-  }
+  await openClientsSettingsDirect();
   try {
     await loadMatchingSettings();
   } catch (error) {
