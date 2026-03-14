@@ -156,7 +156,7 @@
           <p>Kommandot som används är i praktiken:</p>
           <pre id="ocr-processing-command" class="settings-command"></pre>
           <label class="settings-checkbox">
-            <input id="ocr-skip-existing-text" type="checkbox">
+            <input id="ocr-skip-existing-text" type="checkbox" checked>
             <span>Hoppa över dokument som redan har OCR-text</span>
           </label>
           <p class="settings-help">Ikryssad använder <code>--mode skip</code>. Avmarkerad använder <code>--mode redo</code>.</p>
@@ -164,7 +164,7 @@
             <label class="settings-label" for="ocr-optimize-level">Komprimeringsnivå</label>
             <select id="ocr-optimize-level" class="settings-select">
               <option value="0">Ingen (-O0)</option>
-              <option value="1">Lossless (-O1)</option>
+              <option value="1" selected>Lossless (-O1)</option>
               <option value="2">Balans (-O2)</option>
               <option value="3">Max (-O3)</option>
             </select>

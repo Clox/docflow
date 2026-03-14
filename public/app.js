@@ -117,6 +117,8 @@ clientSelectEl.disabled = true;
 senderSelectEl.disabled = true;
 categorySelectEl.disabled = true;
 matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
+ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
+ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
 
 function setProcessingInfo(processingJobs) {
   if (!Array.isArray(processingJobs) || processingJobs.length === 0) {
