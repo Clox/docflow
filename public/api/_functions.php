@@ -835,21 +835,6 @@ function pdftotext_path(): ?string
     return $cached;
 }
 
-function pdftoppm_path(): ?string
-{
-    static $cached = null;
-    static $loaded = false;
-
-    if ($loaded) {
-        return $cached;
-    }
-
-    $loaded = true;
-    $path = trim((string) shell_exec('command -v pdftoppm 2>/dev/null'));
-    $cached = $path !== '' ? $path : null;
-    return $cached;
-}
-
 function ocrmypdf_path(): ?string
 {
     static $cached = null;
@@ -861,21 +846,6 @@ function ocrmypdf_path(): ?string
 
     $loaded = true;
     $path = trim((string) shell_exec('command -v ocrmypdf 2>/dev/null'));
-    $cached = $path !== '' ? $path : null;
-    return $cached;
-}
-
-function tesseract_path(): ?string
-{
-    static $cached = null;
-    static $loaded = false;
-
-    if ($loaded) {
-        return $cached;
-    }
-
-    $loaded = true;
-    $path = trim((string) shell_exec('command -v tesseract 2>/dev/null'));
     $cached = $path !== '' ? $path : null;
     return $cached;
 }
@@ -906,13 +876,7 @@ function jbig2_status_payload(): array
     ];
 }
 
-function run_ocrmypdf(
-    string $inputPdfPath,
-    string $outputPdfPath,
-    string $sidecarTextPath,
-    bool $skipExistingText,
-    int $optimizeLevel
-): bool
+function run_ocrmypdf(string $inputPdfPath, string $outputPdfPath, bool $skipExistingText, int $optimizeLevel): bool
 {
     $GLOBALS['docflow_last_ocrmypdf_error'] = null;
 
@@ -923,9 +887,6 @@ function run_ocrmypdf(
 
     if (is_file($outputPdfPath)) {
         @unlink($outputPdfPath);
-    }
-    if (is_file($sidecarTextPath)) {
-        @unlink($sidecarTextPath);
     }
 
     $modeFlag = $skipExistingText ? '--mode skip' : '--mode redo';
@@ -938,8 +899,6 @@ function run_ocrmypdf(
         . '-O' . $safeOptimizeLevel
         . ' '
         . $modeFlag
-        . ' --sidecar '
-        . escapeshellarg($sidecarTextPath)
         . ' '
         . escapeshellarg($inputPdfPath)
         . ' '
@@ -1030,131 +989,292 @@ function median_float(array $values, float $fallback): float
     return ($filtered[$middle - 1] + $filtered[$middle]) / 2.0;
 }
 
-function parse_tesseract_tsv(string $tsv): array
+function extract_bbox_layout_xml_from_pdf(string $pdfPath): ?string
 {
-    $lines = preg_split('/\R/u', trim($tsv));
-    if (!is_array($lines) || count($lines) < 2) {
-        return [];
+    $binary = pdftotext_path();
+    if ($binary === null || !is_file($pdfPath)) {
+        return null;
     }
 
-    $header = str_getcsv((string) array_shift($lines), "\t");
-    if (!is_array($header) || $header === []) {
-        return [];
-    }
-
-    $rows = [];
-    foreach ($lines as $line) {
-        if (!is_string($line) || $line === '') {
-            continue;
-        }
-
-        $values = str_getcsv($line, "\t");
-        if (!is_array($values) || count($values) < count($header)) {
-            continue;
-        }
-
-        $row = [];
-        foreach ($header as $index => $column) {
-            if (!is_string($column) || $column === '') {
-                continue;
-            }
-            $row[$column] = isset($values[$index]) ? (string) $values[$index] : '';
-        }
-        $rows[] = $row;
-    }
-
-    return $rows;
-}
-
-function render_grid_text_from_tesseract_tsv(string $tsv): string
-{
-    $rows = parse_tesseract_tsv($tsv);
-    if ($rows === []) {
+    $command = escapeshellarg($binary)
+        . ' -bbox-layout '
+        . escapeshellarg($pdfPath)
+        . ' - 2>/dev/null';
+    $xml = shell_exec($command);
+    if (!is_string($xml) || trim($xml) === '') {
         return '';
     }
 
+    return $xml;
+}
+
+function parse_bbox_layout_objects(string $xml): array
+{
+    if (trim($xml) === '') {
+        return [];
+    }
+
+    $dom = new DOMDocument();
+    $previous = libxml_use_internal_errors(true);
+    $loaded = $dom->loadXML($xml, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+
+    if ($loaded !== true) {
+        return [];
+    }
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('x', 'http://www.w3.org/1999/xhtml');
+
+    $pageNodes = $xpath->query('//x:page');
+    if ($pageNodes === false) {
+        return [];
+    }
+
     $pages = [];
-    $wordWidths = [];
-    $lineHeights = [];
-
-    foreach ($rows as $row) {
-        $pageNum = isset($row['page_num']) ? (int) $row['page_num'] : 0;
-        if ($pageNum < 1) {
+    foreach ($pageNodes as $pageNode) {
+        if (!$pageNode instanceof DOMElement) {
             continue;
         }
 
-        if (!isset($pages[$pageNum])) {
-            $pages[$pageNum] = [
-                'lines' => [],
-            ];
-        }
-
-        $level = isset($row['level']) ? (int) $row['level'] : 0;
-        $blockNum = isset($row['block_num']) ? (int) $row['block_num'] : 0;
-        $parNum = isset($row['par_num']) ? (int) $row['par_num'] : 0;
-        $lineNum = isset($row['line_num']) ? (int) $row['line_num'] : 0;
-        $lineKey = $blockNum . ':' . $parNum . ':' . $lineNum;
-
-        if ($level === 4) {
-            $top = isset($row['top']) ? (int) $row['top'] : 0;
-            $height = isset($row['height']) ? (int) $row['height'] : 0;
-            $pages[$pageNum]['lines'][$lineKey] = [
-                'top' => $top,
-                'height' => $height,
-                'words' => [],
-            ];
-            if ($height > 0) {
-                $lineHeights[] = (float) $height;
-            }
-            continue;
-        }
-
-        if ($level !== 5) {
-            continue;
-        }
-
-        $text = isset($row['text']) ? trim((string) $row['text']) : '';
-        if ($text === '') {
-            continue;
-        }
-
-        if (!isset($pages[$pageNum]['lines'][$lineKey])) {
-            $pages[$pageNum]['lines'][$lineKey] = [
-                'top' => isset($row['top']) ? (int) $row['top'] : 0,
-                'height' => isset($row['height']) ? (int) $row['height'] : 0,
-                'words' => [],
-            ];
-        }
-
-        $word = [
-            'left' => isset($row['left']) ? (int) $row['left'] : 0,
-            'top' => isset($row['top']) ? (int) $row['top'] : 0,
-            'width' => isset($row['width']) ? (int) $row['width'] : 0,
-            'height' => isset($row['height']) ? (int) $row['height'] : 0,
-            'text' => $text,
+        $page = [
+            'width' => (float) $pageNode->getAttribute('width'),
+            'height' => (float) $pageNode->getAttribute('height'),
+            'lines' => [],
         ];
-        $pages[$pageNum]['lines'][$lineKey]['words'][] = $word;
 
-        $charCount = utf8_strlen_safe($text);
-        if ($charCount > 0 && $word['width'] > 0) {
-            $wordWidths[] = $word['width'] / $charCount;
+        $lineNodes = $xpath->query('.//x:line', $pageNode);
+        if ($lineNodes === false) {
+            $pages[] = $page;
+            continue;
         }
-        if ($word['height'] > 0) {
-            $lineHeights[] = (float) $word['height'];
+
+        foreach ($lineNodes as $lineNode) {
+            if (!$lineNode instanceof DOMElement) {
+                continue;
+            }
+
+            $line = [
+                'x0' => (float) $lineNode->getAttribute('xMin'),
+                'y0' => (float) $lineNode->getAttribute('yMin'),
+                'x1' => (float) $lineNode->getAttribute('xMax'),
+                'y1' => (float) $lineNode->getAttribute('yMax'),
+                'text' => '',
+                'words' => [],
+            ];
+
+            $wordNodes = $xpath->query('./x:word', $lineNode);
+            if ($wordNodes === false) {
+                continue;
+            }
+
+            $parts = [];
+            foreach ($wordNodes as $wordNode) {
+                if (!$wordNode instanceof DOMElement) {
+                    continue;
+                }
+
+                $text = trim($wordNode->textContent);
+                if ($text === '') {
+                    continue;
+                }
+
+                $line['words'][] = [
+                    'x0' => (float) $wordNode->getAttribute('xMin'),
+                    'y0' => (float) $wordNode->getAttribute('yMin'),
+                    'x1' => (float) $wordNode->getAttribute('xMax'),
+                    'y1' => (float) $wordNode->getAttribute('yMax'),
+                    'text' => $text,
+                ];
+                $parts[] = $text;
+            }
+
+            if ($line['words'] === []) {
+                continue;
+            }
+
+            $line['text'] = implode(' ', $parts);
+            $page['lines'][] = $line;
+        }
+
+        $page['lines'] = dedupe_bbox_lines($page['lines']);
+        $pages[] = $page;
+    }
+
+    return $pages;
+}
+
+function bbox_entries_are_near(array $left, array $right, float $xTolerance, float $yTolerance): bool
+{
+    $leftText = is_string($left['text'] ?? null) ? trim((string) $left['text']) : '';
+    $rightText = is_string($right['text'] ?? null) ? trim((string) $right['text']) : '';
+    if ($leftText === '' || $leftText !== $rightText) {
+        return false;
+    }
+
+    return abs(((float) ($left['x0'] ?? 0.0)) - ((float) ($right['x0'] ?? 0.0))) <= $xTolerance
+        && abs(((float) ($left['x1'] ?? 0.0)) - ((float) ($right['x1'] ?? 0.0))) <= $xTolerance
+        && abs(((float) ($left['y0'] ?? 0.0)) - ((float) ($right['y0'] ?? 0.0))) <= $yTolerance
+        && abs(((float) ($left['y1'] ?? 0.0)) - ((float) ($right['y1'] ?? 0.0))) <= $yTolerance;
+}
+
+function dedupe_bbox_words(array $words): array
+{
+    if ($words === []) {
+        return [];
+    }
+
+    usort($words, static function (array $a, array $b): int {
+        $yCompare = ((float) ($a['y0'] ?? 0.0)) <=> ((float) ($b['y0'] ?? 0.0));
+        if ($yCompare !== 0) {
+            return $yCompare;
+        }
+
+        $xCompare = ((float) ($a['x0'] ?? 0.0)) <=> ((float) ($b['x0'] ?? 0.0));
+        if ($xCompare !== 0) {
+            return $xCompare;
+        }
+
+        $leftWidth = ((float) ($a['x1'] ?? 0.0)) - ((float) ($a['x0'] ?? 0.0));
+        $rightWidth = ((float) ($b['x1'] ?? 0.0)) - ((float) ($b['x0'] ?? 0.0));
+        return $rightWidth <=> $leftWidth;
+    });
+
+    $deduped = [];
+    foreach ($words as $word) {
+        $isDuplicate = false;
+        foreach ($deduped as $existing) {
+            if (bbox_entries_are_near($existing, $word, 1.5, 1.5)) {
+                $isDuplicate = true;
+                break;
+            }
+        }
+        if (!$isDuplicate) {
+            $deduped[] = $word;
         }
     }
 
-    $charWidth = median_float($wordWidths, 18.0);
-    $lineHeight = median_float($lineHeights, 40.0);
+    return $deduped;
+}
+
+function dedupe_bbox_lines(array $lines): array
+{
+    if ($lines === []) {
+        return [];
+    }
+
+    $normalized = [];
+    foreach ($lines as $line) {
+        $words = dedupe_bbox_words(is_array($line['words'] ?? null) ? $line['words'] : []);
+        if ($words === []) {
+            continue;
+        }
+
+        usort($words, static function (array $a, array $b): int {
+            return ((float) ($a['x0'] ?? 0.0)) <=> ((float) ($b['x0'] ?? 0.0));
+        });
+
+        $parts = [];
+        $x0 = null;
+        $y0 = null;
+        $x1 = null;
+        $y1 = null;
+        foreach ($words as $word) {
+            $parts[] = (string) ($word['text'] ?? '');
+            $wordX0 = (float) ($word['x0'] ?? 0.0);
+            $wordY0 = (float) ($word['y0'] ?? 0.0);
+            $wordX1 = (float) ($word['x1'] ?? 0.0);
+            $wordY1 = (float) ($word['y1'] ?? 0.0);
+            $x0 = $x0 === null ? $wordX0 : min($x0, $wordX0);
+            $y0 = $y0 === null ? $wordY0 : min($y0, $wordY0);
+            $x1 = $x1 === null ? $wordX1 : max($x1, $wordX1);
+            $y1 = $y1 === null ? $wordY1 : max($y1, $wordY1);
+        }
+
+        $normalized[] = [
+            'x0' => $x0 ?? 0.0,
+            'y0' => $y0 ?? 0.0,
+            'x1' => $x1 ?? 0.0,
+            'y1' => $y1 ?? 0.0,
+            'text' => implode(' ', $parts),
+            'words' => $words,
+        ];
+    }
+
+    usort($normalized, static function (array $a, array $b): int {
+        $yCompare = ((float) ($a['y0'] ?? 0.0)) <=> ((float) ($b['y0'] ?? 0.0));
+        if ($yCompare !== 0) {
+            return $yCompare;
+        }
+        return ((float) ($a['x0'] ?? 0.0)) <=> ((float) ($b['x0'] ?? 0.0));
+    });
+
+    $deduped = [];
+    foreach ($normalized as $line) {
+        $isDuplicate = false;
+        foreach ($deduped as $existing) {
+            if (bbox_entries_are_near($existing, $line, 2.0, 2.0)) {
+                $isDuplicate = true;
+                break;
+            }
+        }
+        if (!$isDuplicate) {
+            $deduped[] = $line;
+        }
+    }
+
+    return $deduped;
+}
+
+function render_grid_text_from_bbox_objects(array $pages): string
+{
+    if ($pages === []) {
+        return '';
+    }
+
+    $wordWidths = [];
+    $lineHeights = [];
+
+    foreach ($pages as $page) {
+        $lines = is_array($page['lines'] ?? null) ? $page['lines'] : [];
+        foreach ($lines as $line) {
+            $height = ((float) ($line['y1'] ?? 0.0)) - ((float) ($line['y0'] ?? 0.0));
+            if ($height > 0) {
+                $lineHeights[] = $height;
+            }
+
+            $words = is_array($line['words'] ?? null) ? $line['words'] : [];
+            foreach ($words as $word) {
+                $text = is_string($word['text'] ?? null) ? (string) $word['text'] : '';
+                $charCount = utf8_strlen_safe($text);
+                $width = ((float) ($word['x1'] ?? 0.0)) - ((float) ($word['x0'] ?? 0.0));
+                if ($charCount > 0 && $width > 0) {
+                    $wordWidths[] = $width / $charCount;
+                }
+            }
+        }
+    }
+
+    $charWidth = median_float($wordWidths, 6.0);
+    $lineHeight = median_float($lineHeights, 10.0);
     $renderedPages = [];
 
-    ksort($pages, SORT_NUMERIC);
     foreach ($pages as $page) {
+        $lines = is_array($page['lines'] ?? null) ? $page['lines'] : [];
+        if ($lines === []) {
+            $renderedPages[] = '';
+            continue;
+        }
+
         $grid = [];
         $rowTops = [];
-        $lines = array_values($page['lines']);
         usort($lines, static function (array $a, array $b): int {
-            return ($a['top'] ?? 0) <=> ($b['top'] ?? 0);
+            $yCompare = ((float) ($a['y0'] ?? 0.0)) <=> ((float) ($b['y0'] ?? 0.0));
+            if ($yCompare !== 0) {
+                return $yCompare;
+            }
+            return ((float) ($a['x0'] ?? 0.0)) <=> ((float) ($b['x0'] ?? 0.0));
         });
 
         foreach ($lines as $line) {
@@ -1164,22 +1284,23 @@ function render_grid_text_from_tesseract_tsv(string $tsv): string
             }
 
             usort($words, static function (array $a, array $b): int {
-                return ($a['left'] ?? 0) <=> ($b['left'] ?? 0);
+                return ((float) ($a['x0'] ?? 0.0)) <=> ((float) ($b['x0'] ?? 0.0));
             });
 
-            $candidateRow = (int) round(((int) ($line['top'] ?? 0)) / max($lineHeight, 1.0));
-            while (isset($rowTops[$candidateRow]) && abs($rowTops[$candidateRow] - (int) ($line['top'] ?? 0)) > ($lineHeight * 0.35)) {
+            $lineTop = (float) ($line['y0'] ?? 0.0);
+            $candidateRow = (int) round($lineTop / max($lineHeight, 1.0));
+            while (isset($rowTops[$candidateRow]) && abs($rowTops[$candidateRow] - $lineTop) > ($lineHeight * 0.35)) {
                 $candidateRow++;
             }
             if (!isset($grid[$candidateRow])) {
                 $grid[$candidateRow] = [];
-                $rowTops[$candidateRow] = (int) ($line['top'] ?? 0);
+                $rowTops[$candidateRow] = $lineTop;
             }
 
             $buffer = $grid[$candidateRow];
             $cursor = count($buffer);
             foreach ($words as $word) {
-                $targetCol = (int) round(((int) ($word['left'] ?? 0)) / max($charWidth, 1.0));
+                $targetCol = (int) round(((float) ($word['x0'] ?? 0.0)) / max($charWidth, 1.0));
                 if ($targetCol <= $cursor) {
                     $targetCol = $cursor > 0 ? $cursor + 1 : 0;
                 }
@@ -1219,56 +1340,25 @@ function render_grid_text_from_tesseract_tsv(string $tsv): string
     return trim(implode("\n\n", $renderedPages));
 }
 
+function extract_bbox_layout_objects_from_pdf(string $pdfPath): ?array
+{
+    $xml = extract_bbox_layout_xml_from_pdf($pdfPath);
+    if ($xml === null) {
+        return null;
+    }
+
+    $pages = parse_bbox_layout_objects($xml);
+    return is_array($pages) ? $pages : [];
+}
+
 function extract_grid_ocr_text_from_pdf(string $pdfPath): ?string
 {
-    $pdftoppmBinary = pdftoppm_path();
-    $tesseractBinary = tesseract_path();
-    if ($pdftoppmBinary === null || $tesseractBinary === null || !is_file($pdfPath)) {
+    $pages = extract_bbox_layout_objects_from_pdf($pdfPath);
+    if ($pages === null) {
         return null;
     }
 
-    $tempDir = sys_get_temp_dir() . '/docflow_grid_' . bin2hex(random_bytes(8));
-    if (!mkdir($tempDir, 0700) && !is_dir($tempDir)) {
-        return null;
-    }
-
-    try {
-        $imagePrefix = $tempDir . '/page';
-        $renderCommand = escapeshellarg($pdftoppmBinary)
-            . ' -r 300 -png '
-            . escapeshellarg($pdfPath)
-            . ' '
-            . escapeshellarg($imagePrefix)
-            . ' 2>/dev/null';
-        exec($renderCommand, $renderOutput, $renderCode);
-        if ($renderCode !== 0) {
-            return '';
-        }
-
-        $images = glob($imagePrefix . '-*.png');
-        if (!is_array($images) || $images === []) {
-            return '';
-        }
-        sort($images, SORT_NATURAL);
-
-        $pages = [];
-        foreach ($images as $imagePath) {
-            $command = escapeshellarg($tesseractBinary)
-                . ' '
-                . escapeshellarg($imagePath)
-                . ' stdout -l swe --psm 6 tsv 2>/dev/null';
-            $tsv = shell_exec($command);
-            if (!is_string($tsv) || trim($tsv) === '') {
-                $pages[] = '';
-                continue;
-            }
-            $pages[] = render_grid_text_from_tesseract_tsv($tsv);
-        }
-
-        return trim(implode("\n\n", $pages));
-    } finally {
-        delete_directory_recursive($tempDir);
-    }
+    return render_grid_text_from_bbox_objects($pages);
 }
 
 function fallback_ocr_text_from_path(?string $txtPath): string
@@ -2826,6 +2916,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
             'sourcePdf' => 'source.pdf',
             'reviewPdf' => 'review.pdf',
             'ocrText' => 'ocr.txt',
+            'ocrObjects' => 'ocr-objects.json',
             'extracted' => 'extracted.json',
         ],
     ];
@@ -2851,13 +2942,8 @@ function process_claimed_job(
 {
     $reviewPdfPath = $jobDir . '/review.pdf';
     $ocrPath = $jobDir . '/ocr.txt';
-    $ocrProcessedPdf = run_ocrmypdf(
-        $sourcePdfPath,
-        $reviewPdfPath,
-        $ocrPath,
-        $ocrSkipExistingText,
-        $ocrOptimizeLevel
-    );
+    $ocrObjectsPath = $jobDir . '/ocr-objects.json';
+    $ocrProcessedPdf = run_ocrmypdf($sourcePdfPath, $reviewPdfPath, $ocrSkipExistingText, $ocrOptimizeLevel);
     if (!$ocrProcessedPdf) {
         if (ocrmypdf_path() !== null) {
             $ocrError = last_ocrmypdf_error();
@@ -2873,15 +2959,29 @@ function process_claimed_job(
     }
 
     $textSourcePdfPath = $ocrProcessedPdf ? $reviewPdfPath : $sourcePdfPath;
+    $bboxObjects = extract_bbox_layout_objects_from_pdf($textSourcePdfPath);
     $ocrText = '';
-    $extracted = extract_grid_ocr_text_from_pdf($textSourcePdfPath);
-    if ($extracted === null || $extracted === '') {
-        $extracted = extract_text_from_pdf($textSourcePdfPath);
-    }
-    if ($extracted === null) {
-        $ocrText = fallback_ocr_text_from_path($fallbackTxtPath);
+    if ($bboxObjects !== null && $bboxObjects !== []) {
+        write_json_file($ocrObjectsPath, [
+            'source' => 'pdftotext-bbox-layout',
+            'pages' => $bboxObjects,
+        ]);
+        $ocrText = render_grid_text_from_bbox_objects($bboxObjects);
     } else {
-        $ocrText = $extracted;
+        if (is_file($ocrObjectsPath)) {
+            @unlink($ocrObjectsPath);
+        }
+    }
+
+    if ($ocrText === '') {
+        $extracted = extract_text_from_pdf($textSourcePdfPath);
+        if ($extracted !== null) {
+            $ocrText = $extracted;
+        }
+    }
+
+    if ($ocrText === '') {
+        $ocrText = fallback_ocr_text_from_path($fallbackTxtPath);
     }
 
     if (file_put_contents($ocrPath, $ocrText) === false) {
