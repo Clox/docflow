@@ -103,6 +103,7 @@ let ocrSearchActiveIndex = -1;
 let ocrSearchDragState = null;
 let matchesRequestSeq = 0;
 let metaRequestSeq = 0;
+let preferredJobIdFromHash = '';
 let categoriesDraft = [];
 let systemCategoriesDraft = createDefaultSystemCategories();
 let matchingDraft = [];
@@ -137,6 +138,7 @@ const selectedCategoryByJobId = new Map();
 const seenFailedJobKeys = new Set();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
+const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta']);
 
 clientSelectEl.disabled = true;
 senderSelectEl.disabled = true;
@@ -508,6 +510,64 @@ function setViewerJob(jobId) {
     setViewerMeta(jobId);
   } else {
     setViewerPdf(jobId);
+  }
+}
+
+function sanitizeViewMode(mode) {
+  return VALID_VIEW_MODES.has(mode) ? mode : 'pdf';
+}
+
+function parseHashState() {
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+  const params = new URLSearchParams(hash);
+  const jobId = typeof params.get('job') === 'string' ? params.get('job').trim() : '';
+  const view = sanitizeViewMode((params.get('view') || '').trim());
+  return { jobId, view };
+}
+
+function updateHashState() {
+  preferredJobIdFromHash = selectedJobId;
+  const params = new URLSearchParams();
+  if (selectedJobId) {
+    params.set('job', selectedJobId);
+  }
+  params.set('view', currentViewMode);
+  const nextHash = params.toString();
+  const currentHash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+  if (nextHash === currentHash) {
+    return;
+  }
+
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`;
+  window.history.replaceState(null, '', nextUrl);
+}
+
+function setViewMode(mode, options = {}) {
+  const syncHash = options.syncHash !== false;
+  const nextMode = sanitizeViewMode(mode);
+  currentViewMode = nextMode;
+  viewModeEl.value = nextMode;
+  loadedOcrJobId = '';
+  loadedMatchesJobId = '';
+  loadedMetaJobId = '';
+  setViewerJob(selectedJobId);
+  if (syncHash) {
+    updateHashState();
+  }
+}
+
+function applyHashState() {
+  const hashState = parseHashState();
+  preferredJobIdFromHash = hashState.jobId;
+  setViewMode(hashState.view, { syncHash: false });
+
+  if (!preferredJobIdFromHash) {
+    return;
+  }
+
+  const hashJob = findJobById(preferredJobIdFromHash);
+  if (hashJob) {
+    applySelectedJobId(preferredJobIdFromHash, { syncHash: false });
   }
 }
 
@@ -1210,7 +1270,8 @@ function scrollOcrMatchIntoView(match) {
   syncOcrHighlightScroll();
 }
 
-function applySelectedJobId(jobId) {
+function applySelectedJobId(jobId, options = {}) {
+  const syncHash = options.syncHash !== false;
   const selectedJob = findJobById(jobId);
   selectedJobId = selectedJob ? selectedJob.id : '';
   renderJobList(state.readyJobs, state.failedJobs);
@@ -1218,6 +1279,9 @@ function applySelectedJobId(jobId) {
   setClientForJob(selectedJob);
   setSenderForJob(selectedJob);
   setCategoryForJob(selectedJob);
+  if (syncHash) {
+    updateHashState();
+  }
 }
 
 function moveSelectionBy(offset) {
@@ -1245,18 +1309,33 @@ function moveSelectionBy(offset) {
 }
 
 function refreshSelection() {
-  const readyJobs = state.readyJobs;
+  if (preferredJobIdFromHash) {
+    const preferredJob = findJobById(preferredJobIdFromHash);
+    if (preferredJob) {
+      applySelectedJobId(preferredJob.id, { syncHash: false });
+      updateHashState();
+      return;
+    }
+  }
 
-  if (readyJobs.length === 0) {
-    applySelectedJobId('');
+  if (!Array.isArray(state.readyJobs) || state.readyJobs.length === 0) {
+    const failedFallback = Array.isArray(state.failedJobs) && state.failedJobs.length > 0
+      ? state.failedJobs[0]
+      : null;
+    applySelectedJobId(failedFallback ? failedFallback.id : '', { syncHash: false });
+    updateHashState();
     return;
   }
 
-  const stillExists = readyJobs.some((job) => job.id === selectedJobId);
-  if (!stillExists) {
-    selectedJobId = readyJobs[0].id;
+  const currentSelection = findJobById(selectedJobId);
+  if (currentSelection) {
+    applySelectedJobId(currentSelection.id, { syncHash: false });
+    updateHashState();
+    return;
   }
-  applySelectedJobId(selectedJobId);
+
+  applySelectedJobId(state.readyJobs[0].id, { syncHash: false });
+  updateHashState();
 }
 
 function applyState(nextState) {
@@ -2645,20 +2724,7 @@ async function handleSelectedJobReprocess(mode) {
 }
 
 viewModeEl.addEventListener('change', () => {
-  if (viewModeEl.value === 'ocr') {
-    currentViewMode = 'ocr';
-  } else if (viewModeEl.value === 'matches') {
-    currentViewMode = 'matches';
-  } else if (viewModeEl.value === 'meta') {
-    currentViewMode = 'meta';
-  } else {
-    currentViewMode = 'pdf';
-  }
-
-  loadedOcrJobId = '';
-  loadedMatchesJobId = '';
-  loadedMetaJobId = '';
-  setViewerJob(selectedJobId);
+  setViewMode(viewModeEl.value);
 });
 
 clientSelectEl.addEventListener('change', () => {
@@ -3137,4 +3203,8 @@ async function pollLoop() {
 updateSettingsActionButtons();
 renderJbig2Status(null);
 renderOcrProcessingCommand();
+applyHashState();
+window.addEventListener('hashchange', () => {
+  applyHashState();
+});
 pollLoop();
