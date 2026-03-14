@@ -20,7 +20,11 @@ if (!is_array($payload)) {
     exit;
 }
 
-if (!array_key_exists('outputBaseDirectory', $payload) && !array_key_exists('ocrSkipExistingText', $payload)) {
+if (
+    !array_key_exists('outputBaseDirectory', $payload)
+    && !array_key_exists('ocrSkipExistingText', $payload)
+    && !array_key_exists('ocrOptimizeLevel', $payload)
+) {
     json_response(['error' => 'No config values provided'], 400);
     exit;
 }
@@ -65,6 +69,20 @@ if (array_key_exists('ocrSkipExistingText', $payload)) {
     $nextOcrSkipExistingText = $payload['ocrSkipExistingText'];
 }
 
+$nextOcrOptimizeLevel = null;
+if (array_key_exists('ocrOptimizeLevel', $payload)) {
+    if (!is_int($payload['ocrOptimizeLevel'])) {
+        json_response(['error' => 'OCR optimize level must be integer'], 400);
+        exit;
+    }
+    $ocrOptimizeLevel = (int) $payload['ocrOptimizeLevel'];
+    if ($ocrOptimizeLevel < 0 || $ocrOptimizeLevel > 3) {
+        json_response(['error' => 'OCR optimize level must be between 0 and 3'], 400);
+        exit;
+    }
+    $nextOcrOptimizeLevel = $ocrOptimizeLevel;
+}
+
 try {
     $config = load_raw_config();
     if ($nextOutputBaseDirectory !== null) {
@@ -73,11 +91,15 @@ try {
     if ($nextOcrSkipExistingText !== null) {
         $config['ocrSkipExistingText'] = $nextOcrSkipExistingText;
     }
+    if ($nextOcrOptimizeLevel !== null) {
+        $config['ocrOptimizeLevel'] = $nextOcrOptimizeLevel;
+    }
     save_raw_config($config);
     json_response([
         'ok' => true,
         'outputBaseDirectory' => $config['outputBaseDirectory'] ?? '',
         'ocrSkipExistingText' => (bool) ($config['ocrSkipExistingText'] ?? true),
+        'ocrOptimizeLevel' => (int) ($config['ocrOptimizeLevel'] ?? 1),
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

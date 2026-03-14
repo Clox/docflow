@@ -51,6 +51,7 @@ function load_config(): array
     $jobsDirectory = $config['jobsDirectory'] ?? '';
     $outputBaseDirectory = $config['outputBaseDirectory'] ?? '';
     $ocrSkipExistingText = $config['ocrSkipExistingText'] ?? true;
+    $ocrOptimizeLevel = $config['ocrOptimizeLevel'] ?? 1;
 
     if (!is_string($inboxDirectory) || $inboxDirectory === '') {
         throw new RuntimeException('config.json: inboxDirectory is required');
@@ -67,12 +68,20 @@ function load_config(): array
             $ocrSkipExistingText = true;
         }
     }
+    if (!is_int($ocrOptimizeLevel)) {
+        $parsedOptimizeLevel = filter_var($ocrOptimizeLevel, FILTER_VALIDATE_INT);
+        $ocrOptimizeLevel = $parsedOptimizeLevel !== false ? (int) $parsedOptimizeLevel : 1;
+    }
+    if ($ocrOptimizeLevel < 0 || $ocrOptimizeLevel > 3) {
+        $ocrOptimizeLevel = 1;
+    }
 
     return [
         'inboxDirectory' => $inboxDirectory,
         'jobsDirectory' => $jobsDirectory,
         'outputBaseDirectory' => trim($outputBaseDirectory),
         'ocrSkipExistingText' => $ocrSkipExistingText,
+        'ocrOptimizeLevel' => $ocrOptimizeLevel,
     ];
 }
 
@@ -867,7 +876,7 @@ function jbig2_status_payload(): array
     ];
 }
 
-function run_ocrmypdf(string $inputPdfPath, string $outputPdfPath, bool $skipExistingText): bool
+function run_ocrmypdf(string $inputPdfPath, string $outputPdfPath, bool $skipExistingText, int $optimizeLevel): bool
 {
     $binary = ocrmypdf_path();
     if ($binary === null || !is_file($inputPdfPath)) {
@@ -879,8 +888,11 @@ function run_ocrmypdf(string $inputPdfPath, string $outputPdfPath, bool $skipExi
     }
 
     $modeFlag = $skipExistingText ? '--mode skip' : '--mode redo';
+    $safeOptimizeLevel = $optimizeLevel < 0 || $optimizeLevel > 3 ? 1 : $optimizeLevel;
     $command = escapeshellarg($binary)
         . ' -l swe --deskew --oversample 400 --tesseract-thresholding sauvola --tesseract-pagesegmode 6 --output-type pdf '
+        . '-O' . $safeOptimizeLevel
+        . ' '
         . $modeFlag
         . ' '
         . escapeshellarg($inputPdfPath)
@@ -2497,11 +2509,12 @@ function process_claimed_job(
     array $categories,
     array $replacementMap,
     float $invoiceFieldMinConfidence,
-    bool $ocrSkipExistingText
+    bool $ocrSkipExistingText,
+    int $ocrOptimizeLevel
 ): array
 {
     $reviewPdfPath = $jobDir . '/review.pdf';
-    $ocrProcessedPdf = run_ocrmypdf($sourcePdfPath, $reviewPdfPath, $ocrSkipExistingText);
+    $ocrProcessedPdf = run_ocrmypdf($sourcePdfPath, $reviewPdfPath, $ocrSkipExistingText, $ocrOptimizeLevel);
     if (!$ocrProcessedPdf && !copy($sourcePdfPath, $reviewPdfPath)) {
         throw new RuntimeException('Could not create review.pdf');
     }
@@ -2751,7 +2764,8 @@ function process_job_by_id(
             $categories,
             $replacementMap,
             $invoiceFieldMinConfidence,
-            (bool) ($config['ocrSkipExistingText'] ?? true)
+            (bool) ($config['ocrSkipExistingText'] ?? true),
+            (int) ($config['ocrOptimizeLevel'] ?? 1)
         );
 
         $analysis = $result['analysis'] ?? null;

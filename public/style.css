@@ -469,6 +469,14 @@ body {
   height: 16px;
 }
 
+.settings-help {
+  margin-bottom: 18px;
+}
+
+.settings-group {
+  margin-top: 20px;
+}
+
 .ocr-status-card {
   margin: 0 0 14px;
   padding: 12px;
@@ -618,6 +626,17 @@ body {
   padding: 7px 9px;
   border: 1px solid #ccc;
   border-radius: 4px;
+}
+
+.settings-select {
+  width: 100%;
+  max-width: 260px;
+  display: block;
+  font: inherit;
+  padding: 7px 9px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
 }
 
 .categories-list {

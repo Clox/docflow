@@ -22,6 +22,7 @@ const matchingCancelEl = document.getElementById('matching-cancel');
 const matchingApplyEl = document.getElementById('matching-apply');
 const matchingInvoiceThresholdEl = document.getElementById('matching-invoice-threshold');
 const ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
+const ocrOptimizeLevelEl = document.getElementById('ocr-optimize-level');
 const ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
 const jbig2StatusBadgeWrapEl = document.getElementById('jbig2-status-badge-wrap');
 const jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
@@ -89,6 +90,7 @@ let systemCategoriesDraft = createDefaultSystemCategories();
 let matchingDraft = [];
 let matchingInvoiceFieldMinConfidenceDraft = 0.7;
 let ocrSkipExistingTextBaseline = true;
+let ocrOptimizeLevelBaseline = 1;
 let activeSettingsTabId = 'clients';
 let activeArchiveTabId = 'categories';
 let clientsBaselineText = '';
@@ -871,6 +873,14 @@ function sanitizeInvoiceFieldMinConfidence(value, fallback = 0.7) {
   return Math.round(parsed * 1000) / 1000;
 }
 
+function sanitizeOcrOptimizeLevel(value, fallback = 1) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 3) {
+    return fallback;
+  }
+  return parsed;
+}
+
 function normalizedMatchingJson(replacements, invoiceFieldMinConfidence) {
   return JSON.stringify({
     replacements: replacements.map(sanitizeReplacement),
@@ -898,7 +908,8 @@ function isCategoriesDirty() {
 }
 
 function isOcrProcessingDirty() {
-  return ocrSkipExistingTextEl.checked !== ocrSkipExistingTextBaseline;
+  return ocrSkipExistingTextEl.checked !== ocrSkipExistingTextBaseline
+    || sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1) !== ocrOptimizeLevelBaseline;
 }
 
 function isPathsDirty() {
@@ -1599,9 +1610,12 @@ function setArchiveTab(tabId) {
 
 function renderOcrProcessingCommand() {
   const modeFlag = ocrSkipExistingTextEl.checked ? '--mode skip' : '--mode redo';
+  const optimizeLevel = sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1);
   ocrProcessingCommandEl.textContent =
     'ocrmypdf -l swe --deskew --oversample 400 --tesseract-thresholding sauvola '
     + '--tesseract-pagesegmode 6 --output-type pdf '
+    + '-O' + optimizeLevel
+    + ' '
     + modeFlag
     + ' input.pdf output.pdf';
 }
@@ -1722,12 +1736,18 @@ async function loadOcrProcessingSettings(options = {}) {
   }
 
   const payload = await response.json();
-  if (!payload || typeof payload.ocrSkipExistingText !== 'boolean') {
+  if (
+    !payload
+    || typeof payload.ocrSkipExistingText !== 'boolean'
+    || !Number.isInteger(payload.ocrOptimizeLevel)
+  ) {
     throw new Error('Ogiltigt svar för OCR-inställningar');
   }
 
   ocrSkipExistingTextEl.checked = payload.ocrSkipExistingText;
   ocrSkipExistingTextBaseline = payload.ocrSkipExistingText;
+  ocrOptimizeLevelBaseline = sanitizeOcrOptimizeLevel(payload.ocrOptimizeLevel, 1);
+  ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   renderJbig2Status(payload.jbig2, options);
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
@@ -1871,12 +1891,19 @@ async function saveOcrProcessingSettings() {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      ocrSkipExistingText: ocrSkipExistingTextEl.checked
+      ocrSkipExistingText: ocrSkipExistingTextEl.checked,
+      ocrOptimizeLevel: sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1)
     })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || typeof payload.ocrSkipExistingText !== 'boolean') {
+  if (
+    !response.ok
+    || !payload
+    || payload.ok !== true
+    || typeof payload.ocrSkipExistingText !== 'boolean'
+    || !Number.isInteger(payload.ocrOptimizeLevel)
+  ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara OCR-inställningar';
@@ -1885,6 +1912,8 @@ async function saveOcrProcessingSettings() {
 
   ocrSkipExistingTextEl.checked = payload.ocrSkipExistingText;
   ocrSkipExistingTextBaseline = payload.ocrSkipExistingText;
+  ocrOptimizeLevelBaseline = sanitizeOcrOptimizeLevel(payload.ocrOptimizeLevel, 1);
+  ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
 }
@@ -1988,6 +2017,12 @@ ocrSkipExistingTextEl.addEventListener('change', () => {
   updateSettingsActionButtons();
 });
 
+ocrOptimizeLevelEl.addEventListener('change', () => {
+  ocrOptimizeLevelEl.value = String(sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1));
+  renderOcrProcessingCommand();
+  updateSettingsActionButtons();
+});
+
 outputBasePathEl.addEventListener('input', () => {
   updateSettingsActionButtons();
 });
@@ -2019,6 +2054,8 @@ settingsButtonEl.addEventListener('click', async () => {
     alert('Kunde inte ladda OCR-inställningar.');
     ocrSkipExistingTextEl.checked = true;
     ocrSkipExistingTextBaseline = true;
+    ocrOptimizeLevelBaseline = 1;
+    ocrOptimizeLevelEl.value = '1';
     renderJbig2Status(null);
     renderOcrProcessingCommand();
     updateSettingsActionButtons();
@@ -2095,6 +2132,7 @@ matchingApplyEl.addEventListener('click', async () => {
 
 ocrProcessingCancelEl.addEventListener('click', () => {
   ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
+  ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
 });
