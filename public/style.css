@@ -165,7 +165,7 @@ body {
 
 #client-select,
 #sender-select {
-  min-width: 220px;
+  width: 220px;
   font: inherit;
   padding: 6px 8px;
   border: 1px solid #ccc;
@@ -174,7 +174,7 @@ body {
 }
 
 #category-select {
-  min-width: 210px;
+  width: 220px;
   font: inherit;
   padding: 6px 8px;
   border: 1px solid #ccc;

@@ -22,7 +22,6 @@
     <main class="main">
       <div class="topbar">
         <div class="topbar-left">
-          <span class="title">PDF-filer</span>
           <div class="field-group">
             <label class="floating-label" for="client-select">Huvudman</label>
             <select id="client-select">
