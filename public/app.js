@@ -113,6 +113,7 @@ const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
 const selectedCategoryByJobId = new Map();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
+const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
 
 clientSelectEl.disabled = true;
 senderSelectEl.disabled = true;
@@ -229,12 +230,50 @@ function categoryDisplayName(category) {
 
 function renderCategorySelect(categories) {
   const options = categories
+    .filter((category) => !Boolean(category && category.isSystemCategory))
     .map((category) => ({
       value: category && typeof category.id === 'string' ? category.id.trim() : '',
       label: categoryDisplayName(category)
     }))
     .filter((category) => category.value !== '' && category.label !== '');
-  categoryOptionsSignature = syncSelectOptions(categorySelectEl, 'Välj kategori', options, categoryOptionsSignature);
+  const signature = JSON.stringify({
+    action: EDIT_CATEGORIES_OPTION_VALUE,
+    options
+  });
+  if (signature === categoryOptionsSignature) {
+    return;
+  }
+
+  const currentValue = categorySelectEl.value;
+  categorySelectEl.innerHTML = '';
+
+  const placeholderOption = document.createElement('option');
+  placeholderOption.value = '';
+  placeholderOption.hidden = true;
+  placeholderOption.textContent = 'Välj kategori';
+  categorySelectEl.appendChild(placeholderOption);
+
+  const editOption = document.createElement('option');
+  editOption.value = EDIT_CATEGORIES_OPTION_VALUE;
+  editOption.textContent = 'Redigera kategorier...';
+  categorySelectEl.appendChild(editOption);
+
+  const separatorOption = document.createElement('option');
+  separatorOption.value = '__separator__';
+  separatorOption.textContent = '──────────';
+  separatorOption.disabled = true;
+  categorySelectEl.appendChild(separatorOption);
+
+  options.forEach((item) => {
+    const option = document.createElement('option');
+    option.value = item.value;
+    option.textContent = item.label;
+    categorySelectEl.appendChild(option);
+  });
+
+  const hasCurrentValue = options.some((item) => item.value === currentValue);
+  categorySelectEl.value = hasCurrentValue ? currentValue : '';
+  categoryOptionsSignature = signature;
 }
 
 function setClientForJob(job) {
@@ -877,6 +916,33 @@ async function openClientsSettingsDirect() {
   }
 
   clientsTextareaEl.focus();
+  updateSettingsActionButtons();
+  return true;
+}
+
+async function openCategoriesSettingsDirect() {
+  if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
+    return false;
+  }
+
+  openSettingsModal();
+  setSettingsTab('categories');
+
+  try {
+    await loadCategories();
+  } catch (error) {
+    alert('Kunde inte ladda arkivstruktur.');
+    categoriesDraft = [];
+    systemCategoriesDraft = createDefaultSystemCategories();
+    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+    renderCategoriesEditor();
+    renderSystemCategoryEditor();
+    updateSettingsActionButtons();
+    return false;
+  }
+
+  setArchiveTab('categories');
+  categoriesAddCategoryEl.focus();
   updateSettingsActionButtons();
   return true;
 }
@@ -2060,6 +2126,14 @@ senderSelectEl.addEventListener('change', () => {
 });
 
 categorySelectEl.addEventListener('change', () => {
+  if (categorySelectEl.value === EDIT_CATEGORIES_OPTION_VALUE) {
+    const selectedJob = state.readyJobs.find((job) => job.id === selectedJobId) || null;
+    openCategoriesSettingsDirect().finally(() => {
+      setCategoryForJob(selectedJob);
+    });
+    return;
+  }
+
   if (!selectedJobId) {
     return;
   }
