@@ -267,6 +267,9 @@ body {
   height: 100%;
   border: 0;
   resize: none;
+  white-space: pre;
+  word-break: normal;
+  font-size: 12px;
 }
 
 .matches-view {
@@ -438,6 +441,32 @@ body {
   margin: 6px 0 6px;
   font-size: 13px;
   color: #444;
+}
+
+.settings-command {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 12px/1.45 monospace;
+}
+
+.settings-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 10px;
+  font-size: 14px;
+  color: #333;
+}
+
+.settings-checkbox input {
+  width: 16px;
+  height: 16px;
 }
 
 .settings-danger {

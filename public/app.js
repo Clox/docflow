@@ -21,6 +21,10 @@ const matchingAddRowEl = document.getElementById('matching-add-row');
 const matchingCancelEl = document.getElementById('matching-cancel');
 const matchingApplyEl = document.getElementById('matching-apply');
 const matchingInvoiceThresholdEl = document.getElementById('matching-invoice-threshold');
+const ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
+const ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
+const ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
+const ocrProcessingApplyEl = document.getElementById('ocr-processing-apply');
 const categoriesListEl = document.getElementById('categories-list');
 const systemCategoryEditorEl = document.getElementById('system-category-editor');
 const categoriesAddCategoryEl = document.getElementById('categories-add-category');
@@ -80,6 +84,7 @@ let categoriesDraft = [];
 let systemCategoriesDraft = createDefaultSystemCategories();
 let matchingDraft = [];
 let matchingInvoiceFieldMinConfidenceDraft = 0.7;
+let ocrSkipExistingTextBaseline = true;
 let activeSettingsTabId = 'clients';
 let activeArchiveTabId = 'categories';
 let clientsBaselineText = '';
@@ -825,7 +830,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'matching', 'categories', 'jobs', 'paths'];
+  const panelIds = ['clients', 'matching', 'ocr-processing', 'categories', 'jobs', 'paths'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -837,7 +842,11 @@ function setSettingsTab(tabId) {
 }
 
 function isEditableSettingsTab(tabId) {
-  return tabId === 'clients' || tabId === 'matching' || tabId === 'categories' || tabId === 'paths';
+  return tabId === 'clients'
+    || tabId === 'matching'
+    || tabId === 'ocr-processing'
+    || tabId === 'categories'
+    || tabId === 'paths';
 }
 
 function normalizedPathValue(value) {
@@ -884,6 +893,10 @@ function isCategoriesDirty() {
   return normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft) !== categoriesBaselineJson;
 }
 
+function isOcrProcessingDirty() {
+  return ocrSkipExistingTextEl.checked !== ocrSkipExistingTextBaseline;
+}
+
 function isPathsDirty() {
   return normalizedPathValue(outputBasePathEl.value) !== pathsBaselineValue;
 }
@@ -898,6 +911,9 @@ function isSettingsTabDirty(tabId) {
   if (tabId === 'categories') {
     return isCategoriesDirty();
   }
+  if (tabId === 'ocr-processing') {
+    return isOcrProcessingDirty();
+  }
   if (tabId === 'paths') {
     return isPathsDirty();
   }
@@ -905,7 +921,7 @@ function isSettingsTabDirty(tabId) {
 }
 
 function hasAnyUnsavedSettingsChanges() {
-  return isClientsDirty() || isMatchingDirty() || isCategoriesDirty() || isPathsDirty();
+  return isClientsDirty() || isMatchingDirty() || isOcrProcessingDirty() || isCategoriesDirty() || isPathsDirty();
 }
 
 function panelActionButtonsForTab(tabId) {
@@ -918,6 +934,9 @@ function panelActionButtonsForTab(tabId) {
   if (tabId === 'categories') {
     return [categoriesCancelEl, categoriesApplyEl];
   }
+  if (tabId === 'ocr-processing') {
+    return [ocrProcessingCancelEl, ocrProcessingApplyEl];
+  }
   if (tabId === 'paths') {
     return [pathsCancelEl, pathsApplyEl];
   }
@@ -927,6 +946,7 @@ function panelActionButtonsForTab(tabId) {
 function updateSettingsActionButtons() {
   const clientsDirty = isClientsDirty();
   const matchingDirty = isMatchingDirty();
+  const ocrProcessingDirty = isOcrProcessingDirty();
   const categoriesDirty = isCategoriesDirty();
   const pathsDirty = isPathsDirty();
 
@@ -935,6 +955,9 @@ function updateSettingsActionButtons() {
 
   matchingCancelEl.disabled = !matchingDirty;
   matchingApplyEl.disabled = !matchingDirty;
+
+  ocrProcessingCancelEl.disabled = !ocrProcessingDirty;
+  ocrProcessingApplyEl.disabled = !ocrProcessingDirty;
 
   categoriesCancelEl.disabled = !categoriesDirty;
   categoriesApplyEl.disabled = !categoriesDirty;
@@ -1570,6 +1593,15 @@ function setArchiveTab(tabId) {
   archiveViewSystemEl.classList.toggle('hidden', activeArchiveTabId !== 'system');
 }
 
+function renderOcrProcessingCommand() {
+  const modeFlag = ocrSkipExistingTextEl.checked ? '--mode skip' : '--mode redo';
+  ocrProcessingCommandEl.textContent =
+    'ocrmypdf -l swe --deskew --oversample 400 --tesseract-thresholding sauvola '
+    + '--tesseract-pagesegmode 6 --output-type pdf '
+    + modeFlag
+    + ' input.pdf output.pdf';
+}
+
 async function loadClientsText() {
   const response = await fetch('/api/get-clients.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -1622,6 +1654,23 @@ async function loadPathSettings() {
 
   outputBasePathEl.value = payload.outputBaseDirectory;
   pathsBaselineValue = normalizedPathValue(payload.outputBaseDirectory);
+  updateSettingsActionButtons();
+}
+
+async function loadOcrProcessingSettings() {
+  const response = await fetch('/api/get-config.php', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Kunde inte ladda OCR-inställningar');
+  }
+
+  const payload = await response.json();
+  if (!payload || typeof payload.ocrSkipExistingText !== 'boolean') {
+    throw new Error('Ogiltigt svar för OCR-inställningar');
+  }
+
+  ocrSkipExistingTextEl.checked = payload.ocrSkipExistingText;
+  ocrSkipExistingTextBaseline = payload.ocrSkipExistingText;
+  renderOcrProcessingCommand();
   updateSettingsActionButtons();
 }
 
@@ -1756,6 +1805,31 @@ async function savePathSettings() {
   updateSettingsActionButtons();
 }
 
+async function saveOcrProcessingSettings() {
+  const response = await fetch('/api/save-config.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      ocrSkipExistingText: ocrSkipExistingTextEl.checked
+    })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true || typeof payload.ocrSkipExistingText !== 'boolean') {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Kunde inte spara OCR-inställningar';
+    throw new Error(message);
+  }
+
+  ocrSkipExistingTextEl.checked = payload.ocrSkipExistingText;
+  ocrSkipExistingTextBaseline = payload.ocrSkipExistingText;
+  renderOcrProcessingCommand();
+  updateSettingsActionButtons();
+}
+
 async function resetAllJobs() {
   const response = await fetch('/api/reset-jobs.php', {
     method: 'POST',
@@ -1850,6 +1924,11 @@ matchingInvoiceThresholdEl.addEventListener('input', () => {
   updateSettingsActionButtons();
 });
 
+ocrSkipExistingTextEl.addEventListener('change', () => {
+  renderOcrProcessingCommand();
+  updateSettingsActionButtons();
+});
+
 outputBasePathEl.addEventListener('input', () => {
   updateSettingsActionButtons();
 });
@@ -1873,6 +1952,15 @@ settingsButtonEl.addEventListener('click', async () => {
     matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
     matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft);
     renderMatchingEditor();
+    updateSettingsActionButtons();
+  }
+  try {
+    await loadOcrProcessingSettings();
+  } catch (error) {
+    alert('Kunde inte ladda OCR-inställningar.');
+    ocrSkipExistingTextEl.checked = true;
+    ocrSkipExistingTextBaseline = true;
+    renderOcrProcessingCommand();
     updateSettingsActionButtons();
   }
   try {
@@ -1942,6 +2030,20 @@ matchingApplyEl.addEventListener('click', async () => {
     await saveMatchingSettings();
   } catch (error) {
     alert(error.message || 'Kunde inte spara matchningsinställningar.');
+  }
+});
+
+ocrProcessingCancelEl.addEventListener('click', () => {
+  ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
+  renderOcrProcessingCommand();
+  updateSettingsActionButtons();
+});
+
+ocrProcessingApplyEl.addEventListener('click', async () => {
+  try {
+    await saveOcrProcessingSettings();
+  } catch (error) {
+    alert(error.message || 'Kunde inte spara OCR-inställningar.');
   }
 });
 
@@ -2134,4 +2236,5 @@ async function pollLoop() {
 }
 
 updateSettingsActionButtons();
+renderOcrProcessingCommand();
 pollLoop();

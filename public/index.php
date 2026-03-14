@@ -72,6 +72,7 @@
           id="ocr-view"
           class="ocr-view hidden"
           readonly
+          wrap="off"
           spellcheck="false"
           autocorrect="off"
           autocapitalize="off"
@@ -88,6 +89,7 @@
         <h2>Inställningar</h2>
         <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
         <button class="settings-tab" data-settings-tab="matching" type="button">OCR-matchning</button>
+        <button class="settings-tab" data-settings-tab="ocr-processing" type="button">Bild-OCR</button>
         <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
         <button class="settings-tab" data-settings-tab="jobs" type="button">Jobb</button>
         <button class="settings-tab" data-settings-tab="paths" type="button">Sökvägar</button>
@@ -132,6 +134,22 @@
           <div class="panel-actions">
             <button id="matching-cancel" type="button">Avbryt</button>
             <button id="matching-apply" type="button">Spara</button>
+          </div>
+        </div>
+
+        <div id="settings-panel-ocr-processing" class="settings-panel hidden">
+          <h3>Bild-OCR</h3>
+          <p>Kör <code>ocrmypdf</code> som ett steg i bearbetningen innan OCR-text läses ut för analys.</p>
+          <p>Kommandot som används är i praktiken:</p>
+          <pre id="ocr-processing-command" class="settings-command"></pre>
+          <label class="settings-checkbox">
+            <input id="ocr-skip-existing-text" type="checkbox">
+            <span>Hoppa över dokument som redan har OCR-text</span>
+          </label>
+          <p>Ikryssad använder <code>--mode skip</code>. Avmarkerad använder <code>--mode redo</code>.</p>
+          <div class="panel-actions">
+            <button id="ocr-processing-cancel" type="button">Avbryt</button>
+            <button id="ocr-processing-apply" type="button">Spara</button>
           </div>
         </div>
 

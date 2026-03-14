@@ -9,6 +9,7 @@ try {
         'inboxDirectory' => $config['inboxDirectory'],
         'jobsDirectory' => $config['jobsDirectory'],
         'outputBaseDirectory' => $config['outputBaseDirectory'],
+        'ocrSkipExistingText' => (bool) $config['ocrSkipExistingText'],
     ]);
 } catch (Throwable $e) {
     json_response([

@@ -50,6 +50,7 @@ function load_config(): array
     $inboxDirectory = $config['inboxDirectory'] ?? '';
     $jobsDirectory = $config['jobsDirectory'] ?? '';
     $outputBaseDirectory = $config['outputBaseDirectory'] ?? '';
+    $ocrSkipExistingText = $config['ocrSkipExistingText'] ?? true;
 
     if (!is_string($inboxDirectory) || $inboxDirectory === '') {
         throw new RuntimeException('config.json: inboxDirectory is required');
@@ -60,11 +61,18 @@ function load_config(): array
     if (!is_string($outputBaseDirectory)) {
         $outputBaseDirectory = '';
     }
+    if (!is_bool($ocrSkipExistingText)) {
+        $ocrSkipExistingText = filter_var($ocrSkipExistingText, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        if (!is_bool($ocrSkipExistingText)) {
+            $ocrSkipExistingText = true;
+        }
+    }
 
     return [
         'inboxDirectory' => $inboxDirectory,
         'jobsDirectory' => $jobsDirectory,
         'outputBaseDirectory' => trim($outputBaseDirectory),
+        'ocrSkipExistingText' => $ocrSkipExistingText,
     ];
 }
 
@@ -816,6 +824,46 @@ function pdftotext_path(): ?string
     $path = trim((string) shell_exec('command -v pdftotext 2>/dev/null'));
     $cached = $path !== '' ? $path : null;
     return $cached;
+}
+
+function ocrmypdf_path(): ?string
+{
+    static $cached = null;
+    static $loaded = false;
+
+    if ($loaded) {
+        return $cached;
+    }
+
+    $loaded = true;
+    $path = trim((string) shell_exec('command -v ocrmypdf 2>/dev/null'));
+    $cached = $path !== '' ? $path : null;
+    return $cached;
+}
+
+function run_ocrmypdf(string $inputPdfPath, string $outputPdfPath, bool $skipExistingText): bool
+{
+    $binary = ocrmypdf_path();
+    if ($binary === null || !is_file($inputPdfPath)) {
+        return false;
+    }
+
+    if (is_file($outputPdfPath)) {
+        @unlink($outputPdfPath);
+    }
+
+    $modeFlag = $skipExistingText ? '--mode skip' : '--mode redo';
+    $command = escapeshellarg($binary)
+        . ' -l swe --deskew --oversample 400 --tesseract-thresholding sauvola --tesseract-pagesegmode 6 --output-type pdf '
+        . $modeFlag
+        . ' '
+        . escapeshellarg($inputPdfPath)
+        . ' '
+        . escapeshellarg($outputPdfPath)
+        . ' 2>/dev/null';
+
+    exec($command, $output, $code);
+    return $code === 0 && is_file($outputPdfPath);
 }
 
 function extract_text_from_pdf(string $pdfPath): ?string
@@ -2422,21 +2470,23 @@ function process_claimed_job(
     array $clients,
     array $categories,
     array $replacementMap,
-    float $invoiceFieldMinConfidence
+    float $invoiceFieldMinConfidence,
+    bool $ocrSkipExistingText
 ): array
 {
-    $ocrText = '';
-    $extracted = extract_text_from_pdf($sourcePdfPath);
+    $reviewPdfPath = $jobDir . '/review.pdf';
+    $ocrProcessedPdf = run_ocrmypdf($sourcePdfPath, $reviewPdfPath, $ocrSkipExistingText);
+    if (!$ocrProcessedPdf && !copy($sourcePdfPath, $reviewPdfPath)) {
+        throw new RuntimeException('Could not create review.pdf');
+    }
 
+    $textSourcePdfPath = $ocrProcessedPdf ? $reviewPdfPath : $sourcePdfPath;
+    $ocrText = '';
+    $extracted = extract_text_from_pdf($textSourcePdfPath);
     if ($extracted === null) {
         $ocrText = fallback_ocr_text_from_path($fallbackTxtPath);
     } else {
         $ocrText = $extracted;
-    }
-
-    $reviewPdfPath = $jobDir . '/review.pdf';
-    if (!copy($sourcePdfPath, $reviewPdfPath)) {
-        throw new RuntimeException('Could not create review.pdf');
     }
 
     $ocrPath = $jobDir . '/ocr.txt';
@@ -2674,7 +2724,8 @@ function process_job_by_id(
             $clients,
             $categories,
             $replacementMap,
-            $invoiceFieldMinConfidence
+            $invoiceFieldMinConfidence,
+            (bool) ($config['ocrSkipExistingText'] ?? true)
         );
 
         $analysis = $result['analysis'] ?? null;
