@@ -23,6 +23,10 @@ const matchingApplyEl = document.getElementById('matching-apply');
 const matchingInvoiceThresholdEl = document.getElementById('matching-invoice-threshold');
 const ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
 const ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
+const jbig2StatusBadgeWrapEl = document.getElementById('jbig2-status-badge-wrap');
+const jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
+const jbig2InstallCommandEl = document.getElementById('jbig2-install-command');
+const jbig2RefreshButtonEl = document.getElementById('jbig2-refresh-button');
 const ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
 const ocrProcessingApplyEl = document.getElementById('ocr-processing-apply');
 const categoriesListEl = document.getElementById('categories-list');
@@ -1602,6 +1606,60 @@ function renderOcrProcessingCommand() {
     + ' input.pdf output.pdf';
 }
 
+function startJbig2RefreshSpin() {
+  jbig2RefreshButtonEl.disabled = true;
+  jbig2RefreshButtonEl.classList.add('is-spinning');
+}
+
+function stopJbig2RefreshSpin(hideAfterStop) {
+  const shouldHide = hideAfterStop === true;
+  if (!jbig2RefreshButtonEl.classList.contains('is-spinning')) {
+    jbig2RefreshButtonEl.disabled = false;
+    jbig2RefreshButtonEl.classList.toggle('hidden', shouldHide);
+    return;
+  }
+
+  if (jbig2RefreshButtonEl.dataset.stopPending === 'true') {
+    jbig2RefreshButtonEl.dataset.hideAfterStop = shouldHide ? 'true' : 'false';
+    return;
+  }
+
+  jbig2RefreshButtonEl.dataset.stopPending = 'true';
+  jbig2RefreshButtonEl.dataset.hideAfterStop = shouldHide ? 'true' : 'false';
+  jbig2RefreshButtonEl.addEventListener('animationiteration', () => {
+    const finalHide = jbig2RefreshButtonEl.dataset.hideAfterStop === 'true';
+    jbig2RefreshButtonEl.classList.remove('is-spinning');
+    jbig2RefreshButtonEl.disabled = false;
+    jbig2RefreshButtonEl.classList.toggle('hidden', finalHide);
+    jbig2RefreshButtonEl.dataset.stopPending = 'false';
+    jbig2RefreshButtonEl.dataset.hideAfterStop = 'false';
+  }, { once: true });
+}
+
+function renderJbig2Status(jbig2, options = {}) {
+  const installed = !!(jbig2 && jbig2.installed === true);
+  const deferRefreshVisibility = options && options.deferRefreshVisibility === true;
+  jbig2StatusBadgeEl.textContent = installed ? 'Installerad' : 'Ej installerad';
+  jbig2StatusBadgeEl.classList.toggle('is-installed', installed);
+  jbig2StatusBadgeEl.classList.toggle('is-missing', !installed);
+  if (deferRefreshVisibility) {
+    stopJbig2RefreshSpin(installed);
+  } else {
+    jbig2RefreshButtonEl.classList.remove('is-spinning');
+    jbig2RefreshButtonEl.disabled = false;
+    jbig2RefreshButtonEl.classList.toggle('hidden', installed);
+  }
+  jbig2StatusBadgeWrapEl.classList.remove('is-collapsed');
+  jbig2StatusBadgeWrapEl.classList.remove('is-animating');
+  void jbig2StatusBadgeWrapEl.offsetWidth;
+  jbig2StatusBadgeWrapEl.classList.add('is-animating');
+
+  const installCommand = jbig2 && typeof jbig2.installCommand === 'string' && jbig2.installCommand.trim() !== ''
+    ? jbig2.installCommand.trim()
+    : 'sudo apt install jbig2';
+  jbig2InstallCommandEl.textContent = installCommand;
+}
+
 async function loadClientsText() {
   const response = await fetch('/api/get-clients.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -1657,7 +1715,7 @@ async function loadPathSettings() {
   updateSettingsActionButtons();
 }
 
-async function loadOcrProcessingSettings() {
+async function loadOcrProcessingSettings(options = {}) {
   const response = await fetch('/api/get-config.php', { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Kunde inte ladda OCR-inställningar');
@@ -1670,6 +1728,7 @@ async function loadOcrProcessingSettings() {
 
   ocrSkipExistingTextEl.checked = payload.ocrSkipExistingText;
   ocrSkipExistingTextBaseline = payload.ocrSkipExistingText;
+  renderJbig2Status(payload.jbig2, options);
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
 }
@@ -1960,6 +2019,7 @@ settingsButtonEl.addEventListener('click', async () => {
     alert('Kunde inte ladda OCR-inställningar.');
     ocrSkipExistingTextEl.checked = true;
     ocrSkipExistingTextBaseline = true;
+    renderJbig2Status(null);
     renderOcrProcessingCommand();
     updateSettingsActionButtons();
   }
@@ -2044,6 +2104,17 @@ ocrProcessingApplyEl.addEventListener('click', async () => {
     await saveOcrProcessingSettings();
   } catch (error) {
     alert(error.message || 'Kunde inte spara OCR-inställningar.');
+  }
+});
+
+jbig2RefreshButtonEl.addEventListener('click', async () => {
+  startJbig2RefreshSpin();
+  jbig2StatusBadgeWrapEl.classList.add('is-collapsed');
+  try {
+    await loadOcrProcessingSettings({ deferRefreshVisibility: true });
+  } catch (error) {
+    renderJbig2Status(null, { deferRefreshVisibility: true });
+    alert('Kunde inte kontrollera JBIG2-status.');
   }
 });
 
@@ -2236,5 +2307,6 @@ async function pollLoop() {
 }
 
 updateSettingsActionButtons();
+renderJbig2Status(null);
 renderOcrProcessingCommand();
 pollLoop();

@@ -841,6 +841,32 @@ function ocrmypdf_path(): ?string
     return $cached;
 }
 
+function jbig2_path(): ?string
+{
+    static $cached = null;
+    static $loaded = false;
+
+    if ($loaded) {
+        return $cached;
+    }
+
+    $loaded = true;
+    $path = trim((string) shell_exec('command -v jbig2 2>/dev/null'));
+    $cached = $path !== '' ? $path : null;
+    return $cached;
+}
+
+function jbig2_status_payload(): array
+{
+    $installed = jbig2_path() !== null;
+
+    return [
+        'installed' => $installed,
+        'installCommand' => 'sudo apt install jbig2',
+        'binary' => $installed ? 'jbig2' : null,
+    ];
+}
+
 function run_ocrmypdf(string $inputPdfPath, string $outputPdfPath, bool $skipExistingText): bool
 {
     $binary = ocrmypdf_path();

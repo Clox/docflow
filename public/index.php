@@ -140,6 +140,20 @@
         <div id="settings-panel-ocr-processing" class="settings-panel hidden">
           <h3>Bild-OCR</h3>
           <p>Kör <code>ocrmypdf</code> som ett steg i bearbetningen innan OCR-text läses ut för analys.</p>
+          <div class="ocr-status-card">
+            <div class="ocr-status-row">
+              <span class="ocr-status-label">JBIG2-optimering</span>
+              <div class="ocr-status-actions">
+                <span id="jbig2-status-badge-wrap" class="ocr-status-badge-wrap">
+                  <span id="jbig2-status-badge" class="ocr-status-badge">Kontrollerar...</span>
+                </span>
+                <button id="jbig2-refresh-button" class="ocr-status-refresh hidden" type="button" aria-label="Kontrollera igen" title="Kontrollera igen">↻</button>
+              </div>
+            </div>
+            <p>JBIG2 används för att komprimera svartvita skannade bilder effektivare. Om det finns installerat kan OCRmyPDF ofta ge betydligt mindre PDF-filer.</p>
+            <p>Installationskommando:</p>
+            <pre id="jbig2-install-command" class="settings-command"></pre>
+          </div>
           <p>Kommandot som används är i praktiken:</p>
           <pre id="ocr-processing-command" class="settings-command"></pre>
           <label class="settings-checkbox">

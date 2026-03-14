@@ -469,6 +469,121 @@ body {
   height: 16px;
 }
 
+.ocr-status-card {
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.ocr-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.ocr-status-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ocr-status-badge-wrap {
+  display: inline-flex;
+  overflow: hidden;
+  max-height: 28px;
+  opacity: 1;
+  transition: max-height 0.16s ease, opacity 0.12s ease;
+}
+
+.ocr-status-badge-wrap.is-collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+.ocr-status-badge-wrap.is-animating {
+  animation: badge-expand-in 0.18s ease;
+}
+
+.ocr-status-label {
+  font-weight: 600;
+  color: #333;
+}
+
+.ocr-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #ccc;
+  background: #f0f0f0;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ocr-status-badge.is-installed {
+  border-color: #86c38f;
+  background: #e9f7ec;
+  color: #1f6b2b;
+}
+
+.ocr-status-badge.is-missing {
+  border-color: #d2b48c;
+  background: #fff4e8;
+  color: #8a5520;
+}
+
+@keyframes badge-expand-in {
+  from {
+    max-height: 0;
+    opacity: 0;
+  }
+  to {
+    max-height: 28px;
+    opacity: 1;
+  }
+}
+
+.ocr-status-refresh {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #ccc;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.ocr-status-refresh.is-spinning {
+  animation: ocr-refresh-spin 0.65s linear infinite;
+}
+
+.ocr-status-refresh:hover {
+  background: #f3f4f6;
+}
+
+.ocr-status-refresh:disabled {
+  opacity: 1;
+}
+
+@keyframes ocr-refresh-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .settings-danger {
   margin-top: 14px;
 }
