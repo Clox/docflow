@@ -13,6 +13,9 @@ try {
         'ocrSkipExistingText' => (bool) $config['ocrSkipExistingText'],
         'ocrOptimizeLevel' => (int) $config['ocrOptimizeLevel'],
         'ocrTextExtractionMethod' => (string) $config['ocrTextExtractionMethod'],
+        'ocrPdfTextSubstitutions' => is_array($config['ocrPdfTextSubstitutions'] ?? null)
+            ? $config['ocrPdfTextSubstitutions']
+            : [],
         'jbig2' => $jbig2,
     ]);
 } catch (Throwable $e) {

@@ -22,16 +22,24 @@ if (is_string($raw) && trim($raw) !== '') {
 try {
     $config = load_config();
     if (is_string($payload['jobId'] ?? null) && trim((string) $payload['jobId']) !== '') {
-        $result = reset_job_by_id($config, trim((string) $payload['jobId']));
+        $jobId = trim((string) $payload['jobId']);
+        $mode = is_string($payload['mode'] ?? null) ? trim((string) $payload['mode']) : '';
+        if ($mode === 'full' || $mode === 'post-ocr') {
+            $result = reprocess_job_by_id($config, $jobId, $mode);
+        } else {
+            $result = reset_job_by_id($config, $jobId);
+        }
     } else {
         $result = reset_all_jobs($config);
     }
 
     json_response([
         'ok' => true,
-        'restoredSources' => $result['restoredSources'],
-        'removedJobFolders' => $result['removedJobFolders'],
-        'errors' => $result['errors'],
+        'restoredSources' => $result['restoredSources'] ?? 0,
+        'removedJobFolders' => $result['removedJobFolders'] ?? 0,
+        'errors' => $result['errors'] ?? [],
+        'jobId' => $result['jobId'] ?? null,
+        'mode' => $result['mode'] ?? null,
     ]);
 } catch (Throwable $e) {
     json_response([

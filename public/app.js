@@ -24,6 +24,8 @@ const matchingInvoiceThresholdEl = document.getElementById('matching-invoice-thr
 const ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
 const ocrOptimizeLevelEl = document.getElementById('ocr-optimize-level');
 const ocrTextExtractionMethodEl = document.getElementById('ocr-text-extraction-method');
+const ocrPdfSubstitutionsListEl = document.getElementById('ocr-pdf-substitutions-list');
+const ocrPdfSubstitutionsAddRowEl = document.getElementById('ocr-pdf-substitutions-add-row');
 const ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
 const jbig2StatusBadgeWrapEl = document.getElementById('jbig2-status-badge-wrap');
 const jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
@@ -47,7 +49,8 @@ const pathsApplyEl = document.getElementById('paths-apply');
 const selectedJobPanelEl = document.getElementById('selected-job-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
 const selectedJobMetaEl = document.getElementById('selected-job-meta');
-const selectedJobResetEl = document.getElementById('selected-job-reset');
+const selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
+const selectedJobRerunOcrEl = document.getElementById('selected-job-rerun-ocr');
 
 let state = {
   processingJobs: [],
@@ -97,6 +100,8 @@ let matchingInvoiceFieldMinConfidenceDraft = 0.7;
 let ocrSkipExistingTextBaseline = true;
 let ocrOptimizeLevelBaseline = 1;
 let ocrTextExtractionMethodBaseline = 'layout';
+let ocrPdfSubstitutionsDraft = [];
+let ocrPdfSubstitutionsBaselineJson = JSON.stringify([]);
 let activeSettingsTabId = 'clients';
 let activeArchiveTabId = 'categories';
 let clientsBaselineText = '';
@@ -797,8 +802,8 @@ function renderSelectedJobPanel() {
     selectedJobPanelEl.classList.add('is-empty');
     selectedJobNameEl.textContent = 'Inget jobb markerat';
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
-    selectedJobResetEl.disabled = true;
-    selectedJobResetEl.textContent = 'Kör om markerat jobb';
+    selectedJobReprocessEl.disabled = true;
+    selectedJobRerunOcrEl.disabled = true;
     return;
   }
 
@@ -812,10 +817,8 @@ function renderSelectedJobPanel() {
     metaParts.push(selectedJob.status === 'failed' ? 'Status: Misslyckat' : 'Status: Klar');
   }
   selectedJobMetaEl.textContent = metaParts.join(' | ');
-  selectedJobResetEl.disabled = false;
-  selectedJobResetEl.textContent = selectedJob.status === 'failed'
-    ? 'Försök igen med markerat jobb'
-    : 'Kör om markerat jobb';
+  selectedJobReprocessEl.disabled = !selectedJob.hasReviewPdf;
+  selectedJobRerunOcrEl.disabled = !selectedJob.hasSourcePdf;
 }
 
 function renderJobList(readyJobs, failedJobs) {
@@ -1152,6 +1155,10 @@ function normalizedMatchingJson(replacements, invoiceFieldMinConfidence) {
   });
 }
 
+function normalizedOcrPdfSubstitutionsJson(replacements) {
+  return JSON.stringify(replacements.map(sanitizeReplacement));
+}
+
 function normalizedCategoriesJson(categories, systemCategories) {
   return JSON.stringify({
     archiveFolders: categories.map(sanitizeArchiveFolder),
@@ -1174,7 +1181,8 @@ function isCategoriesDirty() {
 function isOcrProcessingDirty() {
   return ocrSkipExistingTextEl.checked !== ocrSkipExistingTextBaseline
     || sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1) !== ocrOptimizeLevelBaseline
-    || sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout') !== ocrTextExtractionMethodBaseline;
+    || sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout') !== ocrTextExtractionMethodBaseline
+    || normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft) !== ocrPdfSubstitutionsBaselineJson;
 }
 
 function isPathsDirty() {
@@ -1449,6 +1457,71 @@ function renderMatchingEditor() {
     }
 
     matchingListEl.appendChild(rowEl);
+  });
+
+  updateSettingsActionButtons();
+}
+
+function renderOcrPdfSubstitutionsEditor() {
+  ocrPdfSubstitutionsListEl.innerHTML = '';
+
+  if (ocrPdfSubstitutionsDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Inga substitutioner ännu.';
+    ocrPdfSubstitutionsListEl.appendChild(empty);
+    return;
+  }
+
+  ocrPdfSubstitutionsDraft.forEach((row, rowIndex) => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'matching-row';
+
+    const fromInput = document.createElement('input');
+    fromInput.type = 'text';
+    fromInput.placeholder = 'Ex: 0K:';
+    fromInput.value = row.from;
+    fromInput.addEventListener('input', () => {
+      ocrPdfSubstitutionsDraft[rowIndex].from = fromInput.value;
+      renderOcrProcessingCommand();
+      updateSettingsActionButtons();
+    });
+
+    const toInput = document.createElement('input');
+    toInput.type = 'text';
+    toInput.placeholder = 'Ex: OK:';
+    toInput.value = row.to;
+    toInput.addEventListener('input', () => {
+      ocrPdfSubstitutionsDraft[rowIndex].to = toInput.value;
+      renderOcrProcessingCommand();
+      updateSettingsActionButtons();
+    });
+
+    rowEl.appendChild(createFloatingField('Från', fromInput, 'matching-char-field'));
+    rowEl.appendChild(createFloatingField('Till', toInput, 'matching-char-field'));
+
+    if (rowIndex > 0) {
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'rule-remove';
+      removeButton.textContent = 'Ta bort';
+      removeButton.addEventListener('click', () => {
+        ocrPdfSubstitutionsDraft.splice(rowIndex, 1);
+        if (ocrPdfSubstitutionsDraft.length === 0) {
+          ocrPdfSubstitutionsDraft.push(defaultReplacement());
+        }
+        renderOcrPdfSubstitutionsEditor();
+        renderOcrProcessingCommand();
+        updateSettingsActionButtons();
+      });
+      rowEl.appendChild(removeButton);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'rule-remove-placeholder';
+      rowEl.appendChild(placeholder);
+    }
+
+    ocrPdfSubstitutionsListEl.appendChild(rowEl);
   });
 
   updateSettingsActionButtons();
@@ -1878,17 +1951,22 @@ function renderOcrProcessingCommand() {
   const optimizeLevel = sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1);
   const deskewSegment = ocrSkipExistingTextEl.checked ? '--deskew ' : '';
   const extractionMethod = sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout');
+  const substitutions = ocrPdfSubstitutionsDraft.map(sanitizeReplacement).filter((row) => row.from !== '' && row.to !== '');
+  const pluginSegment = substitutions.length > 0
+    ? '--plugin docflow_ocrmypdf_plugin.py --docflow-transform-script data/docflow_ocr_pdf_transform.py '
+    : '';
   const extractionText = extractionMethod === 'bbox'
     ? 'Textuttag: pdftotext -bbox-layout -> bbox-grid'
     : 'Textuttag: pdftotext -layout';
   ocrProcessingCommandEl.textContent =
-    'ocrmypdf -l swe ' + deskewSegment + '--oversample 400 --tesseract-thresholding sauvola '
+    'ocrmypdf ' + pluginSegment + '-l swe ' + deskewSegment + '--oversample 400 --tesseract-thresholding sauvola '
     + '--tesseract-pagesegmode 6 --output-type pdf '
     + '-O' + optimizeLevel
     + ' '
     + modeFlag
     + ' input.pdf output.pdf\n'
-    + extractionText;
+    + extractionText
+    + (substitutions.length > 0 ? '\nPDF-textsubstitutioner: ' + substitutions.length + ' regel/rader' : '');
 }
 
 function startJbig2RefreshSpin() {
@@ -2012,6 +2090,7 @@ async function loadOcrProcessingSettings(options = {}) {
     || typeof payload.ocrSkipExistingText !== 'boolean'
     || !Number.isInteger(payload.ocrOptimizeLevel)
     || typeof payload.ocrTextExtractionMethod !== 'string'
+    || !Array.isArray(payload.ocrPdfTextSubstitutions)
   ) {
     throw new Error('Ogiltigt svar för OCR-inställningar');
   }
@@ -2022,6 +2101,14 @@ async function loadOcrProcessingSettings(options = {}) {
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   ocrTextExtractionMethodBaseline = sanitizeOcrTextExtractionMethod(payload.ocrTextExtractionMethod, 'layout');
   ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+  ocrPdfSubstitutionsDraft = Array.isArray(payload.ocrPdfTextSubstitutions)
+    ? payload.ocrPdfTextSubstitutions.map(sanitizeReplacement)
+    : [];
+  if (ocrPdfSubstitutionsDraft.length === 0) {
+    ocrPdfSubstitutionsDraft = [defaultReplacement()];
+  }
+  ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
+  renderOcrPdfSubstitutionsEditor();
   renderJbig2Status(payload.jbig2, options);
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
@@ -2159,6 +2246,7 @@ async function savePathSettings() {
 }
 
 async function saveOcrProcessingSettings() {
+  const normalizedSubstitutions = ocrPdfSubstitutionsDraft.map(sanitizeReplacement);
   const response = await fetch('/api/save-config.php', {
     method: 'POST',
     headers: {
@@ -2167,7 +2255,8 @@ async function saveOcrProcessingSettings() {
     body: JSON.stringify({
       ocrSkipExistingText: ocrSkipExistingTextEl.checked,
       ocrOptimizeLevel: sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1),
-      ocrTextExtractionMethod: sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout')
+      ocrTextExtractionMethod: sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout'),
+      ocrPdfTextSubstitutions: normalizedSubstitutions
     })
   });
 
@@ -2179,6 +2268,7 @@ async function saveOcrProcessingSettings() {
     || typeof payload.ocrSkipExistingText !== 'boolean'
     || !Number.isInteger(payload.ocrOptimizeLevel)
     || typeof payload.ocrTextExtractionMethod !== 'string'
+    || !Array.isArray(payload.ocrPdfTextSubstitutions)
   ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
@@ -2192,6 +2282,12 @@ async function saveOcrProcessingSettings() {
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   ocrTextExtractionMethodBaseline = sanitizeOcrTextExtractionMethod(payload.ocrTextExtractionMethod, 'layout');
   ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+  ocrPdfSubstitutionsDraft = payload.ocrPdfTextSubstitutions.map(sanitizeReplacement);
+  if (ocrPdfSubstitutionsDraft.length === 0) {
+    ocrPdfSubstitutionsDraft = [defaultReplacement()];
+  }
+  ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
+  renderOcrPdfSubstitutionsEditor();
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
 }
@@ -2222,22 +2318,22 @@ async function resetAllJobs() {
   await fetchState();
 }
 
-async function resetSingleJob(jobId) {
+async function reprocessSingleJob(jobId, mode) {
   const response = await fetch('/api/reset-jobs.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ jobId })
+    body: JSON.stringify({ jobId, mode })
   });
 
   if (!response.ok) {
-    throw new Error('Kunde inte återställa jobbet');
+    throw new Error('Kunde inte köra om jobbet');
   }
 
   const payload = await response.json();
   if (!payload || payload.ok !== true) {
-    throw new Error('Reset job failed');
+    throw new Error('Reprocess job failed');
   }
 
   if (selectedJobId === jobId) {
@@ -2251,17 +2347,17 @@ async function resetSingleJob(jobId) {
   await fetchState();
 }
 
-selectedJobResetEl.addEventListener('click', async () => {
+async function handleSelectedJobReprocess(mode) {
   if (!selectedJobId) {
     return;
   }
 
   try {
-    await resetSingleJob(selectedJobId);
+    await reprocessSingleJob(selectedJobId, mode);
   } catch (error) {
-    alert(error.message || 'Kunde inte återställa jobbet.');
+    alert(error.message || 'Kunde inte köra om jobbet.');
   }
-});
+}
 
 viewModeEl.addEventListener('change', () => {
   if (viewModeEl.value === 'ocr') {
@@ -2364,6 +2460,13 @@ ocrTextExtractionMethodEl.addEventListener('change', () => {
   updateSettingsActionButtons();
 });
 
+ocrPdfSubstitutionsAddRowEl.addEventListener('click', () => {
+  ocrPdfSubstitutionsDraft.push(defaultReplacement());
+  renderOcrPdfSubstitutionsEditor();
+  renderOcrProcessingCommand();
+  updateSettingsActionButtons();
+});
+
 outputBasePathEl.addEventListener('input', () => {
   updateSettingsActionButtons();
 });
@@ -2391,6 +2494,9 @@ settingsButtonEl.addEventListener('click', async () => {
     ocrOptimizeLevelEl.value = '1';
     ocrTextExtractionMethodBaseline = 'layout';
     ocrTextExtractionMethodEl.value = 'layout';
+    ocrPdfSubstitutionsDraft = [defaultReplacement()];
+    ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
+    renderOcrPdfSubstitutionsEditor();
     renderJbig2Status(null);
     renderOcrProcessingCommand();
     updateSettingsActionButtons();
@@ -2469,6 +2575,17 @@ ocrProcessingCancelEl.addEventListener('click', () => {
   ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+  let parsed = [];
+  try {
+    parsed = JSON.parse(ocrPdfSubstitutionsBaselineJson);
+  } catch (error) {
+    parsed = [];
+  }
+  ocrPdfSubstitutionsDraft = Array.isArray(parsed) ? parsed.map(sanitizeReplacement) : [];
+  if (ocrPdfSubstitutionsDraft.length === 0) {
+    ocrPdfSubstitutionsDraft = [defaultReplacement()];
+  }
+  renderOcrPdfSubstitutionsEditor();
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
 });
@@ -2581,6 +2698,14 @@ settingsResetJobsEl.addEventListener('click', async () => {
   } catch (error) {
     alert('Kunde inte återställa jobb.');
   }
+});
+
+selectedJobReprocessEl.addEventListener('click', async () => {
+  await handleSelectedJobReprocess('post-ocr');
+});
+
+selectedJobRerunOcrEl.addEventListener('click', async () => {
+  await handleSelectedJobReprocess('full');
 });
 
 settingsModalEl.addEventListener('click', (event) => {

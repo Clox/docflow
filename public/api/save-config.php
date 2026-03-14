@@ -25,6 +25,7 @@ if (
     && !array_key_exists('ocrSkipExistingText', $payload)
     && !array_key_exists('ocrOptimizeLevel', $payload)
     && !array_key_exists('ocrTextExtractionMethod', $payload)
+    && !array_key_exists('ocrPdfTextSubstitutions', $payload)
 ) {
     json_response(['error' => 'No config values provided'], 400);
     exit;
@@ -98,6 +99,15 @@ if (array_key_exists('ocrTextExtractionMethod', $payload)) {
     $nextOcrTextExtractionMethod = $ocrTextExtractionMethod;
 }
 
+$nextOcrPdfTextSubstitutions = null;
+if (array_key_exists('ocrPdfTextSubstitutions', $payload)) {
+    if (!is_array($payload['ocrPdfTextSubstitutions'])) {
+        json_response(['error' => 'OCR PDF substitutions must be an array'], 400);
+        exit;
+    }
+    $nextOcrPdfTextSubstitutions = sanitize_ocr_pdf_text_substitutions($payload['ocrPdfTextSubstitutions']);
+}
+
 try {
     $config = load_raw_config();
     if ($nextOutputBaseDirectory !== null) {
@@ -112,6 +122,9 @@ try {
     if ($nextOcrTextExtractionMethod !== null) {
         $config['ocrTextExtractionMethod'] = $nextOcrTextExtractionMethod;
     }
+    if ($nextOcrPdfTextSubstitutions !== null) {
+        $config['ocrPdfTextSubstitutions'] = $nextOcrPdfTextSubstitutions;
+    }
     save_raw_config($config);
     json_response([
         'ok' => true,
@@ -119,6 +132,7 @@ try {
         'ocrSkipExistingText' => (bool) ($config['ocrSkipExistingText'] ?? true),
         'ocrOptimizeLevel' => (int) ($config['ocrOptimizeLevel'] ?? 1),
         'ocrTextExtractionMethod' => is_string($config['ocrTextExtractionMethod'] ?? null) ? (string) $config['ocrTextExtractionMethod'] : 'layout',
+        'ocrPdfTextSubstitutions' => sanitize_ocr_pdf_text_substitutions($config['ocrPdfTextSubstitutions'] ?? []),
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);
