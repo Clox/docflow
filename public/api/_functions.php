@@ -3896,3 +3896,55 @@ function reset_all_jobs(array $config): array
         'errors' => $errors,
     ];
 }
+
+function reset_job_by_id(array $config, string $jobId): array
+{
+    if (!is_valid_job_id($jobId)) {
+        throw new RuntimeException('Invalid job id');
+    }
+
+    $jobsDir = $config['jobsDirectory'];
+    $inboxDir = $config['inboxDirectory'];
+
+    ensure_directory($jobsDir);
+    ensure_directory($inboxDir);
+
+    $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $jobId;
+    if (!is_dir($jobDir)) {
+        throw new RuntimeException('Job not found');
+    }
+
+    $job = load_json_file($jobDir . '/job.json');
+    $originalFilename = is_array($job) && is_string($job['originalFilename'] ?? null)
+        ? trim((string) $job['originalFilename'])
+        : '';
+    if ($originalFilename === '') {
+        $originalFilename = $jobId . '.pdf';
+    }
+
+    $restoredSources = 0;
+    $removedJobFolders = 0;
+    $errors = [];
+
+    $sourcePath = $jobDir . '/source.pdf';
+    if (is_file($sourcePath)) {
+        $targetPath = unique_inbox_target_path($inboxDir, $originalFilename);
+        if (!rename($sourcePath, $targetPath)) {
+            $errors[] = 'Could not restore source.pdf for job ' . $jobId;
+        } else {
+            $restoredSources = 1;
+        }
+    }
+
+    if (!delete_directory_recursive($jobDir)) {
+        $errors[] = 'Could not remove job directory ' . $jobId;
+    } else {
+        $removedJobFolders = 1;
+    }
+
+    return [
+        'restoredSources' => $restoredSources,
+        'removedJobFolders' => $removedJobFolders,
+        'errors' => $errors,
+    ];
+}

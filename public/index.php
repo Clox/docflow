@@ -16,7 +16,17 @@
           <span id="processing-text"></span>
         </span>
       </h1>
-      <ul id="job-list" class="job-list"></ul>
+      <div class="sidebar-list-wrap">
+        <ul id="job-list" class="job-list"></ul>
+      </div>
+      <section id="selected-job-panel" class="selected-job-panel">
+        <div class="selected-job-panel-header">Markerat jobb</div>
+        <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
+        <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
+        <div class="selected-job-actions">
+          <button id="selected-job-reset" type="button" disabled>Kör om markerat jobb</button>
+        </div>
+      </section>
     </aside>
 
     <main class="main">

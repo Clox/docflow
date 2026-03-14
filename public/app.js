@@ -44,6 +44,10 @@ const settingsCloseEl = document.getElementById('settings-close');
 const outputBasePathEl = document.getElementById('output-base-path');
 const pathsCancelEl = document.getElementById('paths-cancel');
 const pathsApplyEl = document.getElementById('paths-apply');
+const selectedJobPanelEl = document.getElementById('selected-job-panel');
+const selectedJobNameEl = document.getElementById('selected-job-name');
+const selectedJobMetaEl = document.getElementById('selected-job-meta');
+const selectedJobResetEl = document.getElementById('selected-job-reset');
 
 let state = {
   processingJobs: [],
@@ -775,6 +779,45 @@ function appendJobListSectionLabel(text) {
   jobListEl.appendChild(li);
 }
 
+function findJobById(jobId) {
+  if (!jobId) {
+    return null;
+  }
+
+  const allJobs = []
+    .concat(Array.isArray(state.readyJobs) ? state.readyJobs : [])
+    .concat(Array.isArray(state.failedJobs) ? state.failedJobs : []);
+
+  return allJobs.find((job) => job.id === jobId) || null;
+}
+
+function renderSelectedJobPanel() {
+  const selectedJob = findJobById(selectedJobId);
+  if (!selectedJob) {
+    selectedJobPanelEl.classList.add('is-empty');
+    selectedJobNameEl.textContent = 'Inget jobb markerat';
+    selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
+    selectedJobResetEl.disabled = true;
+    selectedJobResetEl.textContent = 'Kör om markerat jobb';
+    return;
+  }
+
+  selectedJobPanelEl.classList.remove('is-empty');
+  selectedJobNameEl.textContent = selectedJob.originalFilename || selectedJob.id;
+
+  const metaParts = [];
+  if (selectedJob.status === 'failed' && selectedJob.error) {
+    metaParts.push('Fel: ' + selectedJob.error);
+  } else {
+    metaParts.push(selectedJob.status === 'failed' ? 'Status: Misslyckat' : 'Status: Klar');
+  }
+  selectedJobMetaEl.textContent = metaParts.join(' | ');
+  selectedJobResetEl.disabled = false;
+  selectedJobResetEl.textContent = selectedJob.status === 'failed'
+    ? 'Försök igen med markerat jobb'
+    : 'Kör om markerat jobb';
+}
+
 function renderJobList(readyJobs, failedJobs) {
   jobListEl.innerHTML = '';
   const hasReadyJobs = Array.isArray(readyJobs) && readyJobs.length > 0;
@@ -824,6 +867,9 @@ function renderJobList(readyJobs, failedJobs) {
     failedJobs.forEach((job) => {
       const li = document.createElement('li');
       li.className = 'job-item failed';
+      if (job.id === selectedJobId) {
+        li.classList.add('selected');
+      }
 
       const name = document.createElement('div');
       name.className = 'job-name';
@@ -837,9 +883,15 @@ function renderJobList(readyJobs, failedJobs) {
         li.appendChild(error);
       }
 
+      li.addEventListener('click', () => {
+        applySelectedJobId(job.id);
+      });
+
       jobListEl.appendChild(li);
     });
   }
+
+  renderSelectedJobPanel();
 }
 
 function notifyFailedJobs(failedJobs) {
@@ -871,7 +923,7 @@ function notifyFailedJobs(failedJobs) {
 }
 
 function applySelectedJobId(jobId) {
-  const selectedJob = state.readyJobs.find((job) => job.id === jobId) || null;
+  const selectedJob = findJobById(jobId);
   selectedJobId = selectedJob ? selectedJob.id : '';
   renderJobList(state.readyJobs, state.failedJobs);
   setViewerJob(selectedJobId);
@@ -2169,6 +2221,47 @@ async function resetAllJobs() {
   closeSettingsModal();
   await fetchState();
 }
+
+async function resetSingleJob(jobId) {
+  const response = await fetch('/api/reset-jobs.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ jobId })
+  });
+
+  if (!response.ok) {
+    throw new Error('Kunde inte återställa jobbet');
+  }
+
+  const payload = await response.json();
+  if (!payload || payload.ok !== true) {
+    throw new Error('Reset job failed');
+  }
+
+  if (selectedJobId === jobId) {
+    loadedOcrJobId = '';
+    loadedMatchesJobId = '';
+    loadedMetaJobId = '';
+    clearPdfFrames();
+    selectedJobId = '';
+  }
+
+  await fetchState();
+}
+
+selectedJobResetEl.addEventListener('click', async () => {
+  if (!selectedJobId) {
+    return;
+  }
+
+  try {
+    await resetSingleJob(selectedJobId);
+  } catch (error) {
+    alert(error.message || 'Kunde inte återställa jobbet.');
+  }
+});
 
 viewModeEl.addEventListener('change', () => {
   if (viewModeEl.value === 'ocr') {
