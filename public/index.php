@@ -169,6 +169,14 @@
               <option value="3">Max (-O3)</option>
             </select>
           </div>
+          <div class="settings-group">
+            <label class="settings-label" for="ocr-text-extraction-method">Textuttag för OCR-data</label>
+            <select id="ocr-text-extraction-method" class="settings-select">
+              <option value="layout">pdftotext -layout</option>
+              <option value="bbox">bbox-grid (ord + koordinater)</option>
+            </select>
+          </div>
+          <p class="settings-help"><code>pdftotext -layout</code> är den äldre direkta textutläsningen. <code>bbox-grid</code> läser ord och koordinater via <code>pdftotext -bbox-layout</code> och bygger sedan en rutnätstext från samma data.</p>
           <div class="panel-actions">
             <button id="ocr-processing-cancel" type="button">Avbryt</button>
             <button id="ocr-processing-apply" type="button">Spara</button>

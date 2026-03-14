@@ -12,6 +12,7 @@ try {
         'outputBaseDirectory' => $config['outputBaseDirectory'],
         'ocrSkipExistingText' => (bool) $config['ocrSkipExistingText'],
         'ocrOptimizeLevel' => (int) $config['ocrOptimizeLevel'],
+        'ocrTextExtractionMethod' => (string) $config['ocrTextExtractionMethod'],
         'jbig2' => $jbig2,
     ]);
 } catch (Throwable $e) {

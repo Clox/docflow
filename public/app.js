@@ -23,6 +23,7 @@ const matchingApplyEl = document.getElementById('matching-apply');
 const matchingInvoiceThresholdEl = document.getElementById('matching-invoice-threshold');
 const ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
 const ocrOptimizeLevelEl = document.getElementById('ocr-optimize-level');
+const ocrTextExtractionMethodEl = document.getElementById('ocr-text-extraction-method');
 const ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
 const jbig2StatusBadgeWrapEl = document.getElementById('jbig2-status-badge-wrap');
 const jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
@@ -91,6 +92,7 @@ let matchingDraft = [];
 let matchingInvoiceFieldMinConfidenceDraft = 0.7;
 let ocrSkipExistingTextBaseline = true;
 let ocrOptimizeLevelBaseline = 1;
+let ocrTextExtractionMethodBaseline = 'layout';
 let activeSettingsTabId = 'clients';
 let activeArchiveTabId = 'categories';
 let clientsBaselineText = '';
@@ -123,6 +125,7 @@ categorySelectEl.disabled = true;
 matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
 ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
 ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
+ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
 
 function setProcessingInfo(processingJobs) {
   if (!Array.isArray(processingJobs) || processingJobs.length === 0) {
@@ -1079,6 +1082,17 @@ function sanitizeOcrOptimizeLevel(value, fallback = 1) {
   return parsed;
 }
 
+function sanitizeOcrTextExtractionMethod(value, fallback = 'layout') {
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'bbox') {
+    return 'bbox';
+  }
+  if (normalized === 'layout') {
+    return 'layout';
+  }
+  return fallback;
+}
+
 function normalizedMatchingJson(replacements, invoiceFieldMinConfidence) {
   return JSON.stringify({
     replacements: replacements.map(sanitizeReplacement),
@@ -1107,7 +1121,8 @@ function isCategoriesDirty() {
 
 function isOcrProcessingDirty() {
   return ocrSkipExistingTextEl.checked !== ocrSkipExistingTextBaseline
-    || sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1) !== ocrOptimizeLevelBaseline;
+    || sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1) !== ocrOptimizeLevelBaseline
+    || sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout') !== ocrTextExtractionMethodBaseline;
 }
 
 function isPathsDirty() {
@@ -1810,13 +1825,18 @@ function renderOcrProcessingCommand() {
   const modeFlag = ocrSkipExistingTextEl.checked ? '--mode skip' : '--mode redo';
   const optimizeLevel = sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1);
   const deskewSegment = ocrSkipExistingTextEl.checked ? '--deskew ' : '';
+  const extractionMethod = sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout');
+  const extractionText = extractionMethod === 'bbox'
+    ? 'Textuttag: pdftotext -bbox-layout -> bbox-grid'
+    : 'Textuttag: pdftotext -layout';
   ocrProcessingCommandEl.textContent =
     'ocrmypdf -l swe ' + deskewSegment + '--oversample 400 --tesseract-thresholding sauvola '
     + '--tesseract-pagesegmode 6 --output-type pdf '
     + '-O' + optimizeLevel
     + ' '
     + modeFlag
-    + ' input.pdf output.pdf';
+    + ' input.pdf output.pdf\n'
+    + extractionText;
 }
 
 function startJbig2RefreshSpin() {
@@ -1939,6 +1959,7 @@ async function loadOcrProcessingSettings(options = {}) {
     !payload
     || typeof payload.ocrSkipExistingText !== 'boolean'
     || !Number.isInteger(payload.ocrOptimizeLevel)
+    || typeof payload.ocrTextExtractionMethod !== 'string'
   ) {
     throw new Error('Ogiltigt svar för OCR-inställningar');
   }
@@ -1947,6 +1968,8 @@ async function loadOcrProcessingSettings(options = {}) {
   ocrSkipExistingTextBaseline = payload.ocrSkipExistingText;
   ocrOptimizeLevelBaseline = sanitizeOcrOptimizeLevel(payload.ocrOptimizeLevel, 1);
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
+  ocrTextExtractionMethodBaseline = sanitizeOcrTextExtractionMethod(payload.ocrTextExtractionMethod, 'layout');
+  ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
   renderJbig2Status(payload.jbig2, options);
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
@@ -2091,7 +2114,8 @@ async function saveOcrProcessingSettings() {
     },
     body: JSON.stringify({
       ocrSkipExistingText: ocrSkipExistingTextEl.checked,
-      ocrOptimizeLevel: sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1)
+      ocrOptimizeLevel: sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1),
+      ocrTextExtractionMethod: sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout')
     })
   });
 
@@ -2102,6 +2126,7 @@ async function saveOcrProcessingSettings() {
     || payload.ok !== true
     || typeof payload.ocrSkipExistingText !== 'boolean'
     || !Number.isInteger(payload.ocrOptimizeLevel)
+    || typeof payload.ocrTextExtractionMethod !== 'string'
   ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
@@ -2113,6 +2138,8 @@ async function saveOcrProcessingSettings() {
   ocrSkipExistingTextBaseline = payload.ocrSkipExistingText;
   ocrOptimizeLevelBaseline = sanitizeOcrOptimizeLevel(payload.ocrOptimizeLevel, 1);
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
+  ocrTextExtractionMethodBaseline = sanitizeOcrTextExtractionMethod(payload.ocrTextExtractionMethod, 'layout');
+  ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
 }
@@ -2238,6 +2265,12 @@ ocrOptimizeLevelEl.addEventListener('change', () => {
   updateSettingsActionButtons();
 });
 
+ocrTextExtractionMethodEl.addEventListener('change', () => {
+  ocrTextExtractionMethodEl.value = sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout');
+  renderOcrProcessingCommand();
+  updateSettingsActionButtons();
+});
+
 outputBasePathEl.addEventListener('input', () => {
   updateSettingsActionButtons();
 });
@@ -2263,6 +2296,8 @@ settingsButtonEl.addEventListener('click', async () => {
     ocrSkipExistingTextBaseline = true;
     ocrOptimizeLevelBaseline = 1;
     ocrOptimizeLevelEl.value = '1';
+    ocrTextExtractionMethodBaseline = 'layout';
+    ocrTextExtractionMethodEl.value = 'layout';
     renderJbig2Status(null);
     renderOcrProcessingCommand();
     updateSettingsActionButtons();
@@ -2340,6 +2375,7 @@ matchingApplyEl.addEventListener('click', async () => {
 ocrProcessingCancelEl.addEventListener('click', () => {
   ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
+  ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
 });

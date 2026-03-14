@@ -24,6 +24,7 @@ if (
     !array_key_exists('outputBaseDirectory', $payload)
     && !array_key_exists('ocrSkipExistingText', $payload)
     && !array_key_exists('ocrOptimizeLevel', $payload)
+    && !array_key_exists('ocrTextExtractionMethod', $payload)
 ) {
     json_response(['error' => 'No config values provided'], 400);
     exit;
@@ -83,6 +84,20 @@ if (array_key_exists('ocrOptimizeLevel', $payload)) {
     $nextOcrOptimizeLevel = $ocrOptimizeLevel;
 }
 
+$nextOcrTextExtractionMethod = null;
+if (array_key_exists('ocrTextExtractionMethod', $payload)) {
+    if (!is_string($payload['ocrTextExtractionMethod'])) {
+        json_response(['error' => 'OCR text extraction method must be string'], 400);
+        exit;
+    }
+    $ocrTextExtractionMethod = trim((string) $payload['ocrTextExtractionMethod']);
+    if ($ocrTextExtractionMethod !== 'layout' && $ocrTextExtractionMethod !== 'bbox') {
+        json_response(['error' => 'OCR text extraction method must be layout or bbox'], 400);
+        exit;
+    }
+    $nextOcrTextExtractionMethod = $ocrTextExtractionMethod;
+}
+
 try {
     $config = load_raw_config();
     if ($nextOutputBaseDirectory !== null) {
@@ -94,12 +109,16 @@ try {
     if ($nextOcrOptimizeLevel !== null) {
         $config['ocrOptimizeLevel'] = $nextOcrOptimizeLevel;
     }
+    if ($nextOcrTextExtractionMethod !== null) {
+        $config['ocrTextExtractionMethod'] = $nextOcrTextExtractionMethod;
+    }
     save_raw_config($config);
     json_response([
         'ok' => true,
         'outputBaseDirectory' => $config['outputBaseDirectory'] ?? '',
         'ocrSkipExistingText' => (bool) ($config['ocrSkipExistingText'] ?? true),
         'ocrOptimizeLevel' => (int) ($config['ocrOptimizeLevel'] ?? 1),
+        'ocrTextExtractionMethod' => is_string($config['ocrTextExtractionMethod'] ?? null) ? (string) $config['ocrTextExtractionMethod'] : 'layout',
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);
