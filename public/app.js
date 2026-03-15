@@ -23,6 +23,10 @@ const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]
 const clientsTextareaEl = document.getElementById('clients-textarea');
 const clientsCancelEl = document.getElementById('clients-cancel');
 const clientsApplyEl = document.getElementById('clients-apply');
+const sendersListEl = document.getElementById('senders-list');
+const sendersAddRowEl = document.getElementById('senders-add-row');
+const sendersCancelEl = document.getElementById('senders-cancel');
+const sendersApplyEl = document.getElementById('senders-apply');
 const matchingListEl = document.getElementById('matching-list');
 const matchingAddRowEl = document.getElementById('matching-add-row');
 const matchingCancelEl = document.getElementById('matching-cancel');
@@ -106,6 +110,7 @@ let metaRequestSeq = 0;
 let preferredJobIdFromHash = '';
 let categoriesDraft = [];
 let systemCategoriesDraft = createDefaultSystemCategories();
+let sendersDraft = [];
 let matchingDraft = [];
 let matchingInvoiceFieldMinConfidenceDraft = 0.7;
 let ocrSkipExistingTextBaseline = true;
@@ -116,6 +121,7 @@ let ocrPdfSubstitutionsBaselineJson = JSON.stringify([]);
 let activeSettingsTabId = 'clients';
 let activeArchiveTabId = 'categories';
 let clientsBaselineText = '';
+let sendersBaselineJson = '[]';
 let matchingBaselineJson = JSON.stringify({
   replacements: [],
   invoiceFieldMinConfidence: 0.7
@@ -140,6 +146,7 @@ const pinnedProcessingJobIds = new Set();
 const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
+const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
 const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta']);
 
@@ -246,7 +253,44 @@ function renderSenderSelect(senders) {
       label: sender && typeof sender.name === 'string' ? sender.name.trim() : ''
     }))
     .filter((sender) => sender.value !== '' && sender.label !== '');
-  senderOptionsSignature = syncSelectOptions(senderSelectEl, 'Välj avsändare', options, senderOptionsSignature);
+  const signature = JSON.stringify({
+    action: EDIT_SENDERS_OPTION_VALUE,
+    options
+  });
+  if (signature === senderOptionsSignature) {
+    return;
+  }
+
+  const currentValue = senderSelectEl.value;
+  senderSelectEl.innerHTML = '';
+
+  const placeholderOption = document.createElement('option');
+  placeholderOption.value = '';
+  placeholderOption.hidden = true;
+  placeholderOption.textContent = 'Välj avsändare';
+  senderSelectEl.appendChild(placeholderOption);
+
+  const editOption = document.createElement('option');
+  editOption.value = EDIT_SENDERS_OPTION_VALUE;
+  editOption.textContent = 'Redigera avsändare...';
+  senderSelectEl.appendChild(editOption);
+
+  const separatorOption = document.createElement('option');
+  separatorOption.value = '__separator__';
+  separatorOption.textContent = '──────────';
+  separatorOption.disabled = true;
+  senderSelectEl.appendChild(separatorOption);
+
+  options.forEach((item) => {
+    const option = document.createElement('option');
+    option.value = item.value;
+    option.textContent = item.label;
+    senderSelectEl.appendChild(option);
+  });
+
+  const hasCurrentValue = options.some((item) => item.value === currentValue);
+  senderSelectEl.value = hasCurrentValue ? currentValue : '';
+  senderOptionsSignature = signature;
 }
 
 function categoryDisplayName(category) {
@@ -1644,6 +1688,30 @@ async function openClientsSettingsDirect() {
   return true;
 }
 
+async function openSendersSettingsDirect() {
+  if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
+    return false;
+  }
+
+  openSettingsModal();
+  setSettingsTab('senders');
+
+  try {
+    await loadSendersSettings();
+  } catch (error) {
+    alert('Kunde inte ladda avsändare.');
+    sendersDraft = [];
+    sendersBaselineJson = normalizedSendersJson(sendersDraft);
+    renderSendersEditor();
+    updateSettingsActionButtons();
+    return false;
+  }
+
+  sendersAddRowEl.focus();
+  updateSettingsActionButtons();
+  return true;
+}
+
 async function openCategoriesSettingsDirect() {
   if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
     return false;
@@ -1688,7 +1756,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'matching', 'ocr-processing', 'categories', 'jobs', 'paths'];
+  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'jobs', 'paths'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -1701,6 +1769,7 @@ function setSettingsTab(tabId) {
 
 function isEditableSettingsTab(tabId) {
   return tabId === 'clients'
+    || tabId === 'senders'
     || tabId === 'matching'
     || tabId === 'ocr-processing'
     || tabId === 'categories'
@@ -1755,6 +1824,10 @@ function normalizedOcrPdfSubstitutionsJson(replacements) {
   return JSON.stringify(replacements.map(sanitizeReplacement));
 }
 
+function normalizedSendersJson(senders) {
+  return JSON.stringify(senders.map(sanitizeSenderDraft));
+}
+
 function normalizedCategoriesJson(categories, systemCategories) {
   return JSON.stringify({
     archiveFolders: categories.map(sanitizeArchiveFolder),
@@ -1768,6 +1841,10 @@ function isClientsDirty() {
 
 function isMatchingDirty() {
   return normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft) !== matchingBaselineJson;
+}
+
+function isSendersDirty() {
+  return normalizedSendersJson(sendersDraft) !== sendersBaselineJson;
 }
 
 function isCategoriesDirty() {
@@ -1792,6 +1869,9 @@ function isSettingsTabDirty(tabId) {
   if (tabId === 'matching') {
     return isMatchingDirty();
   }
+  if (tabId === 'senders') {
+    return isSendersDirty();
+  }
   if (tabId === 'categories') {
     return isCategoriesDirty();
   }
@@ -1805,12 +1885,15 @@ function isSettingsTabDirty(tabId) {
 }
 
 function hasAnyUnsavedSettingsChanges() {
-  return isClientsDirty() || isMatchingDirty() || isOcrProcessingDirty() || isCategoriesDirty() || isPathsDirty();
+  return isClientsDirty() || isSendersDirty() || isMatchingDirty() || isOcrProcessingDirty() || isCategoriesDirty() || isPathsDirty();
 }
 
 function panelActionButtonsForTab(tabId) {
   if (tabId === 'clients') {
     return [clientsCancelEl, clientsApplyEl];
+  }
+  if (tabId === 'senders') {
+    return [sendersCancelEl, sendersApplyEl];
   }
   if (tabId === 'matching') {
     return [matchingCancelEl, matchingApplyEl];
@@ -1829,6 +1912,7 @@ function panelActionButtonsForTab(tabId) {
 
 function updateSettingsActionButtons() {
   const clientsDirty = isClientsDirty();
+  const sendersDirty = isSendersDirty();
   const matchingDirty = isMatchingDirty();
   const ocrProcessingDirty = isOcrProcessingDirty();
   const categoriesDirty = isCategoriesDirty();
@@ -1836,6 +1920,9 @@ function updateSettingsActionButtons() {
 
   clientsCancelEl.disabled = !clientsDirty;
   clientsApplyEl.disabled = !clientsDirty;
+
+  sendersCancelEl.disabled = !sendersDirty;
+  sendersApplyEl.disabled = !sendersDirty;
 
   matchingCancelEl.disabled = !matchingDirty;
   matchingApplyEl.disabled = !matchingDirty;
@@ -1913,11 +2000,92 @@ function defaultReplacement() {
   };
 }
 
+function defaultSenderDraft() {
+  return {
+    id: null,
+    name: '',
+    slug: '',
+    orgNumber: '',
+    domain: '',
+    kind: '',
+    notes: '',
+    paymentNumbers: []
+  };
+}
+
+function defaultSenderPaymentDraft() {
+  return {
+    id: null,
+    type: 'bankgiro',
+    number: ''
+  };
+}
+
+function digitsOnly(value) {
+  return String(value || '').replace(/\D+/g, '');
+}
+
+function formatSenderPaymentNumberForDisplay(type, value) {
+  const digits = digitsOnly(value);
+  if (!digits) {
+    return '';
+  }
+
+  if (type === 'bankgiro') {
+    if (digits.length >= 5) {
+      return `${digits.slice(0, -4)}-${digits.slice(-4)}`;
+    }
+    return digits;
+  }
+
+  if (type === 'plusgiro') {
+    if (digits.length >= 2) {
+      return `${digits.slice(0, -1)}-${digits.slice(-1)}`;
+    }
+    return digits;
+  }
+
+  return digits;
+}
+
 function sanitizeReplacement(row) {
   const input = row && typeof row === 'object' ? row : {};
   return {
     from: typeof input.from === 'string' ? input.from : '',
     to: typeof input.to === 'string' ? input.to : ''
+  };
+}
+
+function sanitizeSenderDraft(row) {
+  const input = row && typeof row === 'object' ? row : {};
+  const idValue = input.id;
+  const id = Number.isInteger(idValue) && idValue > 0
+    ? idValue
+    : null;
+  const rawPaymentNumbers = Array.isArray(input.paymentNumbers) ? input.paymentNumbers : [];
+  return {
+    id,
+    name: typeof input.name === 'string' ? input.name : '',
+    slug: typeof input.slug === 'string' ? input.slug : '',
+    orgNumber: typeof input.orgNumber === 'string' ? input.orgNumber : '',
+    domain: typeof input.domain === 'string' ? input.domain : '',
+    kind: typeof input.kind === 'string' ? input.kind : '',
+    notes: typeof input.notes === 'string' ? input.notes : '',
+    paymentNumbers: rawPaymentNumbers.map(sanitizeSenderPaymentDraft)
+  };
+}
+
+function sanitizeSenderPaymentDraft(row) {
+  const input = row && typeof row === 'object' ? row : {};
+  const idValue = input.id;
+  const id = Number.isInteger(idValue) && idValue > 0
+    ? idValue
+    : null;
+  const type = String(input.type || 'bankgiro').trim().toLowerCase() === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+  return {
+    id,
+    type,
+    number: typeof input.number === 'string' ? input.number : ''
   };
 }
 
@@ -2053,6 +2221,188 @@ function renderMatchingEditor() {
     }
 
     matchingListEl.appendChild(rowEl);
+  });
+
+  updateSettingsActionButtons();
+}
+
+function renderSendersEditor() {
+  sendersListEl.innerHTML = '';
+
+  if (sendersDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Inga avsändare ännu.';
+    sendersListEl.appendChild(empty);
+    return;
+  }
+
+  sendersDraft.forEach((row, rowIndex) => {
+    const senderNode = document.createElement('div');
+    senderNode.className = 'tree-node tree-folder';
+
+    const senderRow = document.createElement('div');
+    senderRow.className = 'tree-row';
+
+    const senderDot = document.createElement('span');
+    senderDot.className = 'tree-dot';
+    senderRow.appendChild(senderDot);
+
+    const senderBody = document.createElement('div');
+    senderBody.className = 'tree-body folder-body';
+
+    const senderFields = document.createElement('div');
+    senderFields.className = 'sender-fields';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Ex: Region Värmland';
+    nameInput.value = row.name;
+    nameInput.addEventListener('input', () => {
+      sendersDraft[rowIndex].name = nameInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const orgNumberInput = document.createElement('input');
+    orgNumberInput.type = 'text';
+    orgNumberInput.placeholder = 'Ex: 556677-8899';
+    orgNumberInput.value = row.orgNumber;
+    orgNumberInput.addEventListener('input', () => {
+      sendersDraft[rowIndex].orgNumber = orgNumberInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const domainInput = document.createElement('input');
+    domainInput.type = 'text';
+    domainInput.placeholder = 'Ex: regionvarmland.se';
+    domainInput.value = row.domain;
+    domainInput.addEventListener('input', () => {
+      sendersDraft[rowIndex].domain = domainInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const notesInput = document.createElement('textarea');
+    notesInput.placeholder = 'Anteckningar';
+    notesInput.value = row.notes;
+    notesInput.addEventListener('input', () => {
+      sendersDraft[rowIndex].notes = notesInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'category-remove';
+    removeButton.textContent = 'Ta bort avsändare';
+    removeButton.addEventListener('click', () => {
+      sendersDraft.splice(rowIndex, 1);
+      renderSendersEditor();
+      updateSettingsActionButtons();
+    });
+
+    senderFields.appendChild(createFloatingField('Namn', nameInput));
+    senderFields.appendChild(createFloatingField('Org.nr', orgNumberInput));
+    senderFields.appendChild(createFloatingField('Domän', domainInput));
+    senderFields.appendChild(removeButton);
+    senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
+    senderBody.appendChild(senderFields);
+
+    const paymentList = document.createElement('div');
+    paymentList.className = 'tree-children';
+
+    const paymentsLabel = document.createElement('div');
+    paymentsLabel.className = 'archive-level-label';
+    paymentsLabel.textContent = 'Betalnummer';
+    paymentList.appendChild(paymentsLabel);
+
+    row.paymentNumbers.forEach((payment, paymentIndex) => {
+      const paymentNode = document.createElement('div');
+      paymentNode.className = 'tree-node tree-category has-parent';
+
+      const paymentRow = document.createElement('div');
+      paymentRow.className = 'tree-row';
+
+      const paymentDot = document.createElement('span');
+      paymentDot.className = 'tree-dot';
+      paymentRow.appendChild(paymentDot);
+
+      const paymentBody = document.createElement('div');
+      paymentBody.className = 'tree-body category-body';
+
+      const paymentFields = document.createElement('div');
+      paymentFields.className = 'sender-payment-fields';
+
+      const typeSelect = document.createElement('select');
+      const bankgiroOption = document.createElement('option');
+      bankgiroOption.value = 'bankgiro';
+      bankgiroOption.textContent = 'Bankgiro';
+      typeSelect.appendChild(bankgiroOption);
+      const plusgiroOption = document.createElement('option');
+      plusgiroOption.value = 'plusgiro';
+      plusgiroOption.textContent = 'Plusgiro';
+      typeSelect.appendChild(plusgiroOption);
+      typeSelect.value = payment.type;
+      typeSelect.addEventListener('change', () => {
+        sendersDraft[rowIndex].paymentNumbers[paymentIndex].type = typeSelect.value === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+        numberInput.value = formatSenderPaymentNumberForDisplay(
+          sendersDraft[rowIndex].paymentNumbers[paymentIndex].type,
+          numberInput.value
+        );
+        sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
+        updateSettingsActionButtons();
+      });
+
+      const numberInput = document.createElement('input');
+      numberInput.type = 'text';
+      numberInput.placeholder = 'Ex: 5051-6822';
+      numberInput.value = formatSenderPaymentNumberForDisplay(payment.type, payment.number);
+      numberInput.addEventListener('input', () => {
+        sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
+        updateSettingsActionButtons();
+      });
+      numberInput.addEventListener('blur', () => {
+        const formatted = formatSenderPaymentNumberForDisplay(typeSelect.value, numberInput.value);
+        numberInput.value = formatted;
+        sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = formatted;
+        updateSettingsActionButtons();
+      });
+
+      const removePaymentButton = document.createElement('button');
+      removePaymentButton.type = 'button';
+      removePaymentButton.className = 'category-remove';
+      removePaymentButton.textContent = 'Ta bort';
+      removePaymentButton.addEventListener('click', () => {
+        sendersDraft[rowIndex].paymentNumbers.splice(paymentIndex, 1);
+        renderSendersEditor();
+        updateSettingsActionButtons();
+      });
+
+      paymentFields.appendChild(createFloatingField('Typ', typeSelect));
+      paymentFields.appendChild(createFloatingField('Nummer', numberInput));
+      paymentFields.appendChild(removePaymentButton);
+      paymentBody.appendChild(paymentFields);
+      paymentRow.appendChild(paymentBody);
+      paymentNode.appendChild(paymentRow);
+      paymentList.appendChild(paymentNode);
+    });
+
+    senderBody.appendChild(paymentList);
+
+    const senderActions = document.createElement('div');
+    senderActions.className = 'folder-actions';
+    const addPaymentButton = document.createElement('button');
+    addPaymentButton.type = 'button';
+    addPaymentButton.textContent = 'Lägg till betalnummer';
+    addPaymentButton.addEventListener('click', () => {
+      sendersDraft[rowIndex].paymentNumbers.push(defaultSenderPaymentDraft());
+      renderSendersEditor();
+      updateSettingsActionButtons();
+    });
+    senderActions.appendChild(addPaymentButton);
+    senderBody.appendChild(senderActions);
+
+    senderRow.appendChild(senderBody);
+    senderNode.appendChild(senderRow);
+    sendersListEl.appendChild(senderNode);
   });
 
   updateSettingsActionButtons();
@@ -2658,6 +3008,23 @@ async function loadMatchingSettings() {
   updateSettingsActionButtons();
 }
 
+async function loadSendersSettings() {
+  const response = await fetch('/api/get-senders.php', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Kunde inte ladda avsändare');
+  }
+
+  const payload = await response.json();
+  if (!payload || !Array.isArray(payload.senders)) {
+    throw new Error('Ogiltigt svar för avsändare');
+  }
+
+  sendersDraft = payload.senders.map(sanitizeSenderDraft);
+  sendersBaselineJson = normalizedSendersJson(sendersDraft);
+  renderSendersEditor();
+  updateSettingsActionButtons();
+}
+
 async function loadPathSettings() {
   const response = await fetch('/api/get-config.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -2745,6 +3112,31 @@ async function saveClientsText() {
   clientsBaselineText = clientsTextareaEl.value;
   updateSettingsActionButtons();
   await fetchState({ refreshClients: true });
+}
+
+async function saveSendersSettings() {
+  const normalized = sendersDraft.map(sanitizeSenderDraft);
+  const response = await fetch('/api/save-senders.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ senders: normalized })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.senders)) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Kunde inte spara avsändare';
+    throw new Error(message);
+  }
+
+  sendersDraft = payload.senders.map(sanitizeSenderDraft);
+  sendersBaselineJson = normalizedSendersJson(sendersDraft);
+  renderSendersEditor();
+  updateSettingsActionButtons();
+  await fetchState({ refreshSenders: true });
 }
 
 async function saveMatchingSettings() {
@@ -3033,6 +3425,14 @@ clientSelectEl.addEventListener('change', () => {
 });
 
 senderSelectEl.addEventListener('change', () => {
+  if (senderSelectEl.value === EDIT_SENDERS_OPTION_VALUE) {
+    const selectedJob = findJobById(selectedJobId);
+    openSendersSettingsDirect().finally(() => {
+      setSenderForJob(selectedJob);
+    });
+    return;
+  }
+
   if (!selectedJobId) {
     return;
   }
@@ -3108,6 +3508,15 @@ outputBasePathEl.addEventListener('input', () => {
 settingsButtonEl.addEventListener('click', async () => {
   await openClientsSettingsDirect();
   try {
+    await loadSendersSettings();
+  } catch (error) {
+    alert('Kunde inte ladda avsändare.');
+    sendersDraft = [];
+    sendersBaselineJson = normalizedSendersJson(sendersDraft);
+    renderSendersEditor();
+    updateSettingsActionButtons();
+  }
+  try {
     await loadMatchingSettings();
   } catch (error) {
     alert('Kunde inte ladda matchningsinställningar.');
@@ -3168,6 +3577,32 @@ clientsApplyEl.addEventListener('click', async () => {
     await saveClientsText();
   } catch (error) {
     alert('Kunde inte spara huvudmän.');
+  }
+});
+
+sendersAddRowEl.addEventListener('click', () => {
+  sendersDraft.push(defaultSenderDraft());
+  renderSendersEditor();
+  updateSettingsActionButtons();
+});
+
+sendersCancelEl.addEventListener('click', () => {
+  let parsed = [];
+  try {
+    parsed = JSON.parse(sendersBaselineJson);
+  } catch (error) {
+    parsed = [];
+  }
+  sendersDraft = Array.isArray(parsed) ? parsed.map(sanitizeSenderDraft) : [];
+  renderSendersEditor();
+  updateSettingsActionButtons();
+});
+
+sendersApplyEl.addEventListener('click', async () => {
+  try {
+    await saveSendersSettings();
+  } catch (error) {
+    alert(error.message || 'Kunde inte spara avsändare.');
   }
 });
 

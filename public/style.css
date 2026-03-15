@@ -982,6 +982,52 @@ body {
   margin-bottom: 0;
 }
 
+.sender-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.sender-row:last-child {
+  margin-bottom: 0;
+}
+
+.sender-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+
+.sender-fields input,
+.sender-fields textarea,
+.sender-payment-fields select,
+.sender-payment-fields input {
+  width: 100%;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.sender-fields textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.sender-notes-field {
+  grid-column: 1 / -1;
+}
+
+.sender-payment-fields {
+  display: grid;
+  grid-template-columns: minmax(120px, 140px) minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
 .matching-char-field input {
   width: 100%;
 }

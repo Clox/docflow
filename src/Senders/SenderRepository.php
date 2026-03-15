@@ -145,6 +145,45 @@ final class SenderRepository
         return (int) $this->pdo->lastInsertId();
     }
 
+    public function updateSenderBasic(int $id, string $name, string $slug): void
+    {
+        $name = trim($name);
+        $slug = trim($slug);
+        if ($id < 1 || $name === '' || $slug === '') {
+            throw new RuntimeException('Sender id, name and slug are required.');
+        }
+
+        $statement = $this->pdo->prepare(
+            'UPDATE senders
+            SET name = :name, slug = :slug, updated_at = :updated_at
+            WHERE id = :id'
+        );
+        $statement->execute([
+            ':id' => $id,
+            ':name' => $name,
+            ':slug' => $slug,
+            ':updated_at' => date(DATE_ATOM),
+        ]);
+
+        if ($statement->rowCount() < 1) {
+            $exists = $this->pdo->prepare('SELECT 1 FROM senders WHERE id = :id LIMIT 1');
+            $exists->execute([':id' => $id]);
+            if ($exists->fetchColumn() === false) {
+                throw new RuntimeException('Sender not found.');
+            }
+        }
+    }
+
+    public function deleteSenderById(int $id): void
+    {
+        if ($id < 1) {
+            throw new RuntimeException('Sender id is required.');
+        }
+
+        $statement = $this->pdo->prepare('DELETE FROM senders WHERE id = :id');
+        $statement->execute([':id' => $id]);
+    }
+
     public function addPaymentNumber(
         int $senderId,
         string $type,

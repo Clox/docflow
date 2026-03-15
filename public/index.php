@@ -109,6 +109,7 @@
       <aside class="settings-nav">
         <h2>Inställningar</h2>
         <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
+        <button class="settings-tab" data-settings-tab="senders" type="button">Avsändare</button>
         <button class="settings-tab" data-settings-tab="matching" type="button">OCR-matchning</button>
         <button class="settings-tab" data-settings-tab="ocr-processing" type="button">Bild-OCR</button>
         <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
@@ -128,6 +129,20 @@
           <div class="panel-actions">
             <button id="clients-cancel" type="button">Avbryt</button>
             <button id="clients-apply" type="button">Spara</button>
+          </div>
+        </div>
+
+        <div id="settings-panel-senders" class="settings-panel hidden">
+          <h3>Avsändare</h3>
+          <p>Redigera avsändare som lagras i databasen. Fälten här styr listan i väljaren för avsändare och vilka dokumentidentifierare som kan matchas mot avsändaren.</p>
+          <p>Om du tar bort en avsändare här tas även dess kopplade betalnummer bort ur databasen.</p>
+          <div id="senders-list" class="categories-list"></div>
+          <div class="categories-actions">
+            <button id="senders-add-row" type="button">Lägg till avsändare</button>
+          </div>
+          <div class="panel-actions">
+            <button id="senders-cancel" type="button">Avbryt</button>
+            <button id="senders-apply" type="button">Spara</button>
           </div>
         </div>
 
