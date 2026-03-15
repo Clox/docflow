@@ -56,7 +56,6 @@ function load_sender_editor_rows(PDO $pdo): array
         'SELECT
             s.id AS sender_id,
             s.name AS sender_name,
-            s.slug AS sender_slug,
             s.org_number AS sender_org_number,
             s.domain AS sender_domain,
             s.kind AS sender_kind,
@@ -66,7 +65,7 @@ function load_sender_editor_rows(PDO $pdo): array
             p.number AS payment_number
         FROM senders s
         LEFT JOIN sender_payment_numbers p ON p.sender_id = s.id
-        ORDER BY s.name ASC, s.slug ASC, p.type ASC, p.number ASC, p.id ASC'
+        ORDER BY s.name ASC, s.id ASC, p.type ASC, p.number ASC, p.id ASC'
     );
 
     $rows = $statement->fetchAll();
@@ -89,7 +88,6 @@ function load_sender_editor_rows(PDO $pdo): array
             $sendersById[$senderId] = [
                 'id' => $senderId,
                 'name' => is_string($row['sender_name'] ?? null) ? trim((string) $row['sender_name']) : '',
-                'slug' => is_string($row['sender_slug'] ?? null) ? trim((string) $row['sender_slug']) : '',
                 'orgNumber' => is_string($row['sender_org_number'] ?? null) ? trim((string) $row['sender_org_number']) : '',
                 'domain' => is_string($row['sender_domain'] ?? null) ? trim((string) $row['sender_domain']) : '',
                 'kind' => is_string($row['sender_kind'] ?? null) ? trim((string) $row['sender_kind']) : '',
@@ -117,7 +115,6 @@ function load_sender_editor_rows(PDO $pdo): array
 }
 
 $normalized = [];
-$seenSlugs = [];
 $seenOrgNumbers = [];
 $seenPaymentNumbers = [];
 
@@ -132,7 +129,6 @@ foreach ($payload['senders'] as $row) {
     }
 
     $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
-    $slug = is_string($row['slug'] ?? null) ? trim((string) $row['slug']) : '';
     $orgNumberRaw = is_string($row['orgNumber'] ?? null) ? trim((string) $row['orgNumber']) : '';
     $domainRaw = is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '';
     $kindRaw = is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '';
@@ -143,7 +139,6 @@ foreach ($payload['senders'] as $row) {
     ));
 
     $isEffectivelyEmpty = $name === ''
-        && $slug === ''
         && $orgNumberRaw === ''
         && $domainRaw === ''
         && $kindRaw === ''
@@ -153,22 +148,10 @@ foreach ($payload['senders'] as $row) {
         continue;
     }
 
-    if ($name === '' || $slug === '') {
-        json_response(['error' => 'Varje avsändare måste ha både namn och slug'], 400);
+    if ($name === '') {
+        json_response(['error' => 'Varje avsändare måste ha ett namn'], 400);
         exit;
     }
-
-    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]*$/', $slug)) {
-        json_response(['error' => 'Slug får bara innehålla bokstäver, siffror, bindestreck och understreck'], 400);
-        exit;
-    }
-
-    $slugKey = strtolower($slug);
-    if (isset($seenSlugs[$slugKey])) {
-        json_response(['error' => 'Slug måste vara unik'], 400);
-        exit;
-    }
-    $seenSlugs[$slugKey] = true;
 
     $orgNumber = null;
     if ($orgNumberRaw !== '') {
@@ -228,7 +211,6 @@ foreach ($payload['senders'] as $row) {
     $normalized[] = [
         'id' => $id,
         'name' => $name,
-        'slug' => $slug,
         'orgNumber' => $orgNumber,
         'domain' => $domainRaw !== '' ? strtolower($domainRaw) : null,
         'kind' => $kindRaw !== '' ? $kindRaw : null,
@@ -272,7 +254,6 @@ try {
     $insertSender = $pdo->prepare(
         'INSERT INTO senders (
             name,
-            slug,
             org_number,
             domain,
             kind,
@@ -282,7 +263,6 @@ try {
             updated_at
         ) VALUES (
             :name,
-            :slug,
             :org_number,
             :domain,
             :kind,
@@ -297,7 +277,6 @@ try {
         'UPDATE senders
         SET
             name = :name,
-            slug = :slug,
             org_number = :org_number,
             domain = :domain,
             kind = :kind,
@@ -378,7 +357,6 @@ try {
             $updateSender->execute([
                 ':id' => $senderId,
                 ':name' => $row['name'],
-                ':slug' => $row['slug'],
                 ':org_number' => $row['orgNumber'],
                 ':domain' => $row['domain'],
                 ':kind' => $row['kind'],
@@ -390,7 +368,6 @@ try {
         } else {
             $insertSender->execute([
                 ':name' => $row['name'],
-                ':slug' => $row['slug'],
                 ':org_number' => $row['orgNumber'],
                 ':domain' => $row['domain'],
                 ':kind' => $row['kind'],

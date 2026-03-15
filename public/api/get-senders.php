@@ -38,7 +38,6 @@ function load_sender_editor_rows(PDO $pdo): array
         'SELECT
             s.id AS sender_id,
             s.name AS sender_name,
-            s.slug AS sender_slug,
             s.org_number AS sender_org_number,
             s.domain AS sender_domain,
             s.kind AS sender_kind,
@@ -48,7 +47,7 @@ function load_sender_editor_rows(PDO $pdo): array
             p.number AS payment_number
         FROM senders s
         LEFT JOIN sender_payment_numbers p ON p.sender_id = s.id
-        ORDER BY s.name ASC, s.slug ASC, p.type ASC, p.number ASC, p.id ASC'
+        ORDER BY s.name ASC, s.id ASC, p.type ASC, p.number ASC, p.id ASC'
     );
 
     $rows = $statement->fetchAll();
@@ -71,7 +70,6 @@ function load_sender_editor_rows(PDO $pdo): array
             $sendersById[$senderId] = [
                 'id' => $senderId,
                 'name' => is_string($row['sender_name'] ?? null) ? trim((string) $row['sender_name']) : '',
-                'slug' => is_string($row['sender_slug'] ?? null) ? trim((string) $row['sender_slug']) : '',
                 'orgNumber' => is_string($row['sender_org_number'] ?? null) ? trim((string) $row['sender_org_number']) : '',
                 'domain' => is_string($row['sender_domain'] ?? null) ? trim((string) $row['sender_domain']) : '',
                 'kind' => is_string($row['sender_kind'] ?? null) ? trim((string) $row['sender_kind']) : '',

@@ -35,6 +35,23 @@ final class MigrationRunner
                 throw new RuntimeException('Could not read migration file: ' . $path);
             }
 
+            $runWithoutTransaction = $this->shouldRunWithoutTransaction($sql);
+
+            if ($runWithoutTransaction) {
+                $this->pdo->exec($sql);
+
+                $statement = $this->pdo->prepare(
+                    'INSERT INTO migrations (name, applied_at) VALUES (:name, :applied_at)'
+                );
+                $statement->execute([
+                    ':name' => $name,
+                    ':applied_at' => date(DATE_ATOM),
+                ]);
+
+                $appliedNow[] = $name;
+                continue;
+            }
+
             $this->pdo->beginTransaction();
             try {
                 $this->pdo->exec($sql);
@@ -116,5 +133,10 @@ final class MigrationRunner
         }
 
         return $names;
+    }
+
+    private function shouldRunWithoutTransaction(string $sql): bool
+    {
+        return preg_match('/^\s*--\s*no-transaction\b/im', $sql) === 1;
     }
 }

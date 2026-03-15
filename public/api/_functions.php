@@ -304,7 +304,6 @@ function sender_lookup_result(?string $orgNumber, ?string $bankgiro, ?string $pl
     $sender = [
         'id' => isset($match['id']) ? (int) $match['id'] : 0,
         'name' => is_string($match['name'] ?? null) ? $match['name'] : '',
-        'slug' => is_string($match['slug'] ?? null) ? $match['slug'] : '',
         'orgNumber' => is_string($match['org_number'] ?? null) ? $match['org_number'] : null,
         'domain' => is_string($match['domain'] ?? null) ? $match['domain'] : null,
         'kind' => is_string($match['kind'] ?? null) ? $match['kind'] : null,
@@ -351,15 +350,13 @@ function load_senders(): array
 
         $id = isset($row['id']) ? (int) $row['id'] : 0;
         $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
-        $slug = is_string($row['slug'] ?? null) ? trim((string) $row['slug']) : '';
-        if ($id < 1 || $name === '' || $slug === '') {
+        if ($id < 1 || $name === '') {
             continue;
         }
 
         $senders[] = [
             'id' => $id,
             'name' => $name,
-            'slug' => $slug,
         ];
     }
 
@@ -3454,10 +3451,10 @@ function process_claimed_job(
     $preselectedSender = null;
     if (($senderLookup['matched'] ?? false) === true && is_array($senderLookup['sender'] ?? null)) {
         $sender = $senderLookup['sender'];
-        $slug = is_string($sender['slug'] ?? null) ? trim((string) $sender['slug']) : '';
-        if ($slug !== '') {
+        $senderId = isset($sender['id']) ? (int) $sender['id'] : 0;
+        if ($senderId > 0) {
             $preselectedSender = [
-                'slug' => $slug,
+                'id' => $senderId,
                 'name' => is_string($sender['name'] ?? null) ? trim((string) $sender['name']) : '',
                 'matchedBy' => is_string($senderLookup['matchedBy'] ?? null) ? $senderLookup['matchedBy'] : null,
                 'matchedValue' => is_string($senderLookup['matchedValue'] ?? null) ? $senderLookup['matchedValue'] : null,
@@ -3812,7 +3809,7 @@ function read_jobs_state(array $config): array
 
         if ($status === 'ready') {
             $matchedClientDirName = null;
-            $matchedSenderSlug = null;
+            $matchedSenderId = null;
             $topMatchedCategoryId = null;
             $topMatchedCategoryName = null;
             $topMatchedCategoryScore = null;
@@ -3837,17 +3834,17 @@ function read_jobs_state(array $config): array
             $preselectedSender = is_array($analysis['preselectedSender'] ?? null)
                 ? $analysis['preselectedSender']
                 : null;
-            if (is_array($preselectedSender) && is_string($preselectedSender['slug'] ?? null)) {
-                $slug = trim((string) $preselectedSender['slug']);
-                if ($slug !== '') {
-                    $matchedSenderSlug = $slug;
+            if (is_array($preselectedSender) && isset($preselectedSender['id'])) {
+                $senderId = (int) $preselectedSender['id'];
+                if ($senderId > 0) {
+                    $matchedSenderId = $senderId;
                 }
             } elseif (is_array($extracted) && is_array($extracted['senderLookup'] ?? null)) {
                 $senderLookup = $extracted['senderLookup'];
                 $sender = is_array($senderLookup['sender'] ?? null) ? $senderLookup['sender'] : null;
-                $slug = is_array($sender) && is_string($sender['slug'] ?? null) ? trim((string) $sender['slug']) : '';
-                if ($slug !== '') {
-                    $matchedSenderSlug = $slug;
+                $senderId = is_array($sender) && isset($sender['id']) ? (int) $sender['id'] : 0;
+                if ($senderId > 0) {
+                    $matchedSenderId = $senderId;
                 }
             }
 
@@ -3896,7 +3893,7 @@ function read_jobs_state(array $config): array
                 'hasReviewPdf' => $hasReviewPdf,
                 'hasSourcePdf' => $hasSourcePdf,
                 'matchedClientDirName' => $matchedClientDirName,
-                'matchedSenderSlug' => $matchedSenderSlug,
+                'matchedSenderId' => $matchedSenderId,
                 'topMatchedCategoryId' => $topMatchedCategoryId,
                 'topMatchedCategoryName' => $topMatchedCategoryName,
                 'topMatchedCategoryScore' => $topMatchedCategoryScore,

@@ -42,9 +42,9 @@ final class SenderRepository
     public function listAll(): array
     {
         $statement = $this->pdo->query(
-            'SELECT id, name, slug, org_number, domain, kind, notes, confidence, created_at, updated_at
+            'SELECT id, name, org_number, domain, kind, notes, confidence, created_at, updated_at
             FROM senders
-            ORDER BY name ASC, slug ASC'
+            ORDER BY name ASC, id ASC'
         );
         $rows = $statement->fetchAll();
         return is_array($rows) ? $rows : [];
@@ -84,7 +84,6 @@ final class SenderRepository
 
     public function createSender(
         string $name,
-        string $slug,
         ?string $orgNumber = null,
         ?string $domain = null,
         ?string $kind = null,
@@ -92,9 +91,8 @@ final class SenderRepository
         float $confidence = 1.0
     ): int {
         $name = trim($name);
-        $slug = trim($slug);
-        if ($name === '' || $slug === '') {
-            throw new RuntimeException('Sender name and slug are required.');
+        if ($name === '') {
+            throw new RuntimeException('Sender name is required.');
         }
 
         $normalizedOrgNumber = null;
@@ -109,7 +107,6 @@ final class SenderRepository
         $statement = $this->pdo->prepare(
             'INSERT INTO senders (
                 name,
-                slug,
                 org_number,
                 domain,
                 kind,
@@ -119,7 +116,6 @@ final class SenderRepository
                 updated_at
             ) VALUES (
                 :name,
-                :slug,
                 :org_number,
                 :domain,
                 :kind,
@@ -132,7 +128,6 @@ final class SenderRepository
 
         $statement->execute([
             ':name' => $name,
-            ':slug' => $slug,
             ':org_number' => $normalizedOrgNumber,
             ':domain' => $domain !== null ? trim($domain) : null,
             ':kind' => $kind !== null ? trim($kind) : null,
@@ -145,23 +140,21 @@ final class SenderRepository
         return (int) $this->pdo->lastInsertId();
     }
 
-    public function updateSenderBasic(int $id, string $name, string $slug): void
+    public function updateSenderBasic(int $id, string $name): void
     {
         $name = trim($name);
-        $slug = trim($slug);
-        if ($id < 1 || $name === '' || $slug === '') {
-            throw new RuntimeException('Sender id, name and slug are required.');
+        if ($id < 1 || $name === '') {
+            throw new RuntimeException('Sender id and name are required.');
         }
 
         $statement = $this->pdo->prepare(
             'UPDATE senders
-            SET name = :name, slug = :slug, updated_at = :updated_at
+            SET name = :name, updated_at = :updated_at
             WHERE id = :id'
         );
         $statement->execute([
             ':id' => $id,
             ':name' => $name,
-            ':slug' => $slug,
             ':updated_at' => date(DATE_ATOM),
         ]);
 

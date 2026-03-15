@@ -2,7 +2,6 @@
 CREATE TABLE IF NOT EXISTS senders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    slug TEXT NOT NULL UNIQUE,
     org_number TEXT NULL UNIQUE,
     domain TEXT NULL,
     kind TEXT NULL,
@@ -12,5 +11,4 @@ CREATE TABLE IF NOT EXISTS senders (
     updated_at TEXT NOT NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_senders_slug ON senders(slug);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_senders_org_number ON senders(org_number);

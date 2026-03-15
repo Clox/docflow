@@ -249,7 +249,7 @@ function renderClientSelect(clients) {
 function renderSenderSelect(senders) {
   const options = senders
     .map((sender) => ({
-      value: sender && typeof sender.slug === 'string' ? sender.slug.trim() : '',
+      value: sender && Number.isInteger(sender.id) && sender.id > 0 ? String(sender.id) : '',
       label: sender && typeof sender.name === 'string' ? sender.name.trim() : ''
     }))
     .filter((sender) => sender.value !== '' && sender.label !== '');
@@ -401,15 +401,18 @@ function setSenderForJob(job) {
     }
   }
 
-  if (!job.matchedSenderSlug) {
+  const matchedSenderId = Number.isInteger(job.matchedSenderId) && job.matchedSenderId > 0
+    ? String(job.matchedSenderId)
+    : '';
+  if (!matchedSenderId) {
     senderSelectEl.value = '';
     return;
   }
 
   const hasOption = Array.from(senderSelectEl.options).some(
-    (option) => option.value === job.matchedSenderSlug
+    (option) => option.value === matchedSenderId
   );
-  senderSelectEl.value = hasOption ? job.matchedSenderSlug : '';
+  senderSelectEl.value = hasOption ? matchedSenderId : '';
 }
 
 function setCategoryForJob(job) {
@@ -1128,7 +1131,7 @@ function findJobById(jobId) {
     ...snapshot,
     ...processingJob,
     matchedClientDirName: snapshot.matchedClientDirName,
-    matchedSenderSlug: snapshot.matchedSenderSlug,
+    matchedSenderId: snapshot.matchedSenderId,
     topMatchedCategoryId: snapshot.topMatchedCategoryId,
     topMatchedCategoryScore: snapshot.topMatchedCategoryScore
   };
@@ -2004,7 +2007,6 @@ function defaultSenderDraft() {
   return {
     id: null,
     name: '',
-    slug: '',
     orgNumber: '',
     domain: '',
     kind: '',
@@ -2066,7 +2068,6 @@ function sanitizeSenderDraft(row) {
   return {
     id,
     name: typeof input.name === 'string' ? input.name : '',
-    slug: typeof input.slug === 'string' ? input.slug : '',
     orgNumber: typeof input.orgNumber === 'string' ? input.orgNumber : '',
     domain: typeof input.domain === 'string' ? input.domain : '',
     kind: typeof input.kind === 'string' ? input.kind : '',
