@@ -119,8 +119,11 @@ let loadedMatchesJobId = '';
 let loadedMetaJobId = '';
 let pdfFrameJobIds = pdfFrameEls.map(() => '');
 let pollInFlight = false;
+let jobsTickInFlight = false;
 let stateStream = null;
 let statePollTimer = null;
+let jobsTickTimer = null;
+let jobsTickWatchdogStarted = false;
 let stateUpdateTransport = 'polling';
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
@@ -4950,6 +4953,21 @@ async function fetchState(options = {}) {
   }
 }
 
+async function tickJobs() {
+  if (jobsTickInFlight) {
+    return;
+  }
+
+  jobsTickInFlight = true;
+  try {
+    await fetch('/api/tick-jobs.php', { cache: 'no-store' });
+  } catch (error) {
+    // Ignore tick failures and try again on next scheduled run.
+  } finally {
+    jobsTickInFlight = false;
+  }
+}
+
 function stopStateStream() {
   if (!stateStream) {
     return;
@@ -4957,6 +4975,33 @@ function stopStateStream() {
 
   stateStream.close();
   stateStream = null;
+}
+
+function stopJobsTick() {
+  if (jobsTickTimer === null) {
+    return;
+  }
+  window.clearTimeout(jobsTickTimer);
+  jobsTickTimer = null;
+}
+
+function scheduleJobsTick(delay = 1500) {
+  stopJobsTick();
+  jobsTickTimer = window.setTimeout(async () => {
+    jobsTickTimer = null;
+    await tickJobs();
+    scheduleJobsTick(120000);
+  }, delay);
+}
+
+function startJobsTickWatchdog() {
+  if (jobsTickWatchdogStarted) {
+    return;
+  }
+  jobsTickWatchdogStarted = true;
+  tickJobs().finally(() => {
+    scheduleJobsTick(120000);
+  });
 }
 
 function scheduleStatePoll(delay = 1500) {
@@ -5012,6 +5057,8 @@ function startStateStream() {
 }
 
 function syncStateUpdateTransport() {
+  startJobsTickWatchdog();
+
   if (stateUpdateTransport === 'sse') {
     if (statePollTimer !== null) {
       window.clearTimeout(statePollTimer);

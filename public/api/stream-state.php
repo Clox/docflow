@@ -27,11 +27,6 @@ $startedAt = time();
 while (!connection_aborted() && (time() - $startedAt) < 55) {
     try {
         $config = load_config();
-        $clients = load_clients();
-
-        claim_and_process_inbox($config, $clients);
-        trigger_processing_worker();
-
         $jobsState = read_jobs_state($config);
         $payload = [
             'processingJobs' => $jobsState['processingJobs'],

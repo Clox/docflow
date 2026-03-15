@@ -3757,6 +3757,21 @@ function trigger_processing_worker(): void
     exec($command);
 }
 
+function start_job_dispatcher(): void
+{
+    $scriptPath = PROJECT_ROOT . 'scripts/job-dispatcher.php';
+    if (!is_file($scriptPath)) {
+        return;
+    }
+
+    $command = escapeshellarg(PHP_BINARY)
+        . ' '
+        . escapeshellarg($scriptPath)
+        . ' > /dev/null 2>&1 &';
+
+    exec($command);
+}
+
 function read_jobs_state(array $config): array
 {
     $jobsDir = $config['jobsDirectory'];
