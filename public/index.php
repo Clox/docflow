@@ -159,6 +159,7 @@
           <option value="orgNumber">Org.nr</option>
           <option value="domain">Domän</option>
           <option value="paymentCount">Antal betalnummer</option>
+          <option value="similarity">Misstänkt samma</option>
         </select>
       </div>
       <div class="senders-toolbar-actions">
@@ -169,6 +170,7 @@
     <div id="senders-list" class="categories-list"></div>
     <div class="senders-selected-count-row">
       <span id="senders-selected-count" class="senders-selected-count">Antal markerade avsändare: 0</span>
+      <button id="senders-clear-selection" class="senders-clear-selection" type="button">(Avmarkera alla)</button>
     </div>
     <div class="categories-actions senders-footer-actions">
       <button id="senders-add-row" type="button">Lägg till avsändare</button>

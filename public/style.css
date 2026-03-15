@@ -1024,6 +1024,44 @@ body {
   align-items: start;
 }
 
+.sender-similarity-group {
+  display: grid;
+  grid-template-columns: 18px 32px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  margin-bottom: 14px;
+}
+
+.sender-group-checkbox {
+  width: 18px;
+  height: 18px;
+  grid-column: 1;
+  align-self: center;
+}
+
+.sender-similarity-brace {
+  position: relative;
+  grid-column: 2;
+  color: #111;
+}
+
+.sender-similarity-brace svg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: block;
+  width: 28px;
+  height: 100%;
+  overflow: visible;
+}
+
+.sender-similarity-items {
+  grid-column: 3;
+  min-width: 0;
+}
+
 .senders-toolbar {
   margin-top: 0;
   display: flex;
@@ -1071,11 +1109,36 @@ body {
 .senders-selected-count-row {
   margin-top: 10px;
   margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .senders-selected-count {
   font-size: 13px;
   color: #444;
+}
+
+.senders-clear-selection {
+  font: inherit;
+  font-size: 13px;
+  color: #2563eb;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.senders-clear-selection:hover {
+  color: #1d4ed8;
+}
+
+.senders-clear-selection:disabled {
+  color: #9ca3af;
+  cursor: default;
+  text-decoration: none;
 }
 
 .senders-footer-actions button:disabled {

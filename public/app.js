@@ -46,6 +46,7 @@ let sendersSortOrderEl = null;
 let sendersExpandAllEl = null;
 let sendersCollapseAllEl = null;
 let sendersSelectedCountEl = null;
+let sendersClearSelectionEl = null;
 let sendersMergeSelectedEl = null;
 let senderMergeOverlayEl = null;
 let senderMergeEditorEl = null;
@@ -1749,6 +1750,7 @@ function bindSettingsPanelRefs(tabId) {
     sendersExpandAllEl = document.getElementById('senders-expand-all');
     sendersCollapseAllEl = document.getElementById('senders-collapse-all');
     sendersSelectedCountEl = document.getElementById('senders-selected-count');
+    sendersClearSelectionEl = document.getElementById('senders-clear-selection');
     sendersMergeSelectedEl = document.getElementById('senders-merge-selected');
     senderMergeOverlayEl = document.getElementById('sender-merge-overlay');
     senderMergeEditorEl = document.getElementById('sender-merge-editor');
@@ -1761,7 +1763,18 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     sendersSortOrderEl.addEventListener('change', () => {
+      const previousSortOrder = sendersSortOrder;
       sendersSortOrder = String(sendersSortOrderEl.value || 'name');
+      if (sendersSortOrder === 'similarity' && previousSortOrder !== 'similarity') {
+        collapsedSenderUiKeys.clear();
+        sendersDraft.forEach((row) => {
+          collapsedSenderUiKeys.add(senderUiKey(row));
+        });
+      }
+      renderSendersEditor();
+    });
+    sendersClearSelectionEl.addEventListener('click', () => {
+      clearSenderSelections();
       renderSendersEditor();
     });
     sendersExpandAllEl.addEventListener('click', () => {
@@ -2573,6 +2586,86 @@ function senderUiKey(row) {
   return `tmp-${senderDraftUiKeySeq++}`;
 }
 
+function normalizeSenderNameForSimilarity(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function bigramsForSimilarity(value) {
+  const compact = String(value || '').replace(/\s+/g, '');
+  if (compact.length < 2) {
+    return compact === '' ? [] : [compact];
+  }
+  const grams = [];
+  for (let index = 0; index < compact.length - 1; index += 1) {
+    grams.push(compact.slice(index, index + 2));
+  }
+  return grams;
+}
+
+function diceSimilarity(a, b) {
+  const aGrams = bigramsForSimilarity(a);
+  const bGrams = bigramsForSimilarity(b);
+  if (aGrams.length === 0 || bGrams.length === 0) {
+    return 0;
+  }
+  const counts = new Map();
+  aGrams.forEach((gram) => {
+    counts.set(gram, (counts.get(gram) || 0) + 1);
+  });
+  let overlap = 0;
+  bGrams.forEach((gram) => {
+    const count = counts.get(gram) || 0;
+    if (count > 0) {
+      overlap += 1;
+      counts.set(gram, count - 1);
+    }
+  });
+  return (2 * overlap) / (aGrams.length + bGrams.length);
+}
+
+function tokenJaccardSimilarity(a, b) {
+  const aTokens = normalizeSenderNameForSimilarity(a).split(' ').filter(Boolean);
+  const bTokens = normalizeSenderNameForSimilarity(b).split(' ').filter(Boolean);
+  if (aTokens.length === 0 || bTokens.length === 0) {
+    return 0;
+  }
+  const aSet = new Set(aTokens);
+  const bSet = new Set(bTokens);
+  let intersection = 0;
+  aSet.forEach((token) => {
+    if (bSet.has(token)) {
+      intersection += 1;
+    }
+  });
+  const union = new Set([...aSet, ...bSet]).size;
+  return union > 0 ? intersection / union : 0;
+}
+
+function senderNameSimilarity(a, b) {
+  const normalizedA = normalizeSenderNameForSimilarity(a);
+  const normalizedB = normalizeSenderNameForSimilarity(b);
+  if (normalizedA === '' || normalizedB === '') {
+    return 0;
+  }
+  if (normalizedA === normalizedB) {
+    return 1;
+  }
+  const dice = diceSimilarity(normalizedA, normalizedB);
+  const token = tokenJaccardSimilarity(normalizedA, normalizedB);
+  const contains = normalizedA.includes(normalizedB) || normalizedB.includes(normalizedA) ? 1 : 0;
+  return Math.max(0, Math.min(1, (dice * 0.6) + (token * 0.3) + (contains * 0.1)));
+}
+
+function similarityScoreLabel(score) {
+  return Number.isFinite(score) ? score.toFixed(2) : '0.00';
+}
+
 function uniqueSenderFieldOptions(rows, field, config = {}) {
   const ignoreEmpty = config.ignoreEmpty === true;
   const seen = new Set();
@@ -2643,6 +2736,9 @@ function closeSenderMergeOverlay() {
 function updateSendersSelectionSummary() {
   if (sendersSelectedCountEl) {
     sendersSelectedCountEl.textContent = `Antal markerade avsändare: ${selectedSenderUiKeys.size}`;
+  }
+  if (sendersClearSelectionEl) {
+    sendersClearSelectionEl.disabled = selectedSenderUiKeys.size === 0;
   }
   if (sendersMergeSelectedEl) {
     sendersMergeSelectedEl.disabled = selectedSenderUiKeys.size < 2;
@@ -2732,6 +2828,112 @@ function getSortedSenderEntries() {
   });
 
   return entries;
+}
+
+function buildSimilarSenderGroups() {
+  const entries = sendersDraft.map((row, rowIndex) => ({ row, rowIndex }));
+  if (entries.length === 0) {
+    return [];
+  }
+
+  const pairScores = new Map();
+  const adjacency = new Map();
+  const threshold = 0.72;
+  entries.forEach((entry, index) => {
+    adjacency.set(index, []);
+  });
+
+  for (let leftIndex = 0; leftIndex < entries.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < entries.length; rightIndex += 1) {
+      const score = senderNameSimilarity(entries[leftIndex].row.name, entries[rightIndex].row.name);
+      pairScores.set(`${leftIndex}:${rightIndex}`, score);
+      if (score >= threshold) {
+        adjacency.get(leftIndex).push({ index: rightIndex, score });
+        adjacency.get(rightIndex).push({ index: leftIndex, score });
+      }
+    }
+  }
+
+  const visited = new Set();
+  const groups = [];
+
+  function pairScore(indexA, indexB) {
+    const left = Math.min(indexA, indexB);
+    const right = Math.max(indexA, indexB);
+    return pairScores.get(`${left}:${right}`) || 0;
+  }
+
+  entries.forEach((_, startIndex) => {
+    if (visited.has(startIndex)) {
+      return;
+    }
+    const queue = [startIndex];
+    const componentIndexes = [];
+    visited.add(startIndex);
+    while (queue.length > 0) {
+      const currentIndex = queue.shift();
+      componentIndexes.push(currentIndex);
+      (adjacency.get(currentIndex) || []).forEach(({ index: neighborIndex }) => {
+        if (visited.has(neighborIndex)) {
+          return;
+        }
+        visited.add(neighborIndex);
+        queue.push(neighborIndex);
+      });
+    }
+
+    const componentEntries = componentIndexes.map((index) => entries[index]);
+    let groupScore = 0;
+    componentIndexes.forEach((leftIndex, leftPosition) => {
+      for (let rightPosition = leftPosition + 1; rightPosition < componentIndexes.length; rightPosition += 1) {
+        groupScore = Math.max(groupScore, pairScore(leftIndex, componentIndexes[rightPosition]));
+      }
+    });
+
+    let anchorIndex = componentIndexes[0];
+    let anchorStrength = -1;
+    componentIndexes.forEach((candidateIndex) => {
+      const totalScore = componentIndexes.reduce((sum, otherIndex) => {
+        if (candidateIndex === otherIndex) {
+          return sum;
+        }
+        return sum + pairScore(candidateIndex, otherIndex);
+      }, 0);
+      if (totalScore > anchorStrength) {
+        anchorStrength = totalScore;
+        anchorIndex = candidateIndex;
+      }
+    });
+
+    componentEntries.sort((a, b) => {
+      const aScore = pairScore(a.rowIndex, anchorIndex);
+      const bScore = pairScore(b.rowIndex, anchorIndex);
+      if (aScore !== bScore) {
+        return bScore - aScore;
+      }
+      return senderSortFieldValue(a.row, 'name').localeCompare(senderSortFieldValue(b.row, 'name'), 'sv');
+    });
+
+    groups.push({
+      entries: componentEntries,
+      score: groupScore,
+      isGroup: componentEntries.length > 1
+    });
+  });
+
+  groups.sort((a, b) => {
+    if (a.isGroup !== b.isGroup) {
+      return a.isGroup ? -1 : 1;
+    }
+    if (a.isGroup && b.isGroup && a.score !== b.score) {
+      return b.score - a.score;
+    }
+    const aName = senderSortFieldValue(a.entries[0].row, 'name');
+    const bName = senderSortFieldValue(b.entries[0].row, 'name');
+    return aName.localeCompare(bName, 'sv');
+  });
+
+  return groups;
 }
 
 function sanitizeRule(rule) {
@@ -2871,6 +3073,276 @@ function renderMatchingEditor() {
   updateSettingsActionButtons();
 }
 
+function buildSenderEditorNode(row, rowIndex) {
+  const currentSenderUiKey = senderUiKey(row);
+  const isCollapsed = collapsedSenderUiKeys.has(currentSenderUiKey);
+  const senderNode = document.createElement('div');
+  senderNode.className = 'tree-node tree-folder';
+
+  const senderRow = document.createElement('div');
+  senderRow.className = 'tree-row';
+
+  const senderBody = document.createElement('div');
+  senderBody.className = 'tree-body folder-body';
+
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'Ex: Region Värmland';
+  nameInput.value = row.name;
+  nameInput.addEventListener('input', () => {
+    sendersDraft[rowIndex].name = nameInput.value;
+    updateSettingsActionButtons();
+  });
+
+  const orgNumberInput = document.createElement('input');
+  orgNumberInput.type = 'text';
+  orgNumberInput.placeholder = 'Ex: 556677-8899';
+  orgNumberInput.value = row.orgNumber;
+  orgNumberInput.addEventListener('input', () => {
+    sendersDraft[rowIndex].orgNumber = orgNumberInput.value;
+    updateSettingsActionButtons();
+  });
+
+  const domainInput = document.createElement('input');
+  domainInput.type = 'text';
+  domainInput.placeholder = 'Ex: regionvarmland.se';
+  domainInput.value = row.domain;
+  domainInput.addEventListener('input', () => {
+    sendersDraft[rowIndex].domain = domainInput.value;
+    updateSettingsActionButtons();
+  });
+
+  const notesInput = document.createElement('textarea');
+  notesInput.placeholder = 'Anteckningar';
+  notesInput.value = row.notes;
+  notesInput.addEventListener('input', () => {
+    sendersDraft[rowIndex].notes = notesInput.value;
+    updateSettingsActionButtons();
+  });
+
+  const removeButton = document.createElement('button');
+  removeButton.type = 'button';
+  removeButton.className = 'category-remove';
+  removeButton.textContent = 'Ta bort avsändare';
+  removeButton.addEventListener('click', () => {
+    selectedSenderUiKeys.delete(currentSenderUiKey);
+    collapsedSenderUiKeys.delete(currentSenderUiKey);
+    sendersDraft.splice(rowIndex, 1);
+    renderSendersEditor();
+    updateSettingsActionButtons();
+  });
+
+  const senderHeader = document.createElement('div');
+  senderHeader.className = 'sender-header';
+
+  const toggleButton = document.createElement('button');
+  toggleButton.type = 'button';
+  toggleButton.className = isCollapsed ? 'sender-toggle is-collapsed' : 'sender-toggle';
+  toggleButton.title = isCollapsed ? 'Expandera avsändare' : 'Kontrahera avsändare';
+  toggleButton.setAttribute('aria-label', toggleButton.title);
+  toggleButton.addEventListener('click', () => {
+    if (collapsedSenderUiKeys.has(currentSenderUiKey)) {
+      collapsedSenderUiKeys.delete(currentSenderUiKey);
+    } else {
+      collapsedSenderUiKeys.add(currentSenderUiKey);
+    }
+    renderSendersEditor();
+  });
+  senderRow.appendChild(toggleButton);
+
+  const senderSelectCheckbox = document.createElement('input');
+  senderSelectCheckbox.type = 'checkbox';
+  senderSelectCheckbox.className = 'sender-select-checkbox';
+  senderSelectCheckbox.checked = selectedSenderUiKeys.has(currentSenderUiKey);
+  senderSelectCheckbox.title = 'Markera avsändare';
+  senderSelectCheckbox.addEventListener('change', () => {
+    if (senderSelectCheckbox.checked) {
+      selectedSenderUiKeys.add(currentSenderUiKey);
+    } else {
+      selectedSenderUiKeys.delete(currentSenderUiKey);
+    }
+    updateSendersSelectionSummary();
+  });
+
+  const senderSummaryFields = document.createElement('div');
+  senderSummaryFields.className = 'sender-summary-fields';
+  senderSummaryFields.appendChild(senderSelectCheckbox);
+  senderSummaryFields.appendChild(createFloatingField('Namn', nameInput));
+  senderSummaryFields.appendChild(createFloatingField('Org.nr', orgNumberInput));
+  senderHeader.appendChild(senderSummaryFields);
+  senderBody.appendChild(senderHeader);
+
+  if (!isCollapsed) {
+    const senderDetails = document.createElement('div');
+    senderDetails.className = 'sender-details';
+
+    const senderFields = document.createElement('div');
+    senderFields.className = 'sender-fields';
+    senderFields.appendChild(createFloatingField('Domän', domainInput));
+    senderFields.appendChild(removeButton);
+    senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
+    senderDetails.appendChild(senderFields);
+
+    const paymentList = document.createElement('div');
+    paymentList.className = 'tree-children';
+
+    const paymentsLabel = document.createElement('div');
+    paymentsLabel.className = 'archive-level-label';
+    paymentsLabel.textContent = 'Betalnummer';
+    paymentList.appendChild(paymentsLabel);
+
+    row.paymentNumbers.forEach((payment, paymentIndex) => {
+      const paymentNode = document.createElement('div');
+      paymentNode.className = 'tree-node tree-category has-parent';
+
+      const paymentRow = document.createElement('div');
+      paymentRow.className = 'tree-row';
+
+      const paymentDot = document.createElement('span');
+      paymentDot.className = 'tree-dot sender-payment-dot';
+      paymentRow.appendChild(paymentDot);
+
+      const paymentBody = document.createElement('div');
+      paymentBody.className = 'tree-body category-body';
+
+      const paymentFields = document.createElement('div');
+      paymentFields.className = 'sender-payment-fields';
+
+      const typeSelect = document.createElement('select');
+      const bankgiroOption = document.createElement('option');
+      bankgiroOption.value = 'bankgiro';
+      bankgiroOption.textContent = 'Bankgiro';
+      typeSelect.appendChild(bankgiroOption);
+      const plusgiroOption = document.createElement('option');
+      plusgiroOption.value = 'plusgiro';
+      plusgiroOption.textContent = 'Plusgiro';
+      typeSelect.appendChild(plusgiroOption);
+      typeSelect.value = payment.type;
+      typeSelect.addEventListener('change', () => {
+        sendersDraft[rowIndex].paymentNumbers[paymentIndex].type = typeSelect.value === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+        numberInput.value = formatSenderPaymentNumberForDisplay(
+          sendersDraft[rowIndex].paymentNumbers[paymentIndex].type,
+          numberInput.value
+        );
+        sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
+        updateSettingsActionButtons();
+      });
+
+      const numberInput = document.createElement('input');
+      numberInput.type = 'text';
+      numberInput.placeholder = 'Ex: 5051-6822';
+      numberInput.value = formatSenderPaymentNumberForDisplay(payment.type, payment.number);
+      numberInput.addEventListener('input', () => {
+        sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
+        updateSettingsActionButtons();
+      });
+      numberInput.addEventListener('blur', () => {
+        const formatted = formatSenderPaymentNumberForDisplay(typeSelect.value, numberInput.value);
+        numberInput.value = formatted;
+        sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = formatted;
+        updateSettingsActionButtons();
+      });
+
+      const removePaymentButton = document.createElement('button');
+      removePaymentButton.type = 'button';
+      removePaymentButton.className = 'category-remove';
+      removePaymentButton.textContent = 'Ta bort';
+      removePaymentButton.addEventListener('click', () => {
+        sendersDraft[rowIndex].paymentNumbers.splice(paymentIndex, 1);
+        renderSendersEditor();
+        updateSettingsActionButtons();
+      });
+
+      paymentFields.appendChild(createFloatingField('Typ', typeSelect));
+      paymentFields.appendChild(createFloatingField('Nummer', numberInput));
+      paymentFields.appendChild(removePaymentButton);
+      paymentBody.appendChild(paymentFields);
+      paymentRow.appendChild(paymentBody);
+      paymentNode.appendChild(paymentRow);
+      paymentList.appendChild(paymentNode);
+    });
+
+    senderDetails.appendChild(paymentList);
+
+    const senderActions = document.createElement('div');
+    senderActions.className = 'folder-actions';
+    const addPaymentButton = document.createElement('button');
+    addPaymentButton.type = 'button';
+    addPaymentButton.textContent = 'Lägg till betalnummer';
+    addPaymentButton.addEventListener('click', () => {
+      sendersDraft[rowIndex].paymentNumbers.push(defaultSenderPaymentDraft());
+      renderSendersEditor();
+      updateSettingsActionButtons();
+    });
+    senderActions.appendChild(addPaymentButton);
+    senderDetails.appendChild(senderActions);
+    senderBody.appendChild(senderDetails);
+  }
+
+  senderRow.appendChild(senderBody);
+  senderNode.appendChild(senderRow);
+  return senderNode;
+}
+
+function buildSimilarityGroupNode(group) {
+  if (!group.isGroup) {
+    return buildSenderEditorNode(group.entries[0].row, group.entries[0].rowIndex);
+  }
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'sender-similarity-group';
+  wrapper.style.setProperty('--sender-group-size', String(group.entries.length));
+
+  const groupCheckbox = document.createElement('input');
+  groupCheckbox.type = 'checkbox';
+  groupCheckbox.className = 'sender-group-checkbox';
+  const groupUiKeys = group.entries.map((entry) => senderUiKey(entry.row));
+  const selectedCount = groupUiKeys.filter((uiKey) => selectedSenderUiKeys.has(uiKey)).length;
+  groupCheckbox.checked = selectedCount === groupUiKeys.length;
+  groupCheckbox.indeterminate = selectedCount > 0 && selectedCount < groupUiKeys.length;
+  groupCheckbox.title = 'Markera hela gruppen';
+  groupCheckbox.addEventListener('change', () => {
+    groupUiKeys.forEach((uiKey) => {
+      if (groupCheckbox.checked) {
+        selectedSenderUiKeys.add(uiKey);
+      } else {
+        selectedSenderUiKeys.delete(uiKey);
+      }
+    });
+    renderSendersEditor();
+  });
+
+  const brace = document.createElement('div');
+  brace.className = 'sender-similarity-brace';
+  brace.title = `Likhet ${similarityScoreLabel(group.score)}`;
+  brace.setAttribute('aria-label', brace.title);
+  const braceSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  braceSvg.setAttribute('viewBox', '0 0 36 100');
+  braceSvg.setAttribute('preserveAspectRatio', 'none');
+  braceSvg.setAttribute('aria-hidden', 'true');
+  const bracePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  bracePath.setAttribute('d', 'M32 2C12 2 16 18 16 32V42C16 47 12 50 5 50C12 50 16 53 16 58V68C16 82 12 98 32 98');
+  bracePath.setAttribute('fill', 'none');
+  bracePath.setAttribute('stroke', 'currentColor');
+  bracePath.setAttribute('stroke-width', '4');
+  bracePath.setAttribute('vector-effect', 'non-scaling-stroke');
+  bracePath.setAttribute('stroke-linecap', 'round');
+  bracePath.setAttribute('stroke-linejoin', 'round');
+  braceSvg.appendChild(bracePath);
+  brace.appendChild(braceSvg);
+
+  const body = document.createElement('div');
+  body.className = 'sender-similarity-items';
+  group.entries.forEach((entry) => {
+    body.appendChild(buildSenderEditorNode(entry.row, entry.rowIndex));
+  });
+
+  wrapper.appendChild(groupCheckbox);
+  wrapper.appendChild(brace);
+  wrapper.appendChild(body);
+  return wrapper;
+}
+
 function renderSendersEditor() {
   const fragment = document.createDocumentFragment();
 
@@ -2884,216 +3356,15 @@ function renderSendersEditor() {
     return;
   }
 
-  getSortedSenderEntries().forEach(({ row, rowIndex }) => {
-    const currentSenderUiKey = senderUiKey(row);
-    const isCollapsed = collapsedSenderUiKeys.has(currentSenderUiKey);
-    const senderNode = document.createElement('div');
-    senderNode.className = 'tree-node tree-folder';
-
-    const senderRow = document.createElement('div');
-    senderRow.className = 'tree-row';
-
-    const senderBody = document.createElement('div');
-    senderBody.className = 'tree-body folder-body';
-
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.placeholder = 'Ex: Region Värmland';
-    nameInput.value = row.name;
-    nameInput.addEventListener('input', () => {
-      sendersDraft[rowIndex].name = nameInput.value;
-      updateSettingsActionButtons();
+  if (sendersSortOrder === 'similarity') {
+    buildSimilarSenderGroups().forEach((group) => {
+      fragment.appendChild(buildSimilarityGroupNode(group));
     });
-
-    const orgNumberInput = document.createElement('input');
-    orgNumberInput.type = 'text';
-    orgNumberInput.placeholder = 'Ex: 556677-8899';
-    orgNumberInput.value = row.orgNumber;
-    orgNumberInput.addEventListener('input', () => {
-      sendersDraft[rowIndex].orgNumber = orgNumberInput.value;
-      updateSettingsActionButtons();
+  } else {
+    getSortedSenderEntries().forEach(({ row, rowIndex }) => {
+      fragment.appendChild(buildSenderEditorNode(row, rowIndex));
     });
-
-    const domainInput = document.createElement('input');
-    domainInput.type = 'text';
-    domainInput.placeholder = 'Ex: regionvarmland.se';
-    domainInput.value = row.domain;
-    domainInput.addEventListener('input', () => {
-      sendersDraft[rowIndex].domain = domainInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const notesInput = document.createElement('textarea');
-    notesInput.placeholder = 'Anteckningar';
-    notesInput.value = row.notes;
-    notesInput.addEventListener('input', () => {
-      sendersDraft[rowIndex].notes = notesInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'category-remove';
-    removeButton.textContent = 'Ta bort avsändare';
-    removeButton.addEventListener('click', () => {
-      selectedSenderUiKeys.delete(currentSenderUiKey);
-      collapsedSenderUiKeys.delete(currentSenderUiKey);
-      sendersDraft.splice(rowIndex, 1);
-      renderSendersEditor();
-      updateSettingsActionButtons();
-    });
-
-    const senderHeader = document.createElement('div');
-    senderHeader.className = 'sender-header';
-
-    const toggleButton = document.createElement('button');
-    toggleButton.type = 'button';
-    toggleButton.className = isCollapsed ? 'sender-toggle is-collapsed' : 'sender-toggle';
-    toggleButton.title = isCollapsed ? 'Expandera avsändare' : 'Kontrahera avsändare';
-    toggleButton.setAttribute('aria-label', toggleButton.title);
-    toggleButton.addEventListener('click', () => {
-      if (collapsedSenderUiKeys.has(currentSenderUiKey)) {
-        collapsedSenderUiKeys.delete(currentSenderUiKey);
-      } else {
-        collapsedSenderUiKeys.add(currentSenderUiKey);
-      }
-      renderSendersEditor();
-    });
-    senderRow.appendChild(toggleButton);
-
-    const senderSelectCheckbox = document.createElement('input');
-    senderSelectCheckbox.type = 'checkbox';
-    senderSelectCheckbox.className = 'sender-select-checkbox';
-    senderSelectCheckbox.checked = selectedSenderUiKeys.has(currentSenderUiKey);
-    senderSelectCheckbox.title = 'Markera avsändare';
-    senderSelectCheckbox.addEventListener('change', () => {
-      if (senderSelectCheckbox.checked) {
-        selectedSenderUiKeys.add(currentSenderUiKey);
-      } else {
-        selectedSenderUiKeys.delete(currentSenderUiKey);
-      }
-      updateSendersSelectionSummary();
-    });
-
-    const senderSummaryFields = document.createElement('div');
-    senderSummaryFields.className = 'sender-summary-fields';
-    senderSummaryFields.appendChild(senderSelectCheckbox);
-    senderSummaryFields.appendChild(createFloatingField('Namn', nameInput));
-    senderSummaryFields.appendChild(createFloatingField('Org.nr', orgNumberInput));
-    senderHeader.appendChild(senderSummaryFields);
-    senderBody.appendChild(senderHeader);
-
-    if (!isCollapsed) {
-      const senderDetails = document.createElement('div');
-      senderDetails.className = 'sender-details';
-
-      const senderFields = document.createElement('div');
-      senderFields.className = 'sender-fields';
-      senderFields.appendChild(createFloatingField('Domän', domainInput));
-      senderFields.appendChild(removeButton);
-      senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
-      senderDetails.appendChild(senderFields);
-
-      const paymentList = document.createElement('div');
-      paymentList.className = 'tree-children';
-
-      const paymentsLabel = document.createElement('div');
-      paymentsLabel.className = 'archive-level-label';
-      paymentsLabel.textContent = 'Betalnummer';
-      paymentList.appendChild(paymentsLabel);
-
-      row.paymentNumbers.forEach((payment, paymentIndex) => {
-        const paymentNode = document.createElement('div');
-        paymentNode.className = 'tree-node tree-category has-parent';
-
-        const paymentRow = document.createElement('div');
-        paymentRow.className = 'tree-row';
-
-        const paymentDot = document.createElement('span');
-        paymentDot.className = 'tree-dot sender-payment-dot';
-        paymentRow.appendChild(paymentDot);
-
-        const paymentBody = document.createElement('div');
-        paymentBody.className = 'tree-body category-body';
-
-        const paymentFields = document.createElement('div');
-        paymentFields.className = 'sender-payment-fields';
-
-        const typeSelect = document.createElement('select');
-        const bankgiroOption = document.createElement('option');
-        bankgiroOption.value = 'bankgiro';
-        bankgiroOption.textContent = 'Bankgiro';
-        typeSelect.appendChild(bankgiroOption);
-        const plusgiroOption = document.createElement('option');
-        plusgiroOption.value = 'plusgiro';
-        plusgiroOption.textContent = 'Plusgiro';
-        typeSelect.appendChild(plusgiroOption);
-        typeSelect.value = payment.type;
-        typeSelect.addEventListener('change', () => {
-          sendersDraft[rowIndex].paymentNumbers[paymentIndex].type = typeSelect.value === 'plusgiro' ? 'plusgiro' : 'bankgiro';
-          numberInput.value = formatSenderPaymentNumberForDisplay(
-            sendersDraft[rowIndex].paymentNumbers[paymentIndex].type,
-            numberInput.value
-          );
-          sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
-          updateSettingsActionButtons();
-        });
-
-        const numberInput = document.createElement('input');
-        numberInput.type = 'text';
-        numberInput.placeholder = 'Ex: 5051-6822';
-        numberInput.value = formatSenderPaymentNumberForDisplay(payment.type, payment.number);
-        numberInput.addEventListener('input', () => {
-          sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
-          updateSettingsActionButtons();
-        });
-        numberInput.addEventListener('blur', () => {
-          const formatted = formatSenderPaymentNumberForDisplay(typeSelect.value, numberInput.value);
-          numberInput.value = formatted;
-          sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = formatted;
-          updateSettingsActionButtons();
-        });
-
-        const removePaymentButton = document.createElement('button');
-        removePaymentButton.type = 'button';
-        removePaymentButton.className = 'category-remove';
-        removePaymentButton.textContent = 'Ta bort';
-        removePaymentButton.addEventListener('click', () => {
-          sendersDraft[rowIndex].paymentNumbers.splice(paymentIndex, 1);
-          renderSendersEditor();
-          updateSettingsActionButtons();
-        });
-
-        paymentFields.appendChild(createFloatingField('Typ', typeSelect));
-        paymentFields.appendChild(createFloatingField('Nummer', numberInput));
-        paymentFields.appendChild(removePaymentButton);
-        paymentBody.appendChild(paymentFields);
-        paymentRow.appendChild(paymentBody);
-        paymentNode.appendChild(paymentRow);
-        paymentList.appendChild(paymentNode);
-      });
-
-      senderDetails.appendChild(paymentList);
-
-      const senderActions = document.createElement('div');
-      senderActions.className = 'folder-actions';
-      const addPaymentButton = document.createElement('button');
-      addPaymentButton.type = 'button';
-      addPaymentButton.textContent = 'Lägg till betalnummer';
-      addPaymentButton.addEventListener('click', () => {
-        sendersDraft[rowIndex].paymentNumbers.push(defaultSenderPaymentDraft());
-        renderSendersEditor();
-        updateSettingsActionButtons();
-      });
-      senderActions.appendChild(addPaymentButton);
-      senderDetails.appendChild(senderActions);
-      senderBody.appendChild(senderDetails);
-    }
-
-    senderRow.appendChild(senderBody);
-    senderNode.appendChild(senderRow);
-    fragment.appendChild(senderNode);
-  });
+  }
 
   sendersListEl.replaceChildren(fragment);
   updateSettingsActionButtons();
