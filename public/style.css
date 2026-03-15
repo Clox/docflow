@@ -53,10 +53,30 @@ body {
 }
 
 .job-item {
+  position: relative;
   border-radius: 4px;
   padding: 8px 10px;
   margin-bottom: 6px;
   cursor: pointer;
+}
+
+.job-item.is-processing {
+  opacity: 0.58;
+  padding-right: 30px;
+}
+
+.job-item-spinner {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border: 2px solid #d0d0d0;
+  border-top-color: #333;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  pointer-events: none;
 }
 
 .job-item:hover {
@@ -578,13 +598,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 16px;
   background: rgba(0, 0, 0, 0.35);
   z-index: 50;
 }
 
 .settings-dialog {
   width: min(980px, 96vw);
-  min-height: min(620px, 90vh);
+  max-height: min(90vh, calc(100dvh - 32px));
   background: #fff;
   border-radius: 8px;
   overflow: hidden;
@@ -600,6 +621,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
 }
 
 .settings-nav h2 {
@@ -647,14 +669,18 @@ body {
 .settings-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   padding: 16px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .settings-panel {
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .settings-panel h3 {

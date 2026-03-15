@@ -94,8 +94,8 @@ let loadedOcrJobId = '';
 let loadedMatchesJobId = '';
 let loadedMetaJobId = '';
 let pdfFrameJobIds = pdfFrameEls.map(() => '');
-let pollTimer = null;
 let pollInFlight = false;
+let stateStream = null;
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
@@ -135,6 +135,9 @@ let hasLoadedInitialJobsState = false;
 const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
 const selectedCategoryByJobId = new Map();
+const lastKnownJobDisplayById = new Map();
+const pinnedProcessingJobIds = new Set();
+const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
@@ -305,7 +308,7 @@ function renderCategorySelect(categories) {
 }
 
 function setClientForJob(job) {
-  clientSelectEl.disabled = !job;
+  clientSelectEl.disabled = !job || job.status === 'processing';
 
   if (!job) {
     clientSelectEl.value = '';
@@ -336,7 +339,7 @@ function setClientForJob(job) {
 }
 
 function setSenderForJob(job) {
-  senderSelectEl.disabled = !job;
+  senderSelectEl.disabled = !job || job.status === 'processing';
 
   if (!job) {
     senderSelectEl.value = '';
@@ -366,7 +369,7 @@ function setSenderForJob(job) {
 }
 
 function setCategoryForJob(job) {
-  categorySelectEl.disabled = !job;
+  categorySelectEl.disabled = !job || job.status === 'processing';
 
   if (!job) {
     categorySelectEl.value = '';
@@ -861,11 +864,194 @@ async function setViewerMeta(jobId) {
   }
 }
 
-function appendJobListSectionLabel(text) {
-  const li = document.createElement('li');
-  li.className = 'job-section-label';
-  li.textContent = text;
-  jobListEl.appendChild(li);
+function ensureJobListNode(key, createNode) {
+  let node = jobListNodeByKey.get(key) || null;
+  if (node) {
+    return node;
+  }
+
+  node = createNode();
+  node.dataset.jobListKey = key;
+  jobListNodeByKey.set(key, node);
+  return node;
+}
+
+function ensureJobListMessageNode() {
+  return ensureJobListNode('message:empty', () => {
+    const li = document.createElement('li');
+    li.className = 'job-message';
+    return li;
+  });
+}
+
+function ensureJobListSectionLabelNode(text) {
+  const node = ensureJobListNode('label:failed', () => {
+    const li = document.createElement('li');
+    li.className = 'job-section-label';
+    return li;
+  });
+  node.textContent = text;
+  return node;
+}
+
+function ensureJobListItemNode(key) {
+  return ensureJobListNode(key, () => {
+    const li = document.createElement('li');
+    const name = document.createElement('div');
+    name.className = 'job-name';
+    li.appendChild(name);
+    li._nameEl = name;
+    li.addEventListener('click', () => {
+      const jobId = li.dataset.jobId || '';
+      if (jobId) {
+        applySelectedJobId(jobId);
+      }
+    });
+    return li;
+  });
+}
+
+function ensureJobListItemSecondaryNode(li, className) {
+  if (li._secondaryEl && li._secondaryEl.className === className) {
+    return li._secondaryEl;
+  }
+
+  if (li._secondaryEl && li._secondaryEl.parentNode === li) {
+    li.removeChild(li._secondaryEl);
+  }
+
+  const secondary = document.createElement('div');
+  secondary.className = className;
+  li.appendChild(secondary);
+  li._secondaryEl = secondary;
+  return secondary;
+}
+
+function ensureJobListItemSpinnerNode(li) {
+  if (li._spinnerEl) {
+    return li._spinnerEl;
+  }
+
+  const spinner = document.createElement('span');
+  spinner.className = 'job-item-spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+  li.appendChild(spinner);
+  li._spinnerEl = spinner;
+  return spinner;
+}
+
+function removeJobListItemSecondaryNode(li) {
+  if (li._secondaryEl && li._secondaryEl.parentNode === li) {
+    li.removeChild(li._secondaryEl);
+  }
+  li._secondaryEl = null;
+}
+
+function removeJobListItemSpinnerNode(li) {
+  if (li._spinnerEl && li._spinnerEl.parentNode === li) {
+    li.removeChild(li._spinnerEl);
+  }
+  li._spinnerEl = null;
+}
+
+function updateReadyJobListItem(li, job) {
+  li.className = 'job-item';
+  if (job.status === 'processing') {
+    li.classList.add('is-processing');
+  }
+  if (job.id === selectedJobId) {
+    li.classList.add('selected');
+  }
+
+  li.dataset.jobId = job.id;
+  li._nameEl.textContent = job.originalFilename;
+
+  if (job.matchedClientDirName) {
+    const client = ensureJobListItemSecondaryNode(li, 'job-client');
+    client.textContent = job.matchedClientDirName;
+  } else {
+    removeJobListItemSecondaryNode(li);
+  }
+
+  if (job.status === 'processing') {
+    ensureJobListItemSpinnerNode(li);
+  } else {
+    removeJobListItemSpinnerNode(li);
+  }
+}
+
+function updateFailedJobListItem(li, job) {
+  li.className = 'job-item failed';
+  if (job.id === selectedJobId) {
+    li.classList.add('selected');
+  }
+
+  li.dataset.jobId = job.id;
+  li._nameEl.textContent = job.originalFilename;
+
+  if (job.error) {
+    const error = ensureJobListItemSecondaryNode(li, 'job-error');
+    error.textContent = job.error;
+  } else {
+    removeJobListItemSecondaryNode(li);
+  }
+
+  removeJobListItemSpinnerNode(li);
+}
+
+function renderJobList(processingJobs, readyJobs, failedJobs) {
+  const displayedReadyJobs = buildDisplayedReadyJobs(processingJobs, readyJobs);
+  const safeFailedJobs = Array.isArray(failedJobs) ? failedJobs : [];
+  const desiredNodes = [];
+  const activeKeys = new Set();
+
+  if (displayedReadyJobs.length === 0 && safeFailedJobs.length === 0) {
+    const messageNode = ensureJobListMessageNode();
+    messageNode.textContent = 'Inga klara jobb ännu.';
+    desiredNodes.push(messageNode);
+    activeKeys.add('message:empty');
+  } else {
+    displayedReadyJobs.forEach((job) => {
+      const key = `ready:${job.id}`;
+      const li = ensureJobListItemNode(key);
+      updateReadyJobListItem(li, job);
+      desiredNodes.push(li);
+      activeKeys.add(key);
+    });
+
+    if (safeFailedJobs.length > 0) {
+      if (displayedReadyJobs.length > 0) {
+        const labelNode = ensureJobListSectionLabelNode('Misslyckade jobb');
+        desiredNodes.push(labelNode);
+        activeKeys.add('label:failed');
+      }
+
+      safeFailedJobs.forEach((job) => {
+        const key = `failed:${job.id}`;
+        const li = ensureJobListItemNode(key);
+        updateFailedJobListItem(li, job);
+        desiredNodes.push(li);
+        activeKeys.add(key);
+      });
+    }
+  }
+
+  desiredNodes.forEach((node) => {
+    jobListEl.appendChild(node);
+  });
+
+  Array.from(jobListNodeByKey.entries()).forEach(([key, node]) => {
+    if (activeKeys.has(key)) {
+      return;
+    }
+
+    if (node.parentNode === jobListEl) {
+      jobListEl.removeChild(node);
+    }
+    jobListNodeByKey.delete(key);
+  });
+
+  renderSelectedJobPanel();
 }
 
 function findJobById(jobId) {
@@ -873,11 +1059,35 @@ function findJobById(jobId) {
     return null;
   }
 
-  const allJobs = []
+  const readyOrFailedJobs = []
     .concat(Array.isArray(state.readyJobs) ? state.readyJobs : [])
     .concat(Array.isArray(state.failedJobs) ? state.failedJobs : []);
 
-  return allJobs.find((job) => job.id === jobId) || null;
+  const directJob = readyOrFailedJobs.find((entry) => entry.id === jobId) || null;
+  if (directJob) {
+    return directJob;
+  }
+
+  const processingJob = Array.isArray(state.processingJobs)
+    ? state.processingJobs.find((entry) => entry.id === jobId) || null
+    : null;
+  if (!processingJob) {
+    return null;
+  }
+
+  const snapshot = lastKnownJobDisplayById.get(jobId);
+  if (!snapshot) {
+    return processingJob;
+  }
+
+  return {
+    ...snapshot,
+    ...processingJob,
+    matchedClientDirName: snapshot.matchedClientDirName,
+    matchedSenderSlug: snapshot.matchedSenderSlug,
+    topMatchedCategoryId: snapshot.topMatchedCategoryId,
+    topMatchedCategoryScore: snapshot.topMatchedCategoryScore
+  };
 }
 
 function renderSelectedJobPanel() {
@@ -897,88 +1107,79 @@ function renderSelectedJobPanel() {
   const metaParts = [];
   if (selectedJob.status === 'failed' && selectedJob.error) {
     metaParts.push('Fel: ' + selectedJob.error);
+  } else if (selectedJob.status === 'processing') {
+    metaParts.push('Status: Bearbetas');
   } else {
     metaParts.push(selectedJob.status === 'failed' ? 'Status: Misslyckat' : 'Status: Klar');
   }
   selectedJobMetaEl.textContent = metaParts.join(' | ');
-  selectedJobReprocessEl.disabled = !selectedJob.hasReviewPdf;
-  selectedJobRerunOcrEl.disabled = !selectedJob.hasSourcePdf;
+  selectedJobReprocessEl.disabled = selectedJob.status === 'processing' || !selectedJob.hasReviewPdf;
+  selectedJobRerunOcrEl.disabled = selectedJob.status === 'processing' || !selectedJob.hasSourcePdf;
 }
 
-function renderJobList(readyJobs, failedJobs) {
-  jobListEl.innerHTML = '';
-  const hasReadyJobs = Array.isArray(readyJobs) && readyJobs.length > 0;
-  const hasFailedJobs = Array.isArray(failedJobs) && failedJobs.length > 0;
+function buildDisplayedReadyJobs(processingJobs, readyJobs) {
+  const displayed = Array.isArray(readyJobs)
+    ? readyJobs.map((job, index) => {
+        const snapshot = lastKnownJobDisplayById.get(job.id);
+        return {
+          ...job,
+          _displayOrder: typeof snapshot?._displayOrder === 'number' ? snapshot._displayOrder : index
+        };
+      })
+    : [];
+  const orderById = new Map(displayed.map((job) => [job.id, job._displayOrder]));
+  const processingById = new Map(
+    (Array.isArray(processingJobs) ? processingJobs : [])
+      .filter((job) => job && typeof job.id === 'string' && job.id !== '')
+      .map((job) => [job.id, job])
+  );
+  const pinnedJobs = Array.from(pinnedProcessingJobIds)
+    .map((jobId) => processingById.get(jobId) || null)
+    .filter((job) => job !== null);
 
-  if (!hasReadyJobs && !hasFailedJobs) {
-    const li = document.createElement('li');
-    li.className = 'job-message';
-    li.textContent = 'Inga klara jobb ännu.';
-    jobListEl.appendChild(li);
-    return;
+  if (pinnedJobs.length === 0) {
+    return displayed;
   }
 
-  if (hasReadyJobs) {
-    readyJobs.forEach((job) => {
-      const li = document.createElement('li');
-      li.className = 'job-item';
-      if (job.id === selectedJobId) {
-        li.classList.add('selected');
-      }
-
-      const name = document.createElement('div');
-      name.className = 'job-name';
-      name.textContent = job.originalFilename;
-      li.appendChild(name);
-
-      if (job.matchedClientDirName) {
-        const client = document.createElement('div');
-        client.className = 'job-client';
-        client.textContent = job.matchedClientDirName;
-        li.appendChild(client);
-      }
-
-      li.addEventListener('click', () => {
-        applySelectedJobId(job.id);
+  pinnedJobs.forEach((processingJob) => {
+    const snapshot = lastKnownJobDisplayById.get(processingJob.id);
+    if (snapshot) {
+      displayed.push({
+        ...snapshot,
+        status: 'processing',
+        matchedClientDirName: '\u00A0',
+        _displayOrder: orderById.has(processingJob.id)
+          ? orderById.get(processingJob.id)
+          : (typeof snapshot._displayOrder === 'number' ? snapshot._displayOrder : Number.MAX_SAFE_INTEGER)
       });
-
-      jobListEl.appendChild(li);
-    });
-  }
-
-  if (hasFailedJobs) {
-    if (hasReadyJobs) {
-      appendJobListSectionLabel('Misslyckade jobb');
+      return;
     }
 
-    failedJobs.forEach((job) => {
-      const li = document.createElement('li');
-      li.className = 'job-item failed';
-      if (job.id === selectedJobId) {
-        li.classList.add('selected');
-      }
-
-      const name = document.createElement('div');
-      name.className = 'job-name';
-      name.textContent = job.originalFilename;
-      li.appendChild(name);
-
-      if (job.error) {
-        const error = document.createElement('div');
-        error.className = 'job-error';
-        error.textContent = job.error;
-        li.appendChild(error);
-      }
-
-      li.addEventListener('click', () => {
-        applySelectedJobId(job.id);
-      });
-
-      jobListEl.appendChild(li);
+    displayed.push({
+      ...processingJob,
+      _displayOrder: orderById.has(processingJob.id)
+        ? orderById.get(processingJob.id)
+        : Number.MAX_SAFE_INTEGER
     });
-  }
+  });
 
-  renderSelectedJobPanel();
+  displayed.sort((a, b) => {
+    const aOrder = typeof a._displayOrder === 'number' ? a._displayOrder : null;
+    const bOrder = typeof b._displayOrder === 'number' ? b._displayOrder : null;
+    if (aOrder !== null || bOrder !== null) {
+      if (aOrder === null) {
+        return 1;
+      }
+      if (bOrder === null) {
+        return -1;
+      }
+      if (aOrder !== bOrder) {
+        return aOrder - bOrder;
+      }
+    }
+    return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+  });
+  return displayed;
 }
 
 function notifyFailedJobs(failedJobs) {
@@ -1274,7 +1475,7 @@ function applySelectedJobId(jobId, options = {}) {
   const syncHash = options.syncHash !== false;
   const selectedJob = findJobById(jobId);
   selectedJobId = selectedJob ? selectedJob.id : '';
-  renderJobList(state.readyJobs, state.failedJobs);
+  renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
   setViewerJob(selectedJobId);
   setClientForJob(selectedJob);
   setSenderForJob(selectedJob);
@@ -1339,6 +1540,14 @@ function refreshSelection() {
 }
 
 function applyState(nextState) {
+  const previousReadyJobs = Array.isArray(state.readyJobs) ? state.readyJobs : [];
+  previousReadyJobs.forEach((job, index) => {
+    if (!job || typeof job.id !== 'string' || job.id === '') {
+      return;
+    }
+    lastKnownJobDisplayById.set(job.id, { ...job, _displayOrder: index });
+  });
+
   const shouldUpdateClients = Array.isArray(nextState.clients);
   const shouldUpdateSenders = Array.isArray(nextState.senders);
   const shouldUpdateCategories = Array.isArray(nextState.categories);
@@ -1366,6 +1575,29 @@ function applyState(nextState) {
   Array.from(selectedCategoryByJobId.keys()).forEach((jobId) => {
     if (!validJobIds.has(jobId)) {
       selectedCategoryByJobId.delete(jobId);
+    }
+  });
+
+  const activeJobIds = new Set(
+    []
+      .concat(Array.isArray(state.processingJobs) ? state.processingJobs.map((job) => job.id) : [])
+      .concat(Array.isArray(state.readyJobs) ? state.readyJobs.map((job) => job.id) : [])
+      .filter((jobId) => typeof jobId === 'string' && jobId !== '')
+  );
+  Array.from(lastKnownJobDisplayById.keys()).forEach((jobId) => {
+    if (!activeJobIds.has(jobId)) {
+      lastKnownJobDisplayById.delete(jobId);
+    }
+  });
+
+  const activeProcessingJobIds = new Set(
+    (Array.isArray(state.processingJobs) ? state.processingJobs : [])
+      .map((job) => job && typeof job.id === 'string' ? job.id : '')
+      .filter((jobId) => jobId !== '')
+  );
+  Array.from(pinnedProcessingJobIds).forEach((jobId) => {
+    if (!activeProcessingJobIds.has(jobId)) {
+      pinnedProcessingJobIds.delete(jobId);
     }
   });
 
@@ -2682,33 +2914,83 @@ async function resetAllJobs() {
   await fetchState();
 }
 
-async function reprocessSingleJob(jobId, mode) {
-  const response = await fetch('/api/reset-jobs.php', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ jobId, mode })
+function cloneCurrentStateForRollback() {
+  return {
+    processingJobs: Array.isArray(state.processingJobs) ? state.processingJobs.map((job) => ({ ...job })) : [],
+    readyJobs: Array.isArray(state.readyJobs) ? state.readyJobs.map((job) => ({ ...job })) : [],
+    failedJobs: Array.isArray(state.failedJobs) ? state.failedJobs.map((job) => ({ ...job })) : [],
+    clients: state.clients,
+    senders: state.senders,
+    categories: state.categories
+  };
+}
+
+function applyOptimisticReprocess(jobId) {
+  const sourceJob = findJobById(jobId);
+  if (!sourceJob) {
+    return false;
+  }
+
+  pinnedProcessingJobIds.add(jobId);
+
+  const processingJob = {
+    ...sourceJob,
+    status: 'processing',
+    error: null
+  };
+
+  applyState({
+    processingJobs: [
+      processingJob,
+      ...state.processingJobs.filter((job) => job && job.id !== jobId)
+    ],
+    readyJobs: state.readyJobs.filter((job) => job && job.id !== jobId),
+    failedJobs: state.failedJobs.filter((job) => job && job.id !== jobId)
   });
-
-  if (!response.ok) {
-    throw new Error('Kunde inte köra om jobbet');
-  }
-
-  const payload = await response.json();
-  if (!payload || payload.ok !== true) {
-    throw new Error('Reprocess job failed');
-  }
 
   if (selectedJobId === jobId) {
     loadedOcrJobId = '';
     loadedMatchesJobId = '';
     loadedMetaJobId = '';
     clearPdfFrames();
-    selectedJobId = '';
   }
 
-  await fetchState();
+  return true;
+}
+
+async function reprocessSingleJob(jobId, mode) {
+  const rollbackState = cloneCurrentStateForRollback();
+  applyOptimisticReprocess(jobId);
+  try {
+    const response = await fetch('/api/reset-jobs.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ jobId, mode })
+    });
+
+    if (!response.ok) {
+      throw new Error('Kunde inte köra om jobbet');
+    }
+
+    const payload = await response.json();
+    if (!payload || payload.ok !== true) {
+      throw new Error('Reprocess job failed');
+    }
+
+    if (selectedJobId === jobId) {
+      loadedOcrJobId = '';
+      loadedMatchesJobId = '';
+      loadedMetaJobId = '';
+      clearPdfFrames();
+    }
+
+    await fetchState();
+  } catch (error) {
+    applyState(rollbackState);
+    throw error;
+  }
 }
 
 async function handleSelectedJobReprocess(mode) {
@@ -2719,6 +3001,7 @@ async function handleSelectedJobReprocess(mode) {
   try {
     await reprocessSingleJob(selectedJobId, mode);
   } catch (error) {
+    await fetchState();
     alert(error.message || 'Kunde inte köra om jobbet.');
   }
 }
@@ -3195,9 +3478,45 @@ async function fetchState(options = {}) {
   }
 }
 
-async function pollLoop() {
-  await fetchState();
-  pollTimer = window.setTimeout(pollLoop, 3000);
+function startStateStream() {
+  if (stateStream) {
+    return;
+  }
+
+  const stream = new EventSource('/api/stream-state.php');
+  stream.addEventListener('state', (event) => {
+    if (!event || typeof event.data !== 'string' || event.data === '') {
+      return;
+    }
+
+    try {
+      const nextState = JSON.parse(event.data);
+      if (
+        !nextState
+        || !Array.isArray(nextState.processingJobs)
+        || !Array.isArray(nextState.readyJobs)
+        || !Array.isArray(nextState.failedJobs)
+      ) {
+        return;
+      }
+
+      applyState({
+        processingJobs: nextState.processingJobs,
+        readyJobs: nextState.readyJobs,
+        failedJobs: nextState.failedJobs
+      });
+    } catch (error) {
+      // Ignore malformed stream payloads and wait for next event.
+    }
+  });
+
+  stream.addEventListener('error', () => {
+    if (stateStream !== stream) {
+      return;
+    }
+  });
+
+  stateStream = stream;
 }
 
 updateSettingsActionButtons();
@@ -3207,4 +3526,6 @@ applyHashState();
 window.addEventListener('hashchange', () => {
   applyHashState();
 });
-pollLoop();
+fetchState().finally(() => {
+  startStateStream();
+});

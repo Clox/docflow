@@ -5,9 +5,46 @@ set -e
 HOST="127.0.0.1"
 PORT="4321"
 URL="http://${HOST}:${PORT}"
+WORKERS="${PHP_CLI_SERVER_WORKERS:-4}"
+DOCROOT="public"
+LOG_FILE="/tmp/pdf-viewer-php.log"
+PID_FILE="/tmp/docflow-php-server.pid"
 
-php -S "${HOST}:${PORT}" -t public > /tmp/pdf-viewer-php.log 2>&1 &
+stop_server_pid() {
+  local pid="$1"
+  if [[ -z "${pid}" ]] || ! [[ "${pid}" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+
+  if ! kill -0 "${pid}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  kill "${pid}" >/dev/null 2>&1 || true
+  for _ in {1..20}; do
+    if ! kill -0 "${pid}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  kill -9 "${pid}" >/dev/null 2>&1 || true
+}
+
+if [[ -f "${PID_FILE}" ]]; then
+  EXISTING_PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
+  stop_server_pid "${EXISTING_PID}"
+  rm -f "${PID_FILE}"
+fi
+
+while IFS= read -r pid; do
+  [[ -n "${pid}" ]] || continue
+  stop_server_pid "${pid}"
+done < <(pgrep -f "php -S ${HOST}:${PORT} -t ${DOCROOT}" || true)
+
+PHP_CLI_SERVER_WORKERS="${WORKERS}" php -S "${HOST}:${PORT}" -t "${DOCROOT}" > "${LOG_FILE}" 2>&1 &
 SERVER_PID=$!
+echo "${SERVER_PID}" > "${PID_FILE}"
 
 if command -v xdg-open >/dev/null 2>&1; then
   xdg-open "${URL}" >/dev/null 2>&1 || true
@@ -17,4 +54,5 @@ fi
 
 echo "PDF viewer started at ${URL}"
 echo "PHP server PID: ${SERVER_PID}"
-echo "Log file: /tmp/pdf-viewer-php.log"
+echo "PHP workers: ${WORKERS}"
+echo "Log file: ${LOG_FILE}"
