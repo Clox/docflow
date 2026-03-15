@@ -69,6 +69,7 @@ let archiveTabEls = [];
 let archiveViewCategoriesEl = null;
 let archiveViewSystemEl = null;
 let settingsResetJobsEl = null;
+let jobsStateTransportEl = null;
 let outputBasePathEl = null;
 let pathsCancelEl = null;
 let pathsApplyEl = null;
@@ -1917,7 +1918,25 @@ function bindSettingsPanelRefs(tabId) {
       }
     });
   } else if (tabId === 'jobs') {
+    jobsStateTransportEl = document.getElementById('jobs-state-transport');
     settingsResetJobsEl = document.getElementById('settings-reset-jobs');
+    jobsStateTransportEl.value = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
+    jobsStateTransportEl.addEventListener('change', async () => {
+      const previousTransport = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
+      const nextTransport = sanitizeStateUpdateTransport(jobsStateTransportEl.value, previousTransport);
+      jobsStateTransportEl.disabled = true;
+      settingsResetJobsEl.disabled = true;
+      try {
+        await saveStateTransportSetting(nextTransport);
+        window.location.reload();
+      } catch (error) {
+        jobsStateTransportEl.value = previousTransport;
+        alert(error.message || 'Kunde inte spara uppdateringsmetod.');
+      } finally {
+        jobsStateTransportEl.disabled = false;
+        settingsResetJobsEl.disabled = false;
+      }
+    });
     settingsResetJobsEl.addEventListener('click', async () => {
       const confirmed = window.confirm(
         'Detta flyttar tillbaka alla source.pdf till inbox och tar bort alla jobbmappar. Fortsätta?'
@@ -1956,6 +1975,10 @@ function bindSettingsPanelRefs(tabId) {
 
 async function ensureSettingsPanelReady(tabId, options = {}) {
   bindSettingsPanelRefs(tabId);
+
+  if (tabId === 'jobs' && jobsStateTransportEl) {
+    jobsStateTransportEl.value = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
+  }
 
   const reload = options.reload === true;
   if (loadedSettingsPanels.has(tabId) && !reload) {
@@ -2332,7 +2355,41 @@ function sanitizePositiveInt(value, fallback = 1) {
 }
 
 function sanitizeStateUpdateTransport(value, fallback = 'polling') {
-  return String(value || '').trim().toLowerCase() === 'sse' ? 'sse' : fallback;
+  const normalizedValue = String(value || '').trim().toLowerCase();
+  if (normalizedValue === 'sse') {
+    return 'sse';
+  }
+  if (normalizedValue === 'polling') {
+    return 'polling';
+  }
+  return String(fallback || '').trim().toLowerCase() === 'sse' ? 'sse' : 'polling';
+}
+
+async function saveStateTransportSetting(nextTransport) {
+  const normalizedTransport = sanitizeStateUpdateTransport(nextTransport, 'polling');
+  const response = await fetch('/api/save-config.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ stateUpdateTransport: normalizedTransport })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (
+    !response.ok
+    || !payload
+    || payload.ok !== true
+    || typeof payload.stateUpdateTransport !== 'string'
+  ) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Kunde inte spara uppdateringsmetod';
+    throw new Error(message);
+  }
+
+  stateUpdateTransport = sanitizeStateUpdateTransport(payload.stateUpdateTransport, stateUpdateTransport);
+  return stateUpdateTransport;
 }
 
 function defaultReplacement() {

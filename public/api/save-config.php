@@ -26,6 +26,7 @@ if (
     && !array_key_exists('ocrOptimizeLevel', $payload)
     && !array_key_exists('ocrTextExtractionMethod', $payload)
     && !array_key_exists('ocrPdfTextSubstitutions', $payload)
+    && !array_key_exists('stateUpdateTransport', $payload)
 ) {
     json_response(['error' => 'No config values provided'], 400);
     exit;
@@ -108,6 +109,20 @@ if (array_key_exists('ocrPdfTextSubstitutions', $payload)) {
     $nextOcrPdfTextSubstitutions = sanitize_ocr_pdf_text_substitutions($payload['ocrPdfTextSubstitutions']);
 }
 
+$nextStateUpdateTransport = null;
+if (array_key_exists('stateUpdateTransport', $payload)) {
+    if (!is_string($payload['stateUpdateTransport'])) {
+        json_response(['error' => 'State update transport must be string'], 400);
+        exit;
+    }
+    $stateUpdateTransport = trim(strtolower((string) $payload['stateUpdateTransport']));
+    if ($stateUpdateTransport !== 'polling' && $stateUpdateTransport !== 'sse') {
+        json_response(['error' => 'State update transport must be polling or sse'], 400);
+        exit;
+    }
+    $nextStateUpdateTransport = $stateUpdateTransport;
+}
+
 try {
     $config = load_raw_config();
     if ($nextOutputBaseDirectory !== null) {
@@ -125,6 +140,9 @@ try {
     if ($nextOcrPdfTextSubstitutions !== null) {
         $config['ocrPdfTextSubstitutions'] = $nextOcrPdfTextSubstitutions;
     }
+    if ($nextStateUpdateTransport !== null) {
+        $config['stateUpdateTransport'] = $nextStateUpdateTransport;
+    }
     save_raw_config($config);
     json_response([
         'ok' => true,
@@ -133,6 +151,7 @@ try {
         'ocrOptimizeLevel' => (int) ($config['ocrOptimizeLevel'] ?? 1),
         'ocrTextExtractionMethod' => is_string($config['ocrTextExtractionMethod'] ?? null) ? (string) $config['ocrTextExtractionMethod'] : 'layout',
         'ocrPdfTextSubstitutions' => sanitize_ocr_pdf_text_substitutions($config['ocrPdfTextSubstitutions'] ?? []),
+        'stateUpdateTransport' => is_string($config['stateUpdateTransport'] ?? null) ? (string) $config['stateUpdateTransport'] : 'polling',
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

@@ -279,6 +279,13 @@
 
   <template id="settings-template-jobs">
     <h3>Jobb</h3>
+    <p>Välj hur jobbstatus ska uppdateras i UI:t.</p>
+    <label class="settings-label" for="jobs-state-transport">Uppdateringsmetod för jobbstatus</label>
+    <select id="jobs-state-transport" class="settings-select">
+      <option value="polling">Polling</option>
+      <option value="sse">Automatisk push (SSE)</option>
+    </select>
+    <p class="settings-help">Vid byte sparas inställningen direkt och sidan laddas om.</p>
     <p>Ogiltigförklara alla jobb och flytta tillbaka <code>source.pdf</code> till inbox.</p>
     <div class="settings-danger">
       <button id="settings-reset-jobs" type="button">Återställ alla jobb</button>
