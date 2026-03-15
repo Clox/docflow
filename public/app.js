@@ -3030,6 +3030,32 @@ function createFloatingField(labelText, inputEl, extraClass = '') {
   return wrapper;
 }
 
+function createTreeRow(options = {}) {
+  const row = document.createElement('div');
+  row.className = 'tree-row';
+  if (options.markerless) {
+    row.classList.add('tree-row-no-marker');
+  }
+  return row;
+}
+
+function createTreeChildren(options = {}) {
+  const children = document.createElement('div');
+  children.className = 'tree-children';
+  if (options.markerless) {
+    children.classList.add('tree-children-markerless');
+  }
+  return children;
+}
+
+function appendTreeBodyIcon(bodyEl, className) {
+  const icon = document.createElement('span');
+  icon.className = className;
+  icon.setAttribute('aria-hidden', 'true');
+  bodyEl.appendChild(icon);
+  return icon;
+}
+
 function renderMatchingEditor() {
   matchingListEl.innerHTML = '';
 
@@ -3099,16 +3125,11 @@ function buildSenderEditorNode(row, rowIndex) {
   senderNode.className = 'tree-node tree-folder';
   senderNode.dataset.senderUiKey = currentSenderUiKey;
 
-  const senderRow = document.createElement('div');
-  senderRow.className = 'tree-row';
+  const senderRow = createTreeRow();
 
   const senderBody = document.createElement('div');
   senderBody.className = 'tree-body folder-body';
-
-  const senderIcon = document.createElement('span');
-  senderIcon.className = 'sender-card-icon';
-  senderIcon.setAttribute('aria-hidden', 'true');
-  senderBody.appendChild(senderIcon);
+  appendTreeBodyIcon(senderBody, 'tree-body-icon sender-card-icon');
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
@@ -3215,8 +3236,7 @@ function buildSenderEditorNode(row, rowIndex) {
     senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
     senderDetails.appendChild(senderFields);
 
-    const paymentList = document.createElement('div');
-    paymentList.className = 'tree-children';
+    const paymentList = createTreeChildren({ markerless: true });
 
     const paymentsLabel = document.createElement('div');
     paymentsLabel.className = 'archive-level-label';
@@ -3227,16 +3247,11 @@ function buildSenderEditorNode(row, rowIndex) {
       const paymentNode = document.createElement('div');
       paymentNode.className = 'tree-node tree-category has-parent';
 
-      const paymentRow = document.createElement('div');
-      paymentRow.className = 'tree-row tree-row-no-marker';
+      const paymentRow = createTreeRow({ markerless: true });
 
       const paymentBody = document.createElement('div');
       paymentBody.className = 'tree-body category-body';
-
-      const paymentIcon = document.createElement('span');
-      paymentIcon.className = 'sender-payment-icon';
-      paymentIcon.setAttribute('aria-hidden', 'true');
-      paymentBody.appendChild(paymentIcon);
+      appendTreeBodyIcon(paymentBody, 'tree-body-icon sender-payment-icon');
 
       const paymentFields = document.createElement('div');
       paymentFields.className = 'sender-payment-fields';
@@ -3446,20 +3461,11 @@ function renderSenderMergeEditor() {
   const rootNode = document.createElement('div');
   rootNode.className = 'tree-node tree-folder';
 
-  const rootRow = document.createElement('div');
-  rootRow.className = 'tree-row';
-
-  const rootDot = document.createElement('span');
-  rootDot.className = 'tree-dot';
-  rootRow.appendChild(rootDot);
+  const rootRow = createTreeRow({ markerless: true });
 
   const rootBody = document.createElement('div');
   rootBody.className = 'tree-body folder-body';
-
-  const rootIcon = document.createElement('span');
-  rootIcon.className = 'sender-card-icon';
-  rootIcon.setAttribute('aria-hidden', 'true');
-  rootBody.appendChild(rootIcon);
+  appendTreeBodyIcon(rootBody, 'tree-body-icon sender-card-icon');
 
   const senderFields = document.createElement('div');
   senderFields.className = 'sender-fields';
@@ -3483,8 +3489,7 @@ function renderSenderMergeEditor() {
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   rootBody.appendChild(senderFields);
 
-  const paymentList = document.createElement('div');
-  paymentList.className = 'tree-children';
+  const paymentList = createTreeChildren({ markerless: true });
 
   const paymentsLabel = document.createElement('div');
   paymentsLabel.className = 'archive-level-label';
@@ -3495,16 +3500,11 @@ function renderSenderMergeEditor() {
     const paymentNode = document.createElement('div');
     paymentNode.className = 'tree-node tree-category has-parent';
 
-    const paymentRow = document.createElement('div');
-    paymentRow.className = 'tree-row tree-row-no-marker';
+    const paymentRow = createTreeRow({ markerless: true });
 
     const paymentBody = document.createElement('div');
     paymentBody.className = 'tree-body category-body';
-
-    const paymentIcon = document.createElement('span');
-    paymentIcon.className = 'sender-payment-icon';
-    paymentIcon.setAttribute('aria-hidden', 'true');
-    paymentBody.appendChild(paymentIcon);
+    appendTreeBodyIcon(paymentBody, 'tree-body-icon sender-payment-icon');
 
     const paymentFields = document.createElement('div');
     paymentFields.className = 'sender-payment-fields';
@@ -3740,15 +3740,11 @@ function renderCategoriesEditor() {
     const archiveFolderNode = document.createElement('div');
     archiveFolderNode.className = 'tree-node tree-folder';
 
-    const archiveFolderRow = document.createElement('div');
-    archiveFolderRow.className = 'tree-row';
-
-    const archiveFolderDot = document.createElement('span');
-    archiveFolderDot.className = 'tree-dot';
-    archiveFolderRow.appendChild(archiveFolderDot);
+    const archiveFolderRow = createTreeRow({ markerless: true });
 
     const archiveFolderBody = document.createElement('div');
     archiveFolderBody.className = 'tree-body folder-body';
+    appendTreeBodyIcon(archiveFolderBody, 'tree-body-icon tree-body-icon-folder');
 
     const archiveFolderFields = document.createElement('div');
     archiveFolderFields.className = 'folder-fields';
@@ -3786,8 +3782,7 @@ function renderCategoriesEditor() {
     archiveFolderFields.appendChild(removeArchiveFolderButton);
     archiveFolderBody.appendChild(archiveFolderFields);
 
-    const archiveFolderCategories = document.createElement('div');
-    archiveFolderCategories.className = 'tree-children';
+    const archiveFolderCategories = createTreeChildren({ markerless: true });
 
     const categoriesLabel = document.createElement('div');
     categoriesLabel.className = 'archive-level-label';
@@ -3798,15 +3793,11 @@ function renderCategoriesEditor() {
       const categoryNode = document.createElement('div');
       categoryNode.className = 'tree-node tree-category has-parent';
 
-      const categoryRow = document.createElement('div');
-      categoryRow.className = 'tree-row';
-
-      const categoryDot = document.createElement('span');
-      categoryDot.className = 'tree-dot';
-      categoryRow.appendChild(categoryDot);
+      const categoryRow = createTreeRow({ markerless: true });
 
       const categoryBody = document.createElement('div');
       categoryBody.className = 'tree-body category-body';
+      appendTreeBodyIcon(categoryBody, 'tree-body-icon tree-body-icon-category');
 
       const removeCategoryButton = document.createElement('button');
       removeCategoryButton.type = 'button';
@@ -3848,8 +3839,7 @@ function renderCategoriesEditor() {
       fields.appendChild(removeCategoryButton);
       categoryBody.appendChild(fields);
 
-      const ruleList = document.createElement('div');
-      ruleList.className = 'tree-children';
+      const ruleList = createTreeChildren({ markerless: true });
 
       const rulesLabel = document.createElement('div');
       rulesLabel.className = 'archive-level-label';
@@ -3860,15 +3850,11 @@ function renderCategoriesEditor() {
         const ruleNode = document.createElement('div');
         ruleNode.className = 'tree-node tree-rule has-parent';
 
-        const ruleRow = document.createElement('div');
-        ruleRow.className = 'tree-row';
-
-        const ruleDot = document.createElement('span');
-        ruleDot.className = 'tree-dot';
-        ruleRow.appendChild(ruleDot);
+        const ruleRow = createTreeRow({ markerless: true });
 
         const ruleBody = document.createElement('div');
         ruleBody.className = 'tree-body rule-body';
+        appendTreeBodyIcon(ruleBody, 'tree-body-icon tree-body-icon-rule');
 
         const ruleFields = document.createElement('div');
         ruleFields.className = 'rule-fields';
@@ -3983,15 +3969,11 @@ function renderSystemCategoryEditor() {
   categoryNode.dataset.system = 'true';
   categoryNode.dataset.systemCategory = 'true';
 
-  const categoryRow = document.createElement('div');
-  categoryRow.className = 'tree-row';
-
-  const categoryDot = document.createElement('span');
-  categoryDot.className = 'tree-dot';
-  categoryRow.appendChild(categoryDot);
+  const categoryRow = createTreeRow({ markerless: true });
 
   const categoryBody = document.createElement('div');
   categoryBody.className = 'tree-body category-body';
+  appendTreeBodyIcon(categoryBody, 'tree-body-icon tree-body-icon-category');
 
   const fields = document.createElement('div');
   fields.className = 'category-fields';
@@ -4023,8 +4005,7 @@ function renderSystemCategoryEditor() {
   fields.appendChild(spacer);
   categoryBody.appendChild(fields);
 
-  const ruleList = document.createElement('div');
-  ruleList.className = 'tree-children';
+  const ruleList = createTreeChildren({ markerless: true });
 
   const rulesLabel = document.createElement('div');
   rulesLabel.className = 'archive-level-label';
@@ -4035,15 +4016,11 @@ function renderSystemCategoryEditor() {
     const ruleNode = document.createElement('div');
     ruleNode.className = 'tree-node tree-rule has-parent';
 
-    const ruleRow = document.createElement('div');
-    ruleRow.className = 'tree-row';
-
-    const ruleDot = document.createElement('span');
-    ruleDot.className = 'tree-dot';
-    ruleRow.appendChild(ruleDot);
+    const ruleRow = createTreeRow({ markerless: true });
 
     const ruleBody = document.createElement('div');
     ruleBody.className = 'tree-body rule-body';
+    appendTreeBodyIcon(ruleBody, 'tree-body-icon tree-body-icon-rule');
 
     const ruleFields = document.createElement('div');
     ruleFields.className = 'rule-fields';

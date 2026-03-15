@@ -1260,8 +1260,11 @@ body {
   position: relative;
 }
 
-.sender-card-icon,
-.sender-payment-icon {
+.rule-body {
+  position: relative;
+}
+
+.tree-body-icon {
   position: absolute;
   top: 10px;
   left: 10px;
@@ -1270,6 +1273,41 @@ body {
   background-repeat: no-repeat;
   background-size: contain;
   pointer-events: none;
+}
+
+.tree-body-icon-folder {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #111;
+  box-sizing: border-box;
+}
+
+.tree-body-icon-category {
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border: 2px solid #111;
+  box-sizing: border-box;
+}
+
+.tree-body-icon-rule {
+  width: 16px;
+  height: 14px;
+  background: #111;
+  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+}
+
+.tree-body-icon-rule::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 9px;
+  background: #fff;
+  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
 }
 
 .sender-card-icon {
@@ -1288,6 +1326,14 @@ body {
 .sender-fields,
 .sender-payment-fields {
   margin-left: 30px;
+}
+
+.folder-fields,
+.category-fields,
+.rule-fields,
+.folder-actions,
+.category-rule-actions {
+  margin-left: 22px;
 }
 
 @media (max-width: 760px) {
@@ -1364,38 +1410,12 @@ body {
   border-radius: 0;
 }
 
-.tree-rule > .tree-row > .tree-dot {
-  position: relative;
-  width: 16px;
-  height: 14px;
-  background: #111;
-  border: 0;
-  border-radius: 0;
-  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
-  margin-top: 8px;
-}
-
-.tree-rule > .tree-row > .tree-dot::before {
-  content: none;
-}
-
-.tree-rule > .tree-row > .tree-dot::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 10px;
-  height: 9px;
-  background: #fff;
-  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
-}
-
 .tree-node.has-parent > .tree-row::before {
   content: '';
   position: absolute;
-  left: -16px;
+  left: -15px;
   top: 17px;
-  width: 16px;
+  width: 15px;
   border-top: 1px solid #d0d0d0;
 }
 
@@ -1426,6 +1446,8 @@ body {
 }
 
 .tree-children {
+  --tree-connector-span: 16px;
+  position: relative;
   margin-left: 14px;
   padding-left: 14px;
   border-left: 1px solid #d0d0d0;
@@ -1433,6 +1455,28 @@ body {
   flex-direction: column;
   gap: 8px;
   margin-top: 8px;
+}
+
+.tree-children::before {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--tree-connector-span));
+  top: 0;
+  width: var(--tree-connector-span);
+  border-top: 1px solid #d0d0d0;
+}
+
+.tree-children::after {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--tree-connector-span));
+  bottom: 0;
+  width: var(--tree-connector-span);
+  border-top: 1px solid #d0d0d0;
+}
+
+.tree-children.tree-children-markerless {
+  --tree-connector-span: 25px;
 }
 
 .folder-fields {
