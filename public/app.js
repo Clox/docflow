@@ -2948,9 +2948,9 @@ function renderSendersEditor() {
 
     const toggleButton = document.createElement('button');
     toggleButton.type = 'button';
-    toggleButton.className = 'sender-toggle';
-    toggleButton.textContent = isCollapsed ? '▸' : '▾';
+    toggleButton.className = isCollapsed ? 'sender-toggle is-collapsed' : 'sender-toggle';
     toggleButton.title = isCollapsed ? 'Expandera avsändare' : 'Kontrahera avsändare';
+    toggleButton.setAttribute('aria-label', toggleButton.title);
     toggleButton.addEventListener('click', () => {
       if (collapsedSenderUiKeys.has(currentSenderUiKey)) {
         collapsedSenderUiKeys.delete(currentSenderUiKey);
@@ -3010,7 +3010,7 @@ function renderSendersEditor() {
         paymentRow.className = 'tree-row';
 
         const paymentDot = document.createElement('span');
-        paymentDot.className = 'tree-dot';
+        paymentDot.className = 'tree-dot sender-payment-dot';
         paymentRow.appendChild(paymentDot);
 
         const paymentBody = document.createElement('div');
@@ -3186,7 +3186,7 @@ function renderSenderMergeEditor() {
     paymentRow.className = 'tree-row';
 
     const paymentDot = document.createElement('span');
-    paymentDot.className = 'tree-dot';
+    paymentDot.className = 'tree-dot sender-payment-dot';
     paymentRow.appendChild(paymentDot);
 
     const paymentBody = document.createElement('div');

@@ -1091,23 +1091,44 @@ body {
 }
 
 .sender-toggle {
-  width: 22px;
-  height: 22px;
+  position: relative;
+  width: 24px;
+  height: 24px;
   flex: 0 0 auto;
-  font: inherit;
-  border: 1px solid #ccc;
-  border-radius: 999px;
-  background: #fff;
+  border: 0;
+  border-radius: 0;
+  background: transparent url('/assets/icons/sender.svg') center/contain no-repeat;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .sender-toggle:hover {
-  background: #f9fafb;
+  filter: brightness(0.96);
+}
+
+.sender-toggle::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 6px solid #111;
+}
+
+.sender-toggle.is-collapsed::after {
+  right: -2px;
+  bottom: 0;
+  border-left: 5px solid #111;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-right: 0;
 }
 
 .sender-summary-fields {
@@ -1239,6 +1260,15 @@ body {
   background: #fff;
   border-color: #111;
   border-radius: 0;
+}
+
+.tree-category > .tree-row > .tree-dot.sender-payment-dot {
+  width: 22px;
+  height: 22px;
+  margin-top: 5px;
+  border: 0;
+  border-radius: 0;
+  background: transparent url('/assets/icons/123.svg') center/contain no-repeat;
 }
 
 .tree-rule > .tree-row > .tree-dot {
