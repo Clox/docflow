@@ -1338,6 +1338,10 @@ body {
   align-items: flex-start;
 }
 
+.tree-row.tree-row-no-marker {
+  gap: 0;
+}
+
 .tree-dot {
   display: block;
   width: 10px;
@@ -1358,15 +1362,6 @@ body {
   background: #fff;
   border-color: #111;
   border-radius: 0;
-}
-
-.tree-category > .tree-row > .tree-dot.sender-payment-dot {
-  width: 10px;
-  height: 10px;
-  margin-top: 12px;
-  border-radius: 0;
-  border: 2px solid #111;
-  background: #fff;
 }
 
 .tree-rule > .tree-row > .tree-dot {

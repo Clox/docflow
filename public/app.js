@@ -3228,11 +3228,7 @@ function buildSenderEditorNode(row, rowIndex) {
       paymentNode.className = 'tree-node tree-category has-parent';
 
       const paymentRow = document.createElement('div');
-      paymentRow.className = 'tree-row';
-
-      const paymentDot = document.createElement('span');
-      paymentDot.className = 'tree-dot sender-payment-dot';
-      paymentRow.appendChild(paymentDot);
+      paymentRow.className = 'tree-row tree-row-no-marker';
 
       const paymentBody = document.createElement('div');
       paymentBody.className = 'tree-body category-body';
@@ -3500,11 +3496,7 @@ function renderSenderMergeEditor() {
     paymentNode.className = 'tree-node tree-category has-parent';
 
     const paymentRow = document.createElement('div');
-    paymentRow.className = 'tree-row';
-
-    const paymentDot = document.createElement('span');
-    paymentDot.className = 'tree-dot sender-payment-dot';
-    paymentRow.appendChild(paymentDot);
+    paymentRow.className = 'tree-row tree-row-no-marker';
 
     const paymentBody = document.createElement('div');
     paymentBody.className = 'tree-body category-body';
