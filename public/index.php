@@ -167,8 +167,27 @@
       </div>
     </div>
     <div id="senders-list" class="categories-list"></div>
-    <div class="categories-actions">
+    <div class="senders-selected-count-row">
+      <span id="senders-selected-count" class="senders-selected-count">Antal markerade avsändare: 0</span>
+    </div>
+    <div class="categories-actions senders-footer-actions">
       <button id="senders-add-row" type="button">Lägg till avsändare</button>
+      <button id="senders-merge-selected" type="button" disabled>Slå ihop...</button>
+    </div>
+    <div id="sender-merge-overlay" class="modal-overlay hidden">
+      <div class="settings-dialog sender-merge-dialog">
+        <section class="settings-content">
+          <div class="settings-panel active sender-merge-panel">
+            <h3>Slå ihop avsändare</h3>
+            <p>Välj vilka värden som ska behållas och granska den sammanslagna avsändaren innan du sparar.</p>
+            <div id="sender-merge-editor" class="categories-list"></div>
+            <div class="panel-actions">
+              <button id="sender-merge-cancel" type="button">Avbryt</button>
+              <button id="sender-merge-apply" type="button">Spara sammanslagning</button>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
     <div class="panel-actions">
       <button id="senders-cancel" type="button">Avbryt</button>

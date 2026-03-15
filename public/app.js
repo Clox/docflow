@@ -45,6 +45,12 @@ let sendersApplyEl = null;
 let sendersSortOrderEl = null;
 let sendersExpandAllEl = null;
 let sendersCollapseAllEl = null;
+let sendersSelectedCountEl = null;
+let sendersMergeSelectedEl = null;
+let senderMergeOverlayEl = null;
+let senderMergeEditorEl = null;
+let senderMergeCancelEl = null;
+let senderMergeApplyEl = null;
 let matchingListEl = null;
 let matchingAddRowEl = null;
 let matchingCancelEl = null;
@@ -163,6 +169,7 @@ const pinnedProcessingJobIds = new Set();
 const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
 const collapsedSenderUiKeys = new Set();
+const selectedSenderUiKeys = new Set();
 const mountedSettingsPanels = new Set();
 const boundSettingsPanels = new Set();
 const loadedSettingsPanels = new Set();
@@ -170,6 +177,8 @@ const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
 const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta']);
+
+let senderMergeState = null;
 
 clientSelectEl.disabled = true;
 senderSelectEl.disabled = true;
@@ -1739,6 +1748,12 @@ function bindSettingsPanelRefs(tabId) {
     sendersSortOrderEl = document.getElementById('senders-sort-order');
     sendersExpandAllEl = document.getElementById('senders-expand-all');
     sendersCollapseAllEl = document.getElementById('senders-collapse-all');
+    sendersSelectedCountEl = document.getElementById('senders-selected-count');
+    sendersMergeSelectedEl = document.getElementById('senders-merge-selected');
+    senderMergeOverlayEl = document.getElementById('sender-merge-overlay');
+    senderMergeEditorEl = document.getElementById('sender-merge-editor');
+    senderMergeCancelEl = document.getElementById('sender-merge-cancel');
+    senderMergeApplyEl = document.getElementById('sender-merge-apply');
     sendersSortOrderEl.value = sendersSortOrder;
     sendersAddRowEl.addEventListener('click', () => {
       sendersDraft.push(defaultSenderDraft());
@@ -1760,6 +1775,24 @@ function bindSettingsPanelRefs(tabId) {
       });
       renderSendersEditor();
     });
+    sendersMergeSelectedEl.addEventListener('click', () => {
+      openSenderMergeOverlay();
+    });
+    senderMergeCancelEl.addEventListener('click', () => {
+      closeSenderMergeOverlay();
+    });
+    senderMergeApplyEl.addEventListener('click', async () => {
+      try {
+        await applySenderMerge();
+      } catch (error) {
+        alert(error.message || 'Kunde inte slå ihop avsändare.');
+      }
+    });
+    senderMergeOverlayEl.addEventListener('click', (event) => {
+      if (event.target === senderMergeOverlayEl) {
+        closeSenderMergeOverlay();
+      }
+    });
     sendersCancelEl.addEventListener('click', () => {
       let parsed = [];
       try {
@@ -1768,6 +1801,8 @@ function bindSettingsPanelRefs(tabId) {
         parsed = [];
       }
       sendersDraft = Array.isArray(parsed) ? parsed.map(sanitizeSenderDraft) : [];
+      clearSenderSelections();
+      closeSenderMergeOverlay();
       renderSendersEditor();
       updateSettingsActionButtons();
     });
@@ -2099,11 +2134,15 @@ function closeSettingsModal(force = false) {
     return false;
   }
 
+  closeSenderMergeOverlay();
   settingsModalEl.classList.add('hidden');
   return true;
 }
 
 function setSettingsTab(tabId) {
+  if (tabId !== 'senders') {
+    closeSenderMergeOverlay();
+  }
   mountSettingsPanel(tabId);
   bindSettingsPanelRefs(tabId);
   activeSettingsTabId = tabId;
@@ -2534,6 +2573,125 @@ function senderUiKey(row) {
   return `tmp-${senderDraftUiKeySeq++}`;
 }
 
+function uniqueSenderFieldOptions(rows, field, config = {}) {
+  const ignoreEmpty = config.ignoreEmpty === true;
+  const seen = new Set();
+  const values = [];
+  rows.forEach((row) => {
+    const rawValue = row && typeof row[field] === 'string' ? row[field] : '';
+    const normalizedValue = rawValue.trim();
+    if (ignoreEmpty && normalizedValue === '') {
+      return;
+    }
+    const key = normalizedValue.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    values.push(normalizedValue);
+  });
+  return values;
+}
+
+function mergedSenderNotes(rows) {
+  const parts = [];
+  const seen = new Set();
+  rows.forEach((row) => {
+    const notes = row && typeof row.notes === 'string' ? row.notes.trim() : '';
+    if (notes === '') {
+      return;
+    }
+    if (seen.has(notes)) {
+      return;
+    }
+    seen.add(notes);
+    parts.push(notes);
+  });
+  return parts.join('\n\n');
+}
+
+function mergedSenderPaymentNumbers(rows) {
+  const seen = new Set();
+  const payments = [];
+  rows.forEach((row) => {
+    const paymentRows = Array.isArray(row && row.paymentNumbers) ? row.paymentNumbers : [];
+    paymentRows.forEach((payment) => {
+      const normalized = sanitizeSenderPaymentDraft(payment);
+      const key = `${normalized.type}:${digitsOnly(normalized.number)}`;
+      if (digitsOnly(normalized.number) === '' || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      payments.push(normalized);
+    });
+  });
+  payments.sort((a, b) => {
+    const aKey = `${a.type}:${digitsOnly(a.number)}`;
+    const bKey = `${b.type}:${digitsOnly(b.number)}`;
+    return aKey.localeCompare(bKey, 'sv');
+  });
+  return payments;
+}
+
+function closeSenderMergeOverlay() {
+  senderMergeState = null;
+  if (senderMergeOverlayEl) {
+    senderMergeOverlayEl.classList.add('hidden');
+  }
+}
+
+function updateSendersSelectionSummary() {
+  if (sendersSelectedCountEl) {
+    sendersSelectedCountEl.textContent = `Antal markerade avsändare: ${selectedSenderUiKeys.size}`;
+  }
+  if (sendersMergeSelectedEl) {
+    sendersMergeSelectedEl.disabled = selectedSenderUiKeys.size < 2;
+  }
+}
+
+function clearSenderSelections() {
+  selectedSenderUiKeys.clear();
+  updateSendersSelectionSummary();
+}
+
+function buildSenderMergeState() {
+  const selectedEntries = sendersDraft
+    .map((row, rowIndex) => ({ row, rowIndex, uiKey: senderUiKey(row) }))
+    .filter((entry) => selectedSenderUiKeys.has(entry.uiKey));
+
+  if (selectedEntries.length < 2) {
+    return null;
+  }
+
+  const rows = selectedEntries.map((entry) => entry.row);
+  const nameOptions = uniqueSenderFieldOptions(rows, 'name');
+  const orgNumberOptions = uniqueSenderFieldOptions(rows, 'orgNumber', { ignoreEmpty: true });
+  const domainOptions = uniqueSenderFieldOptions(rows, 'domain', { ignoreEmpty: true });
+  const baseEntry = selectedEntries[0];
+  const baseUiKey = baseEntry.uiKey;
+  const baseId = Number.isInteger(baseEntry.row.id) && baseEntry.row.id > 0 ? baseEntry.row.id : null;
+  const uiKey = senderUiKey(baseEntry.row);
+
+  return {
+    baseUiKey,
+    sourceUiKeys: selectedEntries.map((entry) => entry.uiKey),
+    draft: sanitizeSenderDraft({
+      uiKey,
+      id: baseId,
+      name: nameOptions[0] || '',
+      orgNumber: orgNumberOptions[0] || '',
+      domain: domainOptions[0] || '',
+      notes: mergedSenderNotes(rows),
+      paymentNumbers: mergedSenderPaymentNumbers(rows)
+    }),
+    fieldOptions: {
+      name: nameOptions,
+      orgNumber: orgNumberOptions,
+      domain: domainOptions
+    }
+  };
+}
+
 function getSortedSenderEntries() {
   const entries = sendersDraft.map((row, rowIndex) => ({ row, rowIndex }));
 
@@ -2722,6 +2880,7 @@ function renderSendersEditor() {
     empty.textContent = 'Inga avsändare ännu.';
     fragment.appendChild(empty);
     sendersListEl.replaceChildren(fragment);
+    updateSendersSelectionSummary();
     return;
   }
 
@@ -2777,6 +2936,8 @@ function renderSendersEditor() {
     removeButton.className = 'category-remove';
     removeButton.textContent = 'Ta bort avsändare';
     removeButton.addEventListener('click', () => {
+      selectedSenderUiKeys.delete(currentSenderUiKey);
+      collapsedSenderUiKeys.delete(currentSenderUiKey);
       sendersDraft.splice(rowIndex, 1);
       renderSendersEditor();
       updateSettingsActionButtons();
@@ -2800,8 +2961,23 @@ function renderSendersEditor() {
     });
     senderRow.appendChild(toggleButton);
 
+    const senderSelectCheckbox = document.createElement('input');
+    senderSelectCheckbox.type = 'checkbox';
+    senderSelectCheckbox.className = 'sender-select-checkbox';
+    senderSelectCheckbox.checked = selectedSenderUiKeys.has(currentSenderUiKey);
+    senderSelectCheckbox.title = 'Markera avsändare';
+    senderSelectCheckbox.addEventListener('change', () => {
+      if (senderSelectCheckbox.checked) {
+        selectedSenderUiKeys.add(currentSenderUiKey);
+      } else {
+        selectedSenderUiKeys.delete(currentSenderUiKey);
+      }
+      updateSendersSelectionSummary();
+    });
+
     const senderSummaryFields = document.createElement('div');
     senderSummaryFields.className = 'sender-summary-fields';
+    senderSummaryFields.appendChild(senderSelectCheckbox);
     senderSummaryFields.appendChild(createFloatingField('Namn', nameInput));
     senderSummaryFields.appendChild(createFloatingField('Org.nr', orgNumberInput));
     senderHeader.appendChild(senderSummaryFields);
@@ -2921,6 +3097,248 @@ function renderSendersEditor() {
 
   sendersListEl.replaceChildren(fragment);
   updateSettingsActionButtons();
+  updateSendersSelectionSummary();
+}
+
+function createSenderMergeField(label, fieldName, options, draft, onChange, extraClassName = '') {
+  if (Array.isArray(options) && options.length > 1) {
+    const select = document.createElement('select');
+    const normalizedOptions = [];
+    const seen = new Set();
+    options.forEach((optionValue) => {
+      const value = String(optionValue || '');
+      if (seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      normalizedOptions.push(value);
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value === '' ? '(Tomt)' : value;
+      select.appendChild(option);
+    });
+    select.value = normalizedOptions.includes(draft[fieldName]) ? draft[fieldName] : normalizedOptions[0];
+    select.addEventListener('change', () => onChange(select.value));
+    return createFloatingField(label, select, extraClassName);
+  }
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = draft[fieldName];
+  input.addEventListener('input', () => onChange(input.value));
+  return createFloatingField(label, input, extraClassName);
+}
+
+function renderSenderMergeEditor() {
+  if (!senderMergeEditorEl || !senderMergeState) {
+    return;
+  }
+
+  const { draft, fieldOptions } = senderMergeState;
+  const rootNode = document.createElement('div');
+  rootNode.className = 'tree-node tree-folder';
+
+  const rootRow = document.createElement('div');
+  rootRow.className = 'tree-row';
+
+  const rootDot = document.createElement('span');
+  rootDot.className = 'tree-dot';
+  rootRow.appendChild(rootDot);
+
+  const rootBody = document.createElement('div');
+  rootBody.className = 'tree-body folder-body';
+
+  const senderFields = document.createElement('div');
+  senderFields.className = 'sender-fields';
+
+  senderFields.appendChild(createSenderMergeField('Namn', 'name', fieldOptions.name, draft, (value) => {
+    senderMergeState.draft.name = value;
+  }));
+  senderFields.appendChild(createSenderMergeField('Org.nr', 'orgNumber', fieldOptions.orgNumber, draft, (value) => {
+    senderMergeState.draft.orgNumber = value;
+  }));
+  senderFields.appendChild(createSenderMergeField('Domän', 'domain', fieldOptions.domain, draft, (value) => {
+    senderMergeState.draft.domain = value;
+  }));
+
+  const notesInput = document.createElement('textarea');
+  notesInput.placeholder = 'Anteckningar';
+  notesInput.value = draft.notes;
+  notesInput.addEventListener('input', () => {
+    senderMergeState.draft.notes = notesInput.value;
+  });
+  senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
+  rootBody.appendChild(senderFields);
+
+  const paymentList = document.createElement('div');
+  paymentList.className = 'tree-children';
+
+  const paymentsLabel = document.createElement('div');
+  paymentsLabel.className = 'archive-level-label';
+  paymentsLabel.textContent = 'Betalnummer';
+  paymentList.appendChild(paymentsLabel);
+
+  draft.paymentNumbers.forEach((payment, paymentIndex) => {
+    const paymentNode = document.createElement('div');
+    paymentNode.className = 'tree-node tree-category has-parent';
+
+    const paymentRow = document.createElement('div');
+    paymentRow.className = 'tree-row';
+
+    const paymentDot = document.createElement('span');
+    paymentDot.className = 'tree-dot';
+    paymentRow.appendChild(paymentDot);
+
+    const paymentBody = document.createElement('div');
+    paymentBody.className = 'tree-body category-body';
+
+    const paymentFields = document.createElement('div');
+    paymentFields.className = 'sender-payment-fields';
+
+    const typeSelect = document.createElement('select');
+    [
+      ['bankgiro', 'Bankgiro'],
+      ['plusgiro', 'Plusgiro']
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      typeSelect.appendChild(option);
+    });
+    typeSelect.value = payment.type;
+    typeSelect.addEventListener('change', () => {
+      senderMergeState.draft.paymentNumbers[paymentIndex].type = typeSelect.value === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+      numberInput.value = formatSenderPaymentNumberForDisplay(
+        senderMergeState.draft.paymentNumbers[paymentIndex].type,
+        numberInput.value
+      );
+      senderMergeState.draft.paymentNumbers[paymentIndex].number = numberInput.value;
+    });
+
+    const numberInput = document.createElement('input');
+    numberInput.type = 'text';
+    numberInput.value = formatSenderPaymentNumberForDisplay(payment.type, payment.number);
+    numberInput.addEventListener('input', () => {
+      senderMergeState.draft.paymentNumbers[paymentIndex].number = numberInput.value;
+    });
+    numberInput.addEventListener('blur', () => {
+      const formatted = formatSenderPaymentNumberForDisplay(typeSelect.value, numberInput.value);
+      numberInput.value = formatted;
+      senderMergeState.draft.paymentNumbers[paymentIndex].number = formatted;
+    });
+
+    const removePaymentButton = document.createElement('button');
+    removePaymentButton.type = 'button';
+    removePaymentButton.className = 'category-remove';
+    removePaymentButton.textContent = 'Ta bort';
+    removePaymentButton.addEventListener('click', () => {
+      senderMergeState.draft.paymentNumbers.splice(paymentIndex, 1);
+      renderSenderMergeEditor();
+    });
+
+    paymentFields.appendChild(createFloatingField('Typ', typeSelect));
+    paymentFields.appendChild(createFloatingField('Nummer', numberInput));
+    paymentFields.appendChild(removePaymentButton);
+    paymentBody.appendChild(paymentFields);
+    paymentRow.appendChild(paymentBody);
+    paymentNode.appendChild(paymentRow);
+    paymentList.appendChild(paymentNode);
+  });
+
+  rootBody.appendChild(paymentList);
+
+  const mergeActions = document.createElement('div');
+  mergeActions.className = 'folder-actions';
+  const addPaymentButton = document.createElement('button');
+  addPaymentButton.type = 'button';
+  addPaymentButton.textContent = 'Lägg till betalnummer';
+  addPaymentButton.addEventListener('click', () => {
+    senderMergeState.draft.paymentNumbers.push(defaultSenderPaymentDraft());
+    renderSenderMergeEditor();
+  });
+  mergeActions.appendChild(addPaymentButton);
+  rootBody.appendChild(mergeActions);
+
+  rootRow.appendChild(rootBody);
+  rootNode.appendChild(rootRow);
+  senderMergeEditorEl.replaceChildren(rootNode);
+}
+
+function openSenderMergeOverlay() {
+  senderMergeState = buildSenderMergeState();
+  if (!senderMergeState || !senderMergeOverlayEl) {
+    return;
+  }
+  renderSenderMergeEditor();
+  senderMergeOverlayEl.classList.remove('hidden');
+}
+
+async function applySenderMerge() {
+  if (!senderMergeState) {
+    return;
+  }
+
+  const previousSendersDraft = sendersDraft.map(sanitizeSenderDraft);
+  const previousSelectedSenderUiKeys = new Set(selectedSenderUiKeys);
+  const previousCollapsedSenderUiKeys = new Set(collapsedSenderUiKeys);
+  const previousMergeState = JSON.parse(JSON.stringify(senderMergeState));
+  const mergedDraft = sanitizeSenderDraft(senderMergeState.draft);
+  const sourceUiKeys = new Set(senderMergeState.sourceUiKeys);
+  const nextSendersDraft = [];
+  let insertedMergedRow = false;
+
+  sendersDraft.forEach((row) => {
+    const rowUiKey = senderUiKey(row);
+    if (!sourceUiKeys.has(rowUiKey)) {
+      nextSendersDraft.push(row);
+      return;
+    }
+    if (!insertedMergedRow && rowUiKey === senderMergeState.baseUiKey) {
+      nextSendersDraft.push(mergedDraft);
+      insertedMergedRow = true;
+    }
+  });
+
+  if (!insertedMergedRow) {
+    nextSendersDraft.push(mergedDraft);
+  }
+
+  sendersDraft = nextSendersDraft.map(sanitizeSenderDraft);
+  senderMergeState.sourceUiKeys.forEach((uiKey) => {
+    selectedSenderUiKeys.delete(uiKey);
+    collapsedSenderUiKeys.delete(uiKey);
+  });
+  selectedSenderUiKeys.add(senderUiKey(mergedDraft));
+  renderSendersEditor();
+  updateSettingsActionButtons();
+  if (senderMergeApplyEl) {
+    senderMergeApplyEl.disabled = true;
+  }
+  if (senderMergeCancelEl) {
+    senderMergeCancelEl.disabled = true;
+  }
+
+  try {
+    await saveSendersSettings();
+  } catch (error) {
+    sendersDraft = previousSendersDraft.map(sanitizeSenderDraft);
+    selectedSenderUiKeys.clear();
+    previousSelectedSenderUiKeys.forEach((uiKey) => selectedSenderUiKeys.add(uiKey));
+    collapsedSenderUiKeys.clear();
+    previousCollapsedSenderUiKeys.forEach((uiKey) => collapsedSenderUiKeys.add(uiKey));
+    senderMergeState = previousMergeState;
+    renderSendersEditor();
+    renderSenderMergeEditor();
+    updateSettingsActionButtons();
+    throw error;
+  } finally {
+    if (senderMergeApplyEl) {
+      senderMergeApplyEl.disabled = false;
+    }
+    if (senderMergeCancelEl) {
+      senderMergeCancelEl.disabled = false;
+    }
+  }
 }
 
 function renderOcrPdfSubstitutionsEditor() {
@@ -3551,6 +3969,8 @@ async function loadSendersSettings() {
 
   sendersDraft = payload.senders.map(sanitizeSenderDraft);
   sendersBaselineJson = normalizedSendersJson(sendersDraft);
+  clearSenderSelections();
+  closeSenderMergeOverlay();
   renderSendersEditor();
   updateSettingsActionButtons();
 }
@@ -3664,6 +4084,8 @@ async function saveSendersSettings() {
 
   sendersDraft = payload.senders.map(sanitizeSenderDraft);
   sendersBaselineJson = normalizedSendersJson(sendersDraft);
+  clearSenderSelections();
+  closeSenderMergeOverlay();
   renderSendersEditor();
   updateSettingsActionButtons();
   await fetchState({ refreshSenders: true });
