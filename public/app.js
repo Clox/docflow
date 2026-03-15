@@ -2769,15 +2769,21 @@ function updateSimilarityGroupCheckboxState(groupEl) {
   groupCheckbox.indeterminate = selectedCount > 0 && selectedCount < senderCheckboxes.length;
 }
 
-function replaceSenderEditorNodeInPlace(senderNode, row, rowIndex) {
-  if (!senderNode || !senderNode.isConnected) {
-    renderSendersEditor();
-    return null;
+function applySenderEditorCollapsedState(senderNode, isCollapsed) {
+  if (!senderNode) {
+    return;
   }
-  const replacementNode = buildSenderEditorNode(row, rowIndex);
-  senderNode.replaceWith(replacementNode);
-  updateSimilarityGroupCheckboxState(replacementNode.closest('.sender-similarity-group'));
-  return replacementNode;
+  const toggleButton = senderNode.querySelector('.sender-toggle');
+  if (toggleButton) {
+    toggleButton.classList.toggle('is-collapsed', isCollapsed);
+    const title = isCollapsed ? 'Expandera avsändare' : 'Kontrahera avsändare';
+    toggleButton.title = title;
+    toggleButton.setAttribute('aria-label', title);
+  }
+  const senderDetails = senderNode.querySelector('.sender-details');
+  if (senderDetails) {
+    senderDetails.hidden = isCollapsed;
+  }
 }
 
 function buildSenderMergeState() {
@@ -3203,7 +3209,7 @@ function buildSenderEditorNode(row, rowIndex) {
     } else {
       collapsedSenderUiKeys.add(currentSenderUiKey);
     }
-    replaceSenderEditorNodeInPlace(senderNode, row, rowIndex);
+    applySenderEditorCollapsedState(senderNode, collapsedSenderUiKeys.has(currentSenderUiKey));
   });
   senderRow.appendChild(toggleButton);
 
@@ -3230,107 +3236,106 @@ function buildSenderEditorNode(row, rowIndex) {
   senderHeader.appendChild(senderSummaryFields);
   senderBody.appendChild(senderHeader);
 
-  if (!isCollapsed) {
-    const senderDetails = document.createElement('div');
-    senderDetails.className = 'sender-details';
+  const senderDetails = document.createElement('div');
+  senderDetails.className = 'sender-details';
+  senderDetails.hidden = isCollapsed;
 
-    const senderFields = document.createElement('div');
-    senderFields.className = 'sender-fields';
-    senderFields.appendChild(createFloatingField('Domän', domainInput));
-    senderFields.appendChild(removeButton);
-    senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
-    senderDetails.appendChild(senderFields);
+  const senderFields = document.createElement('div');
+  senderFields.className = 'sender-fields';
+  senderFields.appendChild(createFloatingField('Domän', domainInput));
+  senderFields.appendChild(removeButton);
+  senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
+  senderDetails.appendChild(senderFields);
 
-    const paymentList = createTreeChildren({ markerless: true });
+  const paymentList = createTreeChildren({ markerless: true });
 
-    const paymentsLabel = document.createElement('div');
-    paymentsLabel.className = 'archive-level-label';
-    paymentsLabel.textContent = 'Betalnummer';
-    paymentList.appendChild(paymentsLabel);
+  const paymentsLabel = document.createElement('div');
+  paymentsLabel.className = 'archive-level-label';
+  paymentsLabel.textContent = 'Betalnummer';
+  paymentList.appendChild(paymentsLabel);
 
-    row.paymentNumbers.forEach((payment, paymentIndex) => {
-      const paymentNode = document.createElement('div');
-      paymentNode.className = 'tree-node tree-category has-parent';
+  row.paymentNumbers.forEach((payment, paymentIndex) => {
+    const paymentNode = document.createElement('div');
+    paymentNode.className = 'tree-node tree-category has-parent';
 
-      const paymentRow = createTreeRow({ markerless: true });
+    const paymentRow = createTreeRow({ markerless: true });
 
-      const paymentBody = document.createElement('div');
-      paymentBody.className = 'tree-body category-body';
-      appendTreeBodyIcon(paymentBody, 'tree-body-icon sender-payment-icon');
+    const paymentBody = document.createElement('div');
+    paymentBody.className = 'tree-body category-body';
+    appendTreeBodyIcon(paymentBody, 'tree-body-icon sender-payment-icon');
 
-      const paymentFields = document.createElement('div');
-      paymentFields.className = 'sender-payment-fields';
+    const paymentFields = document.createElement('div');
+    paymentFields.className = 'sender-payment-fields';
 
-      const typeSelect = document.createElement('select');
-      const bankgiroOption = document.createElement('option');
-      bankgiroOption.value = 'bankgiro';
-      bankgiroOption.textContent = 'Bankgiro';
-      typeSelect.appendChild(bankgiroOption);
-      const plusgiroOption = document.createElement('option');
-      plusgiroOption.value = 'plusgiro';
-      plusgiroOption.textContent = 'Plusgiro';
-      typeSelect.appendChild(plusgiroOption);
-      typeSelect.value = payment.type;
-      typeSelect.addEventListener('change', () => {
-        sendersDraft[rowIndex].paymentNumbers[paymentIndex].type = typeSelect.value === 'plusgiro' ? 'plusgiro' : 'bankgiro';
-        numberInput.value = formatSenderPaymentNumberForDisplay(
-          sendersDraft[rowIndex].paymentNumbers[paymentIndex].type,
-          numberInput.value
-        );
-        sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
-        updateSettingsActionButtons();
-      });
-
-      const numberInput = document.createElement('input');
-      numberInput.type = 'text';
-      numberInput.placeholder = 'Ex: 5051-6822';
-      numberInput.value = formatSenderPaymentNumberForDisplay(payment.type, payment.number);
-      numberInput.addEventListener('input', () => {
-        sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
-        updateSettingsActionButtons();
-      });
-      numberInput.addEventListener('blur', () => {
-        const formatted = formatSenderPaymentNumberForDisplay(typeSelect.value, numberInput.value);
-        numberInput.value = formatted;
-        sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = formatted;
-        updateSettingsActionButtons();
-      });
-
-      const removePaymentButton = document.createElement('button');
-      removePaymentButton.type = 'button';
-      removePaymentButton.className = 'category-remove';
-      removePaymentButton.textContent = 'Ta bort';
-      removePaymentButton.addEventListener('click', () => {
-        sendersDraft[rowIndex].paymentNumbers.splice(paymentIndex, 1);
-        renderSendersEditor();
-        updateSettingsActionButtons();
-      });
-
-      paymentFields.appendChild(createFloatingField('Typ', typeSelect));
-      paymentFields.appendChild(createFloatingField('Nummer', numberInput));
-      paymentFields.appendChild(removePaymentButton);
-      paymentBody.appendChild(paymentFields);
-      paymentRow.appendChild(paymentBody);
-      paymentNode.appendChild(paymentRow);
-      paymentList.appendChild(paymentNode);
+    const typeSelect = document.createElement('select');
+    const bankgiroOption = document.createElement('option');
+    bankgiroOption.value = 'bankgiro';
+    bankgiroOption.textContent = 'Bankgiro';
+    typeSelect.appendChild(bankgiroOption);
+    const plusgiroOption = document.createElement('option');
+    plusgiroOption.value = 'plusgiro';
+    plusgiroOption.textContent = 'Plusgiro';
+    typeSelect.appendChild(plusgiroOption);
+    typeSelect.value = payment.type;
+    typeSelect.addEventListener('change', () => {
+      sendersDraft[rowIndex].paymentNumbers[paymentIndex].type = typeSelect.value === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+      numberInput.value = formatSenderPaymentNumberForDisplay(
+        sendersDraft[rowIndex].paymentNumbers[paymentIndex].type,
+        numberInput.value
+      );
+      sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
+      updateSettingsActionButtons();
     });
 
-    senderDetails.appendChild(paymentList);
+    const numberInput = document.createElement('input');
+    numberInput.type = 'text';
+    numberInput.placeholder = 'Ex: 5051-6822';
+    numberInput.value = formatSenderPaymentNumberForDisplay(payment.type, payment.number);
+    numberInput.addEventListener('input', () => {
+      sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
+      updateSettingsActionButtons();
+    });
+    numberInput.addEventListener('blur', () => {
+      const formatted = formatSenderPaymentNumberForDisplay(typeSelect.value, numberInput.value);
+      numberInput.value = formatted;
+      sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = formatted;
+      updateSettingsActionButtons();
+    });
 
-    const senderActions = document.createElement('div');
-    senderActions.className = 'folder-actions';
-    const addPaymentButton = document.createElement('button');
-    addPaymentButton.type = 'button';
-    addPaymentButton.textContent = 'Lägg till betalnummer';
-    addPaymentButton.addEventListener('click', () => {
-      sendersDraft[rowIndex].paymentNumbers.push(defaultSenderPaymentDraft());
+    const removePaymentButton = document.createElement('button');
+    removePaymentButton.type = 'button';
+    removePaymentButton.className = 'category-remove';
+    removePaymentButton.textContent = 'Ta bort';
+    removePaymentButton.addEventListener('click', () => {
+      sendersDraft[rowIndex].paymentNumbers.splice(paymentIndex, 1);
       renderSendersEditor();
       updateSettingsActionButtons();
     });
-    senderActions.appendChild(addPaymentButton);
-    senderDetails.appendChild(senderActions);
-    senderBody.appendChild(senderDetails);
-  }
+
+    paymentFields.appendChild(createFloatingField('Typ', typeSelect));
+    paymentFields.appendChild(createFloatingField('Nummer', numberInput));
+    paymentFields.appendChild(removePaymentButton);
+    paymentBody.appendChild(paymentFields);
+    paymentRow.appendChild(paymentBody);
+    paymentNode.appendChild(paymentRow);
+    paymentList.appendChild(paymentNode);
+  });
+
+  senderDetails.appendChild(paymentList);
+
+  const senderActions = document.createElement('div');
+  senderActions.className = 'folder-actions';
+  const addPaymentButton = document.createElement('button');
+  addPaymentButton.type = 'button';
+  addPaymentButton.textContent = 'Lägg till betalnummer';
+  addPaymentButton.addEventListener('click', () => {
+    sendersDraft[rowIndex].paymentNumbers.push(defaultSenderPaymentDraft());
+    renderSendersEditor();
+    updateSettingsActionButtons();
+  });
+  senderActions.appendChild(addPaymentButton);
+  senderDetails.appendChild(senderActions);
+  senderBody.appendChild(senderDetails);
 
   senderRow.appendChild(senderBody);
   senderNode.appendChild(senderRow);
