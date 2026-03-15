@@ -27,6 +27,7 @@ const sendersListEl = document.getElementById('senders-list');
 const sendersAddRowEl = document.getElementById('senders-add-row');
 const sendersCancelEl = document.getElementById('senders-cancel');
 const sendersApplyEl = document.getElementById('senders-apply');
+const sendersSortOrderEl = document.getElementById('senders-sort-order');
 const matchingListEl = document.getElementById('matching-list');
 const matchingAddRowEl = document.getElementById('matching-add-row');
 const matchingCancelEl = document.getElementById('matching-cancel');
@@ -122,6 +123,7 @@ let activeSettingsTabId = 'clients';
 let activeArchiveTabId = 'categories';
 let clientsBaselineText = '';
 let sendersBaselineJson = '[]';
+let sendersSortOrder = 'name';
 let matchingBaselineJson = JSON.stringify({
   replacements: [],
   invoiceFieldMinConfidence: 0.7
@@ -2090,6 +2092,64 @@ function sanitizeSenderPaymentDraft(row) {
   };
 }
 
+function senderSortFieldValue(row, field) {
+  if (!row || typeof row !== 'object') {
+    return '';
+  }
+
+  if (field === 'orgNumber') {
+    return String(row.orgNumber || '').trim().toLowerCase();
+  }
+
+  if (field === 'domain') {
+    return String(row.domain || '').trim().toLowerCase();
+  }
+
+  return String(row.name || '').trim().toLowerCase();
+}
+
+function getSortedSenderEntries() {
+  const entries = sendersDraft.map((row, rowIndex) => ({ row, rowIndex }));
+
+  entries.sort((a, b) => {
+    if (sendersSortOrder === 'paymentCount') {
+      const aCount = Array.isArray(a.row.paymentNumbers) ? a.row.paymentNumbers.length : 0;
+      const bCount = Array.isArray(b.row.paymentNumbers) ? b.row.paymentNumbers.length : 0;
+      if (aCount !== bCount) {
+        return bCount - aCount;
+      }
+    } else {
+      const aValue = senderSortFieldValue(a.row, sendersSortOrder);
+      const bValue = senderSortFieldValue(b.row, sendersSortOrder);
+      if (aValue !== bValue) {
+        if (aValue === '') {
+          return 1;
+        }
+        if (bValue === '') {
+          return -1;
+        }
+        return aValue.localeCompare(bValue, 'sv');
+      }
+    }
+
+    const aName = senderSortFieldValue(a.row, 'name');
+    const bName = senderSortFieldValue(b.row, 'name');
+    if (aName !== bName) {
+      if (aName === '') {
+        return 1;
+      }
+      if (bName === '') {
+        return -1;
+      }
+      return aName.localeCompare(bName, 'sv');
+    }
+
+    return a.rowIndex - b.rowIndex;
+  });
+
+  return entries;
+}
+
 function sanitizeRule(rule) {
   const input = rule && typeof rule === 'object' ? rule : {};
   return {
@@ -2228,17 +2288,18 @@ function renderMatchingEditor() {
 }
 
 function renderSendersEditor() {
-  sendersListEl.innerHTML = '';
+  const fragment = document.createDocumentFragment();
 
   if (sendersDraft.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
     empty.textContent = 'Inga avsändare ännu.';
-    sendersListEl.appendChild(empty);
+    fragment.appendChild(empty);
+    sendersListEl.replaceChildren(fragment);
     return;
   }
 
-  sendersDraft.forEach((row, rowIndex) => {
+  getSortedSenderEntries().forEach(({ row, rowIndex }) => {
     const senderNode = document.createElement('div');
     senderNode.className = 'tree-node tree-folder';
 
@@ -2403,9 +2464,10 @@ function renderSendersEditor() {
 
     senderRow.appendChild(senderBody);
     senderNode.appendChild(senderRow);
-    sendersListEl.appendChild(senderNode);
+    fragment.appendChild(senderNode);
   });
 
+  sendersListEl.replaceChildren(fragment);
   updateSettingsActionButtons();
 }
 
@@ -3585,6 +3647,11 @@ sendersAddRowEl.addEventListener('click', () => {
   sendersDraft.push(defaultSenderDraft());
   renderSendersEditor();
   updateSettingsActionButtons();
+});
+
+sendersSortOrderEl.addEventListener('change', () => {
+  sendersSortOrder = String(sendersSortOrderEl.value || 'name');
+  renderSendersEditor();
 });
 
 sendersCancelEl.addEventListener('click', () => {
