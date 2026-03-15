@@ -20,49 +20,58 @@ const categorySelectEl = document.getElementById('category-select');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
 const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]'));
-const clientsTextareaEl = document.getElementById('clients-textarea');
-const clientsCancelEl = document.getElementById('clients-cancel');
-const clientsApplyEl = document.getElementById('clients-apply');
-const sendersListEl = document.getElementById('senders-list');
-const sendersAddRowEl = document.getElementById('senders-add-row');
-const sendersCancelEl = document.getElementById('senders-cancel');
-const sendersApplyEl = document.getElementById('senders-apply');
-const sendersSortOrderEl = document.getElementById('senders-sort-order');
-const matchingListEl = document.getElementById('matching-list');
-const matchingAddRowEl = document.getElementById('matching-add-row');
-const matchingCancelEl = document.getElementById('matching-cancel');
-const matchingApplyEl = document.getElementById('matching-apply');
-const matchingInvoiceThresholdEl = document.getElementById('matching-invoice-threshold');
-const ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
-const ocrOptimizeLevelEl = document.getElementById('ocr-optimize-level');
-const ocrTextExtractionMethodEl = document.getElementById('ocr-text-extraction-method');
-const ocrPdfSubstitutionsListEl = document.getElementById('ocr-pdf-substitutions-list');
-const ocrPdfSubstitutionsAddRowEl = document.getElementById('ocr-pdf-substitutions-add-row');
-const ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
-const jbig2StatusBadgeWrapEl = document.getElementById('jbig2-status-badge-wrap');
-const jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
-const jbig2InstallCommandEl = document.getElementById('jbig2-install-command');
-const jbig2RefreshButtonEl = document.getElementById('jbig2-refresh-button');
-const ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
-const ocrProcessingApplyEl = document.getElementById('ocr-processing-apply');
-const categoriesListEl = document.getElementById('categories-list');
-const systemCategoryEditorEl = document.getElementById('system-category-editor');
-const categoriesAddCategoryEl = document.getElementById('categories-add-category');
-const categoriesCancelEl = document.getElementById('categories-cancel');
-const categoriesApplyEl = document.getElementById('categories-apply');
-const archiveTabEls = Array.from(document.querySelectorAll('[data-archive-tab]'));
-const archiveViewCategoriesEl = document.getElementById('archive-view-categories');
-const archiveViewSystemEl = document.getElementById('archive-view-system');
-const settingsResetJobsEl = document.getElementById('settings-reset-jobs');
 const settingsCloseEl = document.getElementById('settings-close');
-const outputBasePathEl = document.getElementById('output-base-path');
-const pathsCancelEl = document.getElementById('paths-cancel');
-const pathsApplyEl = document.getElementById('paths-apply');
 const selectedJobPanelEl = document.getElementById('selected-job-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
 const selectedJobMetaEl = document.getElementById('selected-job-meta');
 const selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
 const selectedJobRerunOcrEl = document.getElementById('selected-job-rerun-ocr');
+const settingsPanelTemplateIds = {
+  clients: 'settings-template-clients',
+  senders: 'settings-template-senders',
+  matching: 'settings-template-matching',
+  'ocr-processing': 'settings-template-ocr-processing',
+  categories: 'settings-template-categories',
+  jobs: 'settings-template-jobs',
+  paths: 'settings-template-paths'
+};
+let clientsTextareaEl = null;
+let clientsCancelEl = null;
+let clientsApplyEl = null;
+let sendersListEl = null;
+let sendersAddRowEl = null;
+let sendersCancelEl = null;
+let sendersApplyEl = null;
+let sendersSortOrderEl = null;
+let matchingListEl = null;
+let matchingAddRowEl = null;
+let matchingCancelEl = null;
+let matchingApplyEl = null;
+let matchingInvoiceThresholdEl = null;
+let ocrSkipExistingTextEl = null;
+let ocrOptimizeLevelEl = null;
+let ocrTextExtractionMethodEl = null;
+let ocrPdfSubstitutionsListEl = null;
+let ocrPdfSubstitutionsAddRowEl = null;
+let ocrProcessingCommandEl = null;
+let jbig2StatusBadgeWrapEl = null;
+let jbig2StatusBadgeEl = null;
+let jbig2InstallCommandEl = null;
+let jbig2RefreshButtonEl = null;
+let ocrProcessingCancelEl = null;
+let ocrProcessingApplyEl = null;
+let categoriesListEl = null;
+let systemCategoryEditorEl = null;
+let categoriesAddCategoryEl = null;
+let categoriesCancelEl = null;
+let categoriesApplyEl = null;
+let archiveTabEls = [];
+let archiveViewCategoriesEl = null;
+let archiveViewSystemEl = null;
+let settingsResetJobsEl = null;
+let outputBasePathEl = null;
+let pathsCancelEl = null;
+let pathsApplyEl = null;
 
 let state = {
   processingJobs: [],
@@ -101,6 +110,8 @@ let loadedMetaJobId = '';
 let pdfFrameJobIds = pdfFrameEls.map(() => '');
 let pollInFlight = false;
 let stateStream = null;
+let statePollTimer = null;
+let stateUpdateTransport = 'polling';
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
@@ -147,6 +158,9 @@ const lastKnownJobDisplayById = new Map();
 const pinnedProcessingJobIds = new Set();
 const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
+const mountedSettingsPanels = new Set();
+const boundSettingsPanels = new Set();
+const loadedSettingsPanels = new Set();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
@@ -155,10 +169,6 @@ const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta']);
 clientSelectEl.disabled = true;
 senderSelectEl.disabled = true;
 categorySelectEl.disabled = true;
-matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
-ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
-ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
-ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
 setOcrSearchButtonsEnabled(false);
 setOcrSearchStatus('');
 
@@ -1671,6 +1681,306 @@ function openSettingsModal() {
   settingsModalEl.classList.remove('hidden');
 }
 
+function settingsPanelEl(tabId) {
+  return document.getElementById('settings-panel-' + tabId);
+}
+
+function mountSettingsPanel(tabId) {
+  if (mountedSettingsPanels.has(tabId)) {
+    return;
+  }
+
+  const panel = settingsPanelEl(tabId);
+  const templateId = settingsPanelTemplateIds[tabId];
+  const template = templateId ? document.getElementById(templateId) : null;
+  if (!panel || !(template instanceof HTMLTemplateElement)) {
+    return;
+  }
+
+  panel.replaceChildren(template.content.cloneNode(true));
+  mountedSettingsPanels.add(tabId);
+}
+
+function bindSettingsPanelRefs(tabId) {
+  if (boundSettingsPanels.has(tabId)) {
+    return;
+  }
+
+  mountSettingsPanel(tabId);
+
+  if (tabId === 'clients') {
+    clientsTextareaEl = document.getElementById('clients-textarea');
+    clientsCancelEl = document.getElementById('clients-cancel');
+    clientsApplyEl = document.getElementById('clients-apply');
+    clientsTextareaEl.addEventListener('input', () => {
+      updateSettingsActionButtons();
+    });
+    clientsCancelEl.addEventListener('click', () => {
+      clientsTextareaEl.value = clientsBaselineText;
+      updateSettingsActionButtons();
+    });
+    clientsApplyEl.addEventListener('click', async () => {
+      try {
+        await saveClientsText();
+      } catch (error) {
+        alert('Kunde inte spara huvudmän.');
+      }
+    });
+  } else if (tabId === 'senders') {
+    sendersListEl = document.getElementById('senders-list');
+    sendersAddRowEl = document.getElementById('senders-add-row');
+    sendersCancelEl = document.getElementById('senders-cancel');
+    sendersApplyEl = document.getElementById('senders-apply');
+    sendersSortOrderEl = document.getElementById('senders-sort-order');
+    sendersSortOrderEl.value = sendersSortOrder;
+    sendersAddRowEl.addEventListener('click', () => {
+      sendersDraft.push(defaultSenderDraft());
+      renderSendersEditor();
+      updateSettingsActionButtons();
+    });
+    sendersSortOrderEl.addEventListener('change', () => {
+      sendersSortOrder = String(sendersSortOrderEl.value || 'name');
+      renderSendersEditor();
+    });
+    sendersCancelEl.addEventListener('click', () => {
+      let parsed = [];
+      try {
+        parsed = JSON.parse(sendersBaselineJson);
+      } catch (error) {
+        parsed = [];
+      }
+      sendersDraft = Array.isArray(parsed) ? parsed.map(sanitizeSenderDraft) : [];
+      renderSendersEditor();
+      updateSettingsActionButtons();
+    });
+    sendersApplyEl.addEventListener('click', async () => {
+      try {
+        await saveSendersSettings();
+      } catch (error) {
+        alert(error.message || 'Kunde inte spara avsändare.');
+      }
+    });
+  } else if (tabId === 'matching') {
+    matchingListEl = document.getElementById('matching-list');
+    matchingAddRowEl = document.getElementById('matching-add-row');
+    matchingCancelEl = document.getElementById('matching-cancel');
+    matchingApplyEl = document.getElementById('matching-apply');
+    matchingInvoiceThresholdEl = document.getElementById('matching-invoice-threshold');
+    matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
+    matchingInvoiceThresholdEl.addEventListener('input', () => {
+      matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(matchingInvoiceThresholdEl.value, 0.7);
+      updateSettingsActionButtons();
+    });
+    matchingAddRowEl.addEventListener('click', () => {
+      matchingDraft.push(defaultReplacement());
+      renderMatchingEditor();
+      updateSettingsActionButtons();
+    });
+    matchingCancelEl.addEventListener('click', () => {
+      let parsed = {};
+      try {
+        parsed = JSON.parse(matchingBaselineJson);
+      } catch (error) {
+        parsed = {};
+      }
+      const replacements = Array.isArray(parsed.replacements) ? parsed.replacements : [];
+      matchingDraft = replacements.map(sanitizeReplacement);
+      if (matchingDraft.length === 0) {
+        matchingDraft = [defaultReplacement()];
+      }
+      matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(parsed.invoiceFieldMinConfidence, 0.7);
+      matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
+      renderMatchingEditor();
+      updateSettingsActionButtons();
+    });
+    matchingApplyEl.addEventListener('click', async () => {
+      try {
+        await saveMatchingSettings();
+      } catch (error) {
+        alert(error.message || 'Kunde inte spara matchningsinställningar.');
+      }
+    });
+  } else if (tabId === 'ocr-processing') {
+    ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
+    ocrOptimizeLevelEl = document.getElementById('ocr-optimize-level');
+    ocrTextExtractionMethodEl = document.getElementById('ocr-text-extraction-method');
+    ocrPdfSubstitutionsListEl = document.getElementById('ocr-pdf-substitutions-list');
+    ocrPdfSubstitutionsAddRowEl = document.getElementById('ocr-pdf-substitutions-add-row');
+    ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
+    jbig2StatusBadgeWrapEl = document.getElementById('jbig2-status-badge-wrap');
+    jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
+    jbig2InstallCommandEl = document.getElementById('jbig2-install-command');
+    jbig2RefreshButtonEl = document.getElementById('jbig2-refresh-button');
+    ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
+    ocrProcessingApplyEl = document.getElementById('ocr-processing-apply');
+    ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
+    ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
+    ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+    ocrSkipExistingTextEl.addEventListener('change', () => {
+      renderOcrProcessingCommand();
+      updateSettingsActionButtons();
+    });
+    ocrOptimizeLevelEl.addEventListener('change', () => {
+      ocrOptimizeLevelEl.value = String(sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1));
+      renderOcrProcessingCommand();
+      updateSettingsActionButtons();
+    });
+    ocrTextExtractionMethodEl.addEventListener('change', () => {
+      ocrTextExtractionMethodEl.value = sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout');
+      renderOcrProcessingCommand();
+      updateSettingsActionButtons();
+    });
+    ocrPdfSubstitutionsAddRowEl.addEventListener('click', () => {
+      ocrPdfSubstitutionsDraft.push(defaultReplacement());
+      renderOcrPdfSubstitutionsEditor();
+      renderOcrProcessingCommand();
+      updateSettingsActionButtons();
+    });
+    ocrProcessingCancelEl.addEventListener('click', () => {
+      ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
+      ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
+      ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+      let parsed = [];
+      try {
+        parsed = JSON.parse(ocrPdfSubstitutionsBaselineJson);
+      } catch (error) {
+        parsed = [];
+      }
+      ocrPdfSubstitutionsDraft = Array.isArray(parsed) ? parsed.map(sanitizeReplacement) : [];
+      if (ocrPdfSubstitutionsDraft.length === 0) {
+        ocrPdfSubstitutionsDraft = [defaultReplacement()];
+      }
+      renderOcrPdfSubstitutionsEditor();
+      renderOcrProcessingCommand();
+      updateSettingsActionButtons();
+    });
+    ocrProcessingApplyEl.addEventListener('click', async () => {
+      try {
+        await saveOcrProcessingSettings();
+      } catch (error) {
+        alert(error.message || 'Kunde inte spara OCR-inställningar.');
+      }
+    });
+    jbig2RefreshButtonEl.addEventListener('click', async () => {
+      startJbig2RefreshSpin();
+      jbig2StatusBadgeWrapEl.classList.add('is-collapsed');
+      try {
+        await loadOcrProcessingSettings({ deferRefreshVisibility: true });
+      } catch (error) {
+        renderJbig2Status(null, { deferRefreshVisibility: true });
+        alert('Kunde inte kontrollera JBIG2-status.');
+      }
+    });
+    renderJbig2Status(null);
+    renderOcrProcessingCommand();
+  } else if (tabId === 'categories') {
+    categoriesListEl = document.getElementById('categories-list');
+    systemCategoryEditorEl = document.getElementById('system-category-editor');
+    categoriesAddCategoryEl = document.getElementById('categories-add-category');
+    categoriesCancelEl = document.getElementById('categories-cancel');
+    categoriesApplyEl = document.getElementById('categories-apply');
+    archiveTabEls = Array.from(document.querySelectorAll('[data-archive-tab]'));
+    archiveViewCategoriesEl = document.getElementById('archive-view-categories');
+    archiveViewSystemEl = document.getElementById('archive-view-system');
+    archiveTabEls.forEach((tabButton) => {
+      tabButton.addEventListener('click', () => {
+        const nextTabId = tabButton.dataset.archiveTab;
+        if (!nextTabId || nextTabId === activeArchiveTabId) {
+          return;
+        }
+        setArchiveTab(nextTabId);
+      });
+    });
+    categoriesAddCategoryEl.addEventListener('click', () => {
+      categoriesDraft.push(defaultArchiveFolder());
+      renderCategoriesEditor();
+      updateSettingsActionButtons();
+    });
+    categoriesCancelEl.addEventListener('click', () => {
+      let parsed = {};
+      try {
+        parsed = JSON.parse(categoriesBaselineJson);
+      } catch (error) {
+        parsed = {};
+      }
+      categoriesDraft = Array.isArray(parsed.archiveFolders) ? parsed.archiveFolders.map(sanitizeArchiveFolder) : [];
+      systemCategoriesDraft = sanitizeSystemCategories(parsed.systemCategories);
+      renderCategoriesEditor();
+      renderSystemCategoryEditor();
+      updateSettingsActionButtons();
+    });
+    categoriesApplyEl.addEventListener('click', async () => {
+      try {
+        await saveCategories();
+      } catch (error) {
+        alert(error.message || 'Kunde inte spara arkivstruktur.');
+      }
+    });
+  } else if (tabId === 'jobs') {
+    settingsResetJobsEl = document.getElementById('settings-reset-jobs');
+    settingsResetJobsEl.addEventListener('click', async () => {
+      const confirmed = window.confirm(
+        'Detta flyttar tillbaka alla source.pdf till inbox och tar bort alla jobbmappar. Fortsätta?'
+      );
+      if (!confirmed) {
+        return;
+      }
+      try {
+        await resetAllJobs();
+      } catch (error) {
+        alert('Kunde inte återställa jobb.');
+      }
+    });
+  } else if (tabId === 'paths') {
+    outputBasePathEl = document.getElementById('output-base-path');
+    pathsCancelEl = document.getElementById('paths-cancel');
+    pathsApplyEl = document.getElementById('paths-apply');
+    outputBasePathEl.addEventListener('input', () => {
+      updateSettingsActionButtons();
+    });
+    pathsCancelEl.addEventListener('click', () => {
+      outputBasePathEl.value = pathsBaselineValue;
+      updateSettingsActionButtons();
+    });
+    pathsApplyEl.addEventListener('click', async () => {
+      try {
+        await savePathSettings();
+      } catch (error) {
+        alert(error.message || 'Kunde inte spara sökvägar.');
+      }
+    });
+  }
+
+  boundSettingsPanels.add(tabId);
+}
+
+async function ensureSettingsPanelReady(tabId, options = {}) {
+  bindSettingsPanelRefs(tabId);
+
+  const reload = options.reload === true;
+  if (loadedSettingsPanels.has(tabId) && !reload) {
+    return true;
+  }
+
+  if (tabId === 'clients') {
+    await loadClientsText();
+  } else if (tabId === 'senders') {
+    await loadSendersSettings();
+  } else if (tabId === 'matching') {
+    await loadMatchingSettings();
+  } else if (tabId === 'ocr-processing') {
+    await loadOcrProcessingSettings(options);
+  } else if (tabId === 'categories') {
+    await loadCategories();
+    setArchiveTab('categories');
+  } else if (tabId === 'paths') {
+    await loadPathSettings();
+  }
+
+  loadedSettingsPanels.add(tabId);
+  return true;
+}
+
 async function openClientsSettingsDirect() {
   if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
     return false;
@@ -1680,10 +1990,10 @@ async function openClientsSettingsDirect() {
   setSettingsTab('clients');
 
   try {
-    await loadClientsText();
+    await ensureSettingsPanelReady('clients');
   } catch (error) {
     alert('Kunde inte ladda huvudmän.');
-    clientsBaselineText = clientsTextareaEl.value;
+    clientsBaselineText = clientsTextareaEl ? clientsTextareaEl.value : '';
     updateSettingsActionButtons();
     return false;
   }
@@ -1702,7 +2012,7 @@ async function openSendersSettingsDirect() {
   setSettingsTab('senders');
 
   try {
-    await loadSendersSettings();
+    await ensureSettingsPanelReady('senders');
   } catch (error) {
     alert('Kunde inte ladda avsändare.');
     sendersDraft = [];
@@ -1726,7 +2036,7 @@ async function openCategoriesSettingsDirect() {
   setSettingsTab('categories');
 
   try {
-    await loadCategories();
+    await ensureSettingsPanelReady('categories');
   } catch (error) {
     alert('Kunde inte ladda arkivstruktur.');
     categoriesDraft = [];
@@ -1754,6 +2064,8 @@ function closeSettingsModal(force = false) {
 }
 
 function setSettingsTab(tabId) {
+  mountSettingsPanel(tabId);
+  bindSettingsPanelRefs(tabId);
   activeSettingsTabId = tabId;
 
   settingsTabEls.forEach((tabButton) => {
@@ -1841,6 +2153,9 @@ function normalizedCategoriesJson(categories, systemCategories) {
 }
 
 function isClientsDirty() {
+  if (!clientsTextareaEl) {
+    return false;
+  }
   return clientsTextareaEl.value !== clientsBaselineText;
 }
 
@@ -1857,6 +2172,9 @@ function isCategoriesDirty() {
 }
 
 function isOcrProcessingDirty() {
+  if (!ocrSkipExistingTextEl || !ocrOptimizeLevelEl || !ocrTextExtractionMethodEl) {
+    return false;
+  }
   return ocrSkipExistingTextEl.checked !== ocrSkipExistingTextBaseline
     || sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1) !== ocrOptimizeLevelBaseline
     || sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout') !== ocrTextExtractionMethodBaseline
@@ -1864,6 +2182,9 @@ function isOcrProcessingDirty() {
 }
 
 function isPathsDirty() {
+  if (!outputBasePathEl) {
+    return false;
+  }
   return normalizedPathValue(outputBasePathEl.value) !== pathsBaselineValue;
 }
 
@@ -1923,27 +2244,39 @@ function updateSettingsActionButtons() {
   const categoriesDirty = isCategoriesDirty();
   const pathsDirty = isPathsDirty();
 
-  clientsCancelEl.disabled = !clientsDirty;
-  clientsApplyEl.disabled = !clientsDirty;
+  if (clientsCancelEl && clientsApplyEl) {
+    clientsCancelEl.disabled = !clientsDirty;
+    clientsApplyEl.disabled = !clientsDirty;
+  }
 
-  sendersCancelEl.disabled = !sendersDirty;
-  sendersApplyEl.disabled = !sendersDirty;
+  if (sendersCancelEl && sendersApplyEl) {
+    sendersCancelEl.disabled = !sendersDirty;
+    sendersApplyEl.disabled = !sendersDirty;
+  }
 
-  matchingCancelEl.disabled = !matchingDirty;
-  matchingApplyEl.disabled = !matchingDirty;
+  if (matchingCancelEl && matchingApplyEl) {
+    matchingCancelEl.disabled = !matchingDirty;
+    matchingApplyEl.disabled = !matchingDirty;
+  }
 
-  ocrProcessingCancelEl.disabled = !ocrProcessingDirty;
-  ocrProcessingApplyEl.disabled = !ocrProcessingDirty;
+  if (ocrProcessingCancelEl && ocrProcessingApplyEl) {
+    ocrProcessingCancelEl.disabled = !ocrProcessingDirty;
+    ocrProcessingApplyEl.disabled = !ocrProcessingDirty;
+  }
 
-  categoriesCancelEl.disabled = !categoriesDirty;
-  categoriesApplyEl.disabled = !categoriesDirty;
+  if (categoriesCancelEl && categoriesApplyEl) {
+    categoriesCancelEl.disabled = !categoriesDirty;
+    categoriesApplyEl.disabled = !categoriesDirty;
+  }
 
-  pathsCancelEl.disabled = !pathsDirty;
-  pathsApplyEl.disabled = !pathsDirty;
+  if (pathsCancelEl && pathsApplyEl) {
+    pathsCancelEl.disabled = !pathsDirty;
+    pathsApplyEl.disabled = !pathsDirty;
+  }
 }
 
 function flashPanelActions(tabId) {
-  const buttons = panelActionButtonsForTab(tabId);
+  const buttons = panelActionButtonsForTab(tabId).filter((button) => button instanceof HTMLElement);
   buttons.forEach((button) => {
     button.classList.remove('flash');
     void button.offsetWidth;
@@ -1996,6 +2329,10 @@ function sanitizePositiveInt(value, fallback = 1) {
     return fallback;
   }
   return parsed < 1 ? 1 : parsed;
+}
+
+function sanitizeStateUpdateTransport(value, fallback = 'polling') {
+  return String(value || '').trim().toLowerCase() === 'sse' ? 'sse' : fallback;
 }
 
 function defaultReplacement() {
@@ -2945,6 +3282,9 @@ function renderSystemCategoryEditor() {
 }
 
 function setArchiveTab(tabId) {
+  if (!archiveViewCategoriesEl || !archiveViewSystemEl || !Array.isArray(archiveTabEls)) {
+    return;
+  }
   activeArchiveTabId = tabId === 'system' ? 'system' : 'categories';
   archiveTabEls.forEach((button) => {
     const isActive = button.dataset.archiveTab === activeArchiveTabId;
@@ -2956,6 +3296,9 @@ function setArchiveTab(tabId) {
 }
 
 function renderOcrProcessingCommand() {
+  if (!ocrSkipExistingTextEl || !ocrOptimizeLevelEl || !ocrTextExtractionMethodEl || !ocrProcessingCommandEl) {
+    return;
+  }
   const modeFlag = ocrSkipExistingTextEl.checked ? '--mode skip' : '--mode redo';
   const optimizeLevel = sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1);
   const deskewSegment = ocrSkipExistingTextEl.checked ? '--deskew ' : '';
@@ -2979,11 +3322,17 @@ function renderOcrProcessingCommand() {
 }
 
 function startJbig2RefreshSpin() {
+  if (!jbig2RefreshButtonEl) {
+    return;
+  }
   jbig2RefreshButtonEl.disabled = true;
   jbig2RefreshButtonEl.classList.add('is-spinning');
 }
 
 function stopJbig2RefreshSpin(hideAfterStop) {
+  if (!jbig2RefreshButtonEl) {
+    return;
+  }
   const shouldHide = hideAfterStop === true;
   if (!jbig2RefreshButtonEl.classList.contains('is-spinning')) {
     jbig2RefreshButtonEl.disabled = false;
@@ -3009,6 +3358,9 @@ function stopJbig2RefreshSpin(hideAfterStop) {
 }
 
 function renderJbig2Status(jbig2, options = {}) {
+  if (!jbig2StatusBadgeEl || !jbig2StatusBadgeWrapEl || !jbig2RefreshButtonEl || !jbig2InstallCommandEl) {
+    return;
+  }
   const installed = !!(jbig2 && jbig2.installed === true);
   const deferRefreshVisibility = options && options.deferRefreshVisibility === true;
   jbig2StatusBadgeEl.textContent = installed ? 'Installerad' : 'Ej installerad';
@@ -3531,266 +3883,12 @@ categorySelectEl.addEventListener('change', () => {
   selectedCategoryByJobId.set(selectedJobId, value);
 });
 
-clientsTextareaEl.addEventListener('input', () => {
-  updateSettingsActionButtons();
-});
-
-matchingInvoiceThresholdEl.addEventListener('input', () => {
-  matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(matchingInvoiceThresholdEl.value, 0.7);
-  updateSettingsActionButtons();
-});
-
-ocrSkipExistingTextEl.addEventListener('change', () => {
-  renderOcrProcessingCommand();
-  updateSettingsActionButtons();
-});
-
-ocrOptimizeLevelEl.addEventListener('change', () => {
-  ocrOptimizeLevelEl.value = String(sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1));
-  renderOcrProcessingCommand();
-  updateSettingsActionButtons();
-});
-
-ocrTextExtractionMethodEl.addEventListener('change', () => {
-  ocrTextExtractionMethodEl.value = sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout');
-  renderOcrProcessingCommand();
-  updateSettingsActionButtons();
-});
-
-ocrPdfSubstitutionsAddRowEl.addEventListener('click', () => {
-  ocrPdfSubstitutionsDraft.push(defaultReplacement());
-  renderOcrPdfSubstitutionsEditor();
-  renderOcrProcessingCommand();
-  updateSettingsActionButtons();
-});
-
-outputBasePathEl.addEventListener('input', () => {
-  updateSettingsActionButtons();
-});
-
 settingsButtonEl.addEventListener('click', async () => {
   await openClientsSettingsDirect();
-  try {
-    await loadSendersSettings();
-  } catch (error) {
-    alert('Kunde inte ladda avsändare.');
-    sendersDraft = [];
-    sendersBaselineJson = normalizedSendersJson(sendersDraft);
-    renderSendersEditor();
-    updateSettingsActionButtons();
-  }
-  try {
-    await loadMatchingSettings();
-  } catch (error) {
-    alert('Kunde inte ladda matchningsinställningar.');
-    matchingDraft = [defaultReplacement()];
-    matchingInvoiceFieldMinConfidenceDraft = 0.7;
-    matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
-    matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft);
-    renderMatchingEditor();
-    updateSettingsActionButtons();
-  }
-  try {
-    await loadOcrProcessingSettings();
-  } catch (error) {
-    alert('Kunde inte ladda OCR-inställningar.');
-    ocrSkipExistingTextEl.checked = true;
-    ocrSkipExistingTextBaseline = true;
-    ocrOptimizeLevelBaseline = 1;
-    ocrOptimizeLevelEl.value = '1';
-    ocrTextExtractionMethodBaseline = 'layout';
-    ocrTextExtractionMethodEl.value = 'layout';
-    ocrPdfSubstitutionsDraft = [defaultReplacement()];
-    ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
-    renderOcrPdfSubstitutionsEditor();
-    renderJbig2Status(null);
-    renderOcrProcessingCommand();
-    updateSettingsActionButtons();
-  }
-  try {
-    await loadPathSettings();
-  } catch (error) {
-    alert('Kunde inte ladda sökvägsinställningar.');
-    pathsBaselineValue = normalizedPathValue(outputBasePathEl.value);
-    updateSettingsActionButtons();
-  }
-  try {
-    await loadCategories();
-  } catch (error) {
-    alert('Kunde inte ladda arkivstruktur.');
-    categoriesDraft = [];
-    systemCategoriesDraft = createDefaultSystemCategories();
-    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
-    renderCategoriesEditor();
-    renderSystemCategoryEditor();
-    updateSettingsActionButtons();
-  }
-  setArchiveTab('categories');
-  clientsTextareaEl.focus();
-  updateSettingsActionButtons();
-});
-
-clientsCancelEl.addEventListener('click', () => {
-  clientsTextareaEl.value = clientsBaselineText;
-  updateSettingsActionButtons();
-});
-
-clientsApplyEl.addEventListener('click', async () => {
-  try {
-    await saveClientsText();
-  } catch (error) {
-    alert('Kunde inte spara huvudmän.');
-  }
-});
-
-sendersAddRowEl.addEventListener('click', () => {
-  sendersDraft.push(defaultSenderDraft());
-  renderSendersEditor();
-  updateSettingsActionButtons();
-});
-
-sendersSortOrderEl.addEventListener('change', () => {
-  sendersSortOrder = String(sendersSortOrderEl.value || 'name');
-  renderSendersEditor();
-});
-
-sendersCancelEl.addEventListener('click', () => {
-  let parsed = [];
-  try {
-    parsed = JSON.parse(sendersBaselineJson);
-  } catch (error) {
-    parsed = [];
-  }
-  sendersDraft = Array.isArray(parsed) ? parsed.map(sanitizeSenderDraft) : [];
-  renderSendersEditor();
-  updateSettingsActionButtons();
-});
-
-sendersApplyEl.addEventListener('click', async () => {
-  try {
-    await saveSendersSettings();
-  } catch (error) {
-    alert(error.message || 'Kunde inte spara avsändare.');
-  }
-});
-
-matchingAddRowEl.addEventListener('click', () => {
-  matchingDraft.push(defaultReplacement());
-  renderMatchingEditor();
-  updateSettingsActionButtons();
-});
-
-matchingCancelEl.addEventListener('click', () => {
-  let parsed = {};
-  try {
-    parsed = JSON.parse(matchingBaselineJson);
-  } catch (error) {
-    parsed = {};
-  }
-
-  const replacements = Array.isArray(parsed.replacements) ? parsed.replacements : [];
-  matchingDraft = replacements.map(sanitizeReplacement);
-  if (matchingDraft.length === 0) {
-    matchingDraft = [defaultReplacement()];
-  }
-  matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(parsed.invoiceFieldMinConfidence, 0.7);
-  matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
-
-  renderMatchingEditor();
-  updateSettingsActionButtons();
-});
-
-matchingApplyEl.addEventListener('click', async () => {
-  try {
-    await saveMatchingSettings();
-  } catch (error) {
-    alert(error.message || 'Kunde inte spara matchningsinställningar.');
-  }
-});
-
-ocrProcessingCancelEl.addEventListener('click', () => {
-  ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
-  ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
-  ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
-  let parsed = [];
-  try {
-    parsed = JSON.parse(ocrPdfSubstitutionsBaselineJson);
-  } catch (error) {
-    parsed = [];
-  }
-  ocrPdfSubstitutionsDraft = Array.isArray(parsed) ? parsed.map(sanitizeReplacement) : [];
-  if (ocrPdfSubstitutionsDraft.length === 0) {
-    ocrPdfSubstitutionsDraft = [defaultReplacement()];
-  }
-  renderOcrPdfSubstitutionsEditor();
-  renderOcrProcessingCommand();
-  updateSettingsActionButtons();
-});
-
-ocrProcessingApplyEl.addEventListener('click', async () => {
-  try {
-    await saveOcrProcessingSettings();
-  } catch (error) {
-    alert(error.message || 'Kunde inte spara OCR-inställningar.');
-  }
-});
-
-jbig2RefreshButtonEl.addEventListener('click', async () => {
-  startJbig2RefreshSpin();
-  jbig2StatusBadgeWrapEl.classList.add('is-collapsed');
-  try {
-    await loadOcrProcessingSettings({ deferRefreshVisibility: true });
-  } catch (error) {
-    renderJbig2Status(null, { deferRefreshVisibility: true });
-    alert('Kunde inte kontrollera JBIG2-status.');
-  }
-});
-
-categoriesAddCategoryEl.addEventListener('click', () => {
-  categoriesDraft.push(defaultArchiveFolder());
-  renderCategoriesEditor();
-  updateSettingsActionButtons();
-});
-
-categoriesCancelEl.addEventListener('click', () => {
-  let parsed = {};
-  try {
-    parsed = JSON.parse(categoriesBaselineJson);
-  } catch (error) {
-    parsed = {};
-  }
-  const archiveFolders = Array.isArray(parsed.archiveFolders) ? parsed.archiveFolders : [];
-  const systemCategories = parsed.systemCategories && typeof parsed.systemCategories === 'object'
-    ? parsed.systemCategories
-    : createDefaultSystemCategories();
-
-  categoriesDraft = archiveFolders.map(sanitizeArchiveFolder);
-  systemCategoriesDraft = sanitizeSystemCategories(systemCategories);
-  renderCategoriesEditor();
-  renderSystemCategoryEditor();
-  updateSettingsActionButtons();
-});
-
-categoriesApplyEl.addEventListener('click', async () => {
-  try {
-    await saveCategories();
-  } catch (error) {
-    alert(error.message || 'Kunde inte spara arkivstruktur.');
-  }
-});
-
-archiveTabEls.forEach((tabButton) => {
-  tabButton.addEventListener('click', () => {
-    const tabId = tabButton.dataset.archiveTab;
-    if (!tabId || tabId === activeArchiveTabId) {
-      return;
-    }
-    setArchiveTab(tabId);
-  });
 });
 
 settingsTabEls.forEach((tabButton) => {
-  tabButton.addEventListener('click', () => {
+  tabButton.addEventListener('click', async () => {
     const tabId = tabButton.dataset.settingsTab;
     if (!tabId) {
       return;
@@ -3801,40 +3899,65 @@ settingsTabEls.forEach((tabButton) => {
     if (!canLeaveCurrentSettingsView()) {
       return;
     }
+    openSettingsModal();
     setSettingsTab(tabId);
+    try {
+      await ensureSettingsPanelReady(tabId);
+    } catch (error) {
+      if (tabId === 'clients') {
+        alert('Kunde inte ladda huvudmän.');
+        clientsBaselineText = clientsTextareaEl ? clientsTextareaEl.value : '';
+      } else if (tabId === 'senders') {
+        alert('Kunde inte ladda avsändare.');
+        sendersDraft = [];
+        sendersBaselineJson = normalizedSendersJson(sendersDraft);
+        renderSendersEditor();
+      } else if (tabId === 'matching') {
+        alert('Kunde inte ladda matchningsinställningar.');
+        matchingDraft = [defaultReplacement()];
+        matchingInvoiceFieldMinConfidenceDraft = 0.7;
+        if (matchingInvoiceThresholdEl) {
+          matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
+        }
+        matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft);
+        renderMatchingEditor();
+      } else if (tabId === 'ocr-processing') {
+        alert('Kunde inte ladda OCR-inställningar.');
+        ocrSkipExistingTextBaseline = true;
+        ocrOptimizeLevelBaseline = 1;
+        ocrTextExtractionMethodBaseline = 'layout';
+        if (ocrSkipExistingTextEl) {
+          ocrSkipExistingTextEl.checked = true;
+        }
+        if (ocrOptimizeLevelEl) {
+          ocrOptimizeLevelEl.value = '1';
+        }
+        if (ocrTextExtractionMethodEl) {
+          ocrTextExtractionMethodEl.value = 'layout';
+        }
+        ocrPdfSubstitutionsDraft = [defaultReplacement()];
+        ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
+        renderOcrPdfSubstitutionsEditor();
+        renderJbig2Status(null);
+        renderOcrProcessingCommand();
+      } else if (tabId === 'categories') {
+        alert('Kunde inte ladda arkivstruktur.');
+        categoriesDraft = [];
+        systemCategoriesDraft = createDefaultSystemCategories();
+        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+        renderCategoriesEditor();
+        renderSystemCategoryEditor();
+      } else if (tabId === 'paths') {
+        alert('Kunde inte ladda sökvägsinställningar.');
+        pathsBaselineValue = normalizedPathValue(outputBasePathEl ? outputBasePathEl.value : '');
+      }
+      updateSettingsActionButtons();
+    }
   });
 });
 
 settingsCloseEl.addEventListener('click', () => {
   closeSettingsModal();
-});
-
-pathsCancelEl.addEventListener('click', () => {
-  outputBasePathEl.value = pathsBaselineValue;
-  updateSettingsActionButtons();
-});
-
-pathsApplyEl.addEventListener('click', async () => {
-  try {
-    await savePathSettings();
-  } catch (error) {
-    alert(error.message || 'Kunde inte spara sökvägsinställningar.');
-  }
-});
-
-settingsResetJobsEl.addEventListener('click', async () => {
-  const confirmed = window.confirm(
-    'Detta flyttar tillbaka alla source.pdf till inbox och tar bort alla jobbmappar. Fortsätta?'
-  );
-  if (!confirmed) {
-    return;
-  }
-
-  try {
-    await resetAllJobs();
-  } catch (error) {
-    alert('Kunde inte återställa jobb.');
-  }
 });
 
 selectedJobReprocessEl.addEventListener('click', async () => {
@@ -3951,6 +4074,11 @@ async function fetchState(options = {}) {
       throw new Error('Ogiltigt statussvar');
     }
 
+    stateUpdateTransport = sanitizeStateUpdateTransport(
+      nextState.stateUpdateTransport,
+      stateUpdateTransport
+    );
+
     applyState({
       processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : [],
       readyJobs: nextState.readyJobs,
@@ -3978,7 +4106,30 @@ async function fetchState(options = {}) {
     jobListEl.appendChild(li);
   } finally {
     pollInFlight = false;
+    if (options.syncTransport !== false) {
+      syncStateUpdateTransport();
+    }
   }
+}
+
+function stopStateStream() {
+  if (!stateStream) {
+    return;
+  }
+
+  stateStream.close();
+  stateStream = null;
+}
+
+function scheduleStatePoll(delay = 1500) {
+  if (statePollTimer !== null) {
+    window.clearTimeout(statePollTimer);
+  }
+
+  statePollTimer = window.setTimeout(() => {
+    statePollTimer = null;
+    fetchState();
+  }, delay);
 }
 
 function startStateStream() {
@@ -4022,6 +4173,20 @@ function startStateStream() {
   stateStream = stream;
 }
 
+function syncStateUpdateTransport() {
+  if (stateUpdateTransport === 'sse') {
+    if (statePollTimer !== null) {
+      window.clearTimeout(statePollTimer);
+      statePollTimer = null;
+    }
+    startStateStream();
+    return;
+  }
+
+  stopStateStream();
+  scheduleStatePoll();
+}
+
 updateSettingsActionButtons();
 renderJbig2Status(null);
 renderOcrProcessingCommand();
@@ -4030,5 +4195,5 @@ window.addEventListener('hashchange', () => {
   applyHashState();
 });
 fetchState().finally(() => {
-  startStateStream();
+  syncStateUpdateTransport();
 });

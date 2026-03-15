@@ -12,6 +12,7 @@ try {
         'outputBaseDirectory' => $config['outputBaseDirectory'],
         'ocrSkipExistingText' => (bool) $config['ocrSkipExistingText'],
         'ocrOptimizeLevel' => (int) $config['ocrOptimizeLevel'],
+        'stateUpdateTransport' => (string) $config['stateUpdateTransport'],
         'ocrTextExtractionMethod' => (string) $config['ocrTextExtractionMethod'],
         'ocrPdfTextSubstitutions' => is_array($config['ocrPdfTextSubstitutions'] ?? null)
             ? $config['ocrPdfTextSubstitutions']

@@ -52,6 +52,7 @@ function load_config(): array
     $outputBaseDirectory = $config['outputBaseDirectory'] ?? '';
     $ocrSkipExistingText = $config['ocrSkipExistingText'] ?? true;
     $ocrOptimizeLevel = $config['ocrOptimizeLevel'] ?? 1;
+    $stateUpdateTransport = $config['stateUpdateTransport'] ?? 'polling';
     $ocrTextExtractionMethod = $config['ocrTextExtractionMethod'] ?? 'layout';
     $ocrPdfTextSubstitutions = sanitize_ocr_pdf_text_substitutions(
         $config['ocrPdfTextSubstitutions'] ?? []
@@ -79,6 +80,13 @@ function load_config(): array
     if ($ocrOptimizeLevel < 0 || $ocrOptimizeLevel > 3) {
         $ocrOptimizeLevel = 1;
     }
+    if (!is_string($stateUpdateTransport)) {
+        $stateUpdateTransport = 'polling';
+    }
+    $stateUpdateTransport = trim(strtolower($stateUpdateTransport));
+    if ($stateUpdateTransport !== 'sse') {
+        $stateUpdateTransport = 'polling';
+    }
     if (!is_string($ocrTextExtractionMethod)) {
         $ocrTextExtractionMethod = 'layout';
     }
@@ -93,6 +101,7 @@ function load_config(): array
         'outputBaseDirectory' => trim($outputBaseDirectory),
         'ocrSkipExistingText' => $ocrSkipExistingText,
         'ocrOptimizeLevel' => $ocrOptimizeLevel,
+        'stateUpdateTransport' => $stateUpdateTransport,
         'ocrTextExtractionMethod' => $ocrTextExtractionMethod,
         'ocrPdfTextSubstitutions' => $ocrPdfTextSubstitutions,
     ];
