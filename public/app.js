@@ -3105,6 +3105,11 @@ function buildSenderEditorNode(row, rowIndex) {
   const senderBody = document.createElement('div');
   senderBody.className = 'tree-body folder-body';
 
+  const senderIcon = document.createElement('span');
+  senderIcon.className = 'sender-card-icon';
+  senderIcon.setAttribute('aria-hidden', 'true');
+  senderBody.appendChild(senderIcon);
+
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
   nameInput.placeholder = 'Ex: Region Värmland';
@@ -3231,6 +3236,11 @@ function buildSenderEditorNode(row, rowIndex) {
 
       const paymentBody = document.createElement('div');
       paymentBody.className = 'tree-body category-body';
+
+      const paymentIcon = document.createElement('span');
+      paymentIcon.className = 'sender-payment-icon';
+      paymentIcon.setAttribute('aria-hidden', 'true');
+      paymentBody.appendChild(paymentIcon);
 
       const paymentFields = document.createElement('div');
       paymentFields.className = 'sender-payment-fields';
@@ -3450,6 +3460,11 @@ function renderSenderMergeEditor() {
   const rootBody = document.createElement('div');
   rootBody.className = 'tree-body folder-body';
 
+  const rootIcon = document.createElement('span');
+  rootIcon.className = 'sender-card-icon';
+  rootIcon.setAttribute('aria-hidden', 'true');
+  rootBody.appendChild(rootIcon);
+
   const senderFields = document.createElement('div');
   senderFields.className = 'sender-fields';
 
@@ -3493,6 +3508,11 @@ function renderSenderMergeEditor() {
 
     const paymentBody = document.createElement('div');
     paymentBody.className = 'tree-body category-body';
+
+    const paymentIcon = document.createElement('span');
+    paymentIcon.className = 'sender-payment-icon';
+    paymentIcon.setAttribute('aria-hidden', 'true');
+    paymentBody.appendChild(paymentIcon);
 
     const paymentFields = document.createElement('div');
     paymentFields.className = 'sender-payment-fields';
