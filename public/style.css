@@ -598,14 +598,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: 12px 16px;
   background: rgba(0, 0, 0, 0.35);
   z-index: 50;
 }
 
 .settings-dialog {
   width: min(980px, 96vw);
-  max-height: min(90vh, calc(100dvh - 32px));
+  height: min(920px, calc(100dvh - 24px));
+  max-height: calc(100dvh - 24px);
   background: #fff;
   border-radius: 8px;
   overflow: hidden;
@@ -681,6 +682,15 @@ body {
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+#settings-panel-clients,
+#settings-panel-senders,
+#settings-panel-categories,
+#settings-panel-matching,
+#settings-panel-ocr-processing {
+  display: flex;
+  flex-direction: column;
 }
 
 .settings-panel h3 {
@@ -870,7 +880,9 @@ body {
 
 #clients-textarea {
   width: 100%;
-  height: min(58vh, 460px);
+  flex: 1;
+  min-height: 280px;
+  height: auto;
   resize: vertical;
   border: 1px solid #ccc;
   border-radius: 6px;
@@ -901,7 +913,9 @@ body {
   border: 1px solid #ddd;
   border-radius: 6px;
   padding: 10px;
-  height: min(48vh, 420px);
+  flex: 1;
+  min-height: 280px;
+  height: auto;
   overflow: auto;
 }
 
@@ -930,7 +944,10 @@ body {
 }
 
 .archive-view {
+  flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .matching-list {
@@ -938,11 +955,17 @@ body {
   border-radius: 6px;
   padding: 10px;
   background: #fafafa;
-  height: min(34vh, 250px);
+  flex: 1;
+  min-height: 220px;
+  height: auto;
   overflow: auto;
 }
 
 .matching-replacements-section {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
   margin-bottom: 12px;
 }
 
