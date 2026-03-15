@@ -2750,6 +2750,25 @@ function clearSenderSelections() {
   updateSendersSelectionSummary();
 }
 
+function updateSimilarityGroupCheckboxState(groupEl) {
+  if (!groupEl) {
+    return;
+  }
+  const groupCheckbox = groupEl.querySelector('.sender-group-checkbox');
+  if (!groupCheckbox) {
+    return;
+  }
+  const senderCheckboxes = Array.from(groupEl.querySelectorAll('.sender-select-checkbox'));
+  if (senderCheckboxes.length === 0) {
+    groupCheckbox.checked = false;
+    groupCheckbox.indeterminate = false;
+    return;
+  }
+  const selectedCount = senderCheckboxes.filter((checkbox) => checkbox.checked).length;
+  groupCheckbox.checked = selectedCount === senderCheckboxes.length;
+  groupCheckbox.indeterminate = selectedCount > 0 && selectedCount < senderCheckboxes.length;
+}
+
 function buildSenderMergeState() {
   const selectedEntries = sendersDraft
     .map((row, rowIndex) => ({ row, rowIndex, uiKey: senderUiKey(row) }))
@@ -3078,6 +3097,7 @@ function buildSenderEditorNode(row, rowIndex) {
   const isCollapsed = collapsedSenderUiKeys.has(currentSenderUiKey);
   const senderNode = document.createElement('div');
   senderNode.className = 'tree-node tree-folder';
+  senderNode.dataset.senderUiKey = currentSenderUiKey;
 
   const senderRow = document.createElement('div');
   senderRow.className = 'tree-row';
@@ -3146,6 +3166,12 @@ function buildSenderEditorNode(row, rowIndex) {
     } else {
       collapsedSenderUiKeys.add(currentSenderUiKey);
     }
+    if (sendersSortOrder === 'similarity' && senderNode.isConnected) {
+      const replacementNode = buildSenderEditorNode(row, rowIndex);
+      senderNode.replaceWith(replacementNode);
+      updateSimilarityGroupCheckboxState(replacementNode.closest('.sender-similarity-group'));
+      return;
+    }
     renderSendersEditor();
   });
   senderRow.appendChild(toggleButton);
@@ -3162,6 +3188,7 @@ function buildSenderEditorNode(row, rowIndex) {
       selectedSenderUiKeys.delete(currentSenderUiKey);
     }
     updateSendersSelectionSummary();
+    updateSimilarityGroupCheckboxState(senderNode.closest('.sender-similarity-group'));
   });
 
   const senderSummaryFields = document.createElement('div');
@@ -3309,7 +3336,11 @@ function buildSimilarityGroupNode(group) {
         selectedSenderUiKeys.delete(uiKey);
       }
     });
-    renderSendersEditor();
+    wrapper.querySelectorAll('.sender-select-checkbox').forEach((checkbox) => {
+      checkbox.checked = groupCheckbox.checked;
+    });
+    updateSimilarityGroupCheckboxState(wrapper);
+    updateSendersSelectionSummary();
   });
 
   const brace = document.createElement('div');
