@@ -2769,6 +2769,17 @@ function updateSimilarityGroupCheckboxState(groupEl) {
   groupCheckbox.indeterminate = selectedCount > 0 && selectedCount < senderCheckboxes.length;
 }
 
+function replaceSenderEditorNodeInPlace(senderNode, row, rowIndex) {
+  if (!senderNode || !senderNode.isConnected) {
+    renderSendersEditor();
+    return null;
+  }
+  const replacementNode = buildSenderEditorNode(row, rowIndex);
+  senderNode.replaceWith(replacementNode);
+  updateSimilarityGroupCheckboxState(replacementNode.closest('.sender-similarity-group'));
+  return replacementNode;
+}
+
 function buildSenderMergeState() {
   const selectedEntries = sendersDraft
     .map((row, rowIndex) => ({ row, rowIndex, uiKey: senderUiKey(row) }))
@@ -3192,13 +3203,7 @@ function buildSenderEditorNode(row, rowIndex) {
     } else {
       collapsedSenderUiKeys.add(currentSenderUiKey);
     }
-    if (sendersSortOrder === 'similarity' && senderNode.isConnected) {
-      const replacementNode = buildSenderEditorNode(row, rowIndex);
-      senderNode.replaceWith(replacementNode);
-      updateSimilarityGroupCheckboxState(replacementNode.closest('.sender-similarity-group'));
-      return;
-    }
-    renderSendersEditor();
+    replaceSenderEditorNodeInPlace(senderNode, row, rowIndex);
   });
   senderRow.appendChild(toggleButton);
 
