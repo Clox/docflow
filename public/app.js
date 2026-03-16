@@ -3,6 +3,7 @@ const pdfStackEl = document.getElementById('pdf-stack');
 const pdfFrameEls = Array.from(document.querySelectorAll('.pdf-frame'));
 const ocrViewEl = document.getElementById('ocr-view');
 const ocrHighlightViewEl = document.getElementById('ocr-highlight-view');
+const ocrPagesViewEl = document.getElementById('ocr-pages-view');
 const ocrSourceTabsEl = document.getElementById('ocr-source-tabs');
 const ocrSourceTabEls = Array.from(document.querySelectorAll('[data-ocr-source]'));
 const matchesViewEl = document.getElementById('matches-view');
@@ -151,6 +152,8 @@ let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
 let ocrSearchActiveIndex = -1;
 let ocrSearchDragState = null;
+let ocrDocumentPages = [];
+let ocrRenderedPages = [];
 let matchesRequestSeq = 0;
 let metaRequestSeq = 0;
 let preferredJobIdFromHash = '';
@@ -684,6 +687,7 @@ function applyHashState() {
 function setViewerPdf(jobId) {
   setOcrSearchVisible(false);
   setOcrSourceTabsVisible(false);
+  ocrPagesViewEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
   syncOcrHighlightPresentation();
@@ -709,14 +713,15 @@ async function setViewerOcr(jobId) {
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
-  ocrHighlightViewEl.classList.remove('hidden');
-  ocrViewEl.classList.remove('hidden');
+  ocrPagesViewEl.classList.remove('hidden');
+  ocrHighlightViewEl.classList.add('hidden');
+  ocrViewEl.classList.add('hidden');
   syncOcrHighlightPresentation();
 
   if (!jobId) {
     loadedOcrJobId = '';
     loadedOcrSource = '';
-    ocrViewEl.value = '';
+    setOcrDocumentText('');
     refreshOcrSearch();
     return;
   }
@@ -726,11 +731,11 @@ async function setViewerOcr(jobId) {
     clearOcrViewCache();
   }
 
-  const cachedText = getCachedOcrViewContent(currentOcrSource);
-  if (typeof cachedText === 'string') {
+  const cachedContent = getCachedOcrViewContent(currentOcrSource);
+  if (cachedContent && typeof cachedContent === 'object') {
     loadedOcrJobId = jobId;
     loadedOcrSource = currentOcrSource;
-    ocrViewEl.value = cachedText;
+    setOcrDocumentPages(cachedContent.pages, cachedContent.text || '');
     refreshOcrSearch();
     restoreOcrViewState(currentOcrSource);
     return;
@@ -744,7 +749,7 @@ async function setViewerOcr(jobId) {
   loadedOcrJobId = jobId;
   loadedOcrSource = currentOcrSource;
   const requestSeq = ++ocrRequestSeq;
-  ocrViewEl.value = `Laddar ${ocrSourceDisplayName(currentOcrSource)}...`;
+  setOcrDocumentText(`Laddar ${ocrSourceDisplayName(currentOcrSource)}...`);
   refreshOcrSearch();
 
   try {
@@ -765,9 +770,13 @@ async function setViewerOcr(jobId) {
     }
 
     const text = payload && typeof payload.text === 'string' ? payload.text : '';
+    const pages = payload && Array.isArray(payload.pages) ? payload.pages : null;
     const resolvedText = text || `(Ingen ${ocrSourceDisplayName(currentOcrSource)} hittades)`;
-    setCachedOcrViewContent(currentOcrSource, resolvedText);
-    ocrViewEl.value = resolvedText;
+    setCachedOcrViewContent(currentOcrSource, {
+      text: resolvedText,
+      pages,
+    });
+    setOcrDocumentPages(pages, resolvedText);
     refreshOcrSearch();
     restoreOcrViewState(currentOcrSource);
   } catch (error) {
@@ -775,8 +784,11 @@ async function setViewerOcr(jobId) {
       return;
     }
     const resolvedText = `Kunde inte ladda ${ocrSourceDisplayName(currentOcrSource)}.`;
-    setCachedOcrViewContent(currentOcrSource, resolvedText);
-    ocrViewEl.value = resolvedText;
+    setCachedOcrViewContent(currentOcrSource, {
+      text: resolvedText,
+      pages: null,
+    });
+    setOcrDocumentText(resolvedText);
     refreshOcrSearch();
     restoreOcrViewState(currentOcrSource);
   }
@@ -925,6 +937,7 @@ function renderMatchesContent(payload) {
 async function setViewerMatches(jobId) {
   setOcrSearchVisible(false);
   setOcrSourceTabsVisible(false);
+  ocrPagesViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
@@ -976,6 +989,7 @@ async function setViewerMatches(jobId) {
 async function setViewerMeta(jobId) {
   setOcrSearchVisible(false);
   setOcrSourceTabsVisible(false);
+  ocrPagesViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
@@ -1413,8 +1427,8 @@ function saveCurrentOcrViewState() {
     return;
   }
   ocrViewStateBySource.set(source, {
-    scrollTop: ocrViewEl.scrollTop,
-    scrollLeft: ocrViewEl.scrollLeft,
+    scrollTop: ocrPagesViewEl.scrollTop,
+    scrollLeft: ocrPagesViewEl.scrollLeft,
   });
 }
 
@@ -1423,9 +1437,16 @@ function getCachedOcrViewContent(source) {
   return ocrViewContentBySource.has(normalizedSource) ? ocrViewContentBySource.get(normalizedSource) : null;
 }
 
-function setCachedOcrViewContent(source, text) {
+function setCachedOcrViewContent(source, content) {
   const normalizedSource = normalizeOcrSource(source);
-  ocrViewContentBySource.set(normalizedSource, text);
+  if (typeof content === 'string') {
+    ocrViewContentBySource.set(normalizedSource, {
+      text: content,
+      pages: null,
+    });
+    return;
+  }
+  ocrViewContentBySource.set(normalizedSource, content);
 }
 
 function restoreOcrViewState(source) {
@@ -1435,8 +1456,8 @@ function restoreOcrViewState(source) {
 
   window.requestAnimationFrame(() => {
     window.requestAnimationFrame(() => {
-      ocrViewEl.scrollTop = scrollTop;
-      ocrViewEl.scrollLeft = scrollLeft;
+      ocrPagesViewEl.scrollTop = scrollTop;
+      ocrPagesViewEl.scrollLeft = scrollLeft;
       syncOcrHighlightScroll();
     });
   });
@@ -1445,6 +1466,171 @@ function restoreOcrViewState(source) {
 function clearOcrViewCache() {
   ocrViewContentBySource.clear();
   ocrViewStateBySource.clear();
+}
+
+function splitOcrTextIntoPages(text) {
+  const rawText = typeof text === 'string' ? text.replace(/\r\n/g, '\n') : '';
+  if (rawText === '') {
+    return [{ number: 1, text: '', start: 0, end: 0 }];
+  }
+
+  const markerRegex = /^=== PAGE (\d+) ===\n?/gm;
+  const markers = Array.from(rawText.matchAll(markerRegex));
+  let pageTexts = [];
+
+  if (markers.length > 0) {
+    markers.forEach((match, index) => {
+      const markerText = match[0] || '';
+      const start = (match.index ?? 0) + markerText.length;
+      const end = index + 1 < markers.length ? (markers[index + 1].index ?? rawText.length) : rawText.length;
+      const pageText = rawText
+        .slice(start, end)
+        .replace(/^\n+/, '')
+        .replace(/\n+$/, '');
+      pageTexts.push({
+        number: Number.parseInt(match[1] || '', 10) || index + 1,
+        text: pageText,
+      });
+    });
+  } else if (rawText.includes('\f')) {
+    pageTexts = rawText.split('\f').map((pageText, index) => ({
+      number: index + 1,
+      text: pageText.replace(/^\n+/, '').replace(/\n+$/, ''),
+    }));
+  } else {
+    pageTexts = [{ number: 1, text: rawText }];
+  }
+
+  let cursor = 0;
+  return pageTexts.map((page, index) => {
+    const normalizedText = typeof page.text === 'string' ? page.text : '';
+    const start = cursor;
+    const end = start + normalizedText.length;
+    cursor = end + (index < pageTexts.length - 1 ? 2 : 0);
+    return {
+      number: page.number,
+      text: normalizedText,
+      start,
+      end,
+    };
+  });
+}
+
+function normalizeOcrPages(pages, fallbackText = '') {
+  if (!Array.isArray(pages) || pages.length === 0) {
+    return splitOcrTextIntoPages(fallbackText);
+  }
+
+  const normalizedPages = pages.map((page, index) => ({
+    number: Number.parseInt(String(page && page.number), 10) || index + 1,
+    text: typeof (page && page.text) === 'string' ? page.text.replace(/\r\n/g, '\n') : '',
+  }));
+
+  let cursor = 0;
+  return normalizedPages.map((page, index) => {
+    const start = cursor;
+    const end = start + page.text.length;
+    cursor = end + (index < normalizedPages.length - 1 ? 2 : 0);
+    return {
+      ...page,
+      start,
+      end,
+    };
+  });
+}
+
+function buildOcrPageHighlightHtml(pageText, pageMatches) {
+  if (!Array.isArray(pageMatches) || pageMatches.length === 0) {
+    return escapeHtml(pageText);
+  }
+
+  let html = '';
+  let cursor = 0;
+  pageMatches.forEach((match, index) => {
+    if (match.start > cursor) {
+      html += escapeHtml(pageText.slice(cursor, match.start));
+    }
+    const matchedText = pageText.slice(match.start, match.end);
+    const className = match.globalIndex === ocrSearchActiveIndex ? ' class="is-active"' : '';
+    html += `<mark${className}>${escapeHtml(matchedText)}</mark>`;
+    cursor = match.end;
+  });
+  if (cursor < pageText.length) {
+    html += escapeHtml(pageText.slice(cursor));
+  }
+  return html;
+}
+
+function resizeOcrPage(wrapperEl, highlightEl, textareaEl) {
+  textareaEl.style.height = '1px';
+  const nextHeight = Math.max(highlightEl.scrollHeight, textareaEl.scrollHeight);
+  wrapperEl.style.height = `${nextHeight}px`;
+  textareaEl.style.height = `${nextHeight}px`;
+}
+
+function renderOcrPages() {
+  const pages = ocrDocumentPages;
+  ocrRenderedPages = [];
+  ocrPagesViewEl.innerHTML = '';
+
+  pages.forEach((page) => {
+    const wrapperEl = document.createElement('div');
+    wrapperEl.className = 'ocr-page';
+    wrapperEl.dataset.pageNumber = String(page.number);
+
+    const highlightEl = document.createElement('pre');
+    highlightEl.className = 'ocr-page-highlight';
+
+    const pageMatches = ocrSearchMatches
+      .map((match, globalIndex) => ({
+        start: Math.max(match.start, page.start) - page.start,
+        end: Math.min(match.end, page.end) - page.start,
+        globalIndex,
+      }))
+      .filter((match) => match.start < match.end);
+    highlightEl.innerHTML = buildOcrPageHighlightHtml(page.text, pageMatches);
+
+    const textareaEl = document.createElement('textarea');
+    textareaEl.className = 'ocr-page-text';
+    textareaEl.readOnly = true;
+    textareaEl.wrap = 'off';
+    textareaEl.spellcheck = false;
+    textareaEl.autocorrect = 'off';
+    textareaEl.autocapitalize = 'off';
+    textareaEl.value = page.text;
+    textareaEl.addEventListener('focus', () => {
+      syncOcrHighlightPresentation();
+    });
+    textareaEl.addEventListener('blur', () => {
+      syncOcrHighlightPresentation();
+    });
+
+    wrapperEl.appendChild(highlightEl);
+    wrapperEl.appendChild(textareaEl);
+    ocrPagesViewEl.appendChild(wrapperEl);
+    resizeOcrPage(wrapperEl, highlightEl, textareaEl);
+
+    ocrRenderedPages.push({
+      ...page,
+      wrapperEl,
+      highlightEl,
+      textareaEl,
+    });
+  });
+
+  syncOcrHighlightPresentation();
+}
+
+function setOcrDocumentText(rawText) {
+  ocrDocumentPages = normalizeOcrPages([], rawText);
+  ocrViewEl.value = ocrDocumentPages.map((page) => page.text).join('\n\n');
+  renderOcrPages();
+}
+
+function setOcrDocumentPages(pages, fallbackText = '') {
+  ocrDocumentPages = normalizeOcrPages(pages, fallbackText);
+  ocrViewEl.value = ocrDocumentPages.map((page) => page.text).join('\n\n');
+  renderOcrPages();
 }
 
 function clamp(value, minValue, maxValue) {
@@ -1533,9 +1719,10 @@ function setOcrSearchButtonsEnabled(enabled) {
 }
 
 function syncOcrHighlightPresentation() {
-  const selectionMode = document.activeElement === ocrViewEl;
-  ocrViewEl.classList.toggle('is-selection-mode', selectionMode);
-  ocrHighlightViewEl.classList.toggle('is-suspended', selectionMode);
+  const activeElement = document.activeElement;
+  const selectionMode = activeElement instanceof HTMLElement
+    && activeElement.classList.contains('ocr-page-text');
+  ocrPagesViewEl.classList.toggle('is-selection-mode', selectionMode);
 }
 
 function escapeHtml(text) {
@@ -1606,7 +1793,7 @@ function refreshOcrSearch() {
     ocrSearchActiveIndex = -1;
     setOcrSearchButtonsEnabled(false);
     setOcrSearchStatus('');
-    renderOcrHighlightLayer();
+    renderOcrPages();
     return;
   }
 
@@ -1617,7 +1804,7 @@ function refreshOcrSearch() {
     ocrSearchActiveIndex = -1;
     setOcrSearchButtonsEnabled(false);
     setOcrSearchStatus('Ogiltig regex', true);
-    renderOcrHighlightLayer();
+    renderOcrPages();
     return;
   }
 
@@ -1625,14 +1812,14 @@ function refreshOcrSearch() {
     ocrSearchActiveIndex = -1;
     setOcrSearchButtonsEnabled(false);
     setOcrSearchStatus('0 träffar');
-    renderOcrHighlightLayer();
+    renderOcrPages();
     return;
   }
 
   setOcrSearchButtonsEnabled(true);
   ocrSearchActiveIndex = -1;
   setOcrSearchStatus(`${ocrSearchMatches.length} träffar`);
-  renderOcrHighlightLayer();
+  renderOcrPages();
 }
 
 function stepOcrSearch(direction) {
@@ -1658,55 +1845,37 @@ function stepOcrSearch(direction) {
 }
 
 function renderOcrHighlightLayer() {
-  const text = ocrViewEl.value || '';
-  if (ocrSearchMatches.length === 0) {
-    ocrHighlightViewEl.textContent = text;
-    syncOcrHighlightScroll();
-    return;
-  }
-
-  let html = '';
-  let cursor = 0;
-
-  ocrSearchMatches.forEach((match, index) => {
-    if (match.start > cursor) {
-      html += escapeHtml(text.slice(cursor, match.start));
-    }
-
-    const matchedText = text.slice(match.start, match.end);
-    const className = index === ocrSearchActiveIndex ? ' class="is-active"' : '';
-    html += `<mark${className}>${escapeHtml(matchedText)}</mark>`;
-    cursor = match.end;
-  });
-
-  if (cursor < text.length) {
-    html += escapeHtml(text.slice(cursor));
-  }
-
-  ocrHighlightViewEl.innerHTML = html;
-  syncOcrHighlightScroll();
+  renderOcrPages();
 }
 
 function syncOcrHighlightScroll() {
-  ocrHighlightViewEl.scrollTop = ocrViewEl.scrollTop;
-  ocrHighlightViewEl.scrollLeft = ocrViewEl.scrollLeft;
+  return;
 }
 
 function scrollOcrMatchIntoView(match) {
-  const textBeforeMatch = ocrViewEl.value.slice(0, match.start);
+  const page = ocrRenderedPages.find((entry) => match.start >= entry.start && match.start <= entry.end);
+  if (!page) {
+    return;
+  }
+
+  const localIndex = Math.max(0, match.start - page.start);
+  const textBeforeMatch = page.text.slice(0, localIndex);
   const lineIndex = textBeforeMatch.split('\n').length - 1;
   const lineStart = textBeforeMatch.lastIndexOf('\n') + 1;
-  const columnIndex = match.start - lineStart;
-  const styles = window.getComputedStyle(ocrViewEl);
+  const columnIndex = localIndex - lineStart;
+  const styles = window.getComputedStyle(page.textareaEl);
   const lineHeight = parseFloat(styles.lineHeight) || 17.4;
   const fontSize = parseFloat(styles.fontSize) || 12;
   const approxCharWidth = fontSize * 0.6;
   const topPadding = parseFloat(styles.paddingTop) || 0;
   const leftPadding = parseFloat(styles.paddingLeft) || 0;
-  const targetTop = Math.max(0, topPadding + (lineIndex * lineHeight) - (ocrViewEl.clientHeight / 3));
+  const targetTop = Math.max(
+    0,
+    page.wrapperEl.offsetTop + topPadding + (lineIndex * lineHeight) - (ocrPagesViewEl.clientHeight / 3)
+  );
   const targetLeft = Math.max(0, leftPadding + (columnIndex * approxCharWidth) - 40);
-  ocrViewEl.scrollTop = targetTop;
-  ocrViewEl.scrollLeft = targetLeft;
+  ocrPagesViewEl.scrollTop = targetTop;
+  ocrPagesViewEl.scrollLeft = targetLeft;
   syncOcrHighlightScroll();
 }
 
@@ -5517,14 +5686,6 @@ ocrSearchInputEl.addEventListener('input', () => {
   refreshOcrSearch();
 });
 
-ocrViewEl.addEventListener('focus', () => {
-  syncOcrHighlightPresentation();
-});
-
-ocrViewEl.addEventListener('blur', () => {
-  syncOcrHighlightPresentation();
-});
-
 ocrSearchRegexEl.addEventListener('change', () => {
   refreshOcrSearch();
 });
@@ -5549,7 +5710,7 @@ ocrSearchInputEl.addEventListener('keydown', (event) => {
   stepOcrSearch(1);
 });
 
-ocrViewEl.addEventListener('scroll', () => {
+ocrPagesViewEl.addEventListener('scroll', () => {
   saveCurrentOcrViewState();
   syncOcrHighlightScroll();
 });

@@ -514,6 +514,84 @@ body {
   font: 14px/1.45 monospace;
 }
 
+.ocr-pages-view {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 64px 14px 14px;
+  overflow: auto;
+  background: #fafafa;
+}
+
+.ocr-page {
+  position: relative;
+  margin-bottom: 14px;
+  border: 1px solid #e3e8f0;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+}
+
+.ocr-page:last-child {
+  margin-bottom: 0;
+}
+
+.ocr-page-highlight,
+.ocr-page-text {
+  margin: 0;
+  padding: 14px;
+  white-space: pre;
+  word-break: normal;
+  font: 12px/1.45 monospace;
+}
+
+.ocr-page-highlight {
+  color: #111;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ocr-page-highlight mark {
+  background: #f8e38b;
+  color: inherit;
+  padding: 0;
+}
+
+.ocr-page-highlight mark.is-active {
+  background: #f3b33d;
+}
+
+.ocr-page-text {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+}
+
+.ocr-pages-view.is-selection-mode .ocr-page-highlight {
+  opacity: 0;
+}
+
+.ocr-pages-view.is-selection-mode .ocr-page-text {
+  color: #111;
+  caret-color: #111;
+}
+
+.ocr-page-text::selection {
+  background: rgba(37, 99, 235, 0.18);
+}
+
+.ocr-page-text::-moz-selection {
+  background: rgba(37, 99, 235, 0.18);
+}
+
 .ocr-highlight-view {
   z-index: 1;
   pointer-events: none;

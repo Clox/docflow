@@ -93,6 +93,7 @@
           <iframe class="pdf-frame"></iframe>
           <iframe class="pdf-frame"></iframe>
         </div>
+        <div id="ocr-pages-view" class="ocr-pages-view hidden"></div>
         <pre id="ocr-highlight-view" class="ocr-highlight-view hidden" aria-hidden="true"></pre>
         <textarea
           id="ocr-view"
