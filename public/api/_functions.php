@@ -1353,6 +1353,23 @@ function regenerate_debug_text_files_from_json(string $jobDir, string $engine): 
     write_combined_page_debug_text($jobDir, $engine, $engine . '.txt');
 }
 
+function load_job_engine_debug_pages(string $jobDir, string $engine): array
+{
+    $jsonPaths = glob($jobDir . '/' . $engine . '_page_*.json') ?: [];
+    sort($jsonPaths, SORT_NATURAL);
+
+    $pages = [];
+    foreach ($jsonPaths as $jsonPath) {
+        $payload = load_json_file($jsonPath);
+        if (!is_array($payload)) {
+            continue;
+        }
+        $pages[] = $payload;
+    }
+
+    return $pages;
+}
+
 function last_ocrmypdf_error(): ?string
 {
     $value = $GLOBALS['docflow_last_ocrmypdf_error'] ?? null;
@@ -1782,6 +1799,31 @@ function normalize_debug_word_bbox($bbox): ?array
         return null;
     }
 
+    if (
+        array_key_exists('x0', $bbox)
+        && array_key_exists('y0', $bbox)
+        && array_key_exists('x1', $bbox)
+        && array_key_exists('y1', $bbox)
+    ) {
+        $values = [
+            $bbox['x0'],
+            $bbox['y0'],
+            $bbox['x1'],
+            $bbox['y1'],
+        ];
+        foreach ($values as $value) {
+            if (!(is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)))) {
+                return null;
+            }
+        }
+        return [
+            'x0' => (float) $bbox['x0'],
+            'y0' => (float) $bbox['y0'],
+            'x1' => (float) $bbox['x1'],
+            'y1' => (float) $bbox['y1'],
+        ];
+    }
+
     if (count($bbox) >= 4 && !is_array($bbox[0] ?? null)) {
         $values = array_slice($bbox, 0, 4);
         foreach ($values as $value) {
@@ -1956,6 +1998,296 @@ function render_grid_text_from_debug_payload(array $payload): string
 
     $text = $payload['text'] ?? '';
     return is_string($text) ? trim($text) : '';
+}
+
+function normalize_debug_words_for_merge(array $payload, string $engine): array
+{
+    $words = is_array($payload['words'] ?? null) ? $payload['words'] : [];
+    $normalized = [];
+
+    foreach ($words as $index => $word) {
+        if (!is_array($word)) {
+            continue;
+        }
+
+        $text = is_string($word['text'] ?? null) ? trim((string) $word['text']) : '';
+        if ($text === '') {
+            continue;
+        }
+
+        $bbox = normalize_debug_word_bbox($word['bbox'] ?? null);
+        if ($bbox === null) {
+            continue;
+        }
+
+        $score = null;
+        if ($engine === 'tesseract') {
+            $confidence = $word['confidence'] ?? null;
+            if (is_int($confidence) || is_float($confidence) || (is_string($confidence) && is_numeric($confidence))) {
+                $score = max(0.0, min(1.0, ((float) $confidence) / 100.0));
+            }
+        } else {
+            $candidateScore = $word['score'] ?? null;
+            if (is_int($candidateScore) || is_float($candidateScore) || (is_string($candidateScore) && is_numeric($candidateScore))) {
+                $score = max(0.0, min(1.0, (float) $candidateScore));
+            }
+        }
+
+        $normalized[] = [
+            'engine' => $engine,
+            'index' => (int) $index,
+            'text' => $text,
+            'bbox' => $bbox,
+            'score' => $score,
+        ];
+    }
+
+    return $normalized;
+}
+
+function bbox_intersection_area(array $left, array $right): float
+{
+    $x0 = max((float) ($left['x0'] ?? 0.0), (float) ($right['x0'] ?? 0.0));
+    $y0 = max((float) ($left['y0'] ?? 0.0), (float) ($right['y0'] ?? 0.0));
+    $x1 = min((float) ($left['x1'] ?? 0.0), (float) ($right['x1'] ?? 0.0));
+    $y1 = min((float) ($left['y1'] ?? 0.0), (float) ($right['y1'] ?? 0.0));
+    if ($x1 <= $x0 || $y1 <= $y0) {
+        return 0.0;
+    }
+    return ($x1 - $x0) * ($y1 - $y0);
+}
+
+function bbox_area(array $bbox): float
+{
+    $width = max(0.0, (float) ($bbox['x1'] ?? 0.0) - (float) ($bbox['x0'] ?? 0.0));
+    $height = max(0.0, (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0));
+    return $width * $height;
+}
+
+function bbox_iou(array $left, array $right): float
+{
+    $intersection = bbox_intersection_area($left, $right);
+    if ($intersection <= 0) {
+        return 0.0;
+    }
+
+    $union = bbox_area($left) + bbox_area($right) - $intersection;
+    if ($union <= 0) {
+        return 0.0;
+    }
+
+    return $intersection / $union;
+}
+
+function bbox_center_distance_ratio(array $left, array $right): float
+{
+    $leftCenterX = (((float) ($left['x0'] ?? 0.0)) + ((float) ($left['x1'] ?? 0.0))) / 2.0;
+    $leftCenterY = (((float) ($left['y0'] ?? 0.0)) + ((float) ($left['y1'] ?? 0.0))) / 2.0;
+    $rightCenterX = (((float) ($right['x0'] ?? 0.0)) + ((float) ($right['x1'] ?? 0.0))) / 2.0;
+    $rightCenterY = (((float) ($right['y0'] ?? 0.0)) + ((float) ($right['y1'] ?? 0.0))) / 2.0;
+
+    $distance = sqrt((($leftCenterX - $rightCenterX) ** 2) + (($leftCenterY - $rightCenterY) ** 2));
+    $scale = max(
+        1.0,
+        (float) ($left['x1'] ?? 0.0) - (float) ($left['x0'] ?? 0.0),
+        (float) ($left['y1'] ?? 0.0) - (float) ($left['y0'] ?? 0.0),
+        (float) ($right['x1'] ?? 0.0) - (float) ($right['x0'] ?? 0.0),
+        (float) ($right['y1'] ?? 0.0) - (float) ($right['y0'] ?? 0.0)
+    );
+
+    return $distance / $scale;
+}
+
+function texts_are_similar_enough(string $left, string $right): bool
+{
+    if ($left === $right) {
+        return true;
+    }
+
+    $normalizedLeft = preg_replace('/\s+/u', '', lowercase_text($left));
+    $normalizedRight = preg_replace('/\s+/u', '', lowercase_text($right));
+    if (!is_string($normalizedLeft) || !is_string($normalizedRight)) {
+        return false;
+    }
+    if ($normalizedLeft === $normalizedRight) {
+        return true;
+    }
+
+    if ($normalizedLeft === '' || $normalizedRight === '') {
+        return false;
+    }
+
+    $maxLen = max(strlen($normalizedLeft), strlen($normalizedRight));
+    if ($maxLen === 0) {
+        return true;
+    }
+
+    $distance = levenshtein($normalizedLeft, $normalizedRight);
+    return $distance <= max(1, (int) floor($maxLen * 0.2));
+}
+
+function choose_experiment_merged_word(array $tesseractWord, ?array $rapidocrWord): array
+{
+    if ($rapidocrWord === null) {
+        return [
+            'chosen' => $tesseractWord,
+            'source' => 'tesseract-only',
+            'rapidocrWord' => null,
+        ];
+    }
+
+    $tesseractScore = is_float($tesseractWord['score']) ? $tesseractWord['score'] : 0.0;
+    $rapidocrScore = is_float($rapidocrWord['score']) ? $rapidocrWord['score'] : 0.0;
+    $sameText = texts_are_similar_enough($tesseractWord['text'], $rapidocrWord['text']);
+
+    if ($sameText) {
+        return [
+            'chosen' => $rapidocrScore >= $tesseractScore ? $rapidocrWord : $tesseractWord,
+            'source' => $rapidocrScore >= $tesseractScore ? 'rapidocr-agree' : 'tesseract-agree',
+            'rapidocrWord' => $rapidocrWord,
+        ];
+    }
+
+    if ($rapidocrScore >= ($tesseractScore + 0.08)) {
+        return [
+            'chosen' => $rapidocrWord,
+            'source' => 'rapidocr-score',
+            'rapidocrWord' => $rapidocrWord,
+        ];
+    }
+
+    return [
+        'chosen' => $tesseractWord,
+        'source' => 'tesseract-score',
+        'rapidocrWord' => $rapidocrWord,
+    ];
+}
+
+function build_experiment_merge_for_pages(array $tesseractPages, array $rapidocrPages): array
+{
+    $pageCount = max(count($tesseractPages), count($rapidocrPages));
+    $pages = [];
+
+    for ($pageIndex = 0; $pageIndex < $pageCount; $pageIndex++) {
+        $tesseractPayload = is_array($tesseractPages[$pageIndex] ?? null) ? $tesseractPages[$pageIndex] : [];
+        $rapidocrPayload = is_array($rapidocrPages[$pageIndex] ?? null) ? $rapidocrPages[$pageIndex] : [];
+        $tesseractWords = normalize_debug_words_for_merge($tesseractPayload, 'tesseract');
+        $rapidocrWords = normalize_debug_words_for_merge($rapidocrPayload, 'rapidocr');
+        $rapidocrUsed = [];
+        $mergedWords = [];
+        $decisions = [];
+
+        foreach ($tesseractWords as $tesseractWord) {
+            $bestIndex = null;
+            $bestScore = -1.0;
+            foreach ($rapidocrWords as $rapidocrIndex => $rapidocrWord) {
+                if (isset($rapidocrUsed[$rapidocrIndex])) {
+                    continue;
+                }
+
+                $iou = bbox_iou($tesseractWord['bbox'], $rapidocrWord['bbox']);
+                $distanceRatio = bbox_center_distance_ratio($tesseractWord['bbox'], $rapidocrWord['bbox']);
+                $score = $iou - ($distanceRatio * 0.2);
+                if ($iou <= 0.02 && $distanceRatio > 1.2) {
+                    continue;
+                }
+                if ($score > $bestScore) {
+                    $bestScore = $score;
+                    $bestIndex = $rapidocrIndex;
+                }
+            }
+
+            $matchedRapidocrWord = null;
+            if ($bestIndex !== null && $bestScore > -0.05) {
+                $matchedRapidocrWord = $rapidocrWords[$bestIndex];
+                $rapidocrUsed[$bestIndex] = true;
+            }
+
+            $decision = choose_experiment_merged_word($tesseractWord, $matchedRapidocrWord);
+            $chosen = $decision['chosen'];
+            $mergedWords[] = [
+                'text' => $chosen['text'],
+                'bbox' => $chosen['bbox'],
+                'score' => $chosen['score'],
+                'source' => $decision['source'],
+            ];
+            $decisions[] = [
+                'tesseract' => $tesseractWord,
+                'rapidocr' => $decision['rapidocrWord'],
+                'chosenSource' => $decision['source'],
+                'chosenText' => $chosen['text'],
+            ];
+        }
+
+        foreach ($rapidocrWords as $rapidocrIndex => $rapidocrWord) {
+            if (isset($rapidocrUsed[$rapidocrIndex])) {
+                continue;
+            }
+            $mergedWords[] = [
+                'text' => $rapidocrWord['text'],
+                'bbox' => $rapidocrWord['bbox'],
+                'score' => $rapidocrWord['score'],
+                'source' => 'rapidocr-unmatched',
+            ];
+            $decisions[] = [
+                'tesseract' => null,
+                'rapidocr' => $rapidocrWord,
+                'chosenSource' => 'rapidocr-unmatched',
+                'chosenText' => $rapidocrWord['text'],
+            ];
+        }
+
+        $renderWords = array_map(static function (array $word): array {
+            return [
+                'text' => $word['text'],
+                'bbox' => $word['bbox'],
+                'score' => $word['score'],
+            ];
+        }, $mergedWords);
+
+        $pages[] = [
+            'pageNumber' => $pageIndex + 1,
+            'tesseract' => $tesseractPayload,
+            'rapidocr' => $rapidocrPayload,
+            'mergedWords' => $mergedWords,
+            'mergedText' => render_grid_text_from_debug_payload(['words' => $renderWords]),
+            'decisions' => $decisions,
+        ];
+    }
+
+    return $pages;
+}
+
+function run_job_merge_experiment(string $jobDir): array
+{
+    if (!is_dir($jobDir)) {
+        throw new RuntimeException('Job directory not found');
+    }
+
+    $tesseractPages = load_job_engine_debug_pages($jobDir, 'tesseract');
+    $rapidocrPages = load_job_engine_debug_pages($jobDir, 'rapidocr');
+    if ($tesseractPages === [] && $rapidocrPages === []) {
+        throw new RuntimeException('No OCR debug page JSON files found');
+    }
+
+    $pages = build_experiment_merge_for_pages($tesseractPages, $rapidocrPages);
+    $payload = [
+        'generatedAt' => now_iso(),
+        'pageCount' => count($pages),
+        'pages' => $pages,
+    ];
+
+    write_json_file($jobDir . '/merge-experiment.json', $payload);
+
+    $pageTexts = [];
+    foreach ($pages as $page) {
+        $pageNumber = (int) ($page['pageNumber'] ?? 0);
+        $mergedText = is_string($page['mergedText'] ?? null) ? rtrim((string) $page['mergedText']) : '';
+        $pageTexts[] = '=== PAGE ' . $pageNumber . " ===\n" . $mergedText;
+    }
+    file_put_contents($jobDir . '/merge-experiment.txt', implode("\n\n", $pageTexts) . "\n");
+
+    return $payload;
 }
 
 function extract_bbox_layout_objects_from_pdf(string $pdfPath): ?array
