@@ -240,16 +240,30 @@
       <p>JBIG2 används för att komprimera svartvita skannade bilder effektivare. Om det finns installerat kan OCRmyPDF ofta ge betydligt mindre PDF-filer.</p>
       <p>Installationskommando:</p>
       <pre id="jbig2-install-command" class="settings-command"></pre>
-	    </div>
-	    <p>OCRmyPDF-kommandot som körs är i praktiken:</p>
-	    <pre id="ocr-processing-command" class="settings-command"></pre>
-	    <p>Textuttag (OCR-data) görs i praktiken med:</p>
-	    <pre id="ocr-text-extraction-command" class="settings-command"></pre>
-	    <p class="settings-help">Vid <code>bbox-grid</code> läser Docflow XML från <code>pdftotext -bbox-layout</code> och bygger sedan en rutnätstext från samma data.</p>
-	    <label class="settings-checkbox">
-	      <input id="ocr-skip-existing-text" type="checkbox" checked>
-	      <span>Hoppa över dokument som redan har OCR-text</span>
-	    </label>
+    </div>
+    <div class="ocr-status-card">
+      <div class="ocr-status-row">
+        <span class="ocr-status-label">RapidOCR</span>
+        <div class="ocr-status-actions">
+          <span id="rapidocr-status-badge-wrap" class="ocr-status-badge-wrap">
+            <span id="rapidocr-status-badge" class="ocr-status-badge">Kontrollerar...</span>
+          </span>
+          <button id="rapidocr-refresh-button" class="ocr-status-refresh hidden" type="button" aria-label="Kontrollera igen" title="Kontrollera igen">↻</button>
+        </div>
+      </div>
+      <p>RapidOCR kan användas för kompletterande OCR-relaterade funktioner utanför OCRmyPDF-flödet. Här kan du snabbt se om Python-paketet finns tillgängligt.</p>
+      <p>Installationskommando:</p>
+      <pre id="rapidocr-install-command" class="settings-command"></pre>
+    </div>
+    <p>OCRmyPDF-kommandot som körs är i praktiken:</p>
+    <pre id="ocr-processing-command" class="settings-command"></pre>
+    <p>Textuttag (OCR-data) görs i praktiken med:</p>
+    <pre id="ocr-text-extraction-command" class="settings-command"></pre>
+    <p class="settings-help">Vid <code>bbox-grid</code> läser Docflow XML från <code>pdftotext -bbox-layout</code> och bygger sedan en rutnätstext från samma data.</p>
+    <label class="settings-checkbox">
+      <input id="ocr-skip-existing-text" type="checkbox" checked>
+      <span>Hoppa över dokument som redan har OCR-text</span>
+    </label>
     <p class="settings-help">Ikryssad använder <code>--mode skip</code>. Avmarkerad använder <code>--mode redo</code>. I <code>redo</code>-läge utelämnas <code>--deskew</code> eftersom OCRmyPDF 17 inte tillåter den kombinationen.</p>
     <div class="settings-group">
       <label class="settings-label" for="ocr-optimize-level">Komprimeringsnivå</label>

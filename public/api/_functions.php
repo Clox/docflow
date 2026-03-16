@@ -952,6 +952,63 @@ function jbig2_status_payload(): array
     ];
 }
 
+function python_command_path(): ?string
+{
+    static $cached = null;
+    static $loaded = false;
+
+    if ($loaded) {
+        return $cached;
+    }
+
+    $loaded = true;
+    $python3 = trim((string) shell_exec('command -v python3 2>/dev/null'));
+    if ($python3 !== '') {
+        $cached = $python3;
+        return $cached;
+    }
+
+    $python = trim((string) shell_exec('command -v python 2>/dev/null'));
+    $cached = $python !== '' ? $python : null;
+    return $cached;
+}
+
+function rapidocr_status_payload(): array
+{
+    $python = python_command_path();
+    $installed = false;
+    $module = null;
+
+    if ($python !== null) {
+        $checkRapidocr = escapeshellarg($python)
+            . ' -c '
+            . escapeshellarg('import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("rapidocr") else 1)')
+            . ' 2>/dev/null';
+        exec($checkRapidocr, $output, $exitCode);
+        if ($exitCode === 0) {
+            $installed = true;
+            $module = 'rapidocr';
+        } else {
+            $checkLegacy = escapeshellarg($python)
+                . ' -c '
+                . escapeshellarg('import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("rapidocr_onnxruntime") else 1)')
+                . ' 2>/dev/null';
+            exec($checkLegacy, $legacyOutput, $legacyExitCode);
+            if ($legacyExitCode === 0) {
+                $installed = true;
+                $module = 'rapidocr_onnxruntime';
+            }
+        }
+    }
+
+    return [
+        'installed' => $installed,
+        'installCommand' => 'python3 -m pip install rapidocr onnxruntime',
+        'python' => $python,
+        'module' => $module,
+    ];
+}
+
 function docflow_ocrmypdf_plugin_path(): ?string
 {
     $path = PROJECT_ROOT . '/docflow-ocrmypdf-plugin/docflow_ocrmypdf_plugin.py';

@@ -70,6 +70,10 @@ let jbig2StatusBadgeWrapEl = null;
 let jbig2StatusBadgeEl = null;
 let jbig2InstallCommandEl = null;
 let jbig2RefreshButtonEl = null;
+let rapidocrStatusBadgeWrapEl = null;
+let rapidocrStatusBadgeEl = null;
+let rapidocrInstallCommandEl = null;
+let rapidocrRefreshButtonEl = null;
 let ocrProcessingCancelEl = null;
 let ocrProcessingApplyEl = null;
 let categoriesListEl = null;
@@ -1897,6 +1901,10 @@ function bindSettingsPanelRefs(tabId) {
 	    jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
 	    jbig2InstallCommandEl = document.getElementById('jbig2-install-command');
 	    jbig2RefreshButtonEl = document.getElementById('jbig2-refresh-button');
+	    rapidocrStatusBadgeWrapEl = document.getElementById('rapidocr-status-badge-wrap');
+	    rapidocrStatusBadgeEl = document.getElementById('rapidocr-status-badge');
+	    rapidocrInstallCommandEl = document.getElementById('rapidocr-install-command');
+	    rapidocrRefreshButtonEl = document.getElementById('rapidocr-refresh-button');
 	    ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
     ocrProcessingApplyEl = document.getElementById('ocr-processing-apply');
     ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
@@ -1957,7 +1965,18 @@ function bindSettingsPanelRefs(tabId) {
         alert('Kunde inte kontrollera JBIG2-status.');
       }
     });
+    rapidocrRefreshButtonEl.addEventListener('click', async () => {
+      startStatusRefreshSpin(rapidocrRefreshButtonEl);
+      rapidocrStatusBadgeWrapEl.classList.add('is-collapsed');
+      try {
+        await loadOcrProcessingSettings({ deferRefreshVisibility: true });
+      } catch (error) {
+        renderRapidocrStatus(null, { deferRefreshVisibility: true });
+        alert('Kunde inte kontrollera RapidOCR-status.');
+      }
+    });
     renderJbig2Status(null);
+    renderRapidocrStatus(null);
     renderOcrProcessingCommand();
   } else if (tabId === 'categories') {
     categoriesListEl = document.getElementById('categories-list');
@@ -4347,67 +4366,89 @@ function renderOcrProcessingCommand() {
   }
 }
 
-function startJbig2RefreshSpin() {
-  if (!jbig2RefreshButtonEl) {
+function startStatusRefreshSpin(buttonEl) {
+  if (!buttonEl) {
     return;
   }
-  jbig2RefreshButtonEl.disabled = true;
-  jbig2RefreshButtonEl.classList.add('is-spinning');
+  buttonEl.disabled = true;
+  buttonEl.classList.add('is-spinning');
 }
 
-function stopJbig2RefreshSpin(hideAfterStop) {
-  if (!jbig2RefreshButtonEl) {
+function stopStatusRefreshSpin(buttonEl, hideAfterStop) {
+  if (!buttonEl) {
     return;
   }
   const shouldHide = hideAfterStop === true;
-  if (!jbig2RefreshButtonEl.classList.contains('is-spinning')) {
-    jbig2RefreshButtonEl.disabled = false;
-    jbig2RefreshButtonEl.classList.toggle('hidden', shouldHide);
+  if (!buttonEl.classList.contains('is-spinning')) {
+    buttonEl.disabled = false;
+    buttonEl.classList.toggle('hidden', shouldHide);
     return;
   }
 
-  if (jbig2RefreshButtonEl.dataset.stopPending === 'true') {
-    jbig2RefreshButtonEl.dataset.hideAfterStop = shouldHide ? 'true' : 'false';
+  if (buttonEl.dataset.stopPending === 'true') {
+    buttonEl.dataset.hideAfterStop = shouldHide ? 'true' : 'false';
     return;
   }
 
-  jbig2RefreshButtonEl.dataset.stopPending = 'true';
-  jbig2RefreshButtonEl.dataset.hideAfterStop = shouldHide ? 'true' : 'false';
-  jbig2RefreshButtonEl.addEventListener('animationiteration', () => {
-    const finalHide = jbig2RefreshButtonEl.dataset.hideAfterStop === 'true';
-    jbig2RefreshButtonEl.classList.remove('is-spinning');
-    jbig2RefreshButtonEl.disabled = false;
-    jbig2RefreshButtonEl.classList.toggle('hidden', finalHide);
-    jbig2RefreshButtonEl.dataset.stopPending = 'false';
-    jbig2RefreshButtonEl.dataset.hideAfterStop = 'false';
+  buttonEl.dataset.stopPending = 'true';
+  buttonEl.dataset.hideAfterStop = shouldHide ? 'true' : 'false';
+  buttonEl.addEventListener('animationiteration', () => {
+    const finalHide = buttonEl.dataset.hideAfterStop === 'true';
+    buttonEl.classList.remove('is-spinning');
+    buttonEl.disabled = false;
+    buttonEl.classList.toggle('hidden', finalHide);
+    buttonEl.dataset.stopPending = 'false';
+    buttonEl.dataset.hideAfterStop = 'false';
   }, { once: true });
 }
 
-function renderJbig2Status(jbig2, options = {}) {
-  if (!jbig2StatusBadgeEl || !jbig2StatusBadgeWrapEl || !jbig2RefreshButtonEl || !jbig2InstallCommandEl) {
+function renderInstallableOcrToolStatus(status, elements, fallbackInstallCommand, options = {}) {
+  if (!elements.badgeEl || !elements.badgeWrapEl || !elements.refreshButtonEl || !elements.installCommandEl) {
     return;
   }
-  const installed = !!(jbig2 && jbig2.installed === true);
+  const installed = !!(status && status.installed === true);
   const deferRefreshVisibility = options && options.deferRefreshVisibility === true;
-  jbig2StatusBadgeEl.textContent = installed ? 'Installerad' : 'Ej installerad';
-  jbig2StatusBadgeEl.classList.toggle('is-installed', installed);
-  jbig2StatusBadgeEl.classList.toggle('is-missing', !installed);
+  elements.badgeEl.textContent = installed ? 'Installerad' : 'Ej installerad';
+  elements.badgeEl.classList.toggle('is-installed', installed);
+  elements.badgeEl.classList.toggle('is-missing', !installed);
   if (deferRefreshVisibility) {
-    stopJbig2RefreshSpin(installed);
+    stopStatusRefreshSpin(elements.refreshButtonEl, installed);
   } else {
-    jbig2RefreshButtonEl.classList.remove('is-spinning');
-    jbig2RefreshButtonEl.disabled = false;
-    jbig2RefreshButtonEl.classList.toggle('hidden', installed);
+    elements.refreshButtonEl.classList.remove('is-spinning');
+    elements.refreshButtonEl.disabled = false;
+    elements.refreshButtonEl.classList.toggle('hidden', installed);
   }
-  jbig2StatusBadgeWrapEl.classList.remove('is-collapsed');
-  jbig2StatusBadgeWrapEl.classList.remove('is-animating');
-  void jbig2StatusBadgeWrapEl.offsetWidth;
-  jbig2StatusBadgeWrapEl.classList.add('is-animating');
+  elements.badgeWrapEl.classList.remove('is-collapsed');
+  elements.badgeWrapEl.classList.remove('is-animating');
+  void elements.badgeWrapEl.offsetWidth;
+  elements.badgeWrapEl.classList.add('is-animating');
 
-  const installCommand = jbig2 && typeof jbig2.installCommand === 'string' && jbig2.installCommand.trim() !== ''
-    ? jbig2.installCommand.trim()
-    : 'sudo apt install jbig2';
-  jbig2InstallCommandEl.textContent = installCommand;
+  const installCommand = status && typeof status.installCommand === 'string' && status.installCommand.trim() !== ''
+    ? status.installCommand.trim()
+    : fallbackInstallCommand;
+  elements.installCommandEl.textContent = installCommand;
+}
+
+function startJbig2RefreshSpin() {
+  startStatusRefreshSpin(jbig2RefreshButtonEl);
+}
+
+function renderJbig2Status(jbig2, options = {}) {
+  renderInstallableOcrToolStatus(jbig2, {
+    badgeEl: jbig2StatusBadgeEl,
+    badgeWrapEl: jbig2StatusBadgeWrapEl,
+    refreshButtonEl: jbig2RefreshButtonEl,
+    installCommandEl: jbig2InstallCommandEl,
+  }, 'sudo apt install jbig2', options);
+}
+
+function renderRapidocrStatus(rapidocr, options = {}) {
+  renderInstallableOcrToolStatus(rapidocr, {
+    badgeEl: rapidocrStatusBadgeEl,
+    badgeWrapEl: rapidocrStatusBadgeWrapEl,
+    refreshButtonEl: rapidocrRefreshButtonEl,
+    installCommandEl: rapidocrInstallCommandEl,
+  }, 'python3 -m pip install rapidocr onnxruntime', options);
 }
 
 async function loadClientsSettings() {
@@ -4507,6 +4548,10 @@ async function loadOcrProcessingSettings(options = {}) {
     || !Number.isInteger(payload.ocrOptimizeLevel)
     || typeof payload.ocrTextExtractionMethod !== 'string'
     || !Array.isArray(payload.ocrPdfTextSubstitutions)
+    || !payload.jbig2
+    || typeof payload.jbig2 !== 'object'
+    || !payload.rapidocr
+    || typeof payload.rapidocr !== 'object'
   ) {
     throw new Error('Ogiltigt svar för OCR-inställningar');
   }
@@ -4526,6 +4571,7 @@ async function loadOcrProcessingSettings(options = {}) {
   ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
   renderOcrPdfSubstitutionsEditor();
   renderJbig2Status(payload.jbig2, options);
+  renderRapidocrStatus(payload.rapidocr, options);
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
 }
