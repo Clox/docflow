@@ -3,6 +3,8 @@ const pdfStackEl = document.getElementById('pdf-stack');
 const pdfFrameEls = Array.from(document.querySelectorAll('.pdf-frame'));
 const ocrViewEl = document.getElementById('ocr-view');
 const ocrHighlightViewEl = document.getElementById('ocr-highlight-view');
+const ocrSourceTabsEl = document.getElementById('ocr-source-tabs');
+const ocrSourceTabEls = Array.from(document.querySelectorAll('[data-ocr-source]'));
 const matchesViewEl = document.getElementById('matches-view');
 const metaViewEl = document.getElementById('meta-view');
 const viewModeEl = document.getElementById('view-mode');
@@ -131,6 +133,7 @@ const SYSTEM_CATEGORIES = {
 
 let selectedJobId = '';
 let loadedOcrJobId = '';
+let loadedOcrSource = '';
 let loadedMatchesJobId = '';
 let loadedMetaJobId = '';
 let pdfFrameJobIds = pdfFrameEls.map(() => '');
@@ -143,6 +146,7 @@ let jobsTickWatchdogStarted = false;
 let stateUpdateTransport = 'polling';
 let jobsStateSig = '';
 let currentViewMode = 'pdf';
+let currentOcrSource = 'merged';
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
 let ocrSearchActiveIndex = -1;
@@ -648,6 +652,7 @@ function setViewMode(mode, options = {}) {
   currentViewMode = nextMode;
   viewModeEl.value = nextMode;
   loadedOcrJobId = '';
+  loadedOcrSource = '';
   loadedMatchesJobId = '';
   loadedMetaJobId = '';
   setViewerJob(selectedJobId);
@@ -673,6 +678,7 @@ function applyHashState() {
 
 function setViewerPdf(jobId) {
   setOcrSearchVisible(false);
+  setOcrSourceTabsVisible(false);
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
   syncOcrHighlightPresentation();
@@ -684,6 +690,7 @@ function setViewerPdf(jobId) {
 
 async function setViewerOcr(jobId) {
   setOcrSearchVisible(true);
+  setOcrSourceTabsVisible(true);
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
@@ -693,22 +700,30 @@ async function setViewerOcr(jobId) {
 
   if (!jobId) {
     loadedOcrJobId = '';
+    loadedOcrSource = '';
     ocrViewEl.value = '';
     refreshOcrSearch();
     return;
   }
 
-  if (loadedOcrJobId === jobId) {
+  if (loadedOcrJobId === jobId && loadedOcrSource === currentOcrSource) {
     return;
   }
 
   loadedOcrJobId = jobId;
+  loadedOcrSource = currentOcrSource;
   const requestSeq = ++ocrRequestSeq;
-  ocrViewEl.value = 'Laddar OCR-data...';
+  ocrViewEl.value = `Laddar ${ocrSourceDisplayName(currentOcrSource)}...`;
   refreshOcrSearch();
 
   try {
-    const response = await fetch('/api/get-job-ocr.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
+    const response = await fetch(
+      '/api/get-job-ocr.php?id='
+        + encodeURIComponent(jobId)
+        + '&source='
+        + encodeURIComponent(currentOcrSource),
+      { cache: 'no-store' }
+    );
     if (!response.ok) {
       throw new Error('Kunde inte hämta OCR-data');
     }
@@ -719,13 +734,13 @@ async function setViewerOcr(jobId) {
     }
 
     const text = payload && typeof payload.text === 'string' ? payload.text : '';
-    ocrViewEl.value = text || '(Ingen OCR-text hittades)';
+    ocrViewEl.value = text || `(Ingen ${ocrSourceDisplayName(currentOcrSource)} hittades)`;
     refreshOcrSearch();
   } catch (error) {
     if (requestSeq !== ocrRequestSeq) {
       return;
     }
-    ocrViewEl.value = 'Kunde inte ladda OCR-data.';
+    ocrViewEl.value = `Kunde inte ladda ${ocrSourceDisplayName(currentOcrSource)}.`;
     refreshOcrSearch();
   }
 }
@@ -872,6 +887,7 @@ function renderMatchesContent(payload) {
 
 async function setViewerMatches(jobId) {
   setOcrSearchVisible(false);
+  setOcrSourceTabsVisible(false);
   pdfStackEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
@@ -922,6 +938,7 @@ async function setViewerMatches(jobId) {
 
 async function setViewerMeta(jobId) {
   setOcrSearchVisible(false);
+  setOcrSourceTabsVisible(false);
   pdfStackEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
@@ -1311,6 +1328,43 @@ function notifyFailedJobs(failedJobs) {
 
 function setOcrSearchVisible(visible) {
   ocrSearchBarEl.classList.toggle('hidden', !visible);
+}
+
+function normalizeOcrSource(source) {
+  return source === 'tesseract' || source === 'rapidocr' || source === 'merged'
+    ? source
+    : 'merged';
+}
+
+function setOcrSourceTabsVisible(visible) {
+  ocrSourceTabsEl.classList.toggle('hidden', !visible);
+}
+
+function setActiveOcrSource(source, options = {}) {
+  const reload = options.reload !== false;
+  const nextSource = normalizeOcrSource(source);
+  currentOcrSource = nextSource;
+  ocrSearchInputEl.placeholder = `Sök i ${ocrSourceDisplayName(nextSource)}`;
+  ocrSourceTabEls.forEach((buttonEl) => {
+    const isActive = buttonEl.dataset.ocrSource === nextSource;
+    buttonEl.classList.toggle('active', isActive);
+    buttonEl.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+  if (reload && currentViewMode === 'ocr') {
+    loadedOcrJobId = '';
+    loadedOcrSource = '';
+    setViewerOcr(selectedJobId);
+  }
+}
+
+function ocrSourceDisplayName(source) {
+  if (source === 'tesseract') {
+    return 'Tesseract';
+  }
+  if (source === 'rapidocr') {
+    return 'RapidOCR';
+  }
+  return 'Merged OCR';
 }
 
 function clamp(value, minValue, maxValue) {
@@ -5107,6 +5161,7 @@ async function resetAllJobs() {
   }
 
   loadedOcrJobId = '';
+  loadedOcrSource = '';
   loadedMatchesJobId = '';
   loadedMetaJobId = '';
   clearPdfFrames();
@@ -5151,6 +5206,7 @@ function applyOptimisticReprocess(jobId) {
 
   if (selectedJobId === jobId) {
     loadedOcrJobId = '';
+    loadedOcrSource = '';
     loadedMatchesJobId = '';
     loadedMetaJobId = '';
     clearPdfFrames();
@@ -5182,6 +5238,7 @@ async function reprocessSingleJob(jobId, mode) {
 
     if (selectedJobId === jobId) {
       loadedOcrJobId = '';
+      loadedOcrSource = '';
       loadedMatchesJobId = '';
       loadedMetaJobId = '';
       clearPdfFrames();
@@ -5362,6 +5419,16 @@ selectedJobReprocessEl.addEventListener('click', async () => {
 
 selectedJobRerunOcrEl.addEventListener('click', async () => {
   await handleSelectedJobReprocess('full');
+});
+
+ocrSourceTabEls.forEach((buttonEl) => {
+  buttonEl.addEventListener('click', () => {
+    const source = buttonEl.dataset.ocrSource || 'merged';
+    if (normalizeOcrSource(source) === currentOcrSource) {
+      return;
+    }
+    setActiveOcrSource(source);
+  });
 });
 
 ocrSearchInputEl.addEventListener('input', () => {
@@ -5664,6 +5731,7 @@ function syncStateUpdateTransport() {
 updateSettingsActionButtons();
 renderJbig2Status(null);
 renderOcrProcessingCommand();
+setActiveOcrSource(currentOcrSource, { reload: false });
 applyHashState();
 window.addEventListener('hashchange', () => {
   applyHashState();

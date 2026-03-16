@@ -73,6 +73,11 @@
       </div>
 
       <div class="viewer-wrap">
+        <div id="ocr-source-tabs" class="ocr-source-tabs hidden" role="tablist" aria-label="OCR-källa">
+          <button id="ocr-source-tesseract" class="ocr-source-tab" type="button" data-ocr-source="tesseract" role="tab" aria-selected="false">Tesseract</button>
+          <button id="ocr-source-rapidocr" class="ocr-source-tab" type="button" data-ocr-source="rapidocr" role="tab" aria-selected="false">RapidOCR</button>
+          <button id="ocr-source-merged" class="ocr-source-tab active" type="button" data-ocr-source="merged" role="tab" aria-selected="true">Merged OCR</button>
+        </div>
         <div id="ocr-search-bar" class="ocr-search-bar hidden">
           <input id="ocr-search-input" type="text" placeholder="Sök i OCR-data">
           <label class="ocr-search-toggle" for="ocr-search-regex">

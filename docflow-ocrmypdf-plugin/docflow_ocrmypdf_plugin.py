@@ -10,7 +10,11 @@ Run with:
 """
 
 import importlib.util
+import json
 import re
+import shutil
+import subprocess
+import sys
 from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -42,6 +46,14 @@ class DocflowOptions(BaseModel):
         default=None,
         description='Optional JSON file with Docflow OCR transform settings',
     )
+    debug_output_dir: str | None = Field(
+        default=None,
+        description='Optional directory where per-page OCR debug artifacts are written',
+    )
+    rapidocr_python: str | None = Field(
+        default=None,
+        description='Optional Python interpreter used to run RapidOCR side-by-side',
+    )
 
 
 @hookimpl
@@ -66,6 +78,18 @@ def add_options(parser) -> None:
         dest='docflow_transform_config',
         metavar='FILE',
         help='JSON file with data used by the Docflow transform runtime.',
+    )
+    group.add_argument(
+        '--docflow-debug-output-dir',
+        dest='docflow_debug_output_dir',
+        metavar='DIR',
+        help='Directory where Docflow writes per-page OCR debug JSON artifacts.',
+    )
+    group.add_argument(
+        '--docflow-rapidocr-python',
+        dest='docflow_rapidocr_python',
+        metavar='PYTHON',
+        help='Python interpreter used to run RapidOCR per page for Docflow debug artifacts.',
     )
 
 
@@ -100,18 +124,46 @@ def _get_transform_config_path(options) -> Path | None:
     return Path(config).expanduser().resolve()
 
 
+def _get_debug_output_dir(options) -> Path | None:
+    value = None
+    extra_attrs = getattr(options, 'extra_attrs', {})
+    if isinstance(extra_attrs, dict):
+        value = extra_attrs.get('docflow_debug_output_dir')
+    if not value:
+        value = getattr(getattr(options, 'docflow', None), 'debug_output_dir', None)
+    if not value:
+        return None
+    return Path(value).expanduser().resolve()
+
+
+def _get_rapidocr_python(options) -> Path | None:
+    value = None
+    extra_attrs = getattr(options, 'extra_attrs', {})
+    if isinstance(extra_attrs, dict):
+        value = extra_attrs.get('docflow_rapidocr_python')
+    if not value:
+        value = getattr(getattr(options, 'docflow', None), 'rapidocr_python', None)
+    if not value:
+        return None
+    return Path(value).expanduser().resolve()
+
+
 @hookimpl
 def check_options(options) -> None:
     builtin_tesseract_ocr.check_options(options)
     script_path = _get_transform_script_path(options)
-    if script_path is None:
-        return
-    if not script_path.is_file():
+    if script_path is not None and not script_path.is_file():
         raise BadArgsError(f'Docflow transform script not found: {script_path}')
     config_path = _get_transform_config_path(options)
     if config_path is not None and not config_path.is_file():
         raise BadArgsError(f'Docflow transform config not found: {config_path}')
-    if options.pdf_renderer == 'sandwich':
+    debug_output_dir = _get_debug_output_dir(options)
+    if debug_output_dir is not None:
+        debug_output_dir.mkdir(parents=True, exist_ok=True)
+    rapidocr_python = _get_rapidocr_python(options)
+    if rapidocr_python is not None and not rapidocr_python.is_file():
+        raise BadArgsError(f'Docflow RapidOCR python not found: {rapidocr_python}')
+    if script_path is not None and options.pdf_renderer == 'sandwich':
         raise BadArgsError(
             'Docflow text transformation requires pdf_renderer auto/fpdf2. '
             'sandwich bypasses the editable HOCR/text path.'
@@ -148,6 +200,264 @@ def _parse_bbox(title: str) -> tuple[int, int, int, int] | None:
     if not match:
         return None
     return tuple(int(group) for group in match.groups())
+
+
+def _parse_confidence(title: str) -> int | None:
+    match = re.search(r'x_wconf\s+(\d+)', title)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _page_debug_path(output_dir: Path, engine: str, page_number: int) -> Path:
+    return output_dir / f'{engine}_page_{page_number + 1:02d}.json'
+
+
+def _page_debug_text_path(output_dir: Path, engine: str, page_number: int) -> Path:
+    return output_dir / f'{engine}_page_{page_number + 1:02d}.txt'
+
+
+def _write_debug_json(output_dir: Path | None, engine: str, page_number: int, payload: dict[str, Any]) -> None:
+    if output_dir is None:
+        return
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = _page_debug_path(output_dir, engine, page_number)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
+        encoding='utf-8',
+    )
+
+
+def _write_debug_text(output_dir: Path | None, engine: str, page_number: int, text: str) -> None:
+    if output_dir is None:
+        return
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = _page_debug_text_path(output_dir, engine, page_number)
+    path.write_text(text, encoding='utf-8')
+
+
+def _extract_tesseract_debug_words(hocr_path: Path) -> list[dict[str, Any]]:
+    tree = ET.parse(hocr_path)
+    root = tree.getroot()
+    namespace = ''
+    match = re.match(r'({.*})html', root.tag)
+    if match:
+        namespace = match.group(1)
+
+    xpath = f".//{namespace}span[@class='ocrx_word']"
+    words: list[dict[str, Any]] = []
+    for word_elem in root.iterfind(xpath):
+        text = ''.join(word_elem.itertext()).strip()
+        if text == '':
+            continue
+        title = word_elem.attrib.get('title', '')
+        bbox = _parse_bbox(title)
+        words.append({
+            'text': text,
+            'bbox': list(bbox) if bbox is not None else None,
+            'confidence': _parse_confidence(title),
+            'title': title,
+        })
+    return words
+
+
+@lru_cache(maxsize=1)
+def _rapidocr_engine():
+    from rapidocr import LangDet, LangRec, ModelType, OCRVersion, RapidOCR
+
+    params = {
+        'Global.text_score': 0.5,
+        'Global.use_cls': True,
+        'Det.lang_type': LangDet.EN,
+        'Det.ocr_version': OCRVersion.PPOCRV4,
+        'Det.model_type': ModelType.MOBILE,
+        'Det.box_thresh': 0.5,
+        'Det.unclip_ratio': 1.6,
+        'Det.limit_side_len': 736,
+        'Rec.lang_type': LangRec.LATIN,
+        'Rec.ocr_version': OCRVersion.PPOCRV5,
+        'Rec.model_type': ModelType.MOBILE,
+    }
+
+    return RapidOCR(params=params)
+
+
+def _run_rapidocr_in_process(input_file: str) -> dict[str, Any] | None:
+    try:
+        output = _rapidocr_engine()(input_file, return_word_box=True)
+    except Exception as exc:
+        return {
+            'available': False,
+            'error': f'RapidOCR in-process execution failed: {exc}',
+            'words': [],
+        }
+
+    words: list[dict[str, Any]] = []
+    for line in getattr(output, 'word_results', ()) or ():
+        if not isinstance(line, tuple):
+            continue
+        for item in line:
+            if not isinstance(item, tuple) or len(item) < 3:
+                continue
+            text, score, box = item
+            words.append({
+                'text': text,
+                'score': score,
+                'bbox': box,
+            })
+
+    text_chunks: list[str] = []
+    for line in output.to_json() or []:
+        if isinstance(line, dict):
+            value = line.get('txt', '')
+            if isinstance(value, str) and value.strip() != '':
+                text_chunks.append(value)
+
+    return {
+        'available': True,
+        'engine': 'rapidocr',
+        'lines': output.to_json(),
+        'words': words,
+        'text': '\n'.join(text_chunks).strip(),
+    }
+
+
+def _run_rapidocr_via_subprocess(input_file: str, python_path: Path) -> dict[str, Any]:
+    runner = Path(__file__).with_name('run_rapidocr_page.py')
+    if not runner.is_file():
+        return {
+            'available': False,
+            'error': f'RapidOCR runner script not found: {runner}',
+            'words': [],
+        }
+
+    completed = subprocess.run(
+        [str(python_path), str(runner), input_file],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return {
+            'available': False,
+            'error': (completed.stderr or completed.stdout or 'RapidOCR subprocess failed').strip(),
+            'words': [],
+        }
+    try:
+        payload = json.loads(completed.stdout)
+    except Exception as exc:
+        return {
+            'available': False,
+            'error': f'Could not parse RapidOCR output: {exc}',
+            'words': [],
+        }
+    if isinstance(payload, dict):
+        return payload
+    return {
+        'available': False,
+        'error': 'RapidOCR subprocess returned invalid payload',
+        'words': [],
+    }
+
+
+def _rapidocr_python_candidates(options) -> list[Path]:
+    candidates: list[Path] = []
+    configured = _get_rapidocr_python(options)
+    if configured is not None:
+        candidates.append(configured)
+
+    system_python = Path('/usr/bin/python3')
+    if system_python.is_file():
+        candidates.append(system_python.resolve())
+
+    for candidate in ('python3', 'python'):
+        resolved = shutil.which(candidate)
+        if resolved:
+            candidates.append(Path(resolved).expanduser().resolve())
+
+    current_python = Path(sys.executable).expanduser().resolve()
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+
+    if str(current_python) not in seen:
+        unique.append(current_python)
+    return unique
+
+
+def _build_rapidocr_debug_payload(input_file, options, *, page_number: int) -> dict[str, Any]:
+    payload: dict[str, Any] | None = None
+    current_python = Path(sys.executable).expanduser().resolve()
+    candidate_pythons = _rapidocr_python_candidates(options)
+
+    for python_path in candidate_pythons:
+        attempts: list[dict[str, Any] | None] = []
+        if python_path == current_python:
+            attempts.append(_run_rapidocr_in_process(str(input_file)))
+            attempts.append(_run_rapidocr_via_subprocess(str(input_file), python_path))
+        else:
+            attempts.append(_run_rapidocr_via_subprocess(str(input_file), python_path))
+
+        for candidate_payload in attempts:
+            if candidate_payload is None:
+                continue
+            payload = candidate_payload
+            if payload.get('available') is True:
+                break
+        if payload is not None and payload.get('available') is True:
+            break
+
+    if payload is None:
+        payload = {
+            'available': False,
+            'error': 'RapidOCR is not available in the current OCR runtime',
+            'words': [],
+        }
+
+    payload.setdefault('engine', 'rapidocr')
+    payload['pageNumber'] = page_number + 1
+    payload['pageIndex'] = page_number
+    payload['sourceImage'] = Path(input_file).name
+    return payload
+
+
+def _write_page_debug_artifacts(input_file, hocr_path: Path, options, *, page_number: int) -> None:
+    output_dir = _get_debug_output_dir(options)
+    if output_dir is None:
+        return
+
+    tesseract_text_path = hocr_path.with_suffix('.txt')
+    tesseract_text = ''
+    if tesseract_text_path.is_file():
+        try:
+            tesseract_text = tesseract_text_path.read_text(encoding='utf-8')
+        except Exception:
+            tesseract_text = ''
+
+    tesseract_payload = {
+        'engine': 'tesseract',
+        'pageNumber': page_number + 1,
+        'pageIndex': page_number,
+        'sourceImage': Path(input_file).name,
+        'words': _extract_tesseract_debug_words(hocr_path),
+        'text': tesseract_text,
+    }
+    _write_debug_json(output_dir, 'tesseract', page_number, tesseract_payload)
+    _write_debug_text(output_dir, 'tesseract', page_number, tesseract_text)
+
+    rapidocr_payload = _build_rapidocr_debug_payload(input_file, options, page_number=page_number)
+    _write_debug_json(output_dir, 'rapidocr', page_number, rapidocr_payload)
+    _write_debug_text(
+        output_dir,
+        'rapidocr',
+        page_number,
+        str(rapidocr_payload.get('text', '') or ''),
+    )
 
 
 def _call_transform(module, name: str, text: str, **kwargs: Any) -> str:
@@ -249,6 +559,13 @@ def _generate_transformed_hocr(
         output_hocr,
         output_text,
         options,
+    )
+
+    _write_page_debug_artifacts(
+        input_file,
+        output_hocr,
+        options,
+        page_number=page_number,
     )
 
     script_path = _get_transform_script_path(options)

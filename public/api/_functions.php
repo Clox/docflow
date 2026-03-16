@@ -1144,6 +1144,13 @@ function rapidocr_status_payload(): array
     ];
 }
 
+function rapidocr_runtime_python_path(): ?string
+{
+    $status = rapidocr_status_payload();
+    $python = $status['python'] ?? null;
+    return is_string($python) && trim($python) !== '' ? trim($python) : null;
+}
+
 function docflow_ocrmypdf_plugin_path(): ?string
 {
     $path = PROJECT_ROOT . '/docflow-ocrmypdf-plugin/docflow_ocrmypdf_plugin.py';
@@ -1202,6 +1209,7 @@ function run_ocrmypdf(
     string $inputPdfPath,
     string $outputPdfPath,
     string $sidecarTextPath,
+    ?string $debugOutputDir,
     bool $skipExistingText,
     int $optimizeLevel,
     array $ocrPdfTextSubstitutions = []
@@ -1222,9 +1230,24 @@ function run_ocrmypdf(
     }
 
     $pluginSegment = '';
+    $pluginPath = docflow_ocrmypdf_plugin_path();
+    if ($pluginPath !== null) {
+        $pluginSegment = '--plugin ' . escapeshellarg($pluginPath) . ' ';
+        if (is_string($debugOutputDir) && trim($debugOutputDir) !== '') {
+            $pluginSegment .= '--docflow-debug-output-dir '
+                . escapeshellarg(trim($debugOutputDir))
+                . ' ';
+        }
+        $rapidocrPython = rapidocr_runtime_python_path();
+        if ($rapidocrPython !== null) {
+            $pluginSegment .= '--docflow-rapidocr-python '
+                . escapeshellarg($rapidocrPython)
+                . ' ';
+        }
+    }
+
     $normalizedSubstitutions = sanitize_ocr_pdf_text_substitutions($ocrPdfTextSubstitutions);
     if ($normalizedSubstitutions !== []) {
-        $pluginPath = docflow_ocrmypdf_plugin_path();
         $runtimeScriptPath = docflow_ocr_transform_runtime_script_path();
         $transformConfigPath = write_docflow_ocr_transform_config($normalizedSubstitutions);
         if (
@@ -1238,9 +1261,7 @@ function run_ocrmypdf(
             return false;
         }
 
-        $pluginSegment = '--plugin '
-            . escapeshellarg($pluginPath)
-            . ' --docflow-transform-script '
+        $pluginSegment .= '--docflow-transform-script '
             . escapeshellarg($runtimeScriptPath)
             . ' --docflow-transform-config '
             . escapeshellarg($transformConfigPath)
@@ -1255,7 +1276,7 @@ function run_ocrmypdf(
         . $pluginSegment
         . ' -l swe '
         . $deskewFlag
-        . '--oversample 400 --tesseract-thresholding sauvola --tesseract-pagesegmode 6 --output-type pdf '
+        . '--oversample 500 --tesseract-thresholding sauvola --tesseract-pagesegmode 6 --output-type pdf '
         . '-O' . $safeOptimizeLevel
         . ' '
         . $modeFlag
@@ -1277,6 +1298,37 @@ function run_ocrmypdf(
     }
 
     return $code === 0 && is_file($outputPdfPath);
+}
+
+function write_combined_page_debug_text(
+    string $jobDir,
+    string $engine,
+    string $targetFilename
+): void
+{
+    $pagePaths = glob($jobDir . '/' . $engine . '_page_*.txt') ?: [];
+    sort($pagePaths, SORT_NATURAL);
+
+    if ($pagePaths === []) {
+        $targetPath = $jobDir . '/' . $targetFilename;
+        if (is_file($targetPath)) {
+            @unlink($targetPath);
+        }
+        return;
+    }
+
+    $chunks = [];
+    foreach ($pagePaths as $index => $path) {
+        $text = file_get_contents($path);
+        if (!is_string($text)) {
+            continue;
+        }
+        $pageNumber = $index + 1;
+        $chunks[] = '=== PAGE ' . $pageNumber . " ===\n" . rtrim($text, "\r\n");
+    }
+
+    $combined = implode("\n\n", $chunks);
+    file_put_contents($jobDir . '/' . $targetFilename, $combined === '' ? '' : $combined . "\n");
 }
 
 function last_ocrmypdf_error(): ?string
@@ -3559,10 +3611,29 @@ function process_claimed_job(
     $ocrProcessedPdf = false;
     $textSourcePdfPath = $sourcePdfPath;
     if ($runOcr) {
+        foreach (glob($jobDir . '/tesseract_page_*.json') ?: [] as $path) {
+            @unlink($path);
+        }
+        foreach (glob($jobDir . '/rapidocr_page_*.json') ?: [] as $path) {
+            @unlink($path);
+        }
+        foreach (glob($jobDir . '/tesseract_page_*.txt') ?: [] as $path) {
+            @unlink($path);
+        }
+        foreach (glob($jobDir . '/rapidocr_page_*.txt') ?: [] as $path) {
+            @unlink($path);
+        }
+        if (is_file($jobDir . '/tesseract.txt')) {
+            @unlink($jobDir . '/tesseract.txt');
+        }
+        if (is_file($jobDir . '/rapidocr.txt')) {
+            @unlink($jobDir . '/rapidocr.txt');
+        }
         $ocrProcessedPdf = run_ocrmypdf(
             $sourcePdfPath,
             $reviewPdfPath,
             $ocrPath,
+            $jobDir,
             $ocrSkipExistingText,
             $ocrOptimizeLevel,
             $ocrPdfTextSubstitutions
@@ -3582,6 +3653,8 @@ function process_claimed_job(
         }
 
         $textSourcePdfPath = $ocrProcessedPdf ? $reviewPdfPath : $sourcePdfPath;
+        write_combined_page_debug_text($jobDir, 'tesseract', 'tesseract.txt');
+        write_combined_page_debug_text($jobDir, 'rapidocr', 'rapidocr.txt');
     } else {
         if (!is_file($reviewPdfPath)) {
             throw new RuntimeException('Missing review.pdf');
@@ -4460,11 +4533,27 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
     ];
     if ($normalizedMode === 'full') {
         $artifactPaths[] = $jobDir . '/review.pdf';
+        $artifactPaths[] = $jobDir . '/tesseract.txt';
+        $artifactPaths[] = $jobDir . '/rapidocr.txt';
     }
 
     foreach ($artifactPaths as $artifactPath) {
         if (is_file($artifactPath)) {
             @unlink($artifactPath);
+        }
+    }
+    if ($normalizedMode === 'full') {
+        foreach (glob($jobDir . '/tesseract_page_*.json') ?: [] as $path) {
+            @unlink($path);
+        }
+        foreach (glob($jobDir . '/rapidocr_page_*.json') ?: [] as $path) {
+            @unlink($path);
+        }
+        foreach (glob($jobDir . '/tesseract_page_*.txt') ?: [] as $path) {
+            @unlink($path);
+        }
+        foreach (glob($jobDir . '/rapidocr_page_*.txt') ?: [] as $path) {
+            @unlink($path);
         }
     }
 
