@@ -196,7 +196,8 @@ const lastKnownJobDisplayById = new Map();
 const pinnedProcessingJobIds = new Set();
 const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
-const ocrViewStateByKey = new Map();
+const ocrViewContentBySource = new Map();
+const ocrViewStateBySource = new Map();
 const collapsedSenderUiKeys = new Set();
 const selectedSenderUiKeys = new Set();
 const mountedSettingsPanels = new Set();
@@ -720,8 +721,23 @@ async function setViewerOcr(jobId) {
     return;
   }
 
+  const jobChanged = loadedOcrJobId !== '' && loadedOcrJobId !== jobId;
+  if (jobChanged) {
+    clearOcrViewCache();
+  }
+
+  const cachedText = getCachedOcrViewContent(currentOcrSource);
+  if (typeof cachedText === 'string') {
+    loadedOcrJobId = jobId;
+    loadedOcrSource = currentOcrSource;
+    ocrViewEl.value = cachedText;
+    refreshOcrSearch();
+    restoreOcrViewState(currentOcrSource);
+    return;
+  }
+
   if (loadedOcrJobId === jobId && loadedOcrSource === currentOcrSource) {
-    restoreOcrViewState(jobId, currentOcrSource);
+    restoreOcrViewState(currentOcrSource);
     return;
   }
 
@@ -749,16 +765,20 @@ async function setViewerOcr(jobId) {
     }
 
     const text = payload && typeof payload.text === 'string' ? payload.text : '';
-    ocrViewEl.value = text || `(Ingen ${ocrSourceDisplayName(currentOcrSource)} hittades)`;
+    const resolvedText = text || `(Ingen ${ocrSourceDisplayName(currentOcrSource)} hittades)`;
+    setCachedOcrViewContent(currentOcrSource, resolvedText);
+    ocrViewEl.value = resolvedText;
     refreshOcrSearch();
-    restoreOcrViewState(jobId, currentOcrSource);
+    restoreOcrViewState(currentOcrSource);
   } catch (error) {
     if (requestSeq !== ocrRequestSeq) {
       return;
     }
-    ocrViewEl.value = `Kunde inte ladda ${ocrSourceDisplayName(currentOcrSource)}.`;
+    const resolvedText = `Kunde inte ladda ${ocrSourceDisplayName(currentOcrSource)}.`;
+    setCachedOcrViewContent(currentOcrSource, resolvedText);
+    ocrViewEl.value = resolvedText;
     refreshOcrSearch();
-    restoreOcrViewState(jobId, currentOcrSource);
+    restoreOcrViewState(currentOcrSource);
   }
 }
 
@@ -1387,35 +1407,44 @@ function ocrSourceDisplayName(source) {
   return 'Merged OCR';
 }
 
-function ocrViewStateKey(jobId, source) {
-  if (!jobId) {
-    return '';
-  }
-  return `${jobId}::${normalizeOcrSource(source)}`;
-}
-
 function saveCurrentOcrViewState() {
-  const key = ocrViewStateKey(loadedOcrJobId, loadedOcrSource);
-  if (!key) {
+  const source = normalizeOcrSource(loadedOcrSource);
+  if (!loadedOcrSource) {
     return;
   }
-  ocrViewStateByKey.set(key, {
+  ocrViewStateBySource.set(source, {
     scrollTop: ocrViewEl.scrollTop,
     scrollLeft: ocrViewEl.scrollLeft,
   });
 }
 
-function restoreOcrViewState(jobId, source) {
-  const key = ocrViewStateKey(jobId, source);
-  const state = key ? ocrViewStateByKey.get(key) : null;
+function getCachedOcrViewContent(source) {
+  const normalizedSource = normalizeOcrSource(source);
+  return ocrViewContentBySource.has(normalizedSource) ? ocrViewContentBySource.get(normalizedSource) : null;
+}
+
+function setCachedOcrViewContent(source, text) {
+  const normalizedSource = normalizeOcrSource(source);
+  ocrViewContentBySource.set(normalizedSource, text);
+}
+
+function restoreOcrViewState(source) {
+  const state = ocrViewStateBySource.get(normalizeOcrSource(source)) || null;
   const scrollTop = state && Number.isFinite(Number(state.scrollTop)) ? Number(state.scrollTop) : 0;
   const scrollLeft = state && Number.isFinite(Number(state.scrollLeft)) ? Number(state.scrollLeft) : 0;
 
   window.requestAnimationFrame(() => {
-    ocrViewEl.scrollTop = scrollTop;
-    ocrViewEl.scrollLeft = scrollLeft;
-    syncOcrHighlightScroll();
+    window.requestAnimationFrame(() => {
+      ocrViewEl.scrollTop = scrollTop;
+      ocrViewEl.scrollLeft = scrollLeft;
+      syncOcrHighlightScroll();
+    });
   });
+}
+
+function clearOcrViewCache() {
+  ocrViewContentBySource.clear();
+  ocrViewStateBySource.clear();
 }
 
 function clamp(value, minValue, maxValue) {
@@ -5211,6 +5240,7 @@ async function resetAllJobs() {
     throw new Error('Reset jobs failed');
   }
 
+  clearOcrViewCache();
   loadedOcrJobId = '';
   loadedOcrSource = '';
   loadedMatchesJobId = '';
@@ -5239,6 +5269,7 @@ function applyOptimisticReprocess(jobId) {
   }
 
   pinnedProcessingJobIds.add(jobId);
+  clearOcrViewCache();
 
   const processingJob = {
     ...sourceJob,
