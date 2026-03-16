@@ -3772,6 +3772,46 @@ function start_job_dispatcher(): void
     exec($command);
 }
 
+function ensure_job_dispatcher_running(array $config): void
+{
+    $jobsDir = $config['jobsDirectory'] ?? '';
+    if (!is_string($jobsDir) || trim($jobsDir) === '') {
+        return;
+    }
+    $jobsDir = trim($jobsDir);
+
+    ensure_directory($jobsDir);
+
+    // Use the dispatcher's lock file as the source of truth. If we can acquire the lock,
+    // there is currently no dispatcher holding it (or it crashed), so we should (re)start it.
+    $lockPath = $jobsDir . DIRECTORY_SEPARATOR . '.dispatcher.lock';
+    $lockHandle = @fopen($lockPath, 'c+');
+    if ($lockHandle === false) {
+        return;
+    }
+
+    $hasLock = @flock($lockHandle, LOCK_EX | LOCK_NB);
+    if (!$hasLock) {
+        @fclose($lockHandle);
+        return;
+    }
+
+    // Dispatcher not running. Release the lock before spawning the dispatcher, otherwise it will exit immediately.
+    @flock($lockHandle, LOCK_UN);
+    @fclose($lockHandle);
+
+    // Throttle restarts to avoid spawn storms during frequent polling.
+    $throttlePath = $jobsDir . DIRECTORY_SEPARATOR . '.dispatcher.ensure';
+    $lastAttempt = @filemtime($throttlePath);
+    $now = time();
+    if (is_int($lastAttempt) && $lastAttempt > 0 && ($now - $lastAttempt) < 2) {
+        return;
+    }
+    @touch($throttlePath);
+
+    start_job_dispatcher();
+}
+
 function read_jobs_state(array $config): array
 {
     $jobsDir = $config['jobsDirectory'];

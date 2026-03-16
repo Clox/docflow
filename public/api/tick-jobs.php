@@ -4,7 +4,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/_bootstrap.php';
 
 try {
-    start_job_dispatcher();
+    $config = load_config();
+    ensure_job_dispatcher_running($config);
 
     json_response([
         'ok' => true,
