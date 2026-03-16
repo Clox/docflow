@@ -73,20 +73,36 @@
       </div>
 
       <div class="viewer-wrap">
-        <div id="ocr-source-tabs" class="ocr-source-tabs hidden" role="tablist" aria-label="OCR-källa">
-          <button id="ocr-source-tesseract" class="ocr-source-tab" type="button" data-ocr-source="tesseract" role="tab" aria-selected="false">Tesseract</button>
-          <button id="ocr-source-rapidocr" class="ocr-source-tab" type="button" data-ocr-source="rapidocr" role="tab" aria-selected="false">RapidOCR</button>
-          <button id="ocr-source-merged" class="ocr-source-tab active" type="button" data-ocr-source="merged" role="tab" aria-selected="true">Merged OCR</button>
-        </div>
-        <div id="ocr-search-bar" class="ocr-search-bar hidden">
-          <input id="ocr-search-input" type="text" placeholder="Sök i OCR-data">
-          <label class="ocr-search-toggle" for="ocr-search-regex">
-            <input id="ocr-search-regex" type="checkbox">
-            <span>Regex</span>
-          </label>
-          <button id="ocr-search-prev" type="button" aria-label="Föregående träff">↑</button>
-          <button id="ocr-search-next" type="button" aria-label="Nästa träff">↓</button>
-          <span id="ocr-search-status" class="ocr-search-status"></span>
+        <div id="ocr-toolbar" class="ocr-toolbar">
+          <div id="ocr-source-tabs" class="ocr-source-tabs hidden" role="tablist" aria-label="OCR-källa">
+            <button id="ocr-source-tesseract" class="ocr-source-tab" type="button" data-ocr-source="tesseract" role="tab" aria-selected="false">Tesseract</button>
+            <button id="ocr-source-rapidocr" class="ocr-source-tab" type="button" data-ocr-source="rapidocr" role="tab" aria-selected="false">RapidOCR</button>
+            <button id="ocr-source-merged" class="ocr-source-tab active" type="button" data-ocr-source="merged" role="tab" aria-selected="true">Merged OCR</button>
+          </div>
+          <div id="ocr-page-controls" class="ocr-page-controls hidden" aria-label="OCR-sidkontroller">
+            <div class="ocr-page-nav">
+              <input id="ocr-page-current" type="text" inputmode="numeric" aria-label="Nuvarande sida">
+              <span class="ocr-page-separator">/</span>
+              <span id="ocr-page-total">0</span>
+            </div>
+            <span class="ocr-page-controls-divider" aria-hidden="true"></span>
+            <div class="ocr-zoom-controls">
+              <button id="ocr-zoom-out" type="button" aria-label="Zooma ut">-</button>
+              <input id="ocr-zoom-input" type="text" inputmode="numeric" aria-label="Zoomnivå i procent">
+              <span class="ocr-zoom-percent">%</span>
+              <button id="ocr-zoom-in" type="button" aria-label="Zooma in">+</button>
+            </div>
+          </div>
+          <div id="ocr-search-bar" class="ocr-search-bar hidden">
+            <input id="ocr-search-input" type="text" placeholder="Sök i OCR-data">
+            <label class="ocr-search-toggle" for="ocr-search-regex">
+              <input id="ocr-search-regex" type="checkbox">
+              <span>Regex</span>
+            </label>
+            <button id="ocr-search-prev" type="button" aria-label="Föregående träff">↑</button>
+            <button id="ocr-search-next" type="button" aria-label="Nästa träff">↓</button>
+            <span id="ocr-search-status" class="ocr-search-status"></span>
+          </div>
         </div>
         <div id="pdf-stack" class="pdf-stack">
           <iframe class="pdf-frame"></iframe>
