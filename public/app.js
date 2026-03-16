@@ -2500,9 +2500,8 @@ function sanitizeClientDraft(row) {
 
   const firstName = typeof input.firstName === 'string' ? input.firstName : '';
   const lastName = typeof input.lastName === 'string' ? input.lastName : '';
-  const displayName = typeof input.displayName === 'string'
-    ? input.displayName
-    : `${firstName} ${lastName}`.trim();
+  // Legacy clients.json did not have displayName; keep a best-effort default for existing data.
+  const displayName = typeof input.displayName === 'string' ? input.displayName : `${firstName} ${lastName}`.trim();
 
   let folderName = typeof input.folderName === 'string' ? input.folderName : '';
   if (folderName === '' && typeof input.dirName === 'string') {
@@ -2529,25 +2528,10 @@ function sanitizeClientDraft(row) {
 
 function serializeClientDraft(row) {
   const client = sanitizeClientDraft(row);
-  const desiredDisplayName = String(client.displayName || '').trim();
-  const existingLastName = String(client.lastName || '').trim();
-  const desiredLower = desiredDisplayName.toLowerCase();
-  const existingLastLower = existingLastName.toLowerCase();
-
-  let firstName = desiredDisplayName;
-  let lastName = '';
-  if (desiredDisplayName === '') {
-    firstName = String(client.firstName || '').trim();
-    lastName = existingLastName;
-  } else if (existingLastName !== '' && desiredLower.endsWith(existingLastLower)) {
-    const beforeLast = desiredDisplayName.slice(0, Math.max(0, desiredDisplayName.length - existingLastName.length)).trim();
-    firstName = beforeLast;
-    lastName = existingLastName;
-  }
-
   return {
-    firstName: firstName.trim(),
-    lastName: lastName.trim(),
+    firstName: client.firstName.trim(),
+    lastName: client.lastName.trim(),
+    displayName: client.displayName.trim(),
     folderName: client.folderName.trim(),
     personalIdentityNumber: client.personalIdentityNumber.trim()
   };
@@ -3209,20 +3193,38 @@ function renderClientsEditor() {
     const fields = document.createElement('div');
     fields.className = 'client-fields';
 
-    const displayNameInput = document.createElement('input');
-    displayNameInput.type = 'text';
-    displayNameInput.placeholder = 'Ex: Johan Andersson';
-    displayNameInput.value = row.displayName || `${row.firstName || ''} ${row.lastName || ''}`.trim();
-    displayNameInput.addEventListener('input', () => {
-      clientsDraft[rowIndex].displayName = displayNameInput.value;
-      updateSettingsActionButtons();
-    });
+	    const displayNameInput = document.createElement('input');
+	    displayNameInput.type = 'text';
+	    displayNameInput.placeholder = 'Ex: Johan Andersson';
+	    displayNameInput.value = row.displayName || '';
+	    displayNameInput.addEventListener('input', () => {
+	      clientsDraft[rowIndex].displayName = displayNameInput.value;
+	      updateSettingsActionButtons();
+	    });
 
-    const pinInput = document.createElement('input');
-    pinInput.type = 'text';
-    pinInput.placeholder = 'Ex: 19900101-1234';
-    pinInput.value = row.personalIdentityNumber;
-    pinInput.addEventListener('input', () => {
+	    const firstNameInput = document.createElement('input');
+	    firstNameInput.type = 'text';
+	    firstNameInput.placeholder = 'Ex: Johan';
+	    firstNameInput.value = row.firstName || '';
+	    firstNameInput.addEventListener('input', () => {
+	      clientsDraft[rowIndex].firstName = firstNameInput.value;
+	      updateSettingsActionButtons();
+	    });
+
+	    const lastNameInput = document.createElement('input');
+	    lastNameInput.type = 'text';
+	    lastNameInput.placeholder = 'Ex: Andersson';
+	    lastNameInput.value = row.lastName || '';
+	    lastNameInput.addEventListener('input', () => {
+	      clientsDraft[rowIndex].lastName = lastNameInput.value;
+	      updateSettingsActionButtons();
+	    });
+
+	    const pinInput = document.createElement('input');
+	    pinInput.type = 'text';
+	    pinInput.placeholder = 'Ex: 19900101-1234';
+	    pinInput.value = row.personalIdentityNumber;
+	    pinInput.addEventListener('input', () => {
       clientsDraft[rowIndex].personalIdentityNumber = pinInput.value;
       updateSettingsActionButtons();
     });
@@ -3244,12 +3246,14 @@ function renderClientsEditor() {
       clientsDraft.splice(rowIndex, 1);
       renderClientsEditor();
       updateSettingsActionButtons();
-    });
+	    });
 
-    fields.appendChild(createFloatingField('Visningsnamn', displayNameInput));
-    fields.appendChild(createFloatingField('Personnummer', pinInput));
-    fields.appendChild(createFloatingField('Mappnamn', folderInput));
-    fields.appendChild(removeButton);
+	    fields.appendChild(createFloatingField('Visningsnamn', displayNameInput));
+	    fields.appendChild(createFloatingField('Mappnamn', folderInput));
+	    fields.appendChild(createFloatingField('Förnamn', firstNameInput));
+	    fields.appendChild(createFloatingField('Efternamn', lastNameInput));
+	    fields.appendChild(createFloatingField('Personnummer', pinInput));
+	    fields.appendChild(removeButton);
 
     clientBody.appendChild(fields);
     clientRow.appendChild(clientBody);
