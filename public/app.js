@@ -1989,7 +1989,19 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
   const matchLookup = buildObjectPageMatchLookup(page, pageMatches);
   const wordElements = new Map();
 
-  page.words.forEach((word) => {
+  const layeredWords = [...page.words].sort((left, right) => {
+    const leftArea = left.rect.width * left.rect.height;
+    const rightArea = right.rect.width * right.rect.height;
+    if (leftArea !== rightArea) {
+      return rightArea - leftArea;
+    }
+    if (left.rect.y0 !== right.rect.y0) {
+      return left.rect.y0 - right.rect.y0;
+    }
+    return left.rect.x0 - right.rect.x0;
+  });
+
+  layeredWords.forEach((word) => {
     const wordEl = document.createElement('div');
     wordEl.className = 'ocr-word-box';
     if (matchLookup.matchedWordIndexes.has(word.index)) {
