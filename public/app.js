@@ -197,6 +197,15 @@ let senderOptionsSignature = '';
 let categoryOptionsSignature = '';
 let hasLoadedClients = false;
 const OCR_ZOOM_STEPS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
+const OCR_OBJECT_FONT_SCALE_BY_SOURCE = {
+  tesseract: 1.21,
+  rapidocr: 1.04,
+};
+const OCR_OBJECT_FONT_FAMILY = '"Arial Narrow", Arial, sans-serif';
+const OCR_OBJECT_LETTER_SPACING_BY_SOURCE = {
+  tesseract: '-0.05em',
+  rapidocr: '-0.05em',
+};
 let hasLoadedSenders = false;
 let hasLoadedCategories = false;
 let hasLoadedInitialJobsState = false;
@@ -1690,6 +1699,18 @@ function buildObjectSearchRows(words) {
 
   rows.forEach((row) => {
     row.words.sort((left, right) => left.rect.x0 - right.rect.x0);
+    const heights = row.words
+      .map((word) => Number(word.rect.height))
+      .filter((height) => Number.isFinite(height) && height > 0)
+      .sort((left, right) => left - right);
+    if (heights.length > 0) {
+      const middleIndex = Math.floor(heights.length / 2);
+      row.typicalHeight = heights.length % 2 === 0
+        ? (heights[middleIndex - 1] + heights[middleIndex]) / 2
+        : heights[middleIndex];
+    } else {
+      row.typicalHeight = row.height;
+    }
   });
   rows.sort((left, right) => left.centerY - right.centerY);
   return rows;
@@ -1721,6 +1742,7 @@ function buildObjectPageSearchModel(words) {
   return {
     searchText,
     searchEntries,
+    rows,
   };
 }
 
@@ -1780,11 +1802,19 @@ function normalizeOcrPages(pages, fallbackText = '', mode = 'text') {
         .map((word, wordIndex) => normalizeObjectWord(word, wordIndex))
         .filter((word) => word !== null)
       : [];
+    const searchModel = buildObjectPageSearchModel(words);
+    (searchModel.rows || []).forEach((row) => {
+      row.words.forEach((word) => {
+        word.rowHeight = row.height;
+        word.rowTypicalHeight = Number.isFinite(Number(row.typicalHeight))
+          ? Number(row.typicalHeight)
+          : row.height;
+      });
+    });
     const derivedWidth = words.reduce((maxWidth, word) => Math.max(maxWidth, word.rect.x1), 0);
     const derivedHeight = words.reduce((maxHeight, word) => Math.max(maxHeight, word.rect.y1), 0);
     const pageWidth = Number.isFinite(Number(page && page.pageWidth)) ? Number(page.pageWidth) : derivedWidth;
     const pageHeight = Number.isFinite(Number(page && page.pageHeight)) ? Number(page.pageHeight) : derivedHeight;
-    const searchModel = buildObjectPageSearchModel(words);
 
     return {
       number,
@@ -1900,6 +1930,50 @@ function buildWordTooltip(word) {
   return parts.join('\n');
 }
 
+let ocrWordMeasureCanvas = null;
+
+function getOcrWordMeasureContext() {
+  if (!ocrWordMeasureCanvas) {
+    ocrWordMeasureCanvas = document.createElement('canvas');
+  }
+  return ocrWordMeasureCanvas.getContext('2d');
+}
+
+function measureOcrWordFontSize(word, scaledHeight, objectScale) {
+  const rowTypicalHeight = Number.isFinite(Number(word && word.rowTypicalHeight))
+    ? Number(word.rowTypicalHeight)
+    : Number.isFinite(Number(word && word.rowHeight))
+      ? Number(word.rowHeight)
+    : (Number.isFinite(Number(word && word.rect && word.rect.height)) ? Number(word.rect.height) : scaledHeight / Math.max(objectScale, 0.0001));
+  const scaledTypicalRowHeight = Math.max(scaledHeight, rowTypicalHeight * objectScale);
+  const ownHeightCap = scaledHeight * 1;
+  const sourceScale = Number.isFinite(Number(OCR_OBJECT_FONT_SCALE_BY_SOURCE[currentOcrSource]))
+    ? Number(OCR_OBJECT_FONT_SCALE_BY_SOURCE[currentOcrSource])
+    : 1;
+  return Math.max(8, Math.min(scaledTypicalRowHeight * 0.84 * sourceScale, ownHeightCap));
+}
+
+function measureOcrWordHorizontalScale(text, fontSize, boxWidth) {
+  const content = String(text || '');
+  if (content === '') {
+    return 1;
+  }
+
+  const context = getOcrWordMeasureContext();
+  if (!context) {
+    return 1;
+  }
+
+  context.font = `${fontSize}px monospace`;
+  const measuredWidth = context.measureText(content).width;
+  if (!(measuredWidth > 0)) {
+    return 1;
+  }
+
+  const availableWidth = Math.max(1, boxWidth - 3);
+  return Math.max(0.78, Math.min(1, availableWidth / measuredWidth));
+}
+
 function renderObjectOcrPage(page, pageMatches, objectScale) {
   const wrapperEl = document.createElement('div');
   wrapperEl.className = 'ocr-page ocr-page--objects';
@@ -1928,14 +2002,22 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
     const scaledTop = word.rect.y0 * objectScale;
     const scaledWidth = Math.max(1, word.rect.width * objectScale);
     const scaledHeight = Math.max(1, word.rect.height * objectScale);
-    const fontSize = Math.max(9, Math.min(scaledHeight * 0.72, (scaledWidth / Math.max(Array.from(word.text).length, 1)) * 1.7));
+    const fontSize = measureOcrWordFontSize(word, scaledHeight, objectScale);
     wordEl.style.left = `${scaledLeft}px`;
     wordEl.style.top = `${scaledTop}px`;
     wordEl.style.width = `${scaledWidth}px`;
     wordEl.style.height = `${scaledHeight}px`;
     wordEl.style.fontSize = `${fontSize}px`;
-    wordEl.style.lineHeight = `${scaledHeight}px`;
-    wordEl.textContent = word.text;
+    wordEl.style.lineHeight = '1';
+    const textEl = document.createElement('span');
+    textEl.className = 'ocr-word-text';
+    textEl.textContent = word.text;
+    textEl.style.fontFamily = OCR_OBJECT_FONT_FAMILY;
+    textEl.style.transform = `scaleX(${measureOcrWordHorizontalScale(word.text, fontSize, scaledWidth)})`;
+    textEl.style.letterSpacing = typeof OCR_OBJECT_LETTER_SPACING_BY_SOURCE[currentOcrSource] === 'string'
+      ? OCR_OBJECT_LETTER_SPACING_BY_SOURCE[currentOcrSource]
+      : '0em';
+    wordEl.appendChild(textEl);
     wordEl.title = buildWordTooltip(word);
     surfaceEl.appendChild(wordEl);
     wordElements.set(word.index, wordEl);
