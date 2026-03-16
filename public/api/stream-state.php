@@ -27,22 +27,17 @@ $startedAt = time();
 while (!connection_aborted() && (time() - $startedAt) < 55) {
     try {
         $config = load_config();
-        $jobsState = read_jobs_state($config);
-        $payload = [
-            'processingJobs' => $jobsState['processingJobs'],
-            'readyJobs' => $jobsState['readyJobs'],
-            'failedJobs' => $jobsState['failedJobs'],
-        ];
-
-        $encodedPayload = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if (!is_string($encodedPayload)) {
-            throw new RuntimeException('Kunde inte serialisera state');
-        }
-
-        $signature = sha1($encodedPayload);
+        $payload = build_jobs_state_payload($config);
+        $encodedPayload = encode_jobs_state_payload($payload);
+        $signature = jobs_state_signature($encodedPayload);
         if ($signature !== $lastSignature) {
+            $envelopePayload = ['jobsSig' => $signature] + $payload;
+            $encodedEnvelope = json_encode($envelopePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (!is_string($encodedEnvelope)) {
+                throw new RuntimeException('Kunde inte serialisera state');
+            }
             echo "event: state\n";
-            echo 'data: ' . $encodedPayload . "\n\n";
+            echo 'data: ' . $encodedEnvelope . "\n\n";
             $lastSignature = $signature;
             $lastKeepaliveAt = time();
             @ob_flush();

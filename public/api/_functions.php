@@ -3959,6 +3959,30 @@ function read_jobs_state(array $config): array
     ];
 }
 
+function build_jobs_state_payload(array $config): array
+{
+    $jobsState = read_jobs_state($config);
+    return [
+        'processingJobs' => $jobsState['processingJobs'],
+        'readyJobs' => $jobsState['readyJobs'],
+        'failedJobs' => $jobsState['failedJobs'],
+    ];
+}
+
+function encode_jobs_state_payload(array $payload): string
+{
+    $encoded = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded)) {
+        throw new RuntimeException('Kunde inte serialisera state');
+    }
+    return $encoded;
+}
+
+function jobs_state_signature(string $encodedPayload): string
+{
+    return sha1($encodedPayload);
+}
+
 function is_valid_job_id(string $id): bool
 {
     return preg_match('/^[A-Za-z0-9_-]+$/', $id) === 1;

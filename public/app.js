@@ -125,6 +125,7 @@ let statePollTimer = null;
 let jobsTickTimer = null;
 let jobsTickWatchdogStarted = false;
 let stateUpdateTransport = 'polling';
+let jobsStateSig = '';
 let currentViewMode = 'pdf';
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
@@ -4905,13 +4906,31 @@ async function fetchState(options = {}) {
 
   pollInFlight = true;
   try {
-    const response = await fetch('/api/get-state.php', { cache: 'no-store' });
+    const params = new URLSearchParams();
+    if (includeClients) {
+      params.set('includeClients', '1');
+    }
+    if (includeSenders) {
+      params.set('includeSenders', '1');
+    }
+    if (includeCategories) {
+      params.set('includeCategories', '1');
+    }
+    if (!includeClients && !includeSenders && !includeCategories && jobsStateSig) {
+      params.set('jobsSig', jobsStateSig);
+    }
+
+    const url = params.toString() ? `/api/get-state.php?${params.toString()}` : '/api/get-state.php';
+    const response = await fetch(url, { cache: 'no-store' });
+    if (response.status === 204) {
+      return;
+    }
     if (!response.ok) {
       throw new Error('Kunde inte hämta status');
     }
 
     const nextState = await response.json();
-    if (!nextState || !Array.isArray(nextState.readyJobs) || !Array.isArray(nextState.clients)) {
+    if (!nextState || !Array.isArray(nextState.readyJobs)) {
       throw new Error('Ogiltigt statussvar');
     }
 
@@ -4928,6 +4947,10 @@ async function fetchState(options = {}) {
       senders: includeSenders && Array.isArray(nextState.senders) ? nextState.senders : undefined,
       categories: includeCategories && Array.isArray(nextState.categories) ? nextState.categories : undefined
     });
+
+    if (typeof nextState.jobsSig === 'string' && nextState.jobsSig !== '') {
+      jobsStateSig = nextState.jobsSig;
+    }
 
     if (includeClients) {
       hasLoadedClients = true;
@@ -5035,6 +5058,10 @@ function startStateStream() {
         || !Array.isArray(nextState.failedJobs)
       ) {
         return;
+      }
+
+      if (typeof nextState.jobsSig === 'string' && nextState.jobsSig !== '') {
+        jobsStateSig = nextState.jobsSig;
       }
 
       applyState({
