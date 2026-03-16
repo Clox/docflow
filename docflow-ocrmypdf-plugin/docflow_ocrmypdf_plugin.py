@@ -38,6 +38,10 @@ class DocflowOptions(BaseModel):
         default=None,
         description='Optional Python file that rewrites OCR text before rendering',
     )
+    transform_config: str | None = Field(
+        default=None,
+        description='Optional JSON file with Docflow OCR transform settings',
+    )
 
 
 @hookimpl
@@ -56,6 +60,12 @@ def add_options(parser) -> None:
             'the PDF text layer. The file may define transform_word() and/or '
             'transform_sidecar().'
         ),
+    )
+    group.add_argument(
+        '--docflow-transform-config',
+        dest='docflow_transform_config',
+        metavar='FILE',
+        help='JSON file with data used by the Docflow transform runtime.',
     )
 
 
@@ -78,6 +88,18 @@ def _get_transform_script_path(options) -> Path | None:
     return Path(script).expanduser().resolve()
 
 
+def _get_transform_config_path(options) -> Path | None:
+    config = None
+    extra_attrs = getattr(options, 'extra_attrs', {})
+    if isinstance(extra_attrs, dict):
+        config = extra_attrs.get('docflow_transform_config')
+    if not config:
+        config = getattr(getattr(options, 'docflow', None), 'transform_config', None)
+    if not config:
+        return None
+    return Path(config).expanduser().resolve()
+
+
 @hookimpl
 def check_options(options) -> None:
     builtin_tesseract_ocr.check_options(options)
@@ -86,6 +108,9 @@ def check_options(options) -> None:
         return
     if not script_path.is_file():
         raise BadArgsError(f'Docflow transform script not found: {script_path}')
+    config_path = _get_transform_config_path(options)
+    if config_path is not None and not config_path.is_file():
+        raise BadArgsError(f'Docflow transform config not found: {config_path}')
     if options.pdf_renderer == 'sandwich':
         raise BadArgsError(
             'Docflow text transformation requires pdf_renderer auto/fpdf2. '

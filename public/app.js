@@ -4330,7 +4330,7 @@ function renderOcrProcessingCommand() {
   const extractionMethod = sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout');
   const substitutions = ocrPdfSubstitutionsDraft.map(sanitizeReplacement).filter((row) => row.from !== '' && row.to !== '');
   const pluginSegment = substitutions.length > 0
-    ? '--plugin docflow_ocrmypdf_plugin.py --docflow-transform-script data/docflow_ocr_pdf_transform.py '
+    ? '--plugin docflow_ocrmypdf_plugin.py --docflow-transform-script docflow_transform_runtime.py --docflow-transform-config data/docflow_ocr_transform_config.json '
     : '';
   ocrProcessingCommandEl.textContent =
     'ocrmypdf ' + pluginSegment + '-l swe ' + deskewSegment + '--oversample 400 --tesseract-thresholding sauvola '
