@@ -33,7 +33,8 @@ const settingsPanelTemplateIds = {
   'ocr-processing': 'settings-template-ocr-processing',
   categories: 'settings-template-categories',
   jobs: 'settings-template-jobs',
-  paths: 'settings-template-paths'
+  paths: 'settings-template-paths',
+  system: 'settings-template-system'
 };
 let clientsTextareaEl = null;
 let clientsCancelEl = null;
@@ -78,7 +79,7 @@ let archiveTabEls = [];
 let archiveViewCategoriesEl = null;
 let archiveViewSystemEl = null;
 let settingsResetJobsEl = null;
-let jobsStateTransportEl = null;
+let systemStateTransportEl = null;
 let outputBasePathEl = null;
 let pathsCancelEl = null;
 let pathsApplyEl = null;
@@ -1987,25 +1988,7 @@ function bindSettingsPanelRefs(tabId) {
       }
     });
   } else if (tabId === 'jobs') {
-    jobsStateTransportEl = document.getElementById('jobs-state-transport');
     settingsResetJobsEl = document.getElementById('settings-reset-jobs');
-    jobsStateTransportEl.value = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
-    jobsStateTransportEl.addEventListener('change', async () => {
-      const previousTransport = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
-      const nextTransport = sanitizeStateUpdateTransport(jobsStateTransportEl.value, previousTransport);
-      jobsStateTransportEl.disabled = true;
-      settingsResetJobsEl.disabled = true;
-      try {
-        await saveStateTransportSetting(nextTransport);
-        window.location.reload();
-      } catch (error) {
-        jobsStateTransportEl.value = previousTransport;
-        alert(error.message || 'Kunde inte spara uppdateringsmetod.');
-      } finally {
-        jobsStateTransportEl.disabled = false;
-        settingsResetJobsEl.disabled = false;
-      }
-    });
     settingsResetJobsEl.addEventListener('click', async () => {
       const confirmed = window.confirm(
         'Detta flyttar tillbaka alla source.pdf till inbox och tar bort alla jobbmappar. Fortsätta?'
@@ -2037,6 +2020,32 @@ function bindSettingsPanelRefs(tabId) {
         alert(error.message || 'Kunde inte spara sökvägar.');
       }
     });
+  } else if (tabId === 'system') {
+    systemStateTransportEl = document.getElementById('system-state-transport');
+    systemStateTransportEl.value = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
+    systemStateTransportEl.addEventListener('change', async () => {
+      const previousTransport = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
+      const nextTransport = sanitizeStateUpdateTransport(systemStateTransportEl.value, previousTransport);
+      if (nextTransport === previousTransport) {
+        systemStateTransportEl.value = previousTransport;
+        return;
+      }
+
+      systemStateTransportEl.disabled = true;
+      try {
+        const savedTransport = await saveStateTransportSetting(nextTransport);
+        systemStateTransportEl.value = savedTransport;
+        syncStateUpdateTransport();
+        if (savedTransport === 'polling') {
+          scheduleStatePoll(0);
+        }
+      } catch (error) {
+        systemStateTransportEl.value = previousTransport;
+        alert(error.message || 'Kunde inte spara uppdateringsmetod.');
+      } finally {
+        systemStateTransportEl.disabled = false;
+      }
+    });
   }
 
   boundSettingsPanels.add(tabId);
@@ -2044,9 +2053,8 @@ function bindSettingsPanelRefs(tabId) {
 
 async function ensureSettingsPanelReady(tabId, options = {}) {
   bindSettingsPanelRefs(tabId);
-
-  if (tabId === 'jobs' && jobsStateTransportEl) {
-    jobsStateTransportEl.value = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
+  if (tabId === 'system' && systemStateTransportEl) {
+    systemStateTransportEl.value = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
   }
 
   const reload = options.reload === true;
@@ -2067,6 +2075,8 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
     setArchiveTab('categories');
   } else if (tabId === 'paths') {
     await loadPathSettings();
+  } else if (tabId === 'system') {
+    // State transport setting is hydrated from /api/get-state.php and saved via /api/save-config.php.
   }
 
   loadedSettingsPanels.add(tabId);
@@ -2169,7 +2179,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'jobs', 'paths'];
+  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'jobs', 'paths', 'system'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
