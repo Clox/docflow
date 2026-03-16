@@ -909,7 +909,7 @@ body {
 
 .client-fields {
   display: grid;
-  grid-template-columns: minmax(240px, 1.4fr) minmax(160px, 220px) minmax(240px, 1.1fr) auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(160px, 220px) minmax(240px, 1.1fr) auto;
   gap: 8px;
   align-items: start;
 }

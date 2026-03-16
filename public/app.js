@@ -2498,22 +2498,15 @@ function sanitizeClientDraft(row) {
   const input = row && typeof row === 'object' ? row : {};
   const uiKey = clientUiKey(input);
 
-  let name = '';
-  if (typeof input.name === 'string') {
-    name = input.name;
-  } else if (typeof input.firstName === 'string' || typeof input.lastName === 'string') {
-    const firstName = typeof input.firstName === 'string' ? input.firstName : '';
-    const lastName = typeof input.lastName === 'string' ? input.lastName : '';
-    name = `${firstName} ${lastName}`.trim();
-  }
+  const firstName = typeof input.firstName === 'string' ? input.firstName : '';
+  const lastName = typeof input.lastName === 'string' ? input.lastName : '';
 
-  let folderName = '';
-  if (typeof input.folderName === 'string') {
-    folderName = input.folderName;
-  } else if (typeof input.dirName === 'string') {
+  let folderName = typeof input.folderName === 'string' ? input.folderName : '';
+  if (folderName === '' && typeof input.dirName === 'string') {
     folderName = input.dirName;
-  } else if (name !== '') {
-    folderName = name;
+  }
+  if (folderName === '') {
+    folderName = `${firstName} ${lastName}`.trim();
   }
 
   const pinRaw = input.personalIdentityNumber;
@@ -2523,7 +2516,8 @@ function sanitizeClientDraft(row) {
 
   return {
     uiKey,
-    name,
+    firstName,
+    lastName,
     folderName,
     personalIdentityNumber
   };
@@ -2532,7 +2526,8 @@ function sanitizeClientDraft(row) {
 function serializeClientDraft(row) {
   const client = sanitizeClientDraft(row);
   return {
-    name: client.name.trim(),
+    firstName: client.firstName.trim(),
+    lastName: client.lastName.trim(),
     folderName: client.folderName.trim(),
     personalIdentityNumber: client.personalIdentityNumber.trim()
   };
@@ -2545,7 +2540,8 @@ function normalizedClientsJson(clients) {
 function defaultClientDraft() {
   return sanitizeClientDraft({
     uiKey: `tmp-client-${clientDraftUiKeySeq++}`,
-    name: '',
+    firstName: '',
+    lastName: '',
     folderName: '',
     personalIdentityNumber: ''
   });
@@ -3192,12 +3188,21 @@ function renderClientsEditor() {
     const fields = document.createElement('div');
     fields.className = 'client-fields';
 
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.placeholder = 'Ex: Johan Andersson';
-    nameInput.value = row.name;
-    nameInput.addEventListener('input', () => {
-      clientsDraft[rowIndex].name = nameInput.value;
+    const firstNameInput = document.createElement('input');
+    firstNameInput.type = 'text';
+    firstNameInput.placeholder = 'Ex: Johan';
+    firstNameInput.value = row.firstName || '';
+    firstNameInput.addEventListener('input', () => {
+      clientsDraft[rowIndex].firstName = firstNameInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const lastNameInput = document.createElement('input');
+    lastNameInput.type = 'text';
+    lastNameInput.placeholder = 'Ex: Andersson';
+    lastNameInput.value = row.lastName || '';
+    lastNameInput.addEventListener('input', () => {
+      clientsDraft[rowIndex].lastName = lastNameInput.value;
       updateSettingsActionButtons();
     });
 
@@ -3229,7 +3234,8 @@ function renderClientsEditor() {
       updateSettingsActionButtons();
     });
 
-    fields.appendChild(createFloatingField('Namn', nameInput));
+    fields.appendChild(createFloatingField('Förnamn', firstNameInput));
+    fields.appendChild(createFloatingField('Efternamn', lastNameInput));
     fields.appendChild(createFloatingField('Personnummer', pinInput));
     fields.appendChild(createFloatingField('Mappnamn', folderInput));
     fields.appendChild(removeButton);
