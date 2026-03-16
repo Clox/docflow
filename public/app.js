@@ -155,6 +155,7 @@ let jobsStateSig = '';
 let currentViewMode = 'pdf';
 let currentOcrSource = 'merged';
 let currentOcrZoom = 100;
+let currentOcrDocumentMode = 'text';
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
 let ocrSearchActiveIndex = -1;
@@ -744,7 +745,7 @@ async function setViewerOcr(jobId) {
   if (cachedContent && typeof cachedContent === 'object') {
     loadedOcrJobId = jobId;
     loadedOcrSource = currentOcrSource;
-    setOcrDocumentPages(cachedContent.pages, cachedContent.text || '');
+    setOcrDocumentPages(cachedContent.pages, cachedContent.text || '', cachedContent.mode || 'text');
     refreshOcrSearch();
     restoreOcrViewState(currentOcrSource);
     return;
@@ -780,12 +781,14 @@ async function setViewerOcr(jobId) {
 
     const text = payload && typeof payload.text === 'string' ? payload.text : '';
     const pages = payload && Array.isArray(payload.pages) ? payload.pages : null;
+    const mode = payload && typeof payload.mode === 'string' ? payload.mode : 'text';
     const resolvedText = text || `(Ingen ${ocrSourceDisplayName(currentOcrSource)} hittades)`;
     setCachedOcrViewContent(currentOcrSource, {
       text: resolvedText,
       pages,
+      mode,
     });
-    setOcrDocumentPages(pages, resolvedText);
+    setOcrDocumentPages(pages, resolvedText, mode);
     refreshOcrSearch();
     restoreOcrViewState(currentOcrSource);
   } catch (error) {
@@ -796,6 +799,7 @@ async function setViewerOcr(jobId) {
     setCachedOcrViewContent(currentOcrSource, {
       text: resolvedText,
       pages: null,
+      mode: 'text',
     });
     setOcrDocumentText(resolvedText);
     refreshOcrSearch();
@@ -1616,20 +1620,189 @@ function splitOcrTextIntoPages(text) {
   });
 }
 
-function normalizeOcrPages(pages, fallbackText = '') {
-  if (!Array.isArray(pages) || pages.length === 0) {
-    return splitOcrTextIntoPages(fallbackText);
+function normalizeWordRect(bbox) {
+  if (!Array.isArray(bbox) || bbox.length === 0) {
+    return null;
   }
 
-  const normalizedPages = pages.map((page, index) => ({
-    number: Number.parseInt(String(page && page.number), 10) || index + 1,
-    text: typeof (page && page.text) === 'string' ? page.text.replace(/\r\n/g, '\n') : '',
-  }));
+  if (bbox.length === 4 && bbox.every((value) => Number.isFinite(Number(value)))) {
+    const x0 = Number(bbox[0]);
+    const y0 = Number(bbox[1]);
+    const x1 = Number(bbox[2]);
+    const y1 = Number(bbox[3]);
+    return {
+      x0: Math.min(x0, x1),
+      y0: Math.min(y0, y1),
+      x1: Math.max(x0, x1),
+      y1: Math.max(y0, y1),
+    };
+  }
+
+  const points = bbox
+    .filter((point) => Array.isArray(point) && point.length >= 2 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
+    .map((point) => ({
+      x: Number(point[0]),
+      y: Number(point[1]),
+    }));
+
+  if (points.length === 0) {
+    return null;
+  }
+
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  return {
+    x0: Math.min(...xs),
+    y0: Math.min(...ys),
+    x1: Math.max(...xs),
+    y1: Math.max(...ys),
+  };
+}
+
+function buildObjectSearchRows(words) {
+  const orderedWords = [...words].sort((left, right) => {
+    const yDiff = left.rect.y0 - right.rect.y0;
+    if (Math.abs(yDiff) > Math.max(left.rect.height, right.rect.height) * 0.35) {
+      return yDiff;
+    }
+    return left.rect.x0 - right.rect.x0;
+  });
+
+  const rows = [];
+  orderedWords.forEach((word) => {
+    const centerY = word.rect.y0 + (word.rect.height / 2);
+    const row = rows.find((candidate) => {
+      const tolerance = Math.max(candidate.height, word.rect.height) * 0.5;
+      return Math.abs(candidate.centerY - centerY) <= tolerance;
+    });
+    if (!row) {
+      rows.push({
+        centerY,
+        height: word.rect.height,
+        words: [word],
+      });
+      return;
+    }
+    row.words.push(word);
+    row.centerY = ((row.centerY * (row.words.length - 1)) + centerY) / row.words.length;
+    row.height = Math.max(row.height, word.rect.height);
+  });
+
+  rows.forEach((row) => {
+    row.words.sort((left, right) => left.rect.x0 - right.rect.x0);
+  });
+  rows.sort((left, right) => left.centerY - right.centerY);
+  return rows;
+}
+
+function buildObjectPageSearchModel(words) {
+  const rows = buildObjectSearchRows(words);
+  let searchText = '';
+  const searchEntries = [];
+
+  rows.forEach((row, rowIndex) => {
+    row.words.forEach((word, wordIndex) => {
+      if (searchText !== '') {
+        searchText += wordIndex === 0 ? '\n' : ' ';
+      }
+      const start = searchText.length;
+      searchText += word.text;
+      searchEntries.push({
+        wordIndex: word.index,
+        start,
+        end: searchText.length,
+      });
+    });
+    if (rowIndex < rows.length - 1) {
+      // handled by the next row's first word
+    }
+  });
+
+  return {
+    searchText,
+    searchEntries,
+  };
+}
+
+function normalizeObjectWord(word, index) {
+  const text = typeof (word && word.text) === 'string' ? word.text : '';
+  const rect = normalizeWordRect(word && word.bbox);
+  if (text === '' || rect === null) {
+    return null;
+  }
+
+  const scoreCandidate = word && (
+    Number.isFinite(Number(word.score)) ? Number(word.score)
+      : Number.isFinite(Number(word.confidence)) ? (Number(word.confidence) / 100)
+        : null
+  );
+
+  return {
+    index,
+    text,
+    rect: {
+      x0: rect.x0,
+      y0: rect.y0,
+      x1: rect.x1,
+      y1: rect.y1,
+      width: Math.max(1, rect.x1 - rect.x0),
+      height: Math.max(1, rect.y1 - rect.y0),
+    },
+    score: scoreCandidate,
+    confidence: Number.isFinite(Number(word && word.confidence)) ? Number(word.confidence) : null,
+    title: typeof (word && word.title) === 'string' ? word.title : '',
+  };
+}
+
+function normalizeOcrPages(pages, fallbackText = '', mode = 'text') {
+  if (!Array.isArray(pages) || pages.length === 0) {
+    return splitOcrTextIntoPages(fallbackText).map((page) => ({
+      ...page,
+      renderMode: 'text',
+      searchText: page.text,
+    }));
+  }
+
+  const normalizedPages = pages.map((page, index) => {
+    const number = Number.parseInt(String(page && page.number), 10) || index + 1;
+    const text = typeof (page && page.text) === 'string' ? page.text.replace(/\r\n/g, '\n') : '';
+    if (mode !== 'objects') {
+      return {
+        number,
+        text,
+        renderMode: 'text',
+        searchText: text,
+      };
+    }
+
+    const words = Array.isArray(page && page.words)
+      ? page.words
+        .map((word, wordIndex) => normalizeObjectWord(word, wordIndex))
+        .filter((word) => word !== null)
+      : [];
+    const derivedWidth = words.reduce((maxWidth, word) => Math.max(maxWidth, word.rect.x1), 0);
+    const derivedHeight = words.reduce((maxHeight, word) => Math.max(maxHeight, word.rect.y1), 0);
+    const pageWidth = Number.isFinite(Number(page && page.pageWidth)) ? Number(page.pageWidth) : derivedWidth;
+    const pageHeight = Number.isFinite(Number(page && page.pageHeight)) ? Number(page.pageHeight) : derivedHeight;
+    const searchModel = buildObjectPageSearchModel(words);
+
+    return {
+      number,
+      text,
+      renderMode: 'objects',
+      pageWidth: Math.max(1, pageWidth),
+      pageHeight: Math.max(1, pageHeight),
+      words,
+      searchText: searchModel.searchText || text,
+      searchEntries: searchModel.searchEntries,
+    };
+  });
 
   let cursor = 0;
   return normalizedPages.map((page, index) => {
+    const searchText = typeof page.searchText === 'string' ? page.searchText : page.text;
     const start = cursor;
-    const end = start + page.text.length;
+    const end = start + searchText.length;
     cursor = end + (index < normalizedPages.length - 1 ? 2 : 0);
     return {
       ...page,
@@ -1692,20 +1865,160 @@ function resizeOcrPage(wrapperEl, highlightEl, textareaEl, targetWidth = null) {
   textareaEl.style.height = `${nextHeight}px`;
 }
 
+function buildObjectPageMatchLookup(page, pageMatches) {
+  const matchedWordIndexes = new Set();
+  const activeWordIndexes = new Set();
+  const activeMatch = ocrSearchActiveIndex >= 0 ? pageMatches.find((match) => match.globalIndex === ocrSearchActiveIndex) : null;
+
+  (page.searchEntries || []).forEach((entry) => {
+    const overlapsAny = pageMatches.some((match) => entry.start < match.end && entry.end > match.start);
+    if (overlapsAny) {
+      matchedWordIndexes.add(entry.wordIndex);
+    }
+    if (activeMatch && entry.start < activeMatch.end && entry.end > activeMatch.start) {
+      activeWordIndexes.add(entry.wordIndex);
+    }
+  });
+
+  return {
+    matchedWordIndexes,
+    activeWordIndexes,
+  };
+}
+
+function buildWordTooltip(word) {
+  const parts = [word.text];
+  if (Number.isFinite(word.score)) {
+    parts.push(`Score: ${Number(word.score).toFixed(4)}`);
+  }
+  if (Number.isFinite(word.confidence)) {
+    parts.push(`Confidence: ${word.confidence}`);
+  }
+  if (word.title) {
+    parts.push(word.title);
+  }
+  return parts.join('\n');
+}
+
+function renderObjectOcrPage(page, pageMatches, objectScale) {
+  const wrapperEl = document.createElement('div');
+  wrapperEl.className = 'ocr-page ocr-page--objects';
+  wrapperEl.dataset.pageNumber = String(page.number);
+  wrapperEl.style.width = `${Math.ceil(page.pageWidth * objectScale)}px`;
+  wrapperEl.style.height = `${Math.ceil(page.pageHeight * objectScale)}px`;
+
+  const surfaceEl = document.createElement('div');
+  surfaceEl.className = 'ocr-page-surface';
+  surfaceEl.style.width = `${Math.ceil(page.pageWidth * objectScale)}px`;
+  surfaceEl.style.height = `${Math.ceil(page.pageHeight * objectScale)}px`;
+
+  const matchLookup = buildObjectPageMatchLookup(page, pageMatches);
+  const wordElements = new Map();
+
+  page.words.forEach((word) => {
+    const wordEl = document.createElement('div');
+    wordEl.className = 'ocr-word-box';
+    if (matchLookup.matchedWordIndexes.has(word.index)) {
+      wordEl.classList.add('is-match');
+    }
+    if (matchLookup.activeWordIndexes.has(word.index)) {
+      wordEl.classList.add('is-active');
+    }
+    const scaledLeft = word.rect.x0 * objectScale;
+    const scaledTop = word.rect.y0 * objectScale;
+    const scaledWidth = Math.max(1, word.rect.width * objectScale);
+    const scaledHeight = Math.max(1, word.rect.height * objectScale);
+    const fontSize = Math.max(9, Math.min(scaledHeight * 0.72, (scaledWidth / Math.max(Array.from(word.text).length, 1)) * 1.7));
+    wordEl.style.left = `${scaledLeft}px`;
+    wordEl.style.top = `${scaledTop}px`;
+    wordEl.style.width = `${scaledWidth}px`;
+    wordEl.style.height = `${scaledHeight}px`;
+    wordEl.style.fontSize = `${fontSize}px`;
+    wordEl.style.lineHeight = `${scaledHeight}px`;
+    wordEl.textContent = word.text;
+    wordEl.title = buildWordTooltip(word);
+    surfaceEl.appendChild(wordEl);
+    wordElements.set(word.index, wordEl);
+  });
+
+  wrapperEl.appendChild(surfaceEl);
+  ocrPagesViewEl.appendChild(wrapperEl);
+
+  return {
+    ...page,
+    wrapperEl,
+    surfaceEl,
+    wordElements,
+    objectScale,
+  };
+}
+
+function renderTextOcrPage(page, pageMatches, targetWidth) {
+  const wrapperEl = document.createElement('div');
+  wrapperEl.className = 'ocr-page';
+  wrapperEl.dataset.pageNumber = String(page.number);
+
+  const highlightEl = document.createElement('pre');
+  highlightEl.className = 'ocr-page-highlight';
+  highlightEl.innerHTML = buildOcrPageHighlightHtml(page.text, pageMatches);
+
+  const textareaEl = document.createElement('textarea');
+  textareaEl.className = 'ocr-page-text';
+  textareaEl.readOnly = true;
+  textareaEl.wrap = 'off';
+  textareaEl.spellcheck = false;
+  textareaEl.autocorrect = 'off';
+  textareaEl.autocapitalize = 'off';
+  textareaEl.value = page.text;
+  textareaEl.addEventListener('focus', () => {
+    syncOcrHighlightPresentation();
+  });
+  textareaEl.addEventListener('blur', () => {
+    syncOcrHighlightPresentation();
+  });
+
+  wrapperEl.appendChild(highlightEl);
+  wrapperEl.appendChild(textareaEl);
+  ocrPagesViewEl.appendChild(wrapperEl);
+  resizeOcrPage(wrapperEl, highlightEl, textareaEl, targetWidth);
+
+  return {
+    ...page,
+    wrapperEl,
+    highlightEl,
+    textareaEl,
+  };
+}
+
 function renderOcrPages() {
   const pages = ocrDocumentPages;
   ocrRenderedPages = [];
   ocrPagesViewEl.innerHTML = '';
-  let documentPageWidth = 0;
+  const objectPages = pages.filter((page) => page.renderMode === 'objects');
+  const maxObjectPageWidth = objectPages.reduce((maxWidth, page) => Math.max(maxWidth, page.pageWidth || 0), 0);
+  const availableWidth = Math.max(360, ocrPagesViewEl.clientWidth - 32);
+  const fitScale = maxObjectPageWidth > 0 ? (availableWidth / maxObjectPageWidth) : 1;
+  const objectScale = fitScale * (currentOcrZoom / 100);
+  let documentTextPageWidth = 0;
+  const textPageMeasurements = new Map();
 
   pages.forEach((page) => {
-    const wrapperEl = document.createElement('div');
-    wrapperEl.className = 'ocr-page';
-    wrapperEl.dataset.pageNumber = String(page.number);
+    if (page.renderMode !== 'text') {
+      return;
+    }
+    const measureEl = document.createElement('textarea');
+    measureEl.className = 'ocr-page-text';
+    measureEl.readOnly = true;
+    measureEl.wrap = 'off';
+    measureEl.value = page.text;
+    ocrPagesViewEl.appendChild(measureEl);
+    const pageWidth = measureOcrPageWidth(measureEl, page.text);
+    documentTextPageWidth = Math.max(documentTextPageWidth, pageWidth);
+    textPageMeasurements.set(page.number, pageWidth);
+    measureEl.remove();
+  });
 
-    const highlightEl = document.createElement('pre');
-    highlightEl.className = 'ocr-page-highlight';
-
+  pages.forEach((page) => {
     const pageMatches = ocrSearchMatches
       .map((match, globalIndex) => ({
         start: Math.max(match.start, page.start) - page.start,
@@ -1713,42 +2026,15 @@ function renderOcrPages() {
         globalIndex,
       }))
       .filter((match) => match.start < match.end);
-    highlightEl.innerHTML = buildOcrPageHighlightHtml(page.text, pageMatches);
 
-    const textareaEl = document.createElement('textarea');
-    textareaEl.className = 'ocr-page-text';
-    textareaEl.readOnly = true;
-    textareaEl.wrap = 'off';
-    textareaEl.spellcheck = false;
-    textareaEl.autocorrect = 'off';
-    textareaEl.autocapitalize = 'off';
-    textareaEl.value = page.text;
-    textareaEl.addEventListener('focus', () => {
-      syncOcrHighlightPresentation();
-    });
-    textareaEl.addEventListener('blur', () => {
-      syncOcrHighlightPresentation();
-    });
-
-    wrapperEl.appendChild(highlightEl);
-    wrapperEl.appendChild(textareaEl);
-    ocrPagesViewEl.appendChild(wrapperEl);
-
-    const pageWidth = measureOcrPageWidth(textareaEl, page.text);
-    if (pageWidth > documentPageWidth) {
-      documentPageWidth = pageWidth;
+    if (page.renderMode === 'objects') {
+      ocrRenderedPages.push(renderObjectOcrPage(page, pageMatches, objectScale));
+      return;
     }
 
-    ocrRenderedPages.push({
-      ...page,
-      wrapperEl,
-      highlightEl,
-      textareaEl,
-    });
-  });
-
-  ocrRenderedPages.forEach((page) => {
-    resizeOcrPage(page.wrapperEl, page.highlightEl, page.textareaEl, documentPageWidth);
+    ocrRenderedPages.push(
+      renderTextOcrPage(page, pageMatches, documentTextPageWidth || textPageMeasurements.get(page.number) || null)
+    );
   });
 
   syncOcrHighlightPresentation();
@@ -1756,14 +2042,16 @@ function renderOcrPages() {
 }
 
 function setOcrDocumentText(rawText) {
-  ocrDocumentPages = normalizeOcrPages([], rawText);
-  ocrViewEl.value = ocrDocumentPages.map((page) => page.text).join('\n\n');
+  currentOcrDocumentMode = 'text';
+  ocrDocumentPages = normalizeOcrPages([], rawText, 'text');
+  ocrViewEl.value = ocrDocumentPages.map((page) => page.searchText || page.text).join('\n\n');
   renderOcrPages();
 }
 
-function setOcrDocumentPages(pages, fallbackText = '') {
-  ocrDocumentPages = normalizeOcrPages(pages, fallbackText);
-  ocrViewEl.value = ocrDocumentPages.map((page) => page.text).join('\n\n');
+function setOcrDocumentPages(pages, fallbackText = '', mode = 'text') {
+  currentOcrDocumentMode = mode;
+  ocrDocumentPages = normalizeOcrPages(pages, fallbackText, mode);
+  ocrViewEl.value = ocrDocumentPages.map((page) => page.searchText || page.text).join('\n\n');
   renderOcrPages();
 }
 
@@ -1914,6 +2202,26 @@ function syncOcrHighlightScroll() {
 function scrollOcrMatchIntoView(match) {
   const page = ocrRenderedPages.find((entry) => match.start >= entry.start && match.start <= entry.end);
   if (!page) {
+    return;
+  }
+
+  if (page.renderMode === 'objects') {
+    const activeEntries = (page.searchEntries || []).filter(
+      (entry) => entry.start < (match.end - page.start) && entry.end > (match.start - page.start)
+    );
+    const targetEntry = activeEntries[0] || null;
+    const targetWordEl = targetEntry ? page.wordElements.get(targetEntry.wordIndex) : null;
+    if (!targetWordEl) {
+      return;
+    }
+
+    const pageRect = ocrPagesViewEl.getBoundingClientRect();
+    const targetRect = targetWordEl.getBoundingClientRect();
+    const targetTop = ocrPagesViewEl.scrollTop + (targetRect.top - pageRect.top) - (ocrPagesViewEl.clientHeight / 3);
+    const targetLeft = ocrPagesViewEl.scrollLeft + (targetRect.left - pageRect.left) - 40;
+    ocrPagesViewEl.scrollTop = Math.max(0, targetTop);
+    ocrPagesViewEl.scrollLeft = Math.max(0, targetLeft);
+    syncOcrHighlightScroll();
     return;
   }
 

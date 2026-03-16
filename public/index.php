@@ -57,7 +57,7 @@
             <label class="floating-label" for="view-mode">Vy</label>
             <select id="view-mode">
               <option value="pdf" selected>PDF</option>
-              <option value="ocr">OCR-data</option>
+              <option value="ocr">OCR</option>
               <option value="matches">Matchningar</option>
               <option value="meta">Meta</option>
             </select>
@@ -94,7 +94,7 @@
             </div>
           </div>
           <div id="ocr-search-bar" class="ocr-search-bar hidden">
-            <input id="ocr-search-input" type="text" placeholder="Sök i OCR-data">
+            <input id="ocr-search-input" type="text" placeholder="Sök i OCR">
             <label class="ocr-search-toggle" for="ocr-search-regex">
               <input id="ocr-search-regex" type="checkbox">
               <span>Regex</span>

@@ -621,6 +621,42 @@ body {
   margin-bottom: 0;
 }
 
+.ocr-page--objects {
+  overflow: visible;
+}
+
+.ocr-page-surface {
+  position: relative;
+  background: #fff;
+}
+
+.ocr-word-box {
+  position: absolute;
+  display: block;
+  padding: 0 2px;
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  background: rgba(255, 255, 255, 0.82);
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  font-family: monospace;
+  font-weight: 500;
+  letter-spacing: 0;
+  user-select: none;
+  cursor: default;
+}
+
+.ocr-word-box.is-match {
+  background: rgba(248, 227, 139, 0.85);
+  border-color: rgba(180, 135, 15, 0.5);
+}
+
+.ocr-word-box.is-active {
+  background: rgba(243, 179, 61, 0.92);
+  border-color: rgba(177, 95, 8, 0.65);
+}
+
 .ocr-page-highlight,
 .ocr-page-text {
   margin: 0;

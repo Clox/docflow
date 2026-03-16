@@ -209,6 +209,14 @@ def _parse_confidence(title: str) -> int | None:
     return int(match.group(1))
 
 
+def _get_image_size(input_file: str | Path) -> tuple[int, int] | None:
+    try:
+        with Image.open(input_file) as image:
+            return image.size
+    except Exception:
+        return None
+
+
 def _page_debug_path(output_dir: Path, engine: str, page_number: int) -> Path:
     return output_dir / f'{engine}_page_{page_number + 1:02d}.json'
 
@@ -423,6 +431,10 @@ def _build_rapidocr_debug_payload(input_file, options, *, page_number: int) -> d
     payload['pageNumber'] = page_number + 1
     payload['pageIndex'] = page_number
     payload['sourceImage'] = Path(input_file).name
+    image_size = _get_image_size(input_file)
+    if image_size is not None:
+        payload['pageWidth'] = int(image_size[0])
+        payload['pageHeight'] = int(image_size[1])
     return payload
 
 
@@ -447,6 +459,10 @@ def _write_page_debug_artifacts(input_file, hocr_path: Path, options, *, page_nu
         'words': _extract_tesseract_debug_words(hocr_path),
         'text': tesseract_text,
     }
+    image_size = _get_image_size(input_file)
+    if image_size is not None:
+        tesseract_payload['pageWidth'] = int(image_size[0])
+        tesseract_payload['pageHeight'] = int(image_size[1])
     _write_debug_json(output_dir, 'tesseract', page_number, tesseract_payload)
     _write_debug_text(output_dir, 'tesseract', page_number, tesseract_text)
 

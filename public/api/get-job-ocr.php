@@ -48,6 +48,94 @@ function split_ocr_text_into_pages(string $text): array
     ];
 }
 
+function derive_page_size_from_words(array $words): array
+{
+    $maxX = 0.0;
+    $maxY = 0.0;
+
+    foreach ($words as $word) {
+        if (!is_array($word)) {
+            continue;
+        }
+        $bbox = $word['bbox'] ?? null;
+        if (!is_array($bbox) || $bbox === []) {
+            continue;
+        }
+
+        $isRectBbox = count($bbox) === 4
+            && is_numeric($bbox[0] ?? null)
+            && is_numeric($bbox[1] ?? null)
+            && is_numeric($bbox[2] ?? null)
+            && is_numeric($bbox[3] ?? null);
+
+        if ($isRectBbox) {
+            $x0 = is_numeric($bbox[0] ?? null) ? (float) $bbox[0] : null;
+            $y0 = is_numeric($bbox[1] ?? null) ? (float) $bbox[1] : null;
+            $x1 = is_numeric($bbox[2] ?? null) ? (float) $bbox[2] : null;
+            $y1 = is_numeric($bbox[3] ?? null) ? (float) $bbox[3] : null;
+            if ($x0 !== null && $y0 !== null && $x1 !== null && $y1 !== null) {
+                $maxX = max($maxX, $x0, $x1);
+                $maxY = max($maxY, $y0, $y1);
+            }
+            continue;
+        }
+
+        foreach ($bbox as $point) {
+            if (!is_array($point) || count($point) < 2) {
+                continue;
+            }
+            $x = is_numeric($point[0] ?? null) ? (float) $point[0] : null;
+            $y = is_numeric($point[1] ?? null) ? (float) $point[1] : null;
+            if ($x !== null && $y !== null) {
+                $maxX = max($maxX, $x);
+                $maxY = max($maxY, $y);
+            }
+        }
+    }
+
+    return [
+        'pageWidth' => $maxX > 0 ? $maxX : null,
+        'pageHeight' => $maxY > 0 ? $maxY : null,
+    ];
+}
+
+function load_engine_object_pages(string $jobDir, string $engine): array
+{
+    $jsonPaths = glob($jobDir . '/' . $engine . '_page_*.json') ?: [];
+    sort($jsonPaths, SORT_NATURAL);
+
+    $pages = [];
+    foreach ($jsonPaths as $index => $jsonPath) {
+        $payload = load_json_file($jsonPath);
+        if (!is_array($payload)) {
+            continue;
+        }
+        $pageNumber = (int) ($payload['pageNumber'] ?? ($index + 1));
+        if ($pageNumber <= 0) {
+            $pageNumber = $index + 1;
+        }
+
+        $derivedSize = derive_page_size_from_words(is_array($payload['words'] ?? null) ? $payload['words'] : []);
+        $pageWidth = is_numeric($payload['pageWidth'] ?? null)
+            ? (float) $payload['pageWidth']
+            : $derivedSize['pageWidth'];
+        $pageHeight = is_numeric($payload['pageHeight'] ?? null)
+            ? (float) $payload['pageHeight']
+            : $derivedSize['pageHeight'];
+
+        $pages[] = [
+            'number' => $pageNumber,
+            'text' => is_string($payload['text'] ?? null) ? (string) $payload['text'] : '',
+            'pageWidth' => $pageWidth,
+            'pageHeight' => $pageHeight,
+            'words' => is_array($payload['words'] ?? null) ? $payload['words'] : [],
+            'lines' => is_array($payload['lines'] ?? null) ? $payload['lines'] : [],
+        ];
+    }
+
+    return $pages;
+}
+
 try {
     $config = load_config();
 
@@ -73,6 +161,27 @@ try {
         . DIRECTORY_SEPARATOR . $id
         . DIRECTORY_SEPARATOR . 'ocr.txt';
     $ocrPath = dirname($ocrPath) . DIRECTORY_SEPARATOR . $ocrFilename;
+
+    $jobDir = dirname($ocrPath);
+
+    if (in_array($normalizedSource, ['tesseract', 'rapidocr'], true)) {
+        $objectPages = load_engine_object_pages($jobDir, $normalizedSource);
+        if ($objectPages !== []) {
+            $chunks = [];
+            foreach ($objectPages as $page) {
+                $pageNumber = (int) ($page['number'] ?? 0);
+                $pageText = is_string($page['text'] ?? null) ? trim((string) $page['text'], "\n") : '';
+                $chunks[] = '=== PAGE ' . $pageNumber . " ===\n" . $pageText;
+            }
+            json_response([
+                'source' => $normalizedSource,
+                'mode' => 'objects',
+                'text' => implode("\n\n", $chunks),
+                'pages' => $objectPages,
+            ]);
+            exit;
+        }
+    }
 
     if (!is_file($ocrPath)) {
         http_response_code(404);
@@ -102,6 +211,7 @@ try {
             if ($chunks !== []) {
                 json_response([
                     'source' => $normalizedSource,
+                    'mode' => 'text',
                     'text' => implode("\n\n", $chunks),
                     'pages' => $pagePayloads,
                 ]);
@@ -118,6 +228,7 @@ try {
 
     json_response([
         'source' => $normalizedSource,
+        'mode' => 'text',
         'text' => $text,
         'pages' => split_ocr_text_into_pages($text),
     ]);
