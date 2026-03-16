@@ -2500,6 +2500,9 @@ function sanitizeClientDraft(row) {
 
   const firstName = typeof input.firstName === 'string' ? input.firstName : '';
   const lastName = typeof input.lastName === 'string' ? input.lastName : '';
+  const displayName = typeof input.displayName === 'string'
+    ? input.displayName
+    : `${firstName} ${lastName}`.trim();
 
   let folderName = typeof input.folderName === 'string' ? input.folderName : '';
   if (folderName === '' && typeof input.dirName === 'string') {
@@ -2518,6 +2521,7 @@ function sanitizeClientDraft(row) {
     uiKey,
     firstName,
     lastName,
+    displayName,
     folderName,
     personalIdentityNumber
   };
@@ -2525,9 +2529,25 @@ function sanitizeClientDraft(row) {
 
 function serializeClientDraft(row) {
   const client = sanitizeClientDraft(row);
+  const desiredDisplayName = String(client.displayName || '').trim();
+  const existingLastName = String(client.lastName || '').trim();
+  const desiredLower = desiredDisplayName.toLowerCase();
+  const existingLastLower = existingLastName.toLowerCase();
+
+  let firstName = desiredDisplayName;
+  let lastName = '';
+  if (desiredDisplayName === '') {
+    firstName = String(client.firstName || '').trim();
+    lastName = existingLastName;
+  } else if (existingLastName !== '' && desiredLower.endsWith(existingLastLower)) {
+    const beforeLast = desiredDisplayName.slice(0, Math.max(0, desiredDisplayName.length - existingLastName.length)).trim();
+    firstName = beforeLast;
+    lastName = existingLastName;
+  }
+
   return {
-    firstName: client.firstName.trim(),
-    lastName: client.lastName.trim(),
+    firstName: firstName.trim(),
+    lastName: lastName.trim(),
     folderName: client.folderName.trim(),
     personalIdentityNumber: client.personalIdentityNumber.trim()
   };
@@ -2542,6 +2562,7 @@ function defaultClientDraft() {
     uiKey: `tmp-client-${clientDraftUiKeySeq++}`,
     firstName: '',
     lastName: '',
+    displayName: '',
     folderName: '',
     personalIdentityNumber: ''
   });
@@ -3183,26 +3204,17 @@ function renderClientsEditor() {
 
     const clientBody = document.createElement('div');
     clientBody.className = 'tree-body folder-body';
-    appendTreeBodyIcon(clientBody, 'tree-body-icon tree-body-icon-folder');
+    appendTreeBodyIcon(clientBody, 'tree-body-icon client-card-icon');
 
     const fields = document.createElement('div');
     fields.className = 'client-fields';
 
-    const firstNameInput = document.createElement('input');
-    firstNameInput.type = 'text';
-    firstNameInput.placeholder = 'Ex: Johan';
-    firstNameInput.value = row.firstName || '';
-    firstNameInput.addEventListener('input', () => {
-      clientsDraft[rowIndex].firstName = firstNameInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const lastNameInput = document.createElement('input');
-    lastNameInput.type = 'text';
-    lastNameInput.placeholder = 'Ex: Andersson';
-    lastNameInput.value = row.lastName || '';
-    lastNameInput.addEventListener('input', () => {
-      clientsDraft[rowIndex].lastName = lastNameInput.value;
+    const displayNameInput = document.createElement('input');
+    displayNameInput.type = 'text';
+    displayNameInput.placeholder = 'Ex: Johan Andersson';
+    displayNameInput.value = row.displayName || `${row.firstName || ''} ${row.lastName || ''}`.trim();
+    displayNameInput.addEventListener('input', () => {
+      clientsDraft[rowIndex].displayName = displayNameInput.value;
       updateSettingsActionButtons();
     });
 
@@ -3234,8 +3246,7 @@ function renderClientsEditor() {
       updateSettingsActionButtons();
     });
 
-    fields.appendChild(createFloatingField('Förnamn', firstNameInput));
-    fields.appendChild(createFloatingField('Efternamn', lastNameInput));
+    fields.appendChild(createFloatingField('Visningsnamn', displayNameInput));
     fields.appendChild(createFloatingField('Personnummer', pinInput));
     fields.appendChild(createFloatingField('Mappnamn', folderInput));
     fields.appendChild(removeButton);

@@ -909,9 +909,18 @@ body {
 
 .client-fields {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(160px, 220px) minmax(240px, 1.1fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 8px;
   align-items: start;
+}
+
+.client-fields > * {
+  min-width: 0;
+}
+
+.client-fields .category-remove {
+  grid-column: 1 / -1;
+  justify-self: end;
 }
 
 .client-fields input {
@@ -1320,6 +1329,12 @@ body {
   background-image: url('/assets/icons/sender.svg');
 }
 
+.client-card-icon {
+  width: 22px;
+  height: 22px;
+  background-image: url('/assets/icons/client.svg');
+}
+
 .sender-payment-icon {
   width: 22px;
   height: 22px;
@@ -1327,6 +1342,7 @@ body {
 }
 
 .sender-header,
+.client-fields,
 .sender-fields,
 .sender-payment-fields {
   margin-left: 30px;
