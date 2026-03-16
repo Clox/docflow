@@ -136,13 +136,11 @@
 
   <template id="settings-template-clients">
     <h3>Huvudmän</h3>
-    <p>Redigera innehållet i <code>data/clients.json</code> direkt.</p>
-    <textarea
-      id="clients-textarea"
-      spellcheck="false"
-      autocorrect="off"
-      autocapitalize="off"
-    ></textarea>
+    <p>Redigera huvudmän som lagras i <code>data/clients.json</code>.</p>
+    <div id="clients-list" class="categories-list"></div>
+    <div class="categories-actions">
+      <button id="clients-add-row" type="button">Lägg till huvudman</button>
+    </div>
     <div class="panel-actions">
       <button id="clients-cancel" type="button">Avbryt</button>
       <button id="clients-apply" type="button">Spara</button>

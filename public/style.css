@@ -878,18 +878,6 @@ body {
   background: #fff1f1;
 }
 
-#clients-textarea {
-  width: 100%;
-  flex: 1;
-  min-height: 280px;
-  height: auto;
-  resize: vertical;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  padding: 10px;
-  font: 13px/1.45 monospace;
-}
-
 #output-base-path {
   width: 100%;
   font: inherit;
@@ -917,6 +905,22 @@ body {
   min-height: 280px;
   height: auto;
   overflow: auto;
+}
+
+.client-fields {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.4fr) minmax(160px, 220px) minmax(240px, 1.1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.client-fields input {
+  width: 100%;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
 }
 
 .archive-subtabs {
@@ -1329,6 +1333,7 @@ body {
 }
 
 .folder-fields,
+.client-fields,
 .category-fields,
 .rule-fields,
 .folder-actions,
@@ -1339,6 +1344,10 @@ body {
 @media (max-width: 760px) {
   .sender-summary-fields,
   .sender-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .client-fields {
     grid-template-columns: 1fr;
   }
 

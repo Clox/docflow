@@ -36,7 +36,8 @@ const settingsPanelTemplateIds = {
   paths: 'settings-template-paths',
   system: 'settings-template-system'
 };
-let clientsTextareaEl = null;
+let clientsListEl = null;
+let clientsAddRowEl = null;
 let clientsCancelEl = null;
 let clientsApplyEl = null;
 let sendersListEl = null;
@@ -147,7 +148,9 @@ let ocrPdfSubstitutionsDraft = [];
 let ocrPdfSubstitutionsBaselineJson = JSON.stringify([]);
 let activeSettingsTabId = 'clients';
 let activeArchiveTabId = 'categories';
-let clientsBaselineText = '';
+let clientsDraft = [];
+let clientsBaselineJson = '[]';
+let clientDraftUiKeySeq = 1;
 let sendersBaselineJson = '[]';
 let sendersSortOrder = 'name';
 let senderDraftUiKeySeq = 1;
@@ -1729,21 +1732,31 @@ function bindSettingsPanelRefs(tabId) {
   mountSettingsPanel(tabId);
 
   if (tabId === 'clients') {
-    clientsTextareaEl = document.getElementById('clients-textarea');
+    clientsListEl = document.getElementById('clients-list');
+    clientsAddRowEl = document.getElementById('clients-add-row');
     clientsCancelEl = document.getElementById('clients-cancel');
     clientsApplyEl = document.getElementById('clients-apply');
-    clientsTextareaEl.addEventListener('input', () => {
+    clientsAddRowEl.addEventListener('click', () => {
+      clientsDraft.push(defaultClientDraft());
+      renderClientsEditor();
       updateSettingsActionButtons();
     });
     clientsCancelEl.addEventListener('click', () => {
-      clientsTextareaEl.value = clientsBaselineText;
+      let parsed = [];
+      try {
+        parsed = JSON.parse(clientsBaselineJson);
+      } catch (error) {
+        parsed = [];
+      }
+      clientsDraft = Array.isArray(parsed) ? parsed.map(sanitizeClientDraft) : [];
+      renderClientsEditor();
       updateSettingsActionButtons();
     });
     clientsApplyEl.addEventListener('click', async () => {
       try {
-        await saveClientsText();
+        await saveClientsSettings();
       } catch (error) {
-        alert('Kunde inte spara huvudmän.');
+        alert(error.message || 'Kunde inte spara huvudmän.');
       }
     });
   } else if (tabId === 'senders') {
@@ -2063,7 +2076,7 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
   }
 
   if (tabId === 'clients') {
-    await loadClientsText();
+    await loadClientsSettings();
   } else if (tabId === 'senders') {
     await loadSendersSettings();
   } else if (tabId === 'matching') {
@@ -2095,12 +2108,14 @@ async function openClientsSettingsDirect() {
     await ensureSettingsPanelReady('clients');
   } catch (error) {
     alert('Kunde inte ladda huvudmän.');
-    clientsBaselineText = clientsTextareaEl ? clientsTextareaEl.value : '';
+    clientsDraft = [];
+    clientsBaselineJson = normalizedClientsJson(clientsDraft);
+    renderClientsEditor();
     updateSettingsActionButtons();
     return false;
   }
 
-  clientsTextareaEl.focus();
+  focusFirstClientsField();
   updateSettingsActionButtons();
   return true;
 }
@@ -2259,10 +2274,7 @@ function normalizedCategoriesJson(categories, systemCategories) {
 }
 
 function isClientsDirty() {
-  if (!clientsTextareaEl) {
-    return false;
-  }
-  return clientsTextareaEl.value !== clientsBaselineText;
+  return normalizedClientsJson(clientsDraft) !== clientsBaselineJson;
 }
 
 function isMatchingDirty() {
@@ -2473,6 +2485,70 @@ async function saveStateTransportSetting(nextTransport) {
 
   stateUpdateTransport = sanitizeStateUpdateTransport(payload.stateUpdateTransport, stateUpdateTransport);
   return stateUpdateTransport;
+}
+
+function clientUiKey(row) {
+  if (row && typeof row.uiKey === 'string' && row.uiKey.trim() !== '') {
+    return row.uiKey.trim();
+  }
+  return `tmp-client-${clientDraftUiKeySeq++}`;
+}
+
+function sanitizeClientDraft(row) {
+  const input = row && typeof row === 'object' ? row : {};
+  const uiKey = clientUiKey(input);
+
+  let name = '';
+  if (typeof input.name === 'string') {
+    name = input.name;
+  } else if (typeof input.firstName === 'string' || typeof input.lastName === 'string') {
+    const firstName = typeof input.firstName === 'string' ? input.firstName : '';
+    const lastName = typeof input.lastName === 'string' ? input.lastName : '';
+    name = `${firstName} ${lastName}`.trim();
+  }
+
+  let folderName = '';
+  if (typeof input.folderName === 'string') {
+    folderName = input.folderName;
+  } else if (typeof input.dirName === 'string') {
+    folderName = input.dirName;
+  } else if (name !== '') {
+    folderName = name;
+  }
+
+  const pinRaw = input.personalIdentityNumber;
+  const personalIdentityNumber = typeof pinRaw === 'string' || typeof pinRaw === 'number'
+    ? String(pinRaw)
+    : '';
+
+  return {
+    uiKey,
+    name,
+    folderName,
+    personalIdentityNumber
+  };
+}
+
+function serializeClientDraft(row) {
+  const client = sanitizeClientDraft(row);
+  return {
+    name: client.name.trim(),
+    folderName: client.folderName.trim(),
+    personalIdentityNumber: client.personalIdentityNumber.trim()
+  };
+}
+
+function normalizedClientsJson(clients) {
+  return JSON.stringify(clients.map(serializeClientDraft));
+}
+
+function defaultClientDraft() {
+  return sanitizeClientDraft({
+    uiKey: `tmp-client-${clientDraftUiKeySeq++}`,
+    name: '',
+    folderName: '',
+    personalIdentityNumber: ''
+  });
 }
 
 function defaultReplacement() {
@@ -3085,6 +3161,96 @@ function appendTreeBodyIcon(bodyEl, className) {
   icon.setAttribute('aria-hidden', 'true');
   bodyEl.appendChild(icon);
   return icon;
+}
+
+function renderClientsEditor() {
+  if (!clientsListEl) {
+    return;
+  }
+
+  clientsListEl.innerHTML = '';
+  if (clientsDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Inga huvudmän ännu.';
+    clientsListEl.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  clientsDraft.forEach((row, rowIndex) => {
+    const clientNode = document.createElement('div');
+    clientNode.className = 'tree-node tree-folder';
+    clientNode.dataset.clientUiKey = clientUiKey(row);
+
+    const clientRow = createTreeRow({ markerless: true });
+
+    const clientBody = document.createElement('div');
+    clientBody.className = 'tree-body folder-body';
+    appendTreeBodyIcon(clientBody, 'tree-body-icon tree-body-icon-folder');
+
+    const fields = document.createElement('div');
+    fields.className = 'client-fields';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Ex: Johan Andersson';
+    nameInput.value = row.name;
+    nameInput.addEventListener('input', () => {
+      clientsDraft[rowIndex].name = nameInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const pinInput = document.createElement('input');
+    pinInput.type = 'text';
+    pinInput.placeholder = 'Ex: 19900101-1234';
+    pinInput.value = row.personalIdentityNumber;
+    pinInput.addEventListener('input', () => {
+      clientsDraft[rowIndex].personalIdentityNumber = pinInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const folderInput = document.createElement('input');
+    folderInput.type = 'text';
+    folderInput.placeholder = 'Mappnamn';
+    folderInput.value = row.folderName;
+    folderInput.addEventListener('input', () => {
+      clientsDraft[rowIndex].folderName = folderInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'category-remove';
+    removeButton.textContent = 'Ta bort huvudman';
+    removeButton.addEventListener('click', () => {
+      clientsDraft.splice(rowIndex, 1);
+      renderClientsEditor();
+      updateSettingsActionButtons();
+    });
+
+    fields.appendChild(createFloatingField('Namn', nameInput));
+    fields.appendChild(createFloatingField('Personnummer', pinInput));
+    fields.appendChild(createFloatingField('Mappnamn', folderInput));
+    fields.appendChild(removeButton);
+
+    clientBody.appendChild(fields);
+    clientRow.appendChild(clientBody);
+    clientNode.appendChild(clientRow);
+    fragment.appendChild(clientNode);
+  });
+
+  clientsListEl.appendChild(fragment);
+}
+
+function focusFirstClientsField() {
+  if (!clientsListEl) {
+    return;
+  }
+  const firstInput = clientsListEl.querySelector('input');
+  if (firstInput) {
+    firstInput.focus();
+  }
 }
 
 function renderMatchingEditor() {
@@ -4232,7 +4398,7 @@ function renderJbig2Status(jbig2, options = {}) {
   jbig2InstallCommandEl.textContent = installCommand;
 }
 
-async function loadClientsText() {
+async function loadClientsSettings() {
   const response = await fetch('/api/get-clients.php', { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Kunde inte ladda huvudmän');
@@ -4243,8 +4409,18 @@ async function loadClientsText() {
     throw new Error('Ogiltigt svar för huvudmän');
   }
 
-  clientsTextareaEl.value = payload.text;
-  clientsBaselineText = payload.text;
+  const rawText = payload.text.trim();
+  let parsed = [];
+  if (rawText !== '') {
+    parsed = JSON.parse(rawText);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error('clients.json måste vara en JSON-lista');
+  }
+
+  clientsDraft = parsed.map(sanitizeClientDraft);
+  clientsBaselineJson = normalizedClientsJson(clientsDraft);
+  renderClientsEditor();
   updateSettingsActionButtons();
 }
 
@@ -4361,20 +4537,22 @@ async function loadCategories() {
   updateSettingsActionButtons();
 }
 
-async function saveClientsText() {
+async function saveClientsSettings() {
+  const normalized = clientsDraft.map(serializeClientDraft);
+  const text = JSON.stringify(normalized, null, 2);
   const response = await fetch('/api/save-clients.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ text: clientsTextareaEl.value })
+    body: JSON.stringify({ text })
   });
 
   if (!response.ok) {
     throw new Error('Kunde inte spara huvudmän');
   }
 
-  clientsBaselineText = clientsTextareaEl.value;
+  clientsBaselineJson = JSON.stringify(normalized);
   updateSettingsActionButtons();
   await fetchState({ refreshClients: true });
 }
@@ -4758,7 +4936,9 @@ settingsTabEls.forEach((tabButton) => {
     } catch (error) {
       if (tabId === 'clients') {
         alert('Kunde inte ladda huvudmän.');
-        clientsBaselineText = clientsTextareaEl ? clientsTextareaEl.value : '';
+        clientsDraft = [];
+        clientsBaselineJson = normalizedClientsJson(clientsDraft);
+        renderClientsEditor();
       } else if (tabId === 'senders') {
         alert('Kunde inte ladda avsändare.');
         sendersDraft = [];
