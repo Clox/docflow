@@ -234,11 +234,12 @@
           <span id="jbig2-status-badge-wrap" class="ocr-status-badge-wrap">
             <span id="jbig2-status-badge" class="ocr-status-badge">Kontrollerar...</span>
           </span>
+          <button id="jbig2-local-install-button" class="ocr-status-action-button" type="button" disabled title="Lokal installation stöds inte ännu">Installera lokalt</button>
           <button id="jbig2-refresh-button" class="ocr-status-refresh hidden" type="button" aria-label="Kontrollera igen" title="Kontrollera igen">↻</button>
         </div>
       </div>
       <p>JBIG2 används för att komprimera svartvita skannade bilder effektivare. Om det finns installerat kan OCRmyPDF ofta ge betydligt mindre PDF-filer.</p>
-      <p>Installationskommando:</p>
+      <p>Kommando för att installera globalt:</p>
       <div class="settings-command-wrap">
         <button class="settings-command-copy" type="button" data-copy-target="jbig2-install-command">Kopiera</button>
         <pre id="jbig2-install-command" class="settings-command"></pre>
@@ -251,11 +252,12 @@
           <span id="python-status-badge-wrap" class="ocr-status-badge-wrap">
             <span id="python-status-badge" class="ocr-status-badge">Kontrollerar...</span>
           </span>
+          <button id="python-local-install-button" class="ocr-status-action-button" type="button" disabled title="Lokal installation stöds inte ännu">Installera lokalt</button>
           <button id="python-refresh-button" class="ocr-status-refresh hidden" type="button" aria-label="Kontrollera igen" title="Kontrollera igen">↻</button>
         </div>
       </div>
       <p>Python 3 behövs för Python-baserade OCR-tillägg och för att kunna använda RapidOCR i Docflow.</p>
-      <p>Installationskommando:</p>
+      <p>Kommando för att installera globalt:</p>
       <div class="settings-command-wrap">
         <button class="settings-command-copy" type="button" data-copy-target="python-install-command">Kopiera</button>
         <pre id="python-install-command" class="settings-command"></pre>
@@ -267,11 +269,13 @@
             <span id="rapidocr-status-badge-wrap" class="ocr-status-badge-wrap">
               <span id="rapidocr-status-badge" class="ocr-status-badge">Kontrollerar...</span>
             </span>
+            <button id="rapidocr-install-log-button" class="ocr-status-action-button hidden" type="button">Visa logg</button>
+            <button id="rapidocr-local-install-button" class="ocr-status-action-button" type="button" disabled>Installera lokalt</button>
             <button id="rapidocr-refresh-button" class="ocr-status-refresh hidden" type="button" aria-label="Kontrollera igen" title="Kontrollera igen">↻</button>
           </div>
         </div>
         <p>RapidOCR är ett Python-paket för kompletterande OCR-relaterade funktioner utanför OCRmyPDF-flödet.</p>
-        <p>Installationskommando:</p>
+        <p>Kommando för att installera globalt:</p>
         <div class="settings-command-wrap">
           <button class="settings-command-copy" type="button" data-copy-target="rapidocr-install-command">Kopiera</button>
           <pre id="rapidocr-install-command" class="settings-command"></pre>

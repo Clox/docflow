@@ -803,6 +803,26 @@ body {
   gap: 8px;
 }
 
+.ocr-status-action-button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ocr-status-action-button:hover {
+  background: #f3f4f6;
+}
+
+.ocr-status-action-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .ocr-status-badge-wrap {
   display: inline-flex;
   overflow: hidden;
@@ -847,6 +867,18 @@ body {
   border-color: #d2b48c;
   background: #fff4e8;
   color: #8a5520;
+}
+
+.ocr-status-badge.is-installing {
+  border-color: #f3b33d;
+  background: #fff3dd;
+  color: #9a5b00;
+}
+
+.ocr-status-badge.is-failed {
+  border-color: #e1a2a2;
+  background: #fff1f1;
+  color: #a11;
 }
 
 @keyframes badge-expand-in {

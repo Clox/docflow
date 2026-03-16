@@ -947,8 +947,12 @@ function jbig2_status_payload(): array
 
     return [
         'installed' => $installed,
+        'installScope' => $installed ? 'global' : null,
+        'isInstalling' => false,
         'installCommand' => 'sudo apt install jbig2',
         'binary' => $installed ? 'jbig2' : null,
+        'localInstallSupported' => false,
+        'localInstallReason' => 'Lokal installation stöds inte ännu för JBIG2',
     ];
 }
 
@@ -979,44 +983,164 @@ function python_status_payload(): array
 
     return [
         'installed' => $python !== null,
-        'installCommand' => 'sudo apt install python3 python3-pip',
+        'installScope' => $python !== null ? 'global' : null,
+        'isInstalling' => false,
+        'installCommand' => 'sudo apt install python3 python3-pip python3-venv',
         'binary' => $python,
+        'localInstallSupported' => false,
+        'localInstallReason' => 'Lokal installation stöds inte ännu för Python 3',
+    ];
+}
+
+function python_can_create_venv(?string $python = null): bool
+{
+    $binary = $python !== null ? trim($python) : (python_command_path() ?? '');
+    if ($binary === '') {
+        return false;
+    }
+
+    $command = escapeshellarg($binary)
+        . ' -c '
+        . escapeshellarg('import venv')
+        . ' 2>/dev/null';
+    exec($command, $output, $exitCode);
+    return $exitCode === 0;
+}
+
+function rapidocr_local_venv_dir(): string
+{
+    return PROJECT_ROOT . '.docflow-tools/rapidocr-venv';
+}
+
+function rapidocr_local_python_path(): string
+{
+    return rapidocr_local_venv_dir() . '/bin/python';
+}
+
+function rapidocr_install_status_path(): string
+{
+    return DATA_DIR . '/rapidocr-install-status.json';
+}
+
+function rapidocr_install_lock_path(): string
+{
+    return DATA_DIR . '/rapidocr-install.lock';
+}
+
+function rapidocr_install_log_path(): string
+{
+    return DATA_DIR . '/rapidocr-install.log';
+}
+
+function rapidocr_install_pid_path(): string
+{
+    return DATA_DIR . '/rapidocr-install.pid';
+}
+
+function rapidocr_detect_module(?string $python): ?string
+{
+    $binary = is_string($python) ? trim($python) : '';
+    if ($binary === '' || !is_file($binary)) {
+        return null;
+    }
+
+    $checkRapidocr = escapeshellarg($binary)
+        . ' -c '
+        . escapeshellarg('import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("rapidocr") else 1)')
+        . ' 2>/dev/null';
+    exec($checkRapidocr, $output, $exitCode);
+    if ($exitCode === 0) {
+        return 'rapidocr';
+    }
+
+    $checkLegacy = escapeshellarg($binary)
+        . ' -c '
+        . escapeshellarg('import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("rapidocr_onnxruntime") else 1)')
+        . ' 2>/dev/null';
+    exec($checkLegacy, $legacyOutput, $legacyExitCode);
+    if ($legacyExitCode === 0) {
+        return 'rapidocr_onnxruntime';
+    }
+
+    return null;
+}
+
+function rapidocr_install_runtime_status(): array
+{
+    $status = load_json_file(rapidocr_install_status_path()) ?? [];
+    $state = is_string($status['state'] ?? null) ? trim((string) $status['state']) : '';
+    $message = is_string($status['message'] ?? null) ? trim((string) $status['message']) : '';
+    $startedAt = is_string($status['startedAt'] ?? null) ? trim((string) $status['startedAt']) : '';
+    $updatedAt = is_string($status['updatedAt'] ?? null) ? trim((string) $status['updatedAt']) : '';
+    $finishedAt = is_string($status['finishedAt'] ?? null) ? trim((string) $status['finishedAt']) : '';
+
+    $lockHandle = @fopen(rapidocr_install_lock_path(), 'c+');
+    $isInstalling = false;
+    if ($lockHandle !== false) {
+        $hasLock = @flock($lockHandle, LOCK_EX | LOCK_NB);
+        if ($hasLock) {
+            @flock($lockHandle, LOCK_UN);
+        } else {
+            $isInstalling = true;
+        }
+        @fclose($lockHandle);
+    }
+
+    if ($isInstalling) {
+        $state = 'installing';
+    } elseif ($state === 'installing') {
+        $state = '';
+    }
+
+    return [
+        'state' => $state,
+        'isInstalling' => $isInstalling,
+        'message' => $message,
+        'startedAt' => $startedAt,
+        'updatedAt' => $updatedAt,
+        'finishedAt' => $finishedAt,
+        'hasLog' => is_file(rapidocr_install_log_path()) && filesize(rapidocr_install_log_path()) > 0,
     ];
 }
 
 function rapidocr_status_payload(): array
 {
-    $python = python_command_path();
-    $installed = false;
-    $module = null;
+    $globalPython = python_command_path();
+    $localPython = rapidocr_local_python_path();
+    $localModule = rapidocr_detect_module($localPython);
+    $globalModule = $localModule === null ? rapidocr_detect_module($globalPython) : null;
+    $installStatus = rapidocr_install_runtime_status();
+    $venvSupported = python_can_create_venv($globalPython);
 
-    if ($python !== null) {
-        $checkRapidocr = escapeshellarg($python)
-            . ' -c '
-            . escapeshellarg('import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("rapidocr") else 1)')
-            . ' 2>/dev/null';
-        exec($checkRapidocr, $output, $exitCode);
-        if ($exitCode === 0) {
-            $installed = true;
-            $module = 'rapidocr';
-        } else {
-            $checkLegacy = escapeshellarg($python)
-                . ' -c '
-                . escapeshellarg('import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("rapidocr_onnxruntime") else 1)')
-                . ' 2>/dev/null';
-            exec($checkLegacy, $legacyOutput, $legacyExitCode);
-            if ($legacyExitCode === 0) {
-                $installed = true;
-                $module = 'rapidocr_onnxruntime';
-            }
-        }
+    $installScope = null;
+    $activePython = null;
+    $module = null;
+    if ($localModule !== null) {
+        $installScope = 'local';
+        $activePython = $localPython;
+        $module = $localModule;
+    } elseif ($globalModule !== null) {
+        $installScope = 'global';
+        $activePython = $globalPython;
+        $module = $globalModule;
     }
 
     return [
-        'installed' => $installed,
+        'installed' => $installScope !== null,
+        'installScope' => $installScope,
+        'isInstalling' => $installStatus['isInstalling'],
+        'installState' => $installStatus['state'],
+        'installStatusMessage' => $installStatus['message'],
+        'hasInstallLog' => $installStatus['hasLog'],
         'installCommand' => 'python3 -m pip install --break-system-packages rapidocr onnxruntime',
-        'python' => $python,
+        'python' => $activePython,
         'module' => $module,
+        'globalPython' => $globalPython,
+        'localPython' => $localModule !== null ? $localPython : null,
+        'localInstallSupported' => $globalPython !== null && $venvSupported,
+        'localInstallReason' => $globalPython === null
+            ? 'Kräver Python 3'
+            : (!$venvSupported ? 'Kräver python3-venv' : ''),
     ];
 }
 
@@ -3832,6 +3956,47 @@ function start_job_dispatcher(): void
         . escapeshellarg($scriptPath)
         . ' > /dev/null 2>&1 &';
 
+    exec($command);
+}
+
+function write_rapidocr_install_status(array $status): void
+{
+    $status['updatedAt'] = now_iso();
+    write_json_file(rapidocr_install_status_path(), $status);
+}
+
+function start_local_rapidocr_install(): void
+{
+    $python = python_command_path();
+    if ($python === null) {
+        throw new RuntimeException('Python 3 måste vara installerat först');
+    }
+    if (!python_can_create_venv($python)) {
+        throw new RuntimeException('Python 3 saknar venv-stöd. Installera python3-venv först.');
+    }
+    if (rapidocr_install_runtime_status()['isInstalling']) {
+        return;
+    }
+
+    ensure_directory(dirname(rapidocr_local_venv_dir()));
+    ensure_directory(DATA_DIR);
+
+    write_rapidocr_install_status([
+        'state' => 'installing',
+        'message' => 'Startar lokal installation...',
+        'startedAt' => now_iso(),
+        'finishedAt' => '',
+    ]);
+
+    $scriptPath = PROJECT_ROOT . 'scripts/install-rapidocr.php';
+    if (!is_file($scriptPath)) {
+        throw new RuntimeException('RapidOCR-installationsscript saknas');
+    }
+
+    $command = escapeshellarg(PHP_BINARY)
+        . ' '
+        . escapeshellarg($scriptPath)
+        . ' > /dev/null 2>&1 &';
     exec($command);
 }
 

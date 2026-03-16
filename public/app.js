@@ -70,15 +70,19 @@ let jbig2StatusBadgeWrapEl = null;
 let jbig2StatusBadgeEl = null;
 let jbig2InstallCommandEl = null;
 let jbig2RefreshButtonEl = null;
+let jbig2LocalInstallButtonEl = null;
 let pythonStatusCardEl = null;
 let pythonStatusBadgeWrapEl = null;
 let pythonStatusBadgeEl = null;
 let pythonInstallCommandEl = null;
 let pythonRefreshButtonEl = null;
+let pythonLocalInstallButtonEl = null;
 let rapidocrStatusBadgeWrapEl = null;
 let rapidocrStatusBadgeEl = null;
 let rapidocrInstallCommandEl = null;
 let rapidocrRefreshButtonEl = null;
+let rapidocrInstallLogButtonEl = null;
+let rapidocrLocalInstallButtonEl = null;
 let ocrProcessingCancelEl = null;
 let ocrProcessingApplyEl = null;
 let categoriesListEl = null;
@@ -156,6 +160,7 @@ let ocrOptimizeLevelBaseline = 1;
 let ocrTextExtractionMethodBaseline = 'layout';
 let ocrPdfSubstitutionsDraft = [];
 let ocrPdfSubstitutionsBaselineJson = JSON.stringify([]);
+let rapidocrInstallPollTimer = null;
 let activeSettingsTabId = 'clients';
 let activeArchiveTabId = 'categories';
 let clientsDraft = [];
@@ -1906,15 +1911,19 @@ function bindSettingsPanelRefs(tabId) {
 	    jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
 	    jbig2InstallCommandEl = document.getElementById('jbig2-install-command');
 	    jbig2RefreshButtonEl = document.getElementById('jbig2-refresh-button');
+      jbig2LocalInstallButtonEl = document.getElementById('jbig2-local-install-button');
 	    pythonStatusCardEl = document.getElementById('python-status-card');
 	    pythonStatusBadgeWrapEl = document.getElementById('python-status-badge-wrap');
 	    pythonStatusBadgeEl = document.getElementById('python-status-badge');
 	    pythonInstallCommandEl = document.getElementById('python-install-command');
 	    pythonRefreshButtonEl = document.getElementById('python-refresh-button');
+      pythonLocalInstallButtonEl = document.getElementById('python-local-install-button');
 	    rapidocrStatusBadgeWrapEl = document.getElementById('rapidocr-status-badge-wrap');
 	    rapidocrStatusBadgeEl = document.getElementById('rapidocr-status-badge');
 	    rapidocrInstallCommandEl = document.getElementById('rapidocr-install-command');
 	    rapidocrRefreshButtonEl = document.getElementById('rapidocr-refresh-button');
+      rapidocrInstallLogButtonEl = document.getElementById('rapidocr-install-log-button');
+      rapidocrLocalInstallButtonEl = document.getElementById('rapidocr-local-install-button');
       bindSettingsCommandCopyButtons(settingsPanelEl(tabId));
 	    ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
     ocrProcessingApplyEl = document.getElementById('ocr-processing-apply');
@@ -1994,6 +2003,21 @@ function bindSettingsPanelRefs(tabId) {
       } catch (error) {
         renderRapidocrStatus(null, { deferRefreshVisibility: true });
         alert('Kunde inte kontrollera RapidOCR-status.');
+      }
+    });
+    rapidocrLocalInstallButtonEl.addEventListener('click', async () => {
+      try {
+        await installLocalTool('rapidocr');
+      } catch (error) {
+        alert(error.message || 'Kunde inte installera RapidOCR lokalt.');
+      }
+    });
+    rapidocrInstallLogButtonEl.addEventListener('click', async () => {
+      try {
+        const log = await fetchLocalToolInstallLog('rapidocr');
+        alert(log || 'Ingen installationslogg finns ännu.');
+      } catch (error) {
+        alert(error.message || 'Kunde inte läsa installationsloggen.');
       }
     });
     renderJbig2Status(null);
@@ -2220,11 +2244,15 @@ function closeSettingsModal(force = false) {
   }
 
   closeSenderMergeOverlay();
+  stopRapidocrInstallPolling();
   settingsModalEl.classList.add('hidden');
   return true;
 }
 
 function setSettingsTab(tabId) {
+  if (activeSettingsTabId === 'ocr-processing' && tabId !== 'ocr-processing') {
+    stopRapidocrInstallPolling();
+  }
   if (tabId !== 'senders') {
     closeSenderMergeOverlay();
   }
@@ -4497,17 +4525,30 @@ function renderInstallableOcrToolStatus(status, elements, fallbackInstallCommand
     return;
   }
   const installed = !!(status && status.installed === true);
+  const isInstalling = !!(status && status.isInstalling === true);
+  const installState = status && typeof status.installState === 'string' ? status.installState : '';
+  const isFailed = installState === 'failed';
+  const installScope = status && typeof status.installScope === 'string' ? status.installScope : '';
+  const installStatusMessage = status && typeof status.installStatusMessage === 'string'
+    ? status.installStatusMessage.trim()
+    : '';
+  const installedText = installScope === 'local' ? 'Installerad lokalt' : 'Installerad globalt';
   const deferRefreshVisibility = options && options.deferRefreshVisibility === true;
   const animate = !options || options.animate !== false;
-  elements.badgeEl.textContent = installed ? 'Installerad' : 'Ej installerad';
-  elements.badgeEl.classList.toggle('is-installed', installed);
-  elements.badgeEl.classList.toggle('is-missing', !installed);
+  elements.badgeEl.textContent = isInstalling
+    ? 'Installerar...'
+    : (isFailed ? 'Installation misslyckades' : (installed ? installedText : 'Ej installerad'));
+  elements.badgeEl.title = installStatusMessage;
+  elements.badgeEl.classList.toggle('is-installed', installed && !isInstalling);
+  elements.badgeEl.classList.toggle('is-installing', isInstalling);
+  elements.badgeEl.classList.toggle('is-failed', isFailed);
+  elements.badgeEl.classList.toggle('is-missing', !installed && !isInstalling && !isFailed);
   if (deferRefreshVisibility) {
-    stopStatusRefreshSpin(elements.refreshButtonEl, installed);
+    stopStatusRefreshSpin(elements.refreshButtonEl, installed || isInstalling);
   } else {
     elements.refreshButtonEl.classList.remove('is-spinning');
-    elements.refreshButtonEl.disabled = false;
-    elements.refreshButtonEl.classList.toggle('hidden', installed);
+    elements.refreshButtonEl.disabled = isInstalling;
+    elements.refreshButtonEl.classList.toggle('hidden', installed || isInstalling);
   }
   elements.badgeWrapEl.classList.remove('is-collapsed');
   elements.badgeWrapEl.classList.remove('is-animating');
@@ -4520,6 +4561,29 @@ function renderInstallableOcrToolStatus(status, elements, fallbackInstallCommand
     ? status.installCommand.trim()
     : fallbackInstallCommand;
   elements.installCommandEl.textContent = installCommand;
+
+  if (elements.localInstallButtonEl) {
+    const localSupported = !!(status && status.localInstallSupported === true);
+    const localReason = status && typeof status.localInstallReason === 'string' ? status.localInstallReason : '';
+    const isLocalInstalled = installScope === 'local';
+    const isGlobalInstalled = installScope === 'global';
+    elements.localInstallButtonEl.textContent = isInstalling ? 'Installerar...' : 'Installera lokalt';
+    elements.localInstallButtonEl.disabled = isInstalling || isLocalInstalled || isGlobalInstalled || !localSupported;
+    elements.localInstallButtonEl.title = isInstalling
+      ? installStatusMessage
+      : (isLocalInstalled
+      ? 'Redan installerad lokalt'
+      : (isGlobalInstalled
+      ? 'Redan installerad globalt'
+      : (localSupported ? 'Installera i Docflows lokala Python-miljö' : localReason)));
+  }
+
+  if (elements.logButtonEl) {
+    const hasInstallLog = !!(status && status.hasInstallLog === true);
+    elements.logButtonEl.classList.toggle('hidden', !hasInstallLog);
+    elements.logButtonEl.disabled = !hasInstallLog;
+    elements.logButtonEl.title = hasInstallLog ? 'Visa installationslogg' : 'Ingen installationslogg finns';
+  }
 }
 
 function startJbig2RefreshSpin() {
@@ -4532,6 +4596,7 @@ function renderJbig2Status(jbig2, options = {}) {
     badgeWrapEl: jbig2StatusBadgeWrapEl,
     refreshButtonEl: jbig2RefreshButtonEl,
     installCommandEl: jbig2InstallCommandEl,
+    localInstallButtonEl: jbig2LocalInstallButtonEl,
   }, 'sudo apt install jbig2', options);
 }
 
@@ -4541,7 +4606,8 @@ function renderPythonStatus(python, options = {}) {
     badgeWrapEl: pythonStatusBadgeWrapEl,
     refreshButtonEl: pythonRefreshButtonEl,
     installCommandEl: pythonInstallCommandEl,
-  }, 'sudo apt install python3 python3-pip', options);
+    localInstallButtonEl: pythonLocalInstallButtonEl,
+  }, 'sudo apt install python3 python3-pip python3-venv', options);
   renderPythonDependentStatuses(python);
 }
 
@@ -4551,7 +4617,83 @@ function renderRapidocrStatus(rapidocr, options = {}) {
     badgeWrapEl: rapidocrStatusBadgeWrapEl,
     refreshButtonEl: rapidocrRefreshButtonEl,
     installCommandEl: rapidocrInstallCommandEl,
+    logButtonEl: rapidocrInstallLogButtonEl,
+    localInstallButtonEl: rapidocrLocalInstallButtonEl,
   }, 'python3 -m pip install --break-system-packages rapidocr onnxruntime', options);
+  syncRapidocrInstallPolling(rapidocr);
+}
+
+function stopRapidocrInstallPolling() {
+  if (rapidocrInstallPollTimer === null) {
+    return;
+  }
+  window.clearTimeout(rapidocrInstallPollTimer);
+  rapidocrInstallPollTimer = null;
+}
+
+function scheduleRapidocrInstallPolling(delay = 2000) {
+  stopRapidocrInstallPolling();
+  rapidocrInstallPollTimer = window.setTimeout(async () => {
+    rapidocrInstallPollTimer = null;
+    if (settingsModalEl.classList.contains('hidden') || activeSettingsTabId !== 'ocr-processing') {
+      return;
+    }
+    try {
+      await loadOcrProcessingSettings({ statusTarget: 'rapidocr', animate: false });
+    } catch (error) {
+      scheduleRapidocrInstallPolling(2500);
+    }
+  }, delay);
+}
+
+function syncRapidocrInstallPolling(rapidocr) {
+  if (rapidocr && rapidocr.isInstalling === true) {
+    scheduleRapidocrInstallPolling();
+    return;
+  }
+  stopRapidocrInstallPolling();
+}
+
+async function installLocalTool(tool) {
+  const response = await fetch('/api/install-local-tool.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ tool })
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte starta lokal installation.');
+  }
+
+  await loadOcrProcessingSettings({ statusTarget: tool, animate: false });
+}
+
+async function fetchLocalToolInstallLog(tool) {
+  const response = await fetch(`/api/get-local-tool-install-log.php?tool=${encodeURIComponent(tool)}`, {
+    cache: 'no-store'
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+
+  if (!response.ok || !payload || typeof payload.log !== 'string') {
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte läsa installationsloggen.');
+  }
+
+  return payload.log;
 }
 
 function renderOcrToolStatuses(payload, options = {}) {
@@ -4592,6 +4734,16 @@ function renderPythonDependentStatuses(python) {
       buttonEl.disabled = !enabled;
       buttonEl.title = enabled ? 'Kontrollera igen' : 'Kräver Python 3';
       buttonEl.setAttribute('aria-label', enabled ? 'Kontrollera igen' : 'Kräver Python 3');
+    });
+    const actionButtons = Array.from(cardEl.querySelectorAll('.ocr-status-action-button'));
+    actionButtons.forEach((buttonEl) => {
+      if (buttonEl.disabled && enabled) {
+        return;
+      }
+      if (!enabled) {
+        buttonEl.disabled = true;
+        buttonEl.title = 'Kräver Python 3';
+      }
     });
   });
 }
