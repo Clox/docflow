@@ -1406,7 +1406,7 @@ function setOcrSearchVisible(visible) {
 }
 
 function normalizeOcrSource(source) {
-  return source === 'tesseract' || source === 'rapidocr' || source === 'merged'
+  return source === 'tesseract' || source === 'rapidocr' || source === 'merged' || source === 'merged-objects'
     ? source
     : 'merged';
 }
@@ -1441,12 +1441,15 @@ function setActiveOcrSource(source, options = {}) {
 
 function ocrSourceDisplayName(source) {
   if (source === 'tesseract') {
-    return 'Tesseract';
+    return 'Tesseract-objekt';
   }
   if (source === 'rapidocr') {
-    return 'RapidOCR';
+    return 'RapidOCR-objekt';
   }
-  return 'Merged OCR';
+  if (source === 'merged-objects') {
+    return 'Sammanfogade objekt';
+  }
+  return 'Sammanfogad text';
 }
 
 function getCurrentOcrZoomStepIndex() {
@@ -1753,11 +1756,9 @@ function normalizeObjectWord(word, index) {
     return null;
   }
 
-  const scoreCandidate = word && (
-    Number.isFinite(Number(word.score)) ? Number(word.score)
-      : Number.isFinite(Number(word.confidence)) ? (Number(word.confidence) / 100)
-        : null
-  );
+  const scoreCandidate = word && Number.isFinite(Number(word.score))
+    ? Number(word.score)
+    : null;
 
   return {
     index,
@@ -1771,8 +1772,7 @@ function normalizeObjectWord(word, index) {
       height: Math.max(1, rect.y1 - rect.y0),
     },
     score: scoreCandidate,
-    confidence: Number.isFinite(Number(word && word.confidence)) ? Number(word.confidence) : null,
-    title: typeof (word && word.title) === 'string' ? word.title : '',
+    raw: word && typeof word.raw === 'object' && word.raw !== null ? word.raw : null,
   };
 }
 
@@ -1921,12 +1921,7 @@ function buildWordTooltip(word) {
   if (Number.isFinite(word.score)) {
     parts.push(`Score: ${Number(word.score).toFixed(4)}`);
   }
-  if (Number.isFinite(word.confidence)) {
-    parts.push(`Confidence: ${word.confidence}`);
-  }
-  if (word.title) {
-    parts.push(word.title);
-  }
+  parts.push(`BBox: ${Math.round(word.rect.x0)}, ${Math.round(word.rect.y0)}, ${Math.round(word.rect.x1)}, ${Math.round(word.rect.y1)}`);
   return parts.join('\n');
 }
 

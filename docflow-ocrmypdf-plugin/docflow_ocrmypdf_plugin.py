@@ -209,6 +209,13 @@ def _parse_confidence(title: str) -> int | None:
     return int(match.group(1))
 
 
+def _parse_score(title: str) -> float | None:
+    confidence = _parse_confidence(title)
+    if confidence is None:
+        return None
+    return confidence / 100.0
+
+
 def _get_image_size(input_file: str | Path) -> tuple[int, int] | None:
     try:
         with Image.open(input_file) as image:
@@ -263,8 +270,10 @@ def _extract_tesseract_debug_words(hocr_path: Path) -> list[dict[str, Any]]:
         words.append({
             'text': text,
             'bbox': list(bbox) if bbox is not None else None,
-            'confidence': _parse_confidence(title),
-            'title': title,
+            'score': _parse_score(title),
+            'raw': {
+                'hocrTitle': title,
+            } if title != '' else None,
         })
     return words
 
