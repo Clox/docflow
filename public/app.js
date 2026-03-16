@@ -675,6 +675,7 @@ function setViewerPdf(jobId) {
   setOcrSearchVisible(false);
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
+  syncOcrHighlightPresentation();
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
   pdfStackEl.classList.remove('hidden');
@@ -688,6 +689,7 @@ async function setViewerOcr(jobId) {
   pdfStackEl.classList.add('hidden');
   ocrHighlightViewEl.classList.remove('hidden');
   ocrViewEl.classList.remove('hidden');
+  syncOcrHighlightPresentation();
 
   if (!jobId) {
     loadedOcrJobId = '';
@@ -1394,6 +1396,12 @@ function setOcrSearchStatus(text, isError = false) {
 function setOcrSearchButtonsEnabled(enabled) {
   ocrSearchPrevEl.disabled = !enabled;
   ocrSearchNextEl.disabled = !enabled;
+}
+
+function syncOcrHighlightPresentation() {
+  const selectionMode = document.activeElement === ocrViewEl;
+  ocrViewEl.classList.toggle('is-selection-mode', selectionMode);
+  ocrHighlightViewEl.classList.toggle('is-suspended', selectionMode);
 }
 
 function escapeHtml(text) {
@@ -5358,6 +5366,14 @@ selectedJobRerunOcrEl.addEventListener('click', async () => {
 
 ocrSearchInputEl.addEventListener('input', () => {
   refreshOcrSearch();
+});
+
+ocrViewEl.addEventListener('focus', () => {
+  syncOcrHighlightPresentation();
+});
+
+ocrViewEl.addEventListener('blur', () => {
+  syncOcrHighlightPresentation();
 });
 
 ocrSearchRegexEl.addEventListener('change', () => {

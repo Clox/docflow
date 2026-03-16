@@ -479,16 +479,23 @@ body {
 .ocr-highlight-view {
   z-index: 1;
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
   white-space: pre;
   word-break: normal;
   font-size: 12px;
   color: #111;
   overflow: auto;
   scrollbar-width: none;
+  padding-top: 58px;
 }
 
 .ocr-highlight-view::-webkit-scrollbar {
   display: none;
+}
+
+.ocr-highlight-view.is-suspended {
+  opacity: 0;
 }
 
 .ocr-highlight-view mark {
@@ -514,6 +521,11 @@ body {
   background: transparent;
   color: transparent;
   caret-color: transparent;
+}
+
+.ocr-view.is-selection-mode {
+  color: #111;
+  caret-color: #111;
 }
 
 .ocr-view::selection {
