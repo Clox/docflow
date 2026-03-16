@@ -1014,7 +1014,7 @@ function rapidocr_status_payload(): array
 
     return [
         'installed' => $installed,
-        'installCommand' => 'python3 -m pip install rapidocr onnxruntime',
+        'installCommand' => 'python3 -m pip install --break-system-packages rapidocr onnxruntime',
         'python' => $python,
         'module' => $module,
     ];

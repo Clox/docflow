@@ -4551,7 +4551,7 @@ function renderRapidocrStatus(rapidocr, options = {}) {
     badgeWrapEl: rapidocrStatusBadgeWrapEl,
     refreshButtonEl: rapidocrRefreshButtonEl,
     installCommandEl: rapidocrInstallCommandEl,
-  }, 'python3 -m pip install rapidocr onnxruntime', options);
+  }, 'python3 -m pip install --break-system-packages rapidocr onnxruntime', options);
 }
 
 function renderOcrToolStatuses(payload, options = {}) {
