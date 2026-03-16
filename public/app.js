@@ -65,6 +65,7 @@ let ocrTextExtractionMethodEl = null;
 let ocrPdfSubstitutionsListEl = null;
 let ocrPdfSubstitutionsAddRowEl = null;
 let ocrProcessingCommandEl = null;
+let ocrTextExtractionCommandEl = null;
 let jbig2StatusBadgeWrapEl = null;
 let jbig2StatusBadgeEl = null;
 let jbig2InstallCommandEl = null;
@@ -1884,18 +1885,19 @@ function bindSettingsPanelRefs(tabId) {
         alert(error.message || 'Kunde inte spara matchningsinställningar.');
       }
     });
-  } else if (tabId === 'ocr-processing') {
-    ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
-    ocrOptimizeLevelEl = document.getElementById('ocr-optimize-level');
-    ocrTextExtractionMethodEl = document.getElementById('ocr-text-extraction-method');
-    ocrPdfSubstitutionsListEl = document.getElementById('ocr-pdf-substitutions-list');
-    ocrPdfSubstitutionsAddRowEl = document.getElementById('ocr-pdf-substitutions-add-row');
-    ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
-    jbig2StatusBadgeWrapEl = document.getElementById('jbig2-status-badge-wrap');
-    jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
-    jbig2InstallCommandEl = document.getElementById('jbig2-install-command');
-    jbig2RefreshButtonEl = document.getElementById('jbig2-refresh-button');
-    ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
+	  } else if (tabId === 'ocr-processing') {
+	    ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
+	    ocrOptimizeLevelEl = document.getElementById('ocr-optimize-level');
+	    ocrTextExtractionMethodEl = document.getElementById('ocr-text-extraction-method');
+	    ocrPdfSubstitutionsListEl = document.getElementById('ocr-pdf-substitutions-list');
+	    ocrPdfSubstitutionsAddRowEl = document.getElementById('ocr-pdf-substitutions-add-row');
+	    ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
+	    ocrTextExtractionCommandEl = document.getElementById('ocr-text-extraction-command');
+	    jbig2StatusBadgeWrapEl = document.getElementById('jbig2-status-badge-wrap');
+	    jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
+	    jbig2InstallCommandEl = document.getElementById('jbig2-install-command');
+	    jbig2RefreshButtonEl = document.getElementById('jbig2-refresh-button');
+	    ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
     ocrProcessingApplyEl = document.getElementById('ocr-processing-apply');
     ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
     ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
@@ -4330,18 +4332,19 @@ function renderOcrProcessingCommand() {
   const pluginSegment = substitutions.length > 0
     ? '--plugin docflow_ocrmypdf_plugin.py --docflow-transform-script data/docflow_ocr_pdf_transform.py '
     : '';
-  const extractionText = extractionMethod === 'bbox'
-    ? 'Textuttag: pdftotext -bbox-layout -> bbox-grid'
-    : 'Textuttag: pdftotext -layout';
   ocrProcessingCommandEl.textContent =
     'ocrmypdf ' + pluginSegment + '-l swe ' + deskewSegment + '--oversample 400 --tesseract-thresholding sauvola '
     + '--tesseract-pagesegmode 6 --output-type pdf '
     + '-O' + optimizeLevel
     + ' '
     + modeFlag
-    + ' input.pdf output.pdf\n'
-    + extractionText
-    + (substitutions.length > 0 ? '\nPDF-textsubstitutioner: ' + substitutions.length + ' regel/rader' : '');
+    + ' input.pdf output.pdf';
+
+  if (ocrTextExtractionCommandEl) {
+    ocrTextExtractionCommandEl.textContent = extractionMethod === 'bbox'
+      ? 'pdftotext -bbox-layout input.pdf -'
+      : 'pdftotext -layout input.pdf ocr.txt';
+  }
 }
 
 function startJbig2RefreshSpin() {
