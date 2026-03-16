@@ -711,9 +711,15 @@ body {
   color: #444;
 }
 
-.settings-command {
+.settings-command-wrap {
+  position: relative;
   margin: 0 0 12px;
+}
+
+.settings-command {
+  margin: 0;
   padding: 10px 12px;
+  padding-right: 86px;
   border: 1px solid #ddd;
   border-radius: 6px;
   background: #fafafa;
@@ -723,6 +729,24 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   font: 12px/1.45 monospace;
+}
+
+.settings-command-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.settings-command-copy:hover {
+  background: #f3f4f6;
 }
 
 .settings-checkbox {

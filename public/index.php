@@ -227,7 +227,7 @@
   <template id="settings-template-ocr-processing">
     <h3>Bild-OCR</h3>
     <p>Kör <code>ocrmypdf</code> som ett steg i bearbetningen innan OCR-text läses ut för analys.</p>
-    <div id="python-status-card" class="ocr-status-card">
+    <div class="ocr-status-card">
       <div class="ocr-status-row">
         <span class="ocr-status-label">JBIG2-optimering</span>
         <div class="ocr-status-actions">
@@ -239,9 +239,12 @@
       </div>
       <p>JBIG2 används för att komprimera svartvita skannade bilder effektivare. Om det finns installerat kan OCRmyPDF ofta ge betydligt mindre PDF-filer.</p>
       <p>Installationskommando:</p>
-      <pre id="jbig2-install-command" class="settings-command"></pre>
+      <div class="settings-command-wrap">
+        <button class="settings-command-copy" type="button" data-copy-target="jbig2-install-command">Kopiera</button>
+        <pre id="jbig2-install-command" class="settings-command"></pre>
+      </div>
     </div>
-    <div class="ocr-status-card">
+    <div id="python-status-card" class="ocr-status-card">
       <div class="ocr-status-row">
         <span class="ocr-status-label">Python 3</span>
         <div class="ocr-status-actions">
@@ -253,7 +256,10 @@
       </div>
       <p>Python 3 behövs för Python-baserade OCR-tillägg och för att kunna använda RapidOCR i Docflow.</p>
       <p>Installationskommando:</p>
-      <pre id="python-install-command" class="settings-command"></pre>
+      <div class="settings-command-wrap">
+        <button class="settings-command-copy" type="button" data-copy-target="python-install-command">Kopiera</button>
+        <pre id="python-install-command" class="settings-command"></pre>
+      </div>
       <div class="ocr-status-card ocr-status-card-child">
         <div class="ocr-status-row">
           <span class="ocr-status-label">RapidOCR</span>
@@ -266,13 +272,22 @@
         </div>
         <p>RapidOCR är ett Python-paket för kompletterande OCR-relaterade funktioner utanför OCRmyPDF-flödet.</p>
         <p>Installationskommando:</p>
-        <pre id="rapidocr-install-command" class="settings-command"></pre>
+        <div class="settings-command-wrap">
+          <button class="settings-command-copy" type="button" data-copy-target="rapidocr-install-command">Kopiera</button>
+          <pre id="rapidocr-install-command" class="settings-command"></pre>
+        </div>
       </div>
     </div>
     <p>OCRmyPDF-kommandot som körs är i praktiken:</p>
-    <pre id="ocr-processing-command" class="settings-command"></pre>
+    <div class="settings-command-wrap">
+      <button class="settings-command-copy" type="button" data-copy-target="ocr-processing-command">Kopiera</button>
+      <pre id="ocr-processing-command" class="settings-command"></pre>
+    </div>
     <p>Textuttag (OCR-data) görs i praktiken med:</p>
-    <pre id="ocr-text-extraction-command" class="settings-command"></pre>
+    <div class="settings-command-wrap">
+      <button class="settings-command-copy" type="button" data-copy-target="ocr-text-extraction-command">Kopiera</button>
+      <pre id="ocr-text-extraction-command" class="settings-command"></pre>
+    </div>
     <p class="settings-help">Vid <code>bbox-grid</code> läser Docflow XML från <code>pdftotext -bbox-layout</code> och bygger sedan en rutnätstext från samma data.</p>
     <label class="settings-checkbox">
       <input id="ocr-skip-existing-text" type="checkbox" checked>

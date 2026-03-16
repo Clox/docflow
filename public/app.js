@@ -1915,6 +1915,7 @@ function bindSettingsPanelRefs(tabId) {
 	    rapidocrStatusBadgeEl = document.getElementById('rapidocr-status-badge');
 	    rapidocrInstallCommandEl = document.getElementById('rapidocr-install-command');
 	    rapidocrRefreshButtonEl = document.getElementById('rapidocr-refresh-button');
+      bindSettingsCommandCopyButtons(settingsPanelEl(tabId));
 	    ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
     ocrProcessingApplyEl = document.getElementById('ocr-processing-apply');
     ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
@@ -4385,6 +4386,74 @@ function renderOcrProcessingCommand() {
       ? 'pdftotext -bbox-layout input.pdf -'
       : 'pdftotext -layout input.pdf ocr.txt';
   }
+}
+
+async function copyTextToClipboard(text) {
+  const value = String(text || '');
+  if (!value) {
+    return false;
+  }
+
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    await navigator.clipboard.writeText(value);
+    return true;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  let success = false;
+  try {
+    success = document.execCommand('copy');
+  } finally {
+    textarea.remove();
+  }
+  return success;
+}
+
+function bindSettingsCommandCopyButtons(panelEl) {
+  if (!panelEl) {
+    return;
+  }
+
+  const buttonEls = Array.from(panelEl.querySelectorAll('.settings-command-copy[data-copy-target]'));
+  buttonEls.forEach((buttonEl) => {
+    if (buttonEl.dataset.bound === 'true') {
+      return;
+    }
+    buttonEl.dataset.bound = 'true';
+    buttonEl.addEventListener('click', async () => {
+      const targetId = String(buttonEl.dataset.copyTarget || '');
+      const targetEl = targetId ? document.getElementById(targetId) : null;
+      const text = targetEl ? String(targetEl.textContent || '').trim() : '';
+      if (!text) {
+        alert('Det finns inget kommando att kopiera.');
+        return;
+      }
+
+      const originalLabel = buttonEl.textContent || 'Kopiera';
+      try {
+        const copied = await copyTextToClipboard(text);
+        if (!copied) {
+          throw new Error('copy_failed');
+        }
+        buttonEl.textContent = 'Kopierad';
+        window.setTimeout(() => {
+          buttonEl.textContent = originalLabel;
+        }, 1200);
+      } catch (error) {
+        buttonEl.textContent = 'Fel';
+        window.setTimeout(() => {
+          buttonEl.textContent = originalLabel;
+        }, 1200);
+        alert('Kunde inte kopiera kommandot.');
+      }
+    });
+  });
 }
 
 function startStatusRefreshSpin(buttonEl) {
