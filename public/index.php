@@ -227,7 +227,7 @@
   <template id="settings-template-ocr-processing">
     <h3>Bild-OCR</h3>
     <p>Kör <code>ocrmypdf</code> som ett steg i bearbetningen innan OCR-text läses ut för analys.</p>
-    <div class="ocr-status-card">
+    <div id="python-status-card" class="ocr-status-card">
       <div class="ocr-status-row">
         <span class="ocr-status-label">JBIG2-optimering</span>
         <div class="ocr-status-actions">
@@ -243,17 +243,31 @@
     </div>
     <div class="ocr-status-card">
       <div class="ocr-status-row">
-        <span class="ocr-status-label">RapidOCR</span>
+        <span class="ocr-status-label">Python 3</span>
         <div class="ocr-status-actions">
-          <span id="rapidocr-status-badge-wrap" class="ocr-status-badge-wrap">
-            <span id="rapidocr-status-badge" class="ocr-status-badge">Kontrollerar...</span>
+          <span id="python-status-badge-wrap" class="ocr-status-badge-wrap">
+            <span id="python-status-badge" class="ocr-status-badge">Kontrollerar...</span>
           </span>
-          <button id="rapidocr-refresh-button" class="ocr-status-refresh hidden" type="button" aria-label="Kontrollera igen" title="Kontrollera igen">↻</button>
+          <button id="python-refresh-button" class="ocr-status-refresh hidden" type="button" aria-label="Kontrollera igen" title="Kontrollera igen">↻</button>
         </div>
       </div>
-      <p>RapidOCR kan användas för kompletterande OCR-relaterade funktioner utanför OCRmyPDF-flödet. Här kan du snabbt se om Python-paketet finns tillgängligt.</p>
+      <p>Python 3 behövs för Python-baserade OCR-tillägg och för att kunna använda RapidOCR i Docflow.</p>
       <p>Installationskommando:</p>
-      <pre id="rapidocr-install-command" class="settings-command"></pre>
+      <pre id="python-install-command" class="settings-command"></pre>
+      <div class="ocr-status-card ocr-status-card-child">
+        <div class="ocr-status-row">
+          <span class="ocr-status-label">RapidOCR</span>
+          <div class="ocr-status-actions">
+            <span id="rapidocr-status-badge-wrap" class="ocr-status-badge-wrap">
+              <span id="rapidocr-status-badge" class="ocr-status-badge">Kontrollerar...</span>
+            </span>
+            <button id="rapidocr-refresh-button" class="ocr-status-refresh hidden" type="button" aria-label="Kontrollera igen" title="Kontrollera igen">↻</button>
+          </div>
+        </div>
+        <p>RapidOCR är ett Python-paket för kompletterande OCR-relaterade funktioner utanför OCRmyPDF-flödet.</p>
+        <p>Installationskommando:</p>
+        <pre id="rapidocr-install-command" class="settings-command"></pre>
+      </div>
     </div>
     <p>OCRmyPDF-kommandot som körs är i praktiken:</p>
     <pre id="ocr-processing-command" class="settings-command"></pre>

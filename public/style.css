@@ -755,6 +755,16 @@ body {
   background: #fafafa;
 }
 
+.ocr-status-card-child {
+  margin: 12px 0 0 18px;
+  border-color: #e3e7ee;
+  background: #fff;
+}
+
+.ocr-status-card-child.is-disabled {
+  opacity: 0.5;
+}
+
 .ocr-status-row {
   display: flex;
   align-items: center;

@@ -70,6 +70,11 @@ let jbig2StatusBadgeWrapEl = null;
 let jbig2StatusBadgeEl = null;
 let jbig2InstallCommandEl = null;
 let jbig2RefreshButtonEl = null;
+let pythonStatusCardEl = null;
+let pythonStatusBadgeWrapEl = null;
+let pythonStatusBadgeEl = null;
+let pythonInstallCommandEl = null;
+let pythonRefreshButtonEl = null;
 let rapidocrStatusBadgeWrapEl = null;
 let rapidocrStatusBadgeEl = null;
 let rapidocrInstallCommandEl = null;
@@ -1901,6 +1906,11 @@ function bindSettingsPanelRefs(tabId) {
 	    jbig2StatusBadgeEl = document.getElementById('jbig2-status-badge');
 	    jbig2InstallCommandEl = document.getElementById('jbig2-install-command');
 	    jbig2RefreshButtonEl = document.getElementById('jbig2-refresh-button');
+	    pythonStatusCardEl = document.getElementById('python-status-card');
+	    pythonStatusBadgeWrapEl = document.getElementById('python-status-badge-wrap');
+	    pythonStatusBadgeEl = document.getElementById('python-status-badge');
+	    pythonInstallCommandEl = document.getElementById('python-install-command');
+	    pythonRefreshButtonEl = document.getElementById('python-refresh-button');
 	    rapidocrStatusBadgeWrapEl = document.getElementById('rapidocr-status-badge-wrap');
 	    rapidocrStatusBadgeEl = document.getElementById('rapidocr-status-badge');
 	    rapidocrInstallCommandEl = document.getElementById('rapidocr-install-command');
@@ -1959,23 +1969,34 @@ function bindSettingsPanelRefs(tabId) {
       startJbig2RefreshSpin();
       jbig2StatusBadgeWrapEl.classList.add('is-collapsed');
       try {
-        await loadOcrProcessingSettings({ deferRefreshVisibility: true });
+        await loadOcrProcessingSettings({ deferRefreshVisibility: true, statusTarget: 'jbig2' });
       } catch (error) {
         renderJbig2Status(null, { deferRefreshVisibility: true });
         alert('Kunde inte kontrollera JBIG2-status.');
+      }
+    });
+    pythonRefreshButtonEl.addEventListener('click', async () => {
+      startStatusRefreshSpin(pythonRefreshButtonEl);
+      pythonStatusBadgeWrapEl.classList.add('is-collapsed');
+      try {
+        await loadOcrProcessingSettings({ deferRefreshVisibility: true, statusTarget: 'python' });
+      } catch (error) {
+        renderPythonStatus(null, { deferRefreshVisibility: true });
+        alert('Kunde inte kontrollera Python 3-status.');
       }
     });
     rapidocrRefreshButtonEl.addEventListener('click', async () => {
       startStatusRefreshSpin(rapidocrRefreshButtonEl);
       rapidocrStatusBadgeWrapEl.classList.add('is-collapsed');
       try {
-        await loadOcrProcessingSettings({ deferRefreshVisibility: true });
+        await loadOcrProcessingSettings({ deferRefreshVisibility: true, statusTarget: 'rapidocr' });
       } catch (error) {
         renderRapidocrStatus(null, { deferRefreshVisibility: true });
         alert('Kunde inte kontrollera RapidOCR-status.');
       }
     });
     renderJbig2Status(null);
+    renderPythonStatus(null);
     renderRapidocrStatus(null);
     renderOcrProcessingCommand();
   } else if (tabId === 'categories') {
@@ -4408,6 +4429,7 @@ function renderInstallableOcrToolStatus(status, elements, fallbackInstallCommand
   }
   const installed = !!(status && status.installed === true);
   const deferRefreshVisibility = options && options.deferRefreshVisibility === true;
+  const animate = !options || options.animate !== false;
   elements.badgeEl.textContent = installed ? 'Installerad' : 'Ej installerad';
   elements.badgeEl.classList.toggle('is-installed', installed);
   elements.badgeEl.classList.toggle('is-missing', !installed);
@@ -4420,8 +4442,10 @@ function renderInstallableOcrToolStatus(status, elements, fallbackInstallCommand
   }
   elements.badgeWrapEl.classList.remove('is-collapsed');
   elements.badgeWrapEl.classList.remove('is-animating');
-  void elements.badgeWrapEl.offsetWidth;
-  elements.badgeWrapEl.classList.add('is-animating');
+  if (animate) {
+    void elements.badgeWrapEl.offsetWidth;
+    elements.badgeWrapEl.classList.add('is-animating');
+  }
 
   const installCommand = status && typeof status.installCommand === 'string' && status.installCommand.trim() !== ''
     ? status.installCommand.trim()
@@ -4442,6 +4466,16 @@ function renderJbig2Status(jbig2, options = {}) {
   }, 'sudo apt install jbig2', options);
 }
 
+function renderPythonStatus(python, options = {}) {
+  renderInstallableOcrToolStatus(python, {
+    badgeEl: pythonStatusBadgeEl,
+    badgeWrapEl: pythonStatusBadgeWrapEl,
+    refreshButtonEl: pythonRefreshButtonEl,
+    installCommandEl: pythonInstallCommandEl,
+  }, 'sudo apt install python3 python3-pip', options);
+  renderPythonDependentStatuses(python);
+}
+
 function renderRapidocrStatus(rapidocr, options = {}) {
   renderInstallableOcrToolStatus(rapidocr, {
     badgeEl: rapidocrStatusBadgeEl,
@@ -4449,6 +4483,48 @@ function renderRapidocrStatus(rapidocr, options = {}) {
     refreshButtonEl: rapidocrRefreshButtonEl,
     installCommandEl: rapidocrInstallCommandEl,
   }, 'python3 -m pip install rapidocr onnxruntime', options);
+}
+
+function renderOcrToolStatuses(payload, options = {}) {
+  const target = typeof options.statusTarget === 'string' ? options.statusTarget : '';
+  const silentOptions = { ...options, animate: false, deferRefreshVisibility: false };
+
+  if (target === 'jbig2') {
+    renderJbig2Status(payload.jbig2, options);
+    return;
+  }
+  if (target === 'python') {
+    renderPythonStatus(payload.python, options);
+    renderRapidocrStatus(payload.rapidocr, silentOptions);
+    return;
+  }
+  if (target === 'rapidocr') {
+    renderPythonStatus(payload.python, silentOptions);
+    renderRapidocrStatus(payload.rapidocr, options);
+    return;
+  }
+
+  renderJbig2Status(payload.jbig2, options);
+  renderPythonStatus(payload.python, options);
+  renderRapidocrStatus(payload.rapidocr, options);
+}
+
+function renderPythonDependentStatuses(python) {
+  if (!pythonStatusCardEl) {
+    return;
+  }
+
+  const enabled = !!(python && python.installed);
+  const childCards = Array.from(pythonStatusCardEl.querySelectorAll('.ocr-status-card-child'));
+  childCards.forEach((cardEl) => {
+    cardEl.classList.toggle('is-disabled', !enabled);
+    const refreshButtons = Array.from(cardEl.querySelectorAll('.ocr-status-refresh'));
+    refreshButtons.forEach((buttonEl) => {
+      buttonEl.disabled = !enabled;
+      buttonEl.title = enabled ? 'Kontrollera igen' : 'Kräver Python 3';
+      buttonEl.setAttribute('aria-label', enabled ? 'Kontrollera igen' : 'Kräver Python 3');
+    });
+  });
 }
 
 async function loadClientsSettings() {
@@ -4550,6 +4626,8 @@ async function loadOcrProcessingSettings(options = {}) {
     || !Array.isArray(payload.ocrPdfTextSubstitutions)
     || !payload.jbig2
     || typeof payload.jbig2 !== 'object'
+    || !payload.python
+    || typeof payload.python !== 'object'
     || !payload.rapidocr
     || typeof payload.rapidocr !== 'object'
   ) {
@@ -4570,8 +4648,7 @@ async function loadOcrProcessingSettings(options = {}) {
   }
   ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
   renderOcrPdfSubstitutionsEditor();
-  renderJbig2Status(payload.jbig2, options);
-  renderRapidocrStatus(payload.rapidocr, options);
+  renderOcrToolStatuses(payload, options);
   renderOcrProcessingCommand();
   updateSettingsActionButtons();
 }

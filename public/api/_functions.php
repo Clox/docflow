@@ -973,6 +973,17 @@ function python_command_path(): ?string
     return $cached;
 }
 
+function python_status_payload(): array
+{
+    $python = python_command_path();
+
+    return [
+        'installed' => $python !== null,
+        'installCommand' => 'sudo apt install python3 python3-pip',
+        'binary' => $python,
+    ];
+}
+
 function rapidocr_status_payload(): array
 {
     $python = python_command_path();

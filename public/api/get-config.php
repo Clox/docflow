@@ -6,6 +6,7 @@ require_once __DIR__ . '/_bootstrap.php';
 try {
     $config = load_config();
     $jbig2 = jbig2_status_payload();
+    $python = python_status_payload();
     $rapidocr = rapidocr_status_payload();
     json_response([
         'inboxDirectory' => $config['inboxDirectory'],
@@ -19,6 +20,7 @@ try {
             ? $config['ocrPdfTextSubstitutions']
             : [],
         'jbig2' => $jbig2,
+        'python' => $python,
         'rapidocr' => $rapidocr,
     ]);
 } catch (Throwable $e) {
