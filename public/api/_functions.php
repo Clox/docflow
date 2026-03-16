@@ -1331,6 +1331,28 @@ function write_combined_page_debug_text(
     file_put_contents($jobDir . '/' . $targetFilename, $combined === '' ? '' : $combined . "\n");
 }
 
+function regenerate_debug_text_files_from_json(string $jobDir, string $engine): void
+{
+    $jsonPaths = glob($jobDir . '/' . $engine . '_page_*.json') ?: [];
+    sort($jsonPaths, SORT_NATURAL);
+
+    foreach ($jsonPaths as $jsonPath) {
+        $payload = load_json_file($jsonPath);
+        if (!is_array($payload)) {
+            continue;
+        }
+
+        $text = render_grid_text_from_debug_payload($payload);
+        $textPath = preg_replace('/\.json$/', '.txt', $jsonPath);
+        if (!is_string($textPath) || $textPath === '') {
+            continue;
+        }
+        file_put_contents($textPath, $text === '' ? '' : $text . "\n");
+    }
+
+    write_combined_page_debug_text($jobDir, $engine, $engine . '.txt');
+}
+
 function last_ocrmypdf_error(): ?string
 {
     $value = $GLOBALS['docflow_last_ocrmypdf_error'] ?? null;
@@ -1752,6 +1774,188 @@ function render_grid_text_from_bbox_objects(array $pages): string
     }
 
     return trim(implode("\n\n", $renderedPages));
+}
+
+function normalize_debug_word_bbox($bbox): ?array
+{
+    if (!is_array($bbox) || $bbox === []) {
+        return null;
+    }
+
+    if (count($bbox) >= 4 && !is_array($bbox[0] ?? null)) {
+        $values = array_slice($bbox, 0, 4);
+        foreach ($values as $value) {
+            if (!(is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)))) {
+                return null;
+            }
+        }
+        return [
+            'x0' => (float) $values[0],
+            'y0' => (float) $values[1],
+            'x1' => (float) $values[2],
+            'y1' => (float) $values[3],
+        ];
+    }
+
+    $points = [];
+    foreach ($bbox as $point) {
+        if (!is_array($point) || count($point) < 2) {
+            continue;
+        }
+        $x = $point[0] ?? null;
+        $y = $point[1] ?? null;
+        if (!(is_int($x) || is_float($x) || (is_string($x) && is_numeric($x)))) {
+            continue;
+        }
+        if (!(is_int($y) || is_float($y) || (is_string($y) && is_numeric($y)))) {
+            continue;
+        }
+        $points[] = [(float) $x, (float) $y];
+    }
+
+    if ($points === []) {
+        return null;
+    }
+
+    $xs = array_column($points, 0);
+    $ys = array_column($points, 1);
+    return [
+        'x0' => min($xs),
+        'y0' => min($ys),
+        'x1' => max($xs),
+        'y1' => max($ys),
+    ];
+}
+
+function render_grid_text_from_debug_words(array $words): string
+{
+    if ($words === []) {
+        return '';
+    }
+
+    $normalized = [];
+    $wordWidths = [];
+    $lineHeights = [];
+
+    foreach ($words as $word) {
+        if (!is_array($word)) {
+            continue;
+        }
+
+        $text = is_string($word['text'] ?? null) ? trim((string) $word['text']) : '';
+        if ($text === '') {
+            continue;
+        }
+
+        $bbox = normalize_debug_word_bbox($word['bbox'] ?? null);
+        if ($bbox === null) {
+            continue;
+        }
+
+        $width = $bbox['x1'] - $bbox['x0'];
+        $height = $bbox['y1'] - $bbox['y0'];
+        $charCount = utf8_strlen_safe($text);
+        if ($width > 0 && $charCount > 0) {
+            $wordWidths[] = $width / $charCount;
+        }
+        if ($height > 0) {
+            $lineHeights[] = $height;
+        }
+
+        $normalized[] = [
+            'text' => $text,
+            'x0' => $bbox['x0'],
+            'y0' => $bbox['y0'],
+            'x1' => $bbox['x1'],
+            'y1' => $bbox['y1'],
+        ];
+    }
+
+    if ($normalized === []) {
+        return '';
+    }
+
+    usort($normalized, static function (array $a, array $b): int {
+        $yCompare = ((float) ($a['y0'] ?? 0.0)) <=> ((float) ($b['y0'] ?? 0.0));
+        if ($yCompare !== 0) {
+            return $yCompare;
+        }
+        return ((float) ($a['x0'] ?? 0.0)) <=> ((float) ($b['x0'] ?? 0.0));
+    });
+
+    $charWidth = median_float($wordWidths, 18.0);
+    $lineHeight = median_float($lineHeights, 40.0);
+    $rows = [];
+    $rowTops = [];
+
+    foreach ($normalized as $word) {
+        $wordTop = (float) ($word['y0'] ?? 0.0);
+        $candidateRow = (int) round($wordTop / max($lineHeight, 1.0));
+        while (isset($rowTops[$candidateRow]) && abs($rowTops[$candidateRow] - $wordTop) > ($lineHeight * 0.35)) {
+            $candidateRow++;
+        }
+        if (!isset($rows[$candidateRow])) {
+            $rows[$candidateRow] = [];
+            $rowTops[$candidateRow] = $wordTop;
+        }
+        $rows[$candidateRow][] = $word;
+    }
+
+    if ($rows === []) {
+        return '';
+    }
+
+    $grid = [];
+    ksort($rows, SORT_NUMERIC);
+    foreach ($rows as $rowIndex => $rowWords) {
+        usort($rowWords, static function (array $a, array $b): int {
+            return ((float) ($a['x0'] ?? 0.0)) <=> ((float) ($b['x0'] ?? 0.0));
+        });
+
+        $buffer = [];
+        $cursor = 0;
+        foreach ($rowWords as $word) {
+            $targetCol = (int) round(((float) ($word['x0'] ?? 0.0)) / max($charWidth, 1.0));
+            if ($targetCol <= $cursor) {
+                $targetCol = $cursor > 0 ? $cursor + 1 : 0;
+            }
+            while (count($buffer) < $targetCol) {
+                $buffer[] = ' ';
+            }
+            foreach (utf8_chars((string) ($word['text'] ?? '')) as $char) {
+                $buffer[] = $char;
+            }
+            $cursor = count($buffer);
+        }
+        $grid[$rowIndex] = $buffer;
+    }
+
+    $pageLines = [];
+    $previousRow = null;
+    foreach ($grid as $rowIndex => $buffer) {
+        if ($previousRow !== null) {
+            $gap = max(0, $rowIndex - $previousRow - 1);
+            for ($i = 0; $i < $gap; $i++) {
+                $pageLines[] = '';
+            }
+        }
+        $pageLines[] = rtrim(implode('', $buffer));
+        $previousRow = $rowIndex;
+    }
+
+    return rtrim(implode("\n", $pageLines));
+}
+
+function render_grid_text_from_debug_payload(array $payload): string
+{
+    $words = is_array($payload['words'] ?? null) ? $payload['words'] : [];
+    $rendered = render_grid_text_from_debug_words($words);
+    if ($rendered !== '') {
+        return $rendered;
+    }
+
+    $text = $payload['text'] ?? '';
+    return is_string($text) ? trim($text) : '';
 }
 
 function extract_bbox_layout_objects_from_pdf(string $pdfPath): ?array
@@ -3653,8 +3857,8 @@ function process_claimed_job(
         }
 
         $textSourcePdfPath = $ocrProcessedPdf ? $reviewPdfPath : $sourcePdfPath;
-        write_combined_page_debug_text($jobDir, 'tesseract', 'tesseract.txt');
-        write_combined_page_debug_text($jobDir, 'rapidocr', 'rapidocr.txt');
+        regenerate_debug_text_files_from_json($jobDir, 'tesseract');
+        regenerate_debug_text_files_from_json($jobDir, 'rapidocr');
     } else {
         if (!is_file($reviewPdfPath)) {
             throw new RuntimeException('Missing review.pdf');

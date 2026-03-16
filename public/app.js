@@ -196,6 +196,7 @@ const lastKnownJobDisplayById = new Map();
 const pinnedProcessingJobIds = new Set();
 const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
+const ocrViewStateByKey = new Map();
 const collapsedSenderUiKeys = new Set();
 const selectedSenderUiKeys = new Set();
 const mountedSettingsPanels = new Set();
@@ -649,6 +650,9 @@ function updateHashState() {
 function setViewMode(mode, options = {}) {
   const syncHash = options.syncHash !== false;
   const nextMode = sanitizeViewMode(mode);
+  if (currentViewMode === 'ocr' && nextMode !== 'ocr') {
+    saveCurrentOcrViewState();
+  }
   currentViewMode = nextMode;
   viewModeEl.value = nextMode;
   loadedOcrJobId = '';
@@ -689,6 +693,16 @@ function setViewerPdf(jobId) {
 }
 
 async function setViewerOcr(jobId) {
+  if (
+    loadedOcrJobId !== ''
+    && (
+      loadedOcrJobId !== jobId
+      || loadedOcrSource !== currentOcrSource
+    )
+  ) {
+    saveCurrentOcrViewState();
+  }
+
   setOcrSearchVisible(true);
   setOcrSourceTabsVisible(true);
   matchesViewEl.classList.add('hidden');
@@ -707,6 +721,7 @@ async function setViewerOcr(jobId) {
   }
 
   if (loadedOcrJobId === jobId && loadedOcrSource === currentOcrSource) {
+    restoreOcrViewState(jobId, currentOcrSource);
     return;
   }
 
@@ -736,12 +751,14 @@ async function setViewerOcr(jobId) {
     const text = payload && typeof payload.text === 'string' ? payload.text : '';
     ocrViewEl.value = text || `(Ingen ${ocrSourceDisplayName(currentOcrSource)} hittades)`;
     refreshOcrSearch();
+    restoreOcrViewState(jobId, currentOcrSource);
   } catch (error) {
     if (requestSeq !== ocrRequestSeq) {
       return;
     }
     ocrViewEl.value = `Kunde inte ladda ${ocrSourceDisplayName(currentOcrSource)}.`;
     refreshOcrSearch();
+    restoreOcrViewState(jobId, currentOcrSource);
   }
 }
 
@@ -1343,6 +1360,9 @@ function setOcrSourceTabsVisible(visible) {
 function setActiveOcrSource(source, options = {}) {
   const reload = options.reload !== false;
   const nextSource = normalizeOcrSource(source);
+  if (currentViewMode === 'ocr' && nextSource !== currentOcrSource) {
+    saveCurrentOcrViewState();
+  }
   currentOcrSource = nextSource;
   ocrSearchInputEl.placeholder = `Sök i ${ocrSourceDisplayName(nextSource)}`;
   ocrSourceTabEls.forEach((buttonEl) => {
@@ -1365,6 +1385,37 @@ function ocrSourceDisplayName(source) {
     return 'RapidOCR';
   }
   return 'Merged OCR';
+}
+
+function ocrViewStateKey(jobId, source) {
+  if (!jobId) {
+    return '';
+  }
+  return `${jobId}::${normalizeOcrSource(source)}`;
+}
+
+function saveCurrentOcrViewState() {
+  const key = ocrViewStateKey(loadedOcrJobId, loadedOcrSource);
+  if (!key) {
+    return;
+  }
+  ocrViewStateByKey.set(key, {
+    scrollTop: ocrViewEl.scrollTop,
+    scrollLeft: ocrViewEl.scrollLeft,
+  });
+}
+
+function restoreOcrViewState(jobId, source) {
+  const key = ocrViewStateKey(jobId, source);
+  const state = key ? ocrViewStateByKey.get(key) : null;
+  const scrollTop = state && Number.isFinite(Number(state.scrollTop)) ? Number(state.scrollTop) : 0;
+  const scrollLeft = state && Number.isFinite(Number(state.scrollLeft)) ? Number(state.scrollLeft) : 0;
+
+  window.requestAnimationFrame(() => {
+    ocrViewEl.scrollTop = scrollTop;
+    ocrViewEl.scrollLeft = scrollLeft;
+    syncOcrHighlightScroll();
+  });
 }
 
 function clamp(value, minValue, maxValue) {
@@ -5468,6 +5519,7 @@ ocrSearchInputEl.addEventListener('keydown', (event) => {
 });
 
 ocrViewEl.addEventListener('scroll', () => {
+  saveCurrentOcrViewState();
   syncOcrHighlightScroll();
 });
 
