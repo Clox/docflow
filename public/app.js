@@ -1452,15 +1452,27 @@ function ocrSourceDisplayName(source) {
   return 'Sammanfogad text';
 }
 
-function getCurrentOcrZoomStepIndex() {
-  return OCR_ZOOM_STEPS.indexOf(currentOcrZoom);
+function parseOcrZoomValue(value) {
+  const digitsOnly = String(value || '').replace(/\D+/g, '');
+  if (digitsOnly === '') {
+    return null;
+  }
+  const parsed = Number.parseInt(digitsOnly, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function formatOcrZoomValue(value) {
+  const parsed = parseOcrZoomValue(value);
+  return parsed === null ? '' : `${parsed}%`;
 }
 
 function updateOcrZoomControls() {
-  const stepIndex = getCurrentOcrZoomStepIndex();
-  ocrZoomInputEl.value = String(currentOcrZoom);
-  ocrZoomOutEl.disabled = stepIndex <= 0;
-  ocrZoomInEl.disabled = stepIndex < 0 || stepIndex >= OCR_ZOOM_STEPS.length - 1;
+  ocrZoomInputEl.value = formatOcrZoomValue(currentOcrZoom);
+  ocrZoomOutEl.disabled = !OCR_ZOOM_STEPS.some((step) => step < currentOcrZoom);
+  ocrZoomInEl.disabled = !OCR_ZOOM_STEPS.some((step) => step > currentOcrZoom);
 }
 
 function getCurrentVisibleOcrPageNumber() {
@@ -1480,8 +1492,11 @@ function getCurrentVisibleOcrPageNumber() {
 
 function updateOcrPageControls() {
   const pageCount = ocrDocumentPages.length;
+  const currentPage = pageCount > 0 ? getCurrentVisibleOcrPageNumber() : 0;
   ocrPageTotalEl.textContent = String(pageCount);
-  ocrPageCurrentEl.value = String(pageCount > 0 ? getCurrentVisibleOcrPageNumber() : 0);
+  ocrPageCurrentEl.value = String(currentPage);
+  ocrPageCurrentEl.min = pageCount > 0 ? '1' : '0';
+  ocrPageCurrentEl.max = String(pageCount);
   updateOcrZoomControls();
 }
 
@@ -1493,12 +1508,8 @@ function applyOcrZoom() {
 }
 
 function setOcrZoom(nextZoom, options = {}) {
-  const normalizedZoom = Number.parseInt(String(nextZoom), 10);
-  if (!Number.isFinite(normalizedZoom) || normalizedZoom < OCR_ZOOM_STEPS[0] || normalizedZoom > OCR_ZOOM_STEPS[OCR_ZOOM_STEPS.length - 1]) {
-    updateOcrZoomControls();
-    return;
-  }
-  if (!OCR_ZOOM_STEPS.includes(normalizedZoom)) {
+  const normalizedZoom = parseOcrZoomValue(nextZoom);
+  if (normalizedZoom === null) {
     updateOcrZoomControls();
     return;
   }
@@ -1513,16 +1524,26 @@ function setOcrZoom(nextZoom, options = {}) {
 }
 
 function stepOcrZoom(direction) {
-  const stepIndex = getCurrentOcrZoomStepIndex();
-  if (stepIndex < 0) {
-    return;
-  }
-  const nextIndex = stepIndex + direction;
-  if (nextIndex < 0 || nextIndex >= OCR_ZOOM_STEPS.length) {
+  const candidateSteps = OCR_ZOOM_STEPS.filter((step) => direction < 0
+    ? step < currentOcrZoom
+    : step > currentOcrZoom);
+  if (candidateSteps.length === 0) {
     updateOcrZoomControls();
     return;
   }
-  setOcrZoom(OCR_ZOOM_STEPS[nextIndex]);
+  const nextZoom = direction < 0
+    ? candidateSteps[candidateSteps.length - 1]
+    : candidateSteps[0];
+  setOcrZoom(nextZoom);
+}
+
+function commitOcrZoomInput() {
+  const parsedZoom = parseOcrZoomValue(ocrZoomInputEl.value);
+  if (parsedZoom === null) {
+    updateOcrZoomControls();
+    return;
+  }
+  setOcrZoom(parsedZoom);
 }
 
 function scrollOcrPageIntoView(pageNumber) {
@@ -6177,7 +6198,11 @@ ocrPageCurrentEl.addEventListener('keydown', (event) => {
   scrollOcrPageIntoView(ocrPageCurrentEl.value);
 });
 
-ocrPageCurrentEl.addEventListener('blur', () => {
+ocrPageCurrentEl.addEventListener('focus', () => {
+  ocrPageCurrentEl.select();
+});
+
+ocrPageCurrentEl.addEventListener('input', () => {
   scrollOcrPageIntoView(ocrPageCurrentEl.value);
 });
 
@@ -6194,11 +6219,19 @@ ocrZoomInputEl.addEventListener('keydown', (event) => {
     return;
   }
   event.preventDefault();
-  setOcrZoom(ocrZoomInputEl.value);
+  commitOcrZoomInput();
+});
+
+ocrZoomInputEl.addEventListener('focus', () => {
+  ocrZoomInputEl.select();
 });
 
 ocrZoomInputEl.addEventListener('blur', () => {
-  setOcrZoom(ocrZoomInputEl.value);
+  commitOcrZoomInput();
+});
+
+ocrZoomInputEl.addEventListener('change', () => {
+  commitOcrZoomInput();
 });
 
 ocrSearchInputEl.addEventListener('keydown', (event) => {

@@ -82,15 +82,14 @@
           </div>
           <div id="ocr-page-controls" class="ocr-page-controls hidden" aria-label="OCR-sidkontroller">
             <div class="ocr-page-nav">
-              <input id="ocr-page-current" type="text" inputmode="numeric" aria-label="Nuvarande sida">
+              <input id="ocr-page-current" type="number" inputmode="numeric" min="1" step="1" aria-label="Nuvarande sida">
               <span class="ocr-page-separator">/</span>
               <span id="ocr-page-total">0</span>
             </div>
             <span class="ocr-page-controls-divider" aria-hidden="true"></span>
             <div class="ocr-zoom-controls">
               <button id="ocr-zoom-out" type="button" aria-label="Zooma ut">-</button>
-              <input id="ocr-zoom-input" type="text" inputmode="numeric" aria-label="Zoomnivå i procent">
-              <span class="ocr-zoom-percent">%</span>
+              <input id="ocr-zoom-input" type="text" inputmode="numeric" autocomplete="off" aria-label="Zoomnivå i procent">
               <button id="ocr-zoom-in" type="button" aria-label="Zooma in">+</button>
             </div>
           </div>

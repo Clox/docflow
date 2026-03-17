@@ -336,8 +336,7 @@ body {
   background: #d8dee8;
 }
 
-.ocr-page-separator,
-.ocr-zoom-percent {
+.ocr-page-separator {
   font-size: 13px;
   color: #475569;
   white-space: nowrap;
@@ -355,11 +354,11 @@ body {
 }
 
 #ocr-page-current {
-  width: 44px;
+  width: 58px;
 }
 
 #ocr-zoom-input {
-  width: 58px;
+  width: 68px;
 }
 
 #ocr-zoom-out,
