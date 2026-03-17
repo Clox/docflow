@@ -1447,17 +1447,6 @@ def _generate_transformed_hocr(
         if merged_sidecar_text is not None:
             output_text.write_text(merged_sidecar_text, encoding='utf-8')
 
-    if output_hocr.exists():
-        tesseract_payload = {
-            **tesseract_payload,
-            'words': _extract_tesseract_debug_words(output_hocr),
-            'text': (
-                output_text.read_text(encoding='utf-8')
-                if output_text.exists()
-                else str(tesseract_payload.get('text') or '')
-            ),
-        }
-
     _write_page_debug_artifacts(
         output_dir,
         page_number=page_number,

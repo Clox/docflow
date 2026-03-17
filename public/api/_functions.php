@@ -1277,7 +1277,7 @@ function run_ocrmypdf(
         . ' -j 1'
         . ' -l swe '
         . $deskewFlag
-        . '--oversample 500 --tesseract-thresholding sauvola --tesseract-pagesegmode 6 --output-type pdf '
+        . '--tesseract-thresholding sauvola --tesseract-pagesegmode 6 --output-type pdf '
         . '-O' . $safeOptimizeLevel
         . ' '
         . $modeFlag
