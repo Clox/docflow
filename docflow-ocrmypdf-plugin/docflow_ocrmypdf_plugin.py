@@ -309,31 +309,59 @@ def _run_rapidocr_in_process(input_file: str) -> dict[str, Any] | None:
             'words': [],
         }
 
+    raw_lines = output.to_json() or []
+    raw_word_lines = getattr(output, 'word_results', ()) or ()
+
+    lines: list[dict[str, Any]] = []
     words: list[dict[str, Any]] = []
-    for line in getattr(output, 'word_results', ()) or ():
-        if not isinstance(line, tuple):
-            continue
-        for item in line:
-            if not isinstance(item, tuple) or len(item) < 3:
-                continue
-            text, score, box = item
-            words.append({
-                'text': text,
-                'score': score,
-                'bbox': box,
-            })
+    line_count = max(len(raw_lines), len(raw_word_lines))
+    for line_index in range(line_count):
+        raw_line = raw_lines[line_index] if line_index < len(raw_lines) and isinstance(raw_lines[line_index], dict) else {}
+        raw_word_line = raw_word_lines[line_index] if line_index < len(raw_word_lines) else ()
+
+        line_words: list[dict[str, Any]] = []
+        if isinstance(raw_word_line, tuple):
+            for item in raw_word_line:
+                if not isinstance(item, tuple) or len(item) < 3:
+                    continue
+                text, score, box = item
+                normalized_word = {
+                    'text': text,
+                    'score': score,
+                    'bbox': box,
+                }
+                line_words.append(normalized_word)
+                words.append(normalized_word)
+
+        line_text = raw_line.get('txt', '')
+        if not isinstance(line_text, str):
+            line_text = ''
+
+        line_score = raw_line.get('score', None)
+        if not isinstance(line_score, (int, float)):
+            line_score = None
+
+        line_box = raw_line.get('box', None)
+        if not isinstance(line_box, list):
+            line_box = None
+
+        lines.append({
+            'text': line_text,
+            'score': line_score,
+            'bbox': line_box,
+            'words': line_words,
+        })
 
     text_chunks: list[str] = []
-    for line in output.to_json() or []:
-        if isinstance(line, dict):
-            value = line.get('txt', '')
-            if isinstance(value, str) and value.strip() != '':
-                text_chunks.append(value)
+    for line in lines:
+        value = line.get('text', '')
+        if isinstance(value, str) and value.strip() != '':
+            text_chunks.append(value)
 
     return {
         'available': True,
         'engine': 'rapidocr',
-        'lines': output.to_json(),
+        'lines': lines,
         'words': words,
         'text': '\n'.join(text_chunks).strip(),
     }

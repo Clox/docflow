@@ -6,6 +6,71 @@ import sys
 from pathlib import Path
 
 
+def normalize_word_item(item):
+    if not isinstance(item, tuple) or len(item) < 3:
+        return None
+    text, score, box = item
+    return {
+        'text': text,
+        'score': score,
+        'bbox': box,
+    }
+
+
+def build_payload_from_output(output):
+    raw_lines = output.to_json() or []
+    raw_word_lines = getattr(output, 'word_results', ()) or ()
+
+    lines = []
+    words = []
+
+    line_count = max(len(raw_lines), len(raw_word_lines))
+    for line_index in range(line_count):
+        raw_line = raw_lines[line_index] if line_index < len(raw_lines) and isinstance(raw_lines[line_index], dict) else {}
+        raw_word_line = raw_word_lines[line_index] if line_index < len(raw_word_lines) else ()
+        line_words = []
+        if isinstance(raw_word_line, tuple):
+            for item in raw_word_line:
+                normalized = normalize_word_item(item)
+                if normalized is None:
+                    continue
+                line_words.append(normalized)
+                words.append(normalized)
+
+        line_text = raw_line.get('txt', '')
+        if not isinstance(line_text, str):
+            line_text = ''
+
+        line_score = raw_line.get('score', None)
+        if not isinstance(line_score, (int, float)):
+            line_score = None
+
+        line_box = raw_line.get('box', None)
+        if not isinstance(line_box, list):
+            line_box = None
+
+        lines.append({
+            'text': line_text,
+            'score': line_score,
+            'bbox': line_box,
+            'words': line_words,
+        })
+
+    text_chunks = []
+    for line in lines:
+        value = line.get('text', '')
+        if isinstance(value, str) and value.strip() != '':
+            text_chunks.append(value)
+
+    return {
+        'available': True,
+        'engine': 'rapidocr',
+        'lines': lines,
+        'words': words,
+        'text': '\n'.join(text_chunks).strip(),
+    }
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(json.dumps({'available': False, 'error': 'Missing input image path', 'words': []}))
@@ -40,35 +105,7 @@ def main() -> int:
         }
         engine = RapidOCR(params=params)
         output = engine(str(image_path), return_word_box=True)
-        words = []
-        for line in getattr(output, 'word_results', ()) or ():
-            if not isinstance(line, tuple):
-                continue
-            for item in line:
-                if not isinstance(item, tuple) or len(item) < 3:
-                    continue
-                text, score, box = item
-                words.append({
-                    'text': text,
-                    'score': score,
-                    'bbox': box,
-                })
-
-        text_chunks = []
-        for line in output.to_json() or []:
-            if not isinstance(line, dict):
-                continue
-            value = line.get('txt', '')
-            if isinstance(value, str) and value.strip() != '':
-                text_chunks.append(value)
-
-        payload = {
-            'available': True,
-            'engine': 'rapidocr',
-            'lines': output.to_json(),
-            'words': words,
-            'text': '\n'.join(text_chunks).strip(),
-        }
+        payload = build_payload_from_output(output)
         print(json.dumps(payload, ensure_ascii=False))
         return 0
     except Exception as exc:

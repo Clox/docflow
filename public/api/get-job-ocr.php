@@ -99,6 +99,20 @@ function derive_page_size_from_words(array $words): array
     ];
 }
 
+function object_page_prefix_for_source(string $source): ?string
+{
+    if ($source === 'tesseract') {
+        return 'tesseract';
+    }
+    if ($source === 'rapidocr') {
+        return 'rapidocr';
+    }
+    if ($source === 'merged-objects') {
+        return 'merged_objects';
+    }
+    return null;
+}
+
 function load_engine_object_pages(string $jobDir, string $engine): array
 {
     $jsonPaths = glob($jobDir . '/' . $engine . '_page_*.json') ?: [];
@@ -154,6 +168,7 @@ try {
         'merged' => 'ocr.txt',
         'tesseract' => 'tesseract.txt',
         'rapidocr' => 'rapidocr.txt',
+        'merged-objects' => 'merged_objects.txt',
     ];
     $ocrFilename = $filenameBySource[$normalizedSource] ?? 'ocr.txt';
 
@@ -164,8 +179,9 @@ try {
 
     $jobDir = dirname($ocrPath);
 
-    if (in_array($normalizedSource, ['tesseract', 'rapidocr'], true)) {
-        $objectPages = load_engine_object_pages($jobDir, $normalizedSource);
+    $objectPrefix = object_page_prefix_for_source($normalizedSource);
+    if ($objectPrefix !== null) {
+        $objectPages = load_engine_object_pages($jobDir, $objectPrefix);
         if ($objectPages !== []) {
             $chunks = [];
             foreach ($objectPages as $page) {

@@ -1633,6 +1633,21 @@ function splitOcrTextIntoPages(text) {
 }
 
 function normalizeWordRect(bbox) {
+  if (bbox && typeof bbox === 'object' && !Array.isArray(bbox)) {
+    const x0 = Number(bbox.x0);
+    const y0 = Number(bbox.y0);
+    const x1 = Number(bbox.x1);
+    const y1 = Number(bbox.y1);
+    if ([x0, y0, x1, y1].every((value) => Number.isFinite(value))) {
+      return {
+        x0: Math.min(x0, x1),
+        y0: Math.min(y0, y1),
+        x1: Math.max(x0, x1),
+        y1: Math.max(y0, y1),
+      };
+    }
+  }
+
   if (!Array.isArray(bbox) || bbox.length === 0) {
     return null;
   }

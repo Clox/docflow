@@ -1274,6 +1274,7 @@ function run_ocrmypdf(
     $command = escapeshellarg($binary)
         . ' '
         . $pluginSegment
+        . ' -j 1'
         . ' -l swe '
         . $deskewFlag
         . '--oversample 500 --tesseract-thresholding sauvola --tesseract-pagesegmode 6 --output-type pdf '
@@ -2021,16 +2022,9 @@ function normalize_debug_words_for_merge(array $payload, string $engine): array
         }
 
         $score = null;
-        if ($engine === 'tesseract') {
-            $confidence = $word['confidence'] ?? null;
-            if (is_int($confidence) || is_float($confidence) || (is_string($confidence) && is_numeric($confidence))) {
-                $score = max(0.0, min(1.0, ((float) $confidence) / 100.0));
-            }
-        } else {
-            $candidateScore = $word['score'] ?? null;
-            if (is_int($candidateScore) || is_float($candidateScore) || (is_string($candidateScore) && is_numeric($candidateScore))) {
-                $score = max(0.0, min(1.0, (float) $candidateScore));
-            }
+        $candidateScore = $word['score'] ?? null;
+        if (is_int($candidateScore) || is_float($candidateScore) || (is_string($candidateScore) && is_numeric($candidateScore))) {
+            $score = max(0.0, min(1.0, (float) $candidateScore));
         }
 
         $normalized[] = [
@@ -2043,6 +2037,322 @@ function normalize_debug_words_for_merge(array $payload, string $engine): array
     }
 
     return $normalized;
+}
+
+function normalize_text_for_segment_match(string $text): string
+{
+    $lowered = lowercase_text($text);
+    $collapsed = preg_replace('/\s+/u', '', $lowered);
+    return is_string($collapsed) ? $collapsed : '';
+}
+
+function build_debug_word_from_fragments(array $fragments, string $text, ?array $fallbackBbox = null, ?float $fallbackScore = null): ?array
+{
+    if ($fragments === []) {
+        if ($fallbackBbox === null || trim($text) === '') {
+            return null;
+        }
+        return [
+            'text' => trim($text),
+            'bbox' => $fallbackBbox,
+            'score' => $fallbackScore,
+        ];
+    }
+
+    $bbox = null;
+    $scores = [];
+    foreach ($fragments as $fragment) {
+        if (!is_array($fragment)) {
+            continue;
+        }
+        $fragmentBbox = normalize_debug_word_bbox($fragment['bbox'] ?? null);
+        if ($fragmentBbox !== null) {
+            if ($bbox === null) {
+                $bbox = $fragmentBbox;
+            } else {
+                $bbox = [
+                    'x0' => min($bbox['x0'], $fragmentBbox['x0']),
+                    'y0' => min($bbox['y0'], $fragmentBbox['y0']),
+                    'x1' => max($bbox['x1'], $fragmentBbox['x1']),
+                    'y1' => max($bbox['y1'], $fragmentBbox['y1']),
+                ];
+            }
+        }
+
+        $candidateScore = $fragment['score'] ?? null;
+        if (is_int($candidateScore) || is_float($candidateScore) || (is_string($candidateScore) && is_numeric($candidateScore))) {
+            $scores[] = max(0.0, min(1.0, (float) $candidateScore));
+        }
+    }
+
+    if ($bbox === null) {
+        $bbox = $fallbackBbox;
+    }
+    if ($bbox === null || trim($text) === '') {
+        return null;
+    }
+
+    $score = $scores !== []
+        ? array_sum($scores) / count($scores)
+        : $fallbackScore;
+
+    return [
+        'text' => trim($text),
+        'bbox' => $bbox,
+        'score' => $score,
+    ];
+}
+
+function fallback_merge_rapidocr_line_fragments(array $fragments, ?array $lineBbox = null, ?float $lineScore = null): array
+{
+    if ($fragments === []) {
+        return [];
+    }
+
+    usort($fragments, static function (array $a, array $b): int {
+        $leftBbox = normalize_debug_word_bbox($a['bbox'] ?? null);
+        $rightBbox = normalize_debug_word_bbox($b['bbox'] ?? null);
+        if ($leftBbox === null || $rightBbox === null) {
+            return 0;
+        }
+        $xCompare = $leftBbox['x0'] <=> $rightBbox['x0'];
+        if ($xCompare !== 0) {
+            return $xCompare;
+        }
+        return $leftBbox['y0'] <=> $rightBbox['y0'];
+    });
+
+    $groups = [];
+    $currentGroup = [];
+    $previousBbox = null;
+
+    foreach ($fragments as $fragment) {
+        $bbox = normalize_debug_word_bbox($fragment['bbox'] ?? null);
+        if ($bbox === null) {
+            continue;
+        }
+
+        if ($currentGroup === [] || $previousBbox === null) {
+            $currentGroup[] = $fragment;
+            $previousBbox = $bbox;
+            continue;
+        }
+
+        $previousHeight = max(1.0, $previousBbox['y1'] - $previousBbox['y0']);
+        $currentHeight = max(1.0, $bbox['y1'] - $bbox['y0']);
+        $gap = $bbox['x0'] - $previousBbox['x1'];
+        $mergeThreshold = max(4.0, min($previousHeight, $currentHeight) * 0.22);
+
+        if ($gap <= $mergeThreshold) {
+            $currentGroup[] = $fragment;
+        } else {
+            $groups[] = $currentGroup;
+            $currentGroup = [$fragment];
+        }
+        $previousBbox = $bbox;
+    }
+
+    if ($currentGroup !== []) {
+        $groups[] = $currentGroup;
+    }
+
+    $segments = [];
+    foreach ($groups as $group) {
+        $text = '';
+        foreach ($group as $fragment) {
+            $text .= is_string($fragment['text'] ?? null) ? (string) $fragment['text'] : '';
+        }
+        $segment = build_debug_word_from_fragments($group, $text, $lineBbox, $lineScore);
+        if ($segment !== null) {
+            $segments[] = $segment;
+        }
+    }
+
+    return $segments;
+}
+
+function merge_rapidocr_line_into_segments(array $line): array
+{
+    $lineText = is_string($line['text'] ?? null) ? trim((string) $line['text']) : '';
+    $lineScore = null;
+    if (is_int($line['score'] ?? null) || is_float($line['score'] ?? null) || (is_string($line['score'] ?? null) && is_numeric($line['score'] ?? null))) {
+        $lineScore = max(0.0, min(1.0, (float) $line['score']));
+    }
+    $lineBbox = normalize_debug_word_bbox($line['bbox'] ?? null);
+
+    $fragments = [];
+    foreach (is_array($line['words'] ?? null) ? $line['words'] : [] as $fragment) {
+        if (!is_array($fragment)) {
+            continue;
+        }
+        $text = is_string($fragment['text'] ?? null) ? trim((string) $fragment['text']) : '';
+        $bbox = normalize_debug_word_bbox($fragment['bbox'] ?? null);
+        if ($text === '' || $bbox === null) {
+            continue;
+        }
+        $score = null;
+        if (is_int($fragment['score'] ?? null) || is_float($fragment['score'] ?? null) || (is_string($fragment['score'] ?? null) && is_numeric($fragment['score'] ?? null))) {
+            $score = max(0.0, min(1.0, (float) $fragment['score']));
+        }
+        $fragments[] = [
+            'text' => $text,
+            'bbox' => $bbox,
+            'score' => $score,
+        ];
+    }
+
+    if ($fragments === []) {
+        return [];
+    }
+
+    usort($fragments, static function (array $a, array $b): int {
+        $xCompare = $a['bbox']['x0'] <=> $b['bbox']['x0'];
+        if ($xCompare !== 0) {
+            return $xCompare;
+        }
+        return $a['bbox']['y0'] <=> $b['bbox']['y0'];
+    });
+
+    $tokens = preg_split('/\s+/u', $lineText, -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($tokens) || $tokens === []) {
+        return fallback_merge_rapidocr_line_fragments($fragments, $lineBbox, $lineScore);
+    }
+
+    $segments = [];
+    $fragmentIndex = 0;
+    foreach ($tokens as $token) {
+        $normalizedToken = normalize_text_for_segment_match($token);
+        if ($normalizedToken === '') {
+            continue;
+        }
+
+        $segmentFragments = [];
+        $candidateText = '';
+        $matched = false;
+
+        while ($fragmentIndex < count($fragments)) {
+            $fragment = $fragments[$fragmentIndex];
+            $fragmentIndex += 1;
+            $normalizedFragment = normalize_text_for_segment_match($fragment['text']);
+            if ($normalizedFragment === '') {
+                continue;
+            }
+
+            $segmentFragments[] = $fragment;
+            $candidateText .= $normalizedFragment;
+
+            if ($candidateText === $normalizedToken) {
+                $matched = true;
+                break;
+            }
+
+            if (!str_starts_with($normalizedToken, $candidateText)) {
+                $matched = false;
+                break;
+            }
+        }
+
+        if (!$matched) {
+            return fallback_merge_rapidocr_line_fragments($fragments, $lineBbox, $lineScore);
+        }
+
+        $segment = build_debug_word_from_fragments($segmentFragments, $token, $lineBbox, $lineScore);
+        if ($segment !== null) {
+            $segments[] = $segment;
+        }
+    }
+
+    if ($fragmentIndex < count($fragments)) {
+        $remaining = array_slice($fragments, $fragmentIndex);
+        foreach (fallback_merge_rapidocr_line_fragments($remaining, $lineBbox, $lineScore) as $segment) {
+            $segments[] = $segment;
+        }
+    }
+
+    return $segments !== [] ? $segments : fallback_merge_rapidocr_line_fragments($fragments, $lineBbox, $lineScore);
+}
+
+function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload, int $pageNumber): array
+{
+    $pageWidth = is_numeric($rapidocrPayload['pageWidth'] ?? null) ? (float) $rapidocrPayload['pageWidth'] : null;
+    $pageHeight = is_numeric($rapidocrPayload['pageHeight'] ?? null) ? (float) $rapidocrPayload['pageHeight'] : null;
+    $sourceImage = is_string($rapidocrPayload['sourceImage'] ?? null) ? $rapidocrPayload['sourceImage'] : null;
+
+    $mergedLines = [];
+    $mergedWords = [];
+    foreach (is_array($rapidocrPayload['lines'] ?? null) ? $rapidocrPayload['lines'] : [] as $lineIndex => $line) {
+        if (!is_array($line)) {
+            continue;
+        }
+        $segments = merge_rapidocr_line_into_segments($line);
+        $lineText = implode(' ', array_map(static fn(array $segment): string => (string) ($segment['text'] ?? ''), $segments));
+        $lineBbox = normalize_debug_word_bbox($line['bbox'] ?? null);
+        $lineScore = null;
+        if (is_int($line['score'] ?? null) || is_float($line['score'] ?? null) || (is_string($line['score'] ?? null) && is_numeric($line['score'] ?? null))) {
+            $lineScore = max(0.0, min(1.0, (float) $line['score']));
+        }
+
+        $lineWords = [];
+        foreach ($segments as $segmentIndex => $segment) {
+            $lineWords[] = $segment;
+            $mergedWords[] = $segment;
+        }
+
+        $mergedLines[] = [
+            'index' => $lineIndex,
+            'text' => $lineText,
+            'bbox' => $lineBbox,
+            'score' => $lineScore,
+            'words' => $lineWords,
+        ];
+    }
+
+    $pageText = implode("\n", array_values(array_filter(array_map(
+        static fn(array $line): string => trim((string) ($line['text'] ?? '')),
+        $mergedLines
+    ), static fn(string $lineText): bool => $lineText !== '')));
+
+    return [
+        'engine' => 'merged_objects',
+        'sourceEngine' => 'rapidocr',
+        'pageNumber' => $pageNumber,
+        'pageIndex' => max(0, $pageNumber - 1),
+        'sourceImage' => $sourceImage,
+        'pageWidth' => $pageWidth,
+        'pageHeight' => $pageHeight,
+        'lines' => $mergedLines,
+        'words' => $mergedWords,
+        'text' => $pageText,
+    ];
+}
+
+function write_merged_object_debug_files_from_rapidocr(string $jobDir): void
+{
+    $rapidocrPages = load_job_engine_debug_pages($jobDir, 'rapidocr');
+    if ($rapidocrPages === []) {
+        foreach (glob($jobDir . '/merged_objects_page_*.json') ?: [] as $path) {
+            @unlink($path);
+        }
+        foreach (glob($jobDir . '/merged_objects_page_*.txt') ?: [] as $path) {
+            @unlink($path);
+        }
+        if (is_file($jobDir . '/merged_objects.txt')) {
+            @unlink($jobDir . '/merged_objects.txt');
+        }
+        return;
+    }
+
+    foreach ($rapidocrPages as $pageIndex => $rapidocrPage) {
+        if (!is_array($rapidocrPage)) {
+            continue;
+        }
+        $pageNumber = is_numeric($rapidocrPage['pageNumber'] ?? null) ? (int) $rapidocrPage['pageNumber'] : ($pageIndex + 1);
+        $payload = build_merged_objects_payload_from_rapidocr_page($rapidocrPage, $pageNumber);
+        $path = $jobDir . '/merged_objects_page_' . str_pad((string) $pageNumber, 2, '0', STR_PAD_LEFT) . '.json';
+        write_json_file($path, $payload);
+    }
+
+    regenerate_debug_text_files_from_json($jobDir, 'merged_objects');
 }
 
 function bbox_intersection_area(array $left, array $right): float
@@ -4153,10 +4463,16 @@ function process_claimed_job(
         foreach (glob($jobDir . '/rapidocr_page_*.json') ?: [] as $path) {
             @unlink($path);
         }
+        foreach (glob($jobDir . '/merged_objects_page_*.json') ?: [] as $path) {
+            @unlink($path);
+        }
         foreach (glob($jobDir . '/tesseract_page_*.txt') ?: [] as $path) {
             @unlink($path);
         }
         foreach (glob($jobDir . '/rapidocr_page_*.txt') ?: [] as $path) {
+            @unlink($path);
+        }
+        foreach (glob($jobDir . '/merged_objects_page_*.txt') ?: [] as $path) {
             @unlink($path);
         }
         if (is_file($jobDir . '/tesseract.txt')) {
@@ -4164,6 +4480,9 @@ function process_claimed_job(
         }
         if (is_file($jobDir . '/rapidocr.txt')) {
             @unlink($jobDir . '/rapidocr.txt');
+        }
+        if (is_file($jobDir . '/merged_objects.txt')) {
+            @unlink($jobDir . '/merged_objects.txt');
         }
         $ocrProcessedPdf = run_ocrmypdf(
             $sourcePdfPath,
@@ -4191,6 +4510,7 @@ function process_claimed_job(
         $textSourcePdfPath = $ocrProcessedPdf ? $reviewPdfPath : $sourcePdfPath;
         regenerate_debug_text_files_from_json($jobDir, 'tesseract');
         regenerate_debug_text_files_from_json($jobDir, 'rapidocr');
+        write_merged_object_debug_files_from_rapidocr($jobDir);
     } else {
         if (!is_file($reviewPdfPath)) {
             throw new RuntimeException('Missing review.pdf');
@@ -5071,6 +5391,7 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         $artifactPaths[] = $jobDir . '/review.pdf';
         $artifactPaths[] = $jobDir . '/tesseract.txt';
         $artifactPaths[] = $jobDir . '/rapidocr.txt';
+        $artifactPaths[] = $jobDir . '/merged_objects.txt';
     }
 
     foreach ($artifactPaths as $artifactPath) {
@@ -5085,10 +5406,16 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         foreach (glob($jobDir . '/rapidocr_page_*.json') ?: [] as $path) {
             @unlink($path);
         }
+        foreach (glob($jobDir . '/merged_objects_page_*.json') ?: [] as $path) {
+            @unlink($path);
+        }
         foreach (glob($jobDir . '/tesseract_page_*.txt') ?: [] as $path) {
             @unlink($path);
         }
         foreach (glob($jobDir . '/rapidocr_page_*.txt') ?: [] as $path) {
+            @unlink($path);
+        }
+        foreach (glob($jobDir . '/merged_objects_page_*.txt') ?: [] as $path) {
             @unlink($path);
         }
     }
