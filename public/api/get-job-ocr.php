@@ -205,6 +205,39 @@ try {
     }
 
     if ($normalizedSource === 'merged') {
+        $mergedObjectPages = load_job_engine_debug_pages($jobDir, 'merged_objects');
+        if ($mergedObjectPages !== []) {
+            $chunks = [];
+            $pagePayloads = [];
+            foreach ($mergedObjectPages as $index => $page) {
+                if (!is_array($page)) {
+                    continue;
+                }
+                $pageNumber = is_numeric($page['pageNumber'] ?? null)
+                    ? (int) $page['pageNumber']
+                    : ($index + 1);
+                if ($pageNumber <= 0) {
+                    $pageNumber = $index + 1;
+                }
+                $pageText = render_grid_text_from_debug_payload($page);
+                $normalizedPageText = rtrim($pageText, "\r\n");
+                $pagePayloads[] = [
+                    'number' => $pageNumber,
+                    'text' => $normalizedPageText,
+                ];
+                $chunks[] = '=== PAGE ' . $pageNumber . " ===\n" . $normalizedPageText;
+            }
+            if ($chunks !== []) {
+                json_response([
+                    'source' => $normalizedSource,
+                    'mode' => 'text',
+                    'text' => implode("\n\n", $chunks),
+                    'pages' => $pagePayloads,
+                ]);
+                exit;
+            }
+        }
+
         $ocrObjectsPath = dirname($ocrPath) . DIRECTORY_SEPARATOR . 'ocr-objects.json';
         $ocrObjects = is_file($ocrObjectsPath) ? load_json_file($ocrObjectsPath) : null;
         $pages = is_array($ocrObjects['pages'] ?? null) ? $ocrObjects['pages'] : [];
