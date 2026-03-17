@@ -225,6 +225,135 @@ def _get_image_size(input_file: str | Path) -> tuple[int, int] | None:
         return None
 
 
+def _get_image_dpi(input_file: str | Path) -> tuple[float, float] | None:
+    try:
+        with Image.open(input_file) as image:
+            dpi = image.info.get('dpi')
+            if isinstance(dpi, tuple) and len(dpi) >= 2:
+                xdpi = float(dpi[0]) if isinstance(dpi[0], (int, float)) else 0.0
+                ydpi = float(dpi[1]) if isinstance(dpi[1], (int, float)) else 0.0
+                if xdpi > 0 and ydpi > 0:
+                    return (xdpi, ydpi)
+    except Exception:
+        return None
+    return None
+
+
+def _scale_bbox_value(value: float | int, scale: float) -> int:
+    return int(round(float(value) / scale))
+
+
+def _scale_down_debug_bbox(bbox: Any, scale_x: float, scale_y: float) -> Any:
+    if scale_x == 1.0 and scale_y == 1.0:
+        return bbox
+
+    if isinstance(bbox, list):
+        if len(bbox) == 4 and all(isinstance(value, (int, float)) for value in bbox):
+            return [
+                _scale_bbox_value(bbox[0], scale_x),
+                _scale_bbox_value(bbox[1], scale_y),
+                _scale_bbox_value(bbox[2], scale_x),
+                _scale_bbox_value(bbox[3], scale_y),
+            ]
+        scaled_points = []
+        for point in bbox:
+            if isinstance(point, (list, tuple)) and len(point) >= 2:
+                scaled_points.append([
+                    _scale_bbox_value(point[0], scale_x),
+                    _scale_bbox_value(point[1], scale_y),
+                ])
+        return scaled_points if scaled_points else bbox
+
+    if isinstance(bbox, dict):
+        scaled = dict(bbox)
+        for key in ('x0', 'x1'):
+            if isinstance(scaled.get(key), (int, float)):
+                scaled[key] = _scale_bbox_value(scaled[key], scale_x)
+        for key in ('y0', 'y1'):
+            if isinstance(scaled.get(key), (int, float)):
+                scaled[key] = _scale_bbox_value(scaled[key], scale_y)
+        return scaled
+
+    return bbox
+
+
+def _scale_down_tesseract_payload(
+    payload: dict[str, Any],
+    scale_x: float,
+    scale_y: float,
+    original_image_path: str | Path,
+) -> dict[str, Any]:
+    if scale_x == 1.0 and scale_y == 1.0:
+        image_size = _get_image_size(original_image_path)
+        if image_size is not None:
+            payload['pageWidth'] = int(image_size[0])
+            payload['pageHeight'] = int(image_size[1])
+        payload['sourceImage'] = Path(original_image_path).name
+        return payload
+
+    scaled_words = []
+    for word in payload.get('words') or []:
+        if not isinstance(word, dict):
+            continue
+        scaled_word = dict(word)
+        scaled_word['bbox'] = _scale_down_debug_bbox(word.get('bbox'), scale_x, scale_y)
+        raw = word.get('raw')
+        if isinstance(raw, dict):
+            title = raw.get('hocrTitle')
+            if isinstance(title, str):
+                bbox = _parse_bbox(title)
+                if bbox is not None:
+                    scaled_bbox = {
+                        'x0': _scale_bbox_value(bbox[0], scale_x),
+                        'y0': _scale_bbox_value(bbox[1], scale_y),
+                        'x1': _scale_bbox_value(bbox[2], scale_x),
+                        'y1': _scale_bbox_value(bbox[3], scale_y),
+                    }
+                    score = word.get('score')
+                    scaled_raw = dict(raw)
+                    scaled_raw['hocrTitle'] = _replace_title_bbox_and_score(
+                        title,
+                        scaled_bbox,
+                        float(score) if isinstance(score, (int, float)) else None,
+                    )
+                    scaled_word['raw'] = scaled_raw
+        scaled_words.append(scaled_word)
+
+    image_size = _get_image_size(original_image_path)
+    scaled_payload = {
+        **payload,
+        'sourceImage': Path(original_image_path).name,
+        'words': scaled_words,
+    }
+    if image_size is not None:
+        scaled_payload['pageWidth'] = int(image_size[0])
+        scaled_payload['pageHeight'] = int(image_size[1])
+    return scaled_payload
+
+
+def _prepare_tesseract_ocr_input(
+    input_file: str | Path,
+    workdir: Path,
+    *,
+    target_dpi: float = 500.0,
+) -> tuple[Path, float, float]:
+    input_path = Path(input_file)
+    source_dpi = _get_image_dpi(input_path) or (300.0, 300.0)
+    scale_x = target_dpi / max(source_dpi[0], 1.0)
+    scale_y = target_dpi / max(source_dpi[1], 1.0)
+    if max(scale_x, scale_y) <= 1.01:
+        return input_path, 1.0, 1.0
+
+    with Image.open(input_path) as image:
+        target_width = max(1, int(round(image.width * scale_x)))
+        target_height = max(1, int(round(image.height * scale_y)))
+        resized = image.resize((target_width, target_height), resample=Image.Resampling.LANCZOS)
+        output_path = workdir / 'tesseract_ocr_input.png'
+        resized.save(output_path, format='PNG', dpi=(target_dpi, target_dpi))
+
+    return output_path, scale_x, scale_y
+
+
 def _page_debug_path(output_dir: Path, engine: str, page_number: int) -> Path:
     return output_dir / f'{engine}_page_{page_number + 1:02d}.json'
 
@@ -1090,7 +1219,15 @@ def _build_rapidocr_debug_payload(input_file, options, *, page_number: int) -> d
     return payload
 
 
-def _build_page_debug_payloads(input_file, hocr_path: Path, options, *, page_number: int) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+def _build_page_debug_payloads(
+    input_file,
+    hocr_path: Path,
+    options,
+    *,
+    page_number: int,
+    tesseract_scale_x: float = 1.0,
+    tesseract_scale_y: float = 1.0,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     tesseract_text_path = hocr_path.with_suffix('.txt')
     tesseract_text = ''
     if tesseract_text_path.is_file():
@@ -1111,6 +1248,12 @@ def _build_page_debug_payloads(input_file, hocr_path: Path, options, *, page_num
     if image_size is not None:
         tesseract_payload['pageWidth'] = int(image_size[0])
         tesseract_payload['pageHeight'] = int(image_size[1])
+    tesseract_payload = _scale_down_tesseract_payload(
+        tesseract_payload,
+        tesseract_scale_x,
+        tesseract_scale_y,
+        input_file,
+    )
 
     rapidocr_payload = _build_rapidocr_debug_payload(input_file, options, page_number=page_number)
     merged_payload = _build_merged_objects_payload_from_page(rapidocr_payload, page_number, tesseract_payload)
@@ -1419,61 +1562,70 @@ def _generate_transformed_hocr(
     *,
     page_number: int = 0,
 ) -> None:
-    builtin_tesseract_ocr.TesseractOcrEngine.generate_hocr(
-        input_file,
-        output_hocr,
-        output_text,
-        options,
-    )
+    with TemporaryDirectory(prefix='docflow-tesseract-input-') as temp_dir:
+        temp_path = Path(temp_dir)
+        tesseract_input, tesseract_scale_x, tesseract_scale_y = _prepare_tesseract_ocr_input(
+            input_file,
+            temp_path,
+        )
 
-    output_dir = _get_debug_output_dir(options)
-    tesseract_payload, rapidocr_payload, merged_payload = _build_page_debug_payloads(
-        input_file,
-        output_hocr,
-        options,
-        page_number=page_number,
-    )
+        builtin_tesseract_ocr.TesseractOcrEngine.generate_hocr(
+            str(tesseract_input),
+            output_hocr,
+            output_text,
+            options,
+        )
 
-    merged_sidecar_text = str(merged_payload.get('text') or '').strip()
-    synthesized_hocr = _write_hocr_from_merged_payload(
-        output_hocr,
-        merged_payload,
-        page_number=page_number,
-    )
-    if synthesized_hocr:
-        output_text.write_text(merged_sidecar_text, encoding='utf-8')
-    else:
-        merged_sidecar_text = _rewrite_hocr_with_merged_objects(output_hocr, merged_payload)
-        if merged_sidecar_text is not None:
-            output_text.write_text(merged_sidecar_text, encoding='utf-8')
-
-    _write_page_debug_artifacts(
-        output_dir,
-        page_number=page_number,
-        tesseract_payload=tesseract_payload,
-        rapidocr_payload=rapidocr_payload,
-        merged_payload=merged_payload,
-    )
-
-    script_path = _get_transform_script_path(options)
-    if script_path is None:
-        return
-
-    module = _load_transform_module(str(script_path))
-    _rewrite_hocr_words(output_hocr, module, page_number=page_number, options=options)
-
-    sidecar_text = ''
-    if output_text.exists():
-        sidecar_text = output_text.read_text(encoding='utf-8')
-    output_text.write_text(
-        _transform_sidecar_text(
-            sidecar_text,
-            module,
+        output_dir = _get_debug_output_dir(options)
+        tesseract_payload, rapidocr_payload, merged_payload = _build_page_debug_payloads(
+            input_file,
+            output_hocr,
+            options,
             page_number=page_number,
-            options=options,
-        ),
-        encoding='utf-8',
-    )
+            tesseract_scale_x=tesseract_scale_x,
+            tesseract_scale_y=tesseract_scale_y,
+        )
+
+        merged_sidecar_text = str(merged_payload.get('text') or '').strip()
+        synthesized_hocr = _write_hocr_from_merged_payload(
+            output_hocr,
+            merged_payload,
+            page_number=page_number,
+        )
+        if synthesized_hocr:
+            output_text.write_text(merged_sidecar_text, encoding='utf-8')
+        else:
+            merged_sidecar_text = _rewrite_hocr_with_merged_objects(output_hocr, merged_payload)
+            if merged_sidecar_text is not None:
+                output_text.write_text(merged_sidecar_text, encoding='utf-8')
+
+        _write_page_debug_artifacts(
+            output_dir,
+            page_number=page_number,
+            tesseract_payload=tesseract_payload,
+            rapidocr_payload=rapidocr_payload,
+            merged_payload=merged_payload,
+        )
+
+        script_path = _get_transform_script_path(options)
+        if script_path is None:
+            return
+
+        module = _load_transform_module(str(script_path))
+        _rewrite_hocr_words(output_hocr, module, page_number=page_number, options=options)
+
+        sidecar_text = ''
+        if output_text.exists():
+            sidecar_text = output_text.read_text(encoding='utf-8')
+        output_text.write_text(
+            _transform_sidecar_text(
+                sidecar_text,
+                module,
+                page_number=page_number,
+                options=options,
+            ),
+            encoding='utf-8',
+        )
 
 
 class DocflowTesseractOcrEngine(builtin_tesseract_ocr.TesseractOcrEngine):
