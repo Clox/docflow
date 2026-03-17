@@ -200,11 +200,13 @@ const OCR_ZOOM_STEPS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200
 const OCR_OBJECT_FONT_SCALE_BY_SOURCE = {
   tesseract: 1.21,
   rapidocr: 1.04,
+  merged: 1.04,
 };
 const OCR_OBJECT_FONT_FAMILY = '"Arial Narrow", Arial, sans-serif';
 const OCR_OBJECT_LETTER_SPACING_BY_SOURCE = {
   tesseract: '-0.05em',
   rapidocr: '-0.05em',
+  merged: '-0.05em',
 };
 let hasLoadedSenders = false;
 let hasLoadedCategories = false;
@@ -1812,6 +1814,10 @@ function normalizeObjectWord(word, index) {
   };
 }
 
+function objectRenderSource(source) {
+  return source === 'merged-objects' ? 'merged' : source;
+}
+
 function normalizeOcrPages(pages, fallbackText = '', mode = 'text') {
   if (!Array.isArray(pages) || pages.length === 0) {
     return splitOcrTextIntoPages(fallbackText).map((page) => ({
@@ -1978,8 +1984,9 @@ function measureOcrWordFontSize(word, scaledHeight, objectScale) {
     : (Number.isFinite(Number(word && word.rect && word.rect.height)) ? Number(word.rect.height) : scaledHeight / Math.max(objectScale, 0.0001));
   const scaledTypicalRowHeight = Math.max(scaledHeight, rowTypicalHeight * objectScale);
   const ownHeightCap = scaledHeight * 1;
-  const sourceScale = Number.isFinite(Number(OCR_OBJECT_FONT_SCALE_BY_SOURCE[currentOcrSource]))
-    ? Number(OCR_OBJECT_FONT_SCALE_BY_SOURCE[currentOcrSource])
+  const renderSource = objectRenderSource(currentOcrSource);
+  const sourceScale = Number.isFinite(Number(OCR_OBJECT_FONT_SCALE_BY_SOURCE[renderSource]))
+    ? Number(OCR_OBJECT_FONT_SCALE_BY_SOURCE[renderSource])
     : 1;
   return Math.max(8, Math.min(scaledTypicalRowHeight * 0.84 * sourceScale, ownHeightCap));
 }
@@ -2057,8 +2064,9 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
     textEl.textContent = word.text;
     textEl.style.fontFamily = OCR_OBJECT_FONT_FAMILY;
     textEl.style.transform = `scaleX(${measureOcrWordHorizontalScale(word.text, fontSize, scaledWidth)})`;
-    textEl.style.letterSpacing = typeof OCR_OBJECT_LETTER_SPACING_BY_SOURCE[currentOcrSource] === 'string'
-      ? OCR_OBJECT_LETTER_SPACING_BY_SOURCE[currentOcrSource]
+    const renderSource = objectRenderSource(currentOcrSource);
+    textEl.style.letterSpacing = typeof OCR_OBJECT_LETTER_SPACING_BY_SOURCE[renderSource] === 'string'
+      ? OCR_OBJECT_LETTER_SPACING_BY_SOURCE[renderSource]
       : '0em';
     wordEl.appendChild(textEl);
     wordEl.title = buildWordTooltip(word);
