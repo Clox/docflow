@@ -2046,6 +2046,166 @@ function normalize_text_for_segment_match(string $text): string
     return is_string($collapsed) ? $collapsed : '';
 }
 
+function is_swedish_diacritic_char(string $char): bool
+{
+    return in_array($char, ['å', 'ä', 'ö', 'Å', 'Ä', 'Ö'], true);
+}
+
+function fold_char_for_diacritic_match(string $char): string
+{
+    $lower = lowercase_text($char);
+    return match ($lower) {
+        'å', 'ä', 'à', 'á', 'â', 'ã', 'ā' => 'a',
+        'ö', 'ò', 'ó', 'ô', 'õ', 'ø', 'ō' => 'o',
+        'ü', 'ù', 'ú', 'û', 'ū' => 'u',
+        'é', 'è', 'ê', 'ë', 'ē' => 'e',
+        'í', 'ì', 'î', 'ï', 'ī' => 'i',
+        default => $lower,
+    };
+}
+
+function normalize_text_for_diacritic_match(string $text): string
+{
+    $normalized = [];
+    foreach (utf8_chars($text) as $char) {
+        if (preg_match('/\s/u', $char) === 1) {
+            continue;
+        }
+        $normalized[] = fold_char_for_diacritic_match($char);
+    }
+    return implode('', $normalized);
+}
+
+function utf8_levenshtein_distance(string $left, string $right): int
+{
+    $leftChars = utf8_chars($left);
+    $rightChars = utf8_chars($right);
+    $leftCount = count($leftChars);
+    $rightCount = count($rightChars);
+
+    if ($leftCount === 0) {
+        return $rightCount;
+    }
+    if ($rightCount === 0) {
+        return $leftCount;
+    }
+
+    $previousRow = range(0, $rightCount);
+    for ($i = 1; $i <= $leftCount; $i++) {
+        $currentRow = [$i];
+        for ($j = 1; $j <= $rightCount; $j++) {
+            $cost = $leftChars[$i - 1] === $rightChars[$j - 1] ? 0 : 1;
+            $currentRow[$j] = min(
+                $previousRow[$j] + 1,
+                $currentRow[$j - 1] + 1,
+                $previousRow[$j - 1] + $cost
+            );
+        }
+        $previousRow = $currentRow;
+    }
+
+    return (int) $previousRow[$rightCount];
+}
+
+function texts_are_diacritic_compatible(string $left, string $right): bool
+{
+    $normalizedLeft = normalize_text_for_diacritic_match($left);
+    $normalizedRight = normalize_text_for_diacritic_match($right);
+    if ($normalizedLeft === '' || $normalizedRight === '') {
+        return false;
+    }
+    if ($normalizedLeft === $normalizedRight) {
+        return true;
+    }
+
+    $maxLen = max(count(utf8_chars($normalizedLeft)), count(utf8_chars($normalizedRight)));
+    if ($maxLen === 0) {
+        return true;
+    }
+
+    $distance = utf8_levenshtein_distance($normalizedLeft, $normalizedRight);
+    return $distance <= max(1, (int) floor($maxLen * 0.2));
+}
+
+function transfer_swedish_diacritics(string $sourceText, string $truthText): string
+{
+    $sourceChars = utf8_chars($sourceText);
+    $truthChars = utf8_chars($truthText);
+    $sourceCount = count($sourceChars);
+    $truthCount = count($truthChars);
+    if ($sourceCount === 0 || $truthCount === 0) {
+        return $sourceText;
+    }
+
+    $sourceFolded = array_map('fold_char_for_diacritic_match', $sourceChars);
+    $truthFolded = array_map('fold_char_for_diacritic_match', $truthChars);
+
+    $dp = array_fill(0, $sourceCount + 1, array_fill(0, $truthCount + 1, 0));
+    for ($i = 0; $i <= $sourceCount; $i++) {
+        $dp[$i][0] = $i;
+    }
+    for ($j = 0; $j <= $truthCount; $j++) {
+        $dp[0][$j] = $j;
+    }
+
+    for ($i = 1; $i <= $sourceCount; $i++) {
+        for ($j = 1; $j <= $truthCount; $j++) {
+            $cost = $sourceFolded[$i - 1] === $truthFolded[$j - 1] ? 0 : 1;
+            $dp[$i][$j] = min(
+                $dp[$i - 1][$j] + 1,
+                $dp[$i][$j - 1] + 1,
+                $dp[$i - 1][$j - 1] + $cost
+            );
+        }
+    }
+
+    $result = [];
+    $i = $sourceCount;
+    $j = $truthCount;
+    while ($i > 0 || $j > 0) {
+        if (
+            $i > 0
+            && $j > 0
+            && $dp[$i][$j] === $dp[$i - 1][$j - 1] + ($sourceFolded[$i - 1] === $truthFolded[$j - 1] ? 0 : 1)
+        ) {
+            $sourceChar = $sourceChars[$i - 1];
+            $truthChar = $truthChars[$j - 1];
+            if (
+                $sourceFolded[$i - 1] === $truthFolded[$j - 1]
+                && is_swedish_diacritic_char($truthChar)
+                && !is_swedish_diacritic_char($sourceChar)
+            ) {
+                $result[] = $truthChar;
+            } else {
+                $result[] = $sourceChar;
+            }
+            $i--;
+            $j--;
+            continue;
+        }
+
+        if ($i > 0 && $dp[$i][$j] === $dp[$i - 1][$j] + 1) {
+            $result[] = $sourceChars[$i - 1];
+            $i--;
+            continue;
+        }
+
+        if ($j > 0 && $dp[$i][$j] === $dp[$i][$j - 1] + 1) {
+            $j--;
+            continue;
+        }
+
+        if ($i > 0) {
+            $result[] = $sourceChars[$i - 1];
+            $i--;
+        } elseif ($j > 0) {
+            $j--;
+        }
+    }
+
+    return implode('', array_reverse($result));
+}
+
 function build_debug_word_from_fragments(array $fragments, string $text, ?array $fallbackBbox = null, ?float $fallbackScore = null): ?array
 {
     if ($fragments === []) {
@@ -2272,11 +2432,77 @@ function merge_rapidocr_line_into_segments(array $line): array
     return $segments !== [] ? $segments : fallback_merge_rapidocr_line_fragments($fragments, $lineBbox, $lineScore);
 }
 
-function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload, int $pageNumber): array
+function apply_tesseract_swedish_truth_to_segments(array $segments, array $tesseractWords): array
+{
+    if ($segments === [] || $tesseractWords === []) {
+        return $segments;
+    }
+
+    foreach ($segments as $index => $segment) {
+        if (!is_array($segment)) {
+            continue;
+        }
+
+        $segmentText = is_string($segment['text'] ?? null) ? trim((string) $segment['text']) : '';
+        $segmentBbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+        if ($segmentText === '' || $segmentBbox === null) {
+            continue;
+        }
+
+        $bestCandidate = null;
+        $bestMatchScore = null;
+        foreach ($tesseractWords as $candidate) {
+            if (!is_array($candidate)) {
+                continue;
+            }
+
+            $candidateText = is_string($candidate['text'] ?? null) ? trim((string) $candidate['text']) : '';
+            if ($candidateText === '' || !preg_match('/[åäöÅÄÖ]/u', $candidateText)) {
+                continue;
+            }
+
+            $candidateBbox = normalize_debug_word_bbox($candidate['bbox'] ?? null);
+            if ($candidateBbox === null) {
+                continue;
+            }
+
+            $iou = bbox_iou($segmentBbox, $candidateBbox);
+            $distanceRatio = bbox_center_distance_ratio($segmentBbox, $candidateBbox);
+            if ($iou < 0.08 && $distanceRatio > 0.9) {
+                continue;
+            }
+
+            if (!texts_are_diacritic_compatible($segmentText, $candidateText)) {
+                continue;
+            }
+
+            $candidateScore = is_float($candidate['score'] ?? null) ? (float) $candidate['score'] : 0.0;
+            $matchScore = ($iou * 4.0) + max(0.0, 1.0 - min($distanceRatio, 1.0)) + $candidateScore;
+            if ($bestMatchScore === null || $matchScore > $bestMatchScore) {
+                $bestMatchScore = $matchScore;
+                $bestCandidate = $candidate;
+            }
+        }
+
+        if ($bestCandidate === null) {
+            continue;
+        }
+
+        $adjustedText = transfer_swedish_diacritics($segmentText, (string) $bestCandidate['text']);
+        if ($adjustedText !== $segmentText) {
+            $segments[$index]['text'] = $adjustedText;
+        }
+    }
+
+    return $segments;
+}
+
+function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload, int $pageNumber, array $tesseractPayload = []): array
 {
     $pageWidth = is_numeric($rapidocrPayload['pageWidth'] ?? null) ? (float) $rapidocrPayload['pageWidth'] : null;
     $pageHeight = is_numeric($rapidocrPayload['pageHeight'] ?? null) ? (float) $rapidocrPayload['pageHeight'] : null;
     $sourceImage = is_string($rapidocrPayload['sourceImage'] ?? null) ? $rapidocrPayload['sourceImage'] : null;
+    $tesseractWords = normalize_debug_words_for_merge($tesseractPayload, 'tesseract');
 
     $mergedLines = [];
     $mergedWords = [];
@@ -2285,6 +2511,7 @@ function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload,
             continue;
         }
         $segments = merge_rapidocr_line_into_segments($line);
+        $segments = apply_tesseract_swedish_truth_to_segments($segments, $tesseractWords);
         $lineText = implode(' ', array_map(static fn(array $segment): string => (string) ($segment['text'] ?? ''), $segments));
         $lineBbox = normalize_debug_word_bbox($line['bbox'] ?? null);
         $lineScore = null;
@@ -2329,6 +2556,7 @@ function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload,
 function write_merged_object_debug_files_from_rapidocr(string $jobDir): void
 {
     $rapidocrPages = load_job_engine_debug_pages($jobDir, 'rapidocr');
+    $tesseractPages = load_job_engine_debug_pages($jobDir, 'tesseract');
     if ($rapidocrPages === []) {
         foreach (glob($jobDir . '/merged_objects_page_*.json') ?: [] as $path) {
             @unlink($path);
@@ -2347,7 +2575,8 @@ function write_merged_object_debug_files_from_rapidocr(string $jobDir): void
             continue;
         }
         $pageNumber = is_numeric($rapidocrPage['pageNumber'] ?? null) ? (int) $rapidocrPage['pageNumber'] : ($pageIndex + 1);
-        $payload = build_merged_objects_payload_from_rapidocr_page($rapidocrPage, $pageNumber);
+        $tesseractPage = is_array($tesseractPages[$pageIndex] ?? null) ? $tesseractPages[$pageIndex] : [];
+        $payload = build_merged_objects_payload_from_rapidocr_page($rapidocrPage, $pageNumber, $tesseractPage);
         $path = $jobDir . '/merged_objects_page_' . str_pad((string) $pageNumber, 2, '0', STR_PAD_LEFT) . '.json';
         write_json_file($path, $payload);
     }
