@@ -1350,8 +1350,15 @@ function jobsForCurrentListMode() {
   return Array.isArray(state.readyJobs) ? state.readyJobs : [];
 }
 
+function displayedJobsForCurrentListMode() {
+  if (currentJobListMode === 'ready') {
+    return buildDisplayedReadyJobs(state.processingJobs, state.readyJobs);
+  }
+  return jobsForCurrentListMode();
+}
+
 function isJobVisibleInCurrentList(jobId) {
-  return jobsForCurrentListMode().some((job) => job && job.id === jobId);
+  return displayedJobsForCurrentListMode().some((job) => job && job.id === jobId);
 }
 
 function findCategoryById(categoryId) {
@@ -2823,7 +2830,7 @@ function moveSelectionBy(offset) {
     return;
   }
 
-  const currentJobs = jobsForCurrentListMode();
+  const currentJobs = displayedJobsForCurrentListMode();
   if (!Array.isArray(currentJobs) || currentJobs.length === 0) {
     return;
   }
@@ -2853,7 +2860,7 @@ function refreshSelection() {
     }
   }
 
-  const visibleJobs = jobsForCurrentListMode();
+  const visibleJobs = displayedJobsForCurrentListMode();
   if (!Array.isArray(visibleJobs) || visibleJobs.length === 0) {
     if (currentJobListMode === 'processing' && Array.isArray(state.failedJobs) && state.failedJobs.length > 0) {
       applySelectedJobId(state.failedJobs[0].id, { syncHash: false });
@@ -5547,23 +5554,134 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0) {
   const wrapper = document.createElement('div');
   wrapper.className = depth === 0 ? 'filename-template-editor' : 'filename-template-editor is-nested';
 
-  wrapper.appendChild(createFilenameTemplateToolbar((part) => {
-    parts.push(part);
-    onChange();
-  }));
+  let insertionIndex = Array.isArray(parts) ? parts.length : 0;
+  let insertionTextPartIndex = null;
+  let insertionCursor = 0;
 
-  const list = document.createElement('div');
-  list.className = 'filename-template-parts';
+  const insertPartAtCurrentPosition = (part) => {
+    if (!Array.isArray(parts)) {
+      return;
+    }
+
+    const normalizedPart = sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
+    if (
+      Number.isInteger(insertionTextPartIndex)
+      && insertionTextPartIndex >= 0
+      && insertionTextPartIndex < parts.length
+      && parts[insertionTextPartIndex]
+      && parts[insertionTextPartIndex].type === 'text'
+    ) {
+      const currentText = String(parts[insertionTextPartIndex].value || '');
+      const cursor = Math.max(0, Math.min(currentText.length, Number.isInteger(insertionCursor) ? insertionCursor : currentText.length));
+      const beforeText = currentText.slice(0, cursor);
+      const afterText = currentText.slice(cursor);
+      const replacement = [];
+      if (beforeText !== '') {
+        replacement.push({ type: 'text', value: beforeText });
+      }
+      replacement.push(normalizedPart);
+      if (afterText !== '') {
+        replacement.push({ type: 'text', value: afterText });
+      }
+      parts.splice(insertionTextPartIndex, 1, ...replacement);
+      onChange();
+      return;
+    }
+
+    const targetIndex = Math.max(0, Math.min(parts.length, Number.isInteger(insertionIndex) ? insertionIndex : parts.length));
+    parts.splice(targetIndex, 0, normalizedPart);
+    onChange();
+  };
+
+  wrapper.appendChild(createFilenameTemplateToolbar(insertPartAtCurrentPosition));
+
+  const sequence = document.createElement('div');
+  sequence.className = 'filename-template-inline-flow';
+  sequence.addEventListener('click', (event) => {
+    if (event.target === sequence) {
+      insertionIndex = Array.isArray(parts) ? parts.length : 0;
+      insertionTextPartIndex = null;
+      insertionCursor = 0;
+    }
+  });
+
+  const details = document.createElement('div');
+  details.className = 'filename-template-parts';
 
   if (!Array.isArray(parts) || parts.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
     empty.textContent = 'Tom filnamnsmall.';
-    list.appendChild(empty);
+    sequence.appendChild(empty);
   } else {
     parts.forEach((part, index) => {
       const normalizedPart = sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
       parts[index] = normalizedPart;
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'filename-template-inline-remove';
+      removeButton.textContent = '×';
+      removeButton.title = 'Ta bort del';
+      removeButton.addEventListener('click', () => {
+        parts.splice(index, 1);
+        onChange();
+      });
+
+      if (normalizedPart.type === 'text') {
+        const textWrap = document.createElement('div');
+        textWrap.className = 'filename-template-inline-item filename-template-inline-item--text';
+
+        const textInput = document.createElement('input');
+        textInput.type = 'text';
+        textInput.className = 'filename-template-inline-text';
+        textInput.value = normalizedPart.value || '';
+        textInput.placeholder = 'Text';
+        const captureCursor = () => {
+          insertionIndex = index;
+          insertionTextPartIndex = index;
+          insertionCursor = textInput.selectionStart ?? textInput.value.length;
+        };
+        textInput.addEventListener('input', () => {
+          parts[index].value = textInput.value;
+          captureCursor();
+          updateSettingsActionButtons();
+        });
+        textInput.addEventListener('focus', captureCursor);
+        textInput.addEventListener('click', captureCursor);
+        textInput.addEventListener('keyup', captureCursor);
+        textWrap.appendChild(textInput);
+        textWrap.appendChild(removeButton);
+        sequence.appendChild(textWrap);
+        return;
+      }
+
+      const tokenWrap = document.createElement('div');
+      tokenWrap.className = 'filename-template-inline-item filename-template-inline-item--token';
+
+      const tokenButton = document.createElement('button');
+      tokenButton.type = 'button';
+      tokenButton.className = 'filename-template-inline-token';
+
+      if (normalizedPart.type === 'field') {
+        const fieldOptions = filenameTemplateFieldOptions();
+        const currentField = fieldOptions.find((field) => field.key === normalizedPart.key) || null;
+        tokenButton.classList.add(`filename-template-inline-token--${currentField && currentField.tone ? currentField.tone : 'base'}`);
+        tokenButton.textContent = currentField ? currentField.label : normalizedPart.key;
+      } else {
+        tokenButton.classList.add('filename-template-inline-token--special');
+        tokenButton.textContent = 'Första tillgängliga';
+      }
+
+      tokenButton.addEventListener('click', () => {
+        insertionIndex = index + 1;
+        insertionTextPartIndex = null;
+        insertionCursor = 0;
+      });
+
+      tokenWrap.appendChild(tokenButton);
+      tokenWrap.appendChild(removeButton);
+      sequence.appendChild(tokenWrap);
 
       const node = document.createElement('div');
       node.className = 'filename-template-part';
@@ -5585,31 +5703,11 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0) {
         onChange();
       });
 
-      const removeButton = document.createElement('button');
-      removeButton.type = 'button';
-      removeButton.className = 'rule-remove';
-      removeButton.textContent = 'Ta bort';
-      removeButton.addEventListener('click', () => {
-        parts.splice(index, 1);
-        onChange();
-      });
-
       const controls = document.createElement('div');
       controls.className = 'filename-template-part-controls';
       controls.appendChild(createFloatingField('Deltyp', typeSelect));
 
-      if (normalizedPart.type === 'text') {
-        controls.classList.add('filename-template-part-controls--text');
-        const textInput = document.createElement('input');
-        textInput.type = 'text';
-        textInput.value = normalizedPart.value || '';
-        textInput.placeholder = 'Text';
-        textInput.addEventListener('input', () => {
-          parts[index].value = textInput.value;
-          updateSettingsActionButtons();
-        });
-        controls.appendChild(createFloatingField('Text', textInput));
-      } else if (normalizedPart.type === 'field') {
+      if (normalizedPart.type === 'field') {
         controls.classList.add('filename-template-part-controls--field');
         const fieldSelect = document.createElement('select');
         filenameTemplateFieldOptions().forEach((field) => {
@@ -5629,7 +5727,6 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0) {
         controls.classList.add('filename-template-part-controls--container');
       }
 
-      controls.appendChild(removeButton);
       node.appendChild(controls);
 
       if (normalizedPart.type === 'field') {
@@ -5641,15 +5738,21 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0) {
         node.appendChild(createFilenameTemplateSection('Suffix', parts[index].suffixParts, onChange, depth));
       }
 
-      list.appendChild(node);
+      details.appendChild(node);
     });
   }
 
-  wrapper.appendChild(list);
+  wrapper.appendChild(sequence);
+  if (details.childNodes.length > 0) {
+    wrapper.appendChild(details);
+  }
   return wrapper;
 }
 
 function renderCategoriesEditor() {
+  if (!categoriesListEl) {
+    return;
+  }
   categoriesListEl.innerHTML = '';
 
   const foldersLabel = document.createElement('div');
@@ -5917,6 +6020,9 @@ function renderCategoriesEditor() {
 }
 
 function renderSystemCategoryEditor() {
+  if (!systemCategoryEditorEl) {
+    return;
+  }
   systemCategoryEditorEl.innerHTML = '';
 
   const categoryKey = 'invoice';
@@ -6860,6 +6966,16 @@ function applyOptimisticReprocess(jobId) {
     return false;
   }
 
+  const readyIndex = Array.isArray(state.readyJobs)
+    ? state.readyJobs.findIndex((job) => job && job.id === jobId)
+    : -1;
+  if (readyIndex >= 0) {
+    lastKnownJobDisplayById.set(jobId, {
+      ...sourceJob,
+      _displayOrder: readyIndex
+    });
+  }
+
   pinnedProcessingJobIds.add(jobId);
   clearOcrViewCache();
 
@@ -6948,6 +7064,9 @@ viewModeEl.addEventListener('change', () => {
 
 jobListModeEl.addEventListener('change', () => {
   const nextMode = VALID_JOB_LIST_MODES.has(jobListModeEl.value) ? jobListModeEl.value : 'ready';
+  if (nextMode !== 'ready') {
+    pinnedProcessingJobIds.clear();
+  }
   currentJobListMode = nextMode;
   jobListModeEl.value = currentJobListMode;
   renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
