@@ -682,6 +682,7 @@ body {
   background: #fff;
   overflow: hidden;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+  background-color: white;
 }
 
 .ocr-page:last-child {
@@ -700,14 +701,9 @@ body {
   object-fit: fill;
   pointer-events: none;
   user-select: none;
-  opacity: 0.96;
 }
 
-.ocr-page-surface {
-  position: relative;
-  background: #fff;
-  z-index: 1;
-}
+
 
 .ocr-word-box {
   position: absolute;
