@@ -25,7 +25,7 @@
         <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
         <div class="selected-job-actions">
           <button id="selected-job-reprocess" type="button" disabled>Kör om analys</button>
-          <button id="selected-job-rerun-ocr" type="button" disabled title="Ignorerar befintlig OCR-text och bygger om dokumentets OCR från source.pdf">Kör ny OCR</button>
+          <button id="selected-job-rerun-ocr" type="button" disabled title="Ignorerar befintlig OCR-text och bygger om dokumentets OCR från source.pdf">Kör ny OCR + Analys</button>
         </div>
       </section>
     </aside>
