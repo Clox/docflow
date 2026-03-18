@@ -12,6 +12,8 @@ const ocrPageTotalEl = document.getElementById('ocr-page-total');
 const ocrZoomOutEl = document.getElementById('ocr-zoom-out');
 const ocrZoomInputEl = document.getElementById('ocr-zoom-input');
 const ocrZoomInEl = document.getElementById('ocr-zoom-in');
+const ocrPageImageToggleEl = document.getElementById('ocr-page-image-toggle');
+const ocrShowPageImageEl = document.getElementById('ocr-show-page-image');
 const matchesViewEl = document.getElementById('matches-view');
 const metaViewEl = document.getElementById('meta-view');
 const viewModeEl = document.getElementById('view-mode');
@@ -156,6 +158,7 @@ let currentViewMode = 'pdf';
 let currentOcrSource = 'merged';
 let currentOcrZoom = 100;
 let currentOcrDocumentMode = 'text';
+let ocrShowPageImage = false;
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
 let ocrSearchActiveIndex = -1;
@@ -707,6 +710,7 @@ function setViewerPdf(jobId) {
   setOcrSearchVisible(false);
   setOcrSourceTabsVisible(false);
   setOcrControlsVisible(false);
+  setOcrPageImageToggleVisible(false);
   ocrPagesViewEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
@@ -731,6 +735,7 @@ async function setViewerOcr(jobId) {
   setOcrSearchVisible(true);
   setOcrSourceTabsVisible(true);
   setOcrControlsVisible(true);
+  setOcrPageImageToggleVisible(true);
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
@@ -962,6 +967,7 @@ async function setViewerMatches(jobId) {
   setOcrSearchVisible(false);
   setOcrSourceTabsVisible(false);
   setOcrControlsVisible(false);
+  setOcrPageImageToggleVisible(false);
   ocrPagesViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
@@ -1015,6 +1021,7 @@ async function setViewerMeta(jobId) {
   setOcrSearchVisible(false);
   setOcrSourceTabsVisible(false);
   setOcrControlsVisible(false);
+  setOcrPageImageToggleVisible(false);
   ocrPagesViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
@@ -1297,15 +1304,31 @@ function renderSelectedJobPanel() {
   selectedJobPanelEl.classList.remove('is-empty');
   selectedJobNameEl.textContent = selectedJob.originalFilename || selectedJob.id;
 
-  const metaParts = [];
-  if (selectedJob.status === 'failed' && selectedJob.error) {
-    metaParts.push('Fel: ' + selectedJob.error);
-  } else if (selectedJob.status === 'processing') {
-    metaParts.push('Status: Bearbetas');
+  const metaLines = [];
+  const appendLine = (text, extraClass = '') => {
+    const line = document.createElement('div');
+    line.className = extraClass ? `selected-job-meta-line ${extraClass}` : 'selected-job-meta-line';
+    line.textContent = text;
+    metaLines.push(line);
+  };
+
+  if (selectedJob.status === 'processing') {
+    appendLine('Status: Bearbetas');
+  } else if (selectedJob.status === 'failed') {
+    appendLine('Status: Misslyckat');
   } else {
-    metaParts.push(selectedJob.status === 'failed' ? 'Status: Misslyckat' : 'Status: Klar');
+    appendLine('Status: Klar');
   }
-  selectedJobMetaEl.textContent = metaParts.join(' | ');
+
+  if (selectedJob && selectedJob.ocr && selectedJob.ocr.usedExistingText === true) {
+    appendLine('Dokumentet hade redan OCR-text. OCR-steget hoppades över.');
+  }
+
+  if (selectedJob.status === 'failed' && selectedJob.error) {
+    appendLine('Fel: ' + selectedJob.error, 'is-error');
+  }
+
+  selectedJobMetaEl.replaceChildren(...metaLines);
   selectedJobReprocessEl.disabled = selectedJob.status === 'processing' || !selectedJob.hasReviewPdf;
   selectedJobRerunOcrEl.disabled = selectedJob.status === 'processing' || !selectedJob.hasSourcePdf;
 }
@@ -1421,6 +1444,13 @@ function setOcrControlsVisible(visible) {
   ocrPageControlsEl.classList.toggle('hidden', !visible);
 }
 
+function setOcrPageImageToggleVisible(visible) {
+  if (!ocrPageImageToggleEl) {
+    return;
+  }
+  ocrPageImageToggleEl.classList.toggle('hidden', !visible);
+}
+
 function setActiveOcrSource(source, options = {}) {
   const reload = options.reload !== false;
   const nextSource = normalizeOcrSource(source);
@@ -1500,6 +1530,36 @@ function updateOcrPageControls() {
   ocrPageCurrentEl.min = pageCount > 0 ? '1' : '0';
   ocrPageCurrentEl.max = String(pageCount);
   updateOcrZoomControls();
+}
+
+function buildOcrPageImageUrl(pageNumber) {
+  const jobId = loadedOcrJobId || selectedJobId;
+  if (!jobId || !Number.isInteger(pageNumber) || pageNumber < 1) {
+    return '';
+  }
+  return '/api/get-job-page-image.php?id='
+    + encodeURIComponent(jobId)
+    + '&page='
+    + encodeURIComponent(String(pageNumber))
+    + '&dpi=150&variant=review';
+}
+
+function appendOcrPageImage(wrapperEl, pageNumber) {
+  if (!ocrShowPageImage) {
+    return;
+  }
+  const imageUrl = buildOcrPageImageUrl(pageNumber);
+  if (!imageUrl) {
+    return;
+  }
+  const imageEl = document.createElement('img');
+  imageEl.className = 'ocr-page-image';
+  imageEl.alt = '';
+  imageEl.decoding = 'async';
+  imageEl.loading = 'lazy';
+  imageEl.src = imageUrl;
+  wrapperEl.classList.add('has-page-image');
+  wrapperEl.appendChild(imageEl);
 }
 
 function applyOcrZoom() {
@@ -2018,6 +2078,7 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
   wrapperEl.dataset.pageNumber = String(page.number);
   wrapperEl.style.width = `${Math.ceil(page.pageWidth * objectScale)}px`;
   wrapperEl.style.height = `${Math.ceil(page.pageHeight * objectScale)}px`;
+  appendOcrPageImage(wrapperEl, page.number);
 
   const surfaceEl = document.createElement('div');
   surfaceEl.className = 'ocr-page-surface';
@@ -2090,6 +2151,8 @@ function renderTextOcrPage(page, pageMatches, targetWidth) {
   const wrapperEl = document.createElement('div');
   wrapperEl.className = 'ocr-page';
   wrapperEl.dataset.pageNumber = String(page.number);
+
+  appendOcrPageImage(wrapperEl, page.number);
 
   const highlightEl = document.createElement('pre');
   highlightEl.className = 'ocr-page-highlight';
@@ -3302,6 +3365,7 @@ function canLeaveCurrentSettingsView() {
 
 function defaultRule() {
   return {
+    type: 'text',
     text: '',
     score: 1
   };
@@ -3945,7 +4009,9 @@ function buildSimilarSenderGroups() {
 
 function sanitizeRule(rule) {
   const input = rule && typeof rule === 'object' ? rule : {};
+  const type = String(input.type || 'text').trim().toLowerCase() === 'invoice' ? 'invoice' : 'text';
   return {
+    type,
     text: typeof input.text === 'string' ? input.text : '',
     score: sanitizePositiveInt(input.score, 1)
   };
@@ -4940,6 +5006,26 @@ function renderCategoriesEditor() {
         const ruleFields = document.createElement('div');
         ruleFields.className = 'rule-fields';
 
+        const typeSelect = document.createElement('select');
+        [
+          ['text', 'Text'],
+          ['invoice', 'Är faktura'],
+        ].forEach(([value, label]) => {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = label;
+          typeSelect.appendChild(option);
+        });
+        typeSelect.value = rule.type === 'invoice' ? 'invoice' : 'text';
+        typeSelect.addEventListener('change', () => {
+          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].type = typeSelect.value === 'invoice' ? 'invoice' : 'text';
+          if (typeSelect.value === 'invoice') {
+            categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].text = '';
+          }
+          renderCategoriesEditor();
+          updateSettingsActionButtons();
+        });
+
         const textInput = document.createElement('input');
         textInput.type = 'text';
         textInput.placeholder = 'Ex: "Förfallodatum"';
@@ -4959,7 +5045,10 @@ function renderCategoriesEditor() {
           updateSettingsActionButtons();
         });
 
-        ruleFields.appendChild(createFloatingField('Regeltext', textInput));
+        ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
+        if (rule.type !== 'invoice') {
+          ruleFields.appendChild(createFloatingField('Regeltext', textInput));
+        }
         ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
 
         if (ruleIndex > 0) {
@@ -5106,6 +5195,26 @@ function renderSystemCategoryEditor() {
     const ruleFields = document.createElement('div');
     ruleFields.className = 'rule-fields';
 
+    const typeSelect = document.createElement('select');
+    [
+      ['text', 'Text'],
+      ['invoice', 'Är faktura'],
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      typeSelect.appendChild(option);
+    });
+    typeSelect.value = rule.type === 'invoice' ? 'invoice' : 'text';
+    typeSelect.addEventListener('change', () => {
+      systemCategoriesDraft[categoryKey].rules[ruleIndex].type = typeSelect.value === 'invoice' ? 'invoice' : 'text';
+      if (typeSelect.value === 'invoice') {
+        systemCategoriesDraft[categoryKey].rules[ruleIndex].text = '';
+      }
+      renderSystemCategoryEditor();
+      updateSettingsActionButtons();
+    });
+
     const textInput = document.createElement('input');
     textInput.type = 'text';
     textInput.placeholder = 'Ex: "Förfallodatum"';
@@ -5125,7 +5234,10 @@ function renderSystemCategoryEditor() {
       updateSettingsActionButtons();
     });
 
-    ruleFields.appendChild(createFloatingField('Regeltext', textInput));
+    ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
+    if (rule.type !== 'invoice') {
+      ruleFields.appendChild(createFloatingField('Regeltext', textInput));
+    }
     ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
 
     if (ruleIndex > 0) {
@@ -5209,11 +5321,12 @@ function renderOcrProcessingCommand() {
   const deskewSegment = ocrSkipExistingTextEl.checked ? '--deskew ' : '';
   const extractionMethod = sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout');
   const substitutions = ocrPdfSubstitutionsDraft.map(sanitizeReplacement).filter((row) => row.from !== '' && row.to !== '');
-  const pluginSegment = substitutions.length > 0
-    ? '--plugin docflow_ocrmypdf_plugin.py --docflow-transform-script docflow_transform_runtime.py --docflow-transform-config data/docflow_ocr_transform_config.json '
-    : '';
+  let pluginSegment = '--plugin docflow_ocrmypdf_plugin.py ';
+  if (substitutions.length > 0) {
+    pluginSegment += '--docflow-transform-script docflow_transform_runtime.py --docflow-transform-config data/docflow_ocr_transform_config.json ';
+  }
   ocrProcessingCommandEl.textContent =
-    'ocrmypdf ' + pluginSegment + '-l swe ' + deskewSegment + '--oversample 400 --tesseract-thresholding sauvola '
+    'ocrmypdf ' + pluginSegment + '-j 1 -l swe ' + deskewSegment + '--tesseract-thresholding sauvola '
     + '--tesseract-pagesegmode 6 --output-type pdf '
     + '-O' + optimizeLevel
     + ' '
@@ -5966,7 +6079,7 @@ function applyOptimisticReprocess(jobId) {
   return true;
 }
 
-async function reprocessSingleJob(jobId, mode) {
+async function reprocessSingleJob(jobId, mode, options = {}) {
   const rollbackState = cloneCurrentStateForRollback();
   applyOptimisticReprocess(jobId);
   try {
@@ -5975,7 +6088,11 @@ async function reprocessSingleJob(jobId, mode) {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ jobId, mode })
+      body: JSON.stringify({
+        jobId,
+        mode,
+        forceOcr: options.forceOcr === true,
+      })
     });
 
     if (!response.ok) {
@@ -6002,13 +6119,13 @@ async function reprocessSingleJob(jobId, mode) {
   }
 }
 
-async function handleSelectedJobReprocess(mode) {
+async function handleSelectedJobReprocess(mode, options = {}) {
   if (!selectedJobId) {
     return;
   }
 
   try {
-    await reprocessSingleJob(selectedJobId, mode);
+    await reprocessSingleJob(selectedJobId, mode, options);
   } catch (error) {
     await fetchState();
     alert(error.message || 'Kunde inte köra om jobbet.');
@@ -6169,8 +6286,17 @@ selectedJobReprocessEl.addEventListener('click', async () => {
 });
 
 selectedJobRerunOcrEl.addEventListener('click', async () => {
-  await handleSelectedJobReprocess('full');
+  await handleSelectedJobReprocess('full', { forceOcr: true });
 });
+
+if (ocrShowPageImageEl) {
+  ocrShowPageImageEl.addEventListener('change', () => {
+    ocrShowPageImage = ocrShowPageImageEl.checked;
+    if (currentViewMode === 'ocr') {
+      renderOcrPages();
+    }
+  });
+}
 
 ocrSourceTabEls.forEach((buttonEl) => {
   buttonEl.addEventListener('click', () => {

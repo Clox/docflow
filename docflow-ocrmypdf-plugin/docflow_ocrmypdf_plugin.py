@@ -568,7 +568,6 @@ def _transfer_swedish_diacritics(source_text: str, truth_text: str) -> str:
             if (
                 source_folded[row - 1] == truth_folded[col - 1]
                 and _is_swedish_diacritic_char(truth_char)
-                and not _is_swedish_diacritic_char(source_char)
             ):
                 result.append(truth_char)
             else:

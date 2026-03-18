@@ -401,20 +401,35 @@ function system_archive_categories_definitions(): array
             'name' => 'Faktura',
             'minScore' => 2,
             'rules' => [
-                ['text' => 'faktura', 'score' => 4],
-                ['text' => 'förfallodatum', 'score' => 3],
-                ['text' => 'faktura', 'score' => 2],
-                ['text' => 'förfallodatum', 'score' => 3],
-                ['text' => 'bankgiro', 'score' => 5],
-                ['text' => 'plusgiro', 'score' => 5],
-                ['text' => 'ocr', 'score' => 5],
-                ['text' => 'ocr-nummer', 'score' => 5],
-                ['text' => 'fakturanummer', 'score' => 5],
-                ['text' => 'autogiro', 'score' => 3],
-                ['text' => 'e-faktura', 'score' => 4],
-                ['text' => 'betalningsmottagare', 'score' => 2],
+                ['type' => 'text', 'text' => 'faktura', 'score' => 4],
+                ['type' => 'text', 'text' => 'förfallodatum', 'score' => 3],
+                ['type' => 'text', 'text' => 'faktura', 'score' => 2],
+                ['type' => 'text', 'text' => 'förfallodatum', 'score' => 3],
+                ['type' => 'text', 'text' => 'bankgiro', 'score' => 5],
+                ['type' => 'text', 'text' => 'plusgiro', 'score' => 5],
+                ['type' => 'text', 'text' => 'ocr', 'score' => 5],
+                ['type' => 'text', 'text' => 'ocr-nummer', 'score' => 5],
+                ['type' => 'text', 'text' => 'fakturanummer', 'score' => 5],
+                ['type' => 'text', 'text' => 'autogiro', 'score' => 3],
+                ['type' => 'text', 'text' => 'e-faktura', 'score' => 4],
+                ['type' => 'text', 'text' => 'betalningsmottagare', 'score' => 2],
             ],
         ],
+    ];
+}
+
+function normalize_archive_rule(mixed $input): array
+{
+    $rule = is_array($input) ? $input : [];
+    $type = is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text';
+    if ($type !== 'invoice') {
+        $type = 'text';
+    }
+
+    return [
+        'type' => $type,
+        'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
+        'score' => positive_int($rule['score'] ?? 1, 1),
     ];
 }
 
@@ -430,13 +445,7 @@ function normalize_system_archive_category_with_defaults(mixed $input, array $de
     $defaultRules = [];
     if (is_array($defaults['rules'] ?? null)) {
         foreach ($defaults['rules'] as $rule) {
-            if (!is_array($rule)) {
-                continue;
-            }
-            $defaultRules[] = [
-                'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
-                'score' => positive_int($rule['score'] ?? 1, 1),
-            ];
+            $defaultRules[] = normalize_archive_rule($rule);
         }
     }
 
@@ -444,14 +453,7 @@ function normalize_system_archive_category_with_defaults(mixed $input, array $de
     $rules = [];
     if (is_array($rawRules)) {
         foreach ($rawRules as $rule) {
-            if (!is_array($rule)) {
-                continue;
-            }
-
-            $rules[] = [
-                'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
-                'score' => positive_int($rule['score'] ?? 1, 1),
-            ];
+            $rules[] = normalize_archive_rule($rule);
         }
     }
     if (count($rules) === 0) {
@@ -522,6 +524,7 @@ function load_categories(): array
                     }
 
                     $rules[] = [
+                        'type' => is_string($ruleIn['type'] ?? null) ? trim(strtolower((string) $ruleIn['type'])) : 'text',
                         'text' => is_string($ruleIn['text'] ?? null) ? trim((string) $ruleIn['text']) : '',
                         'score' => positive_int($ruleIn['score'] ?? 1, 1),
                     ];
@@ -553,6 +556,7 @@ function load_categories(): array
                     continue;
                 }
                 $systemRules[] = [
+                    'type' => is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text',
                     'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
                     'score' => positive_int($rule['score'] ?? 1, 1),
                 ];
@@ -692,22 +696,12 @@ function normalize_archive_category(array $input): array
     $rules = [];
     if (is_array($rulesIn)) {
         foreach ($rulesIn as $ruleIn) {
-            if (!is_array($ruleIn)) {
-                continue;
-            }
-
-            $rules[] = [
-                'text' => is_string($ruleIn['text'] ?? null) ? trim((string) $ruleIn['text']) : '',
-                'score' => positive_int($ruleIn['score'] ?? 1, 1),
-            ];
+            $rules[] = normalize_archive_rule($ruleIn);
         }
     }
 
     if (count($rules) === 0) {
-        $rules[] = [
-            'text' => '',
-            'score' => 1,
-        ];
+        $rules[] = normalize_archive_rule([]);
     }
 
     return [
@@ -894,6 +888,48 @@ function pdftoppm_path(): ?string
     $path = trim((string) shell_exec('command -v pdftoppm 2>/dev/null'));
     $cached = $path !== '' ? $path : null;
     return $cached;
+}
+
+function rasterize_pdf_page_to_png_bytes(string $pdfPath, int $pageNumber, int $dpi = 150): ?string
+{
+    $binary = pdftoppm_path();
+    if ($binary === null || !is_file($pdfPath) || $pageNumber < 1) {
+        return null;
+    }
+
+    $safeDpi = max(72, min(300, $dpi));
+    $tempDir = sys_get_temp_dir() . '/docflow_page_' . bin2hex(random_bytes(8));
+    if (!mkdir($tempDir, 0700) && !is_dir($tempDir)) {
+        return null;
+    }
+
+    try {
+        $outputPrefix = $tempDir . '/page';
+        $command = escapeshellarg($binary)
+            . ' -r ' . $safeDpi
+            . ' -png -singlefile'
+            . ' -f ' . $pageNumber
+            . ' -l ' . $pageNumber
+            . ' '
+            . escapeshellarg($pdfPath)
+            . ' '
+            . escapeshellarg($outputPrefix)
+            . ' 2>/dev/null';
+        exec($command, $output, $code);
+        if ($code !== 0) {
+            return null;
+        }
+
+        $imagePath = $outputPrefix . '.png';
+        if (!is_file($imagePath)) {
+            return null;
+        }
+
+        $bytes = file_get_contents($imagePath);
+        return is_string($bytes) ? $bytes : null;
+    } finally {
+        delete_directory_recursive($tempDir);
+    }
 }
 
 function ocrmypdf_path(): ?string
@@ -1406,6 +1442,12 @@ function extract_text_from_pdf(string $pdfPath): ?string
     @unlink($tmp);
 
     return $text === false ? '' : $text;
+}
+
+function pdf_has_extractable_text(string $pdfPath): bool
+{
+    $text = extract_text_from_pdf($pdfPath);
+    return is_string($text) && trim($text) !== '';
 }
 
 function utf8_strlen_safe(string $text): int
@@ -2173,7 +2215,6 @@ function transfer_swedish_diacritics(string $sourceText, string $truthText): str
             if (
                 $sourceFolded[$i - 1] === $truthFolded[$j - 1]
                 && is_swedish_diacritic_char($truthChar)
-                && !is_swedish_diacritic_char($sourceChar)
             ) {
                 $result[] = $truthChar;
             } else {
@@ -3260,11 +3301,12 @@ function normalize_for_matching(string $text, array $replacementMap): string
     return strtr($normalized, $replacementMap);
 }
 
-function find_category_signal_matches(string $ocrText, array $categories, array $replacementMap): array
+function find_category_signal_matches(string $ocrText, array $categories, array $replacementMap, array $context = []): array
 {
     $normalizedOcr = normalize_for_matching($ocrText, $replacementMap);
     $inverseMap = build_inverse_single_char_map($replacementMap);
     $matches = [];
+    $invoiceMatched = ($context['invoiceDetection']['matched'] ?? false) === true;
 
     foreach ($categories as $categoryIndex => $category) {
         if (!is_array($category)) {
@@ -3296,21 +3338,31 @@ function find_category_signal_matches(string $ocrText, array $categories, array 
                 continue;
             }
 
+            $ruleType = is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text';
             $ruleText = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
-            if ($ruleText === '') {
-                continue;
-            }
-
             $ruleScore = positive_int($rule['score'] ?? 1, 1);
-            $ruleTextLower = normalize_for_matching($ruleText, $replacementMap);
+            $sourceText = '';
 
-            if (!str_contains($normalizedOcr, $ruleTextLower)) {
-                continue;
+            if ($ruleType === 'invoice') {
+                if (!$invoiceMatched) {
+                    continue;
+                }
+                $sourceText = 'invoiceDetection.matched';
+            } else {
+                if ($ruleText === '') {
+                    continue;
+                }
+                $ruleTextLower = normalize_for_matching($ruleText, $replacementMap);
+
+                if (!str_contains($normalizedOcr, $ruleTextLower)) {
+                    continue;
+                }
+
+                $sourceText = find_source_text_for_rule($ocrText, $ruleText, $inverseMap);
             }
-
-            $sourceText = find_source_text_for_rule($ocrText, $ruleText, $inverseMap);
             $score += $ruleScore;
             $matchedRules[] = [
+                'type' => $ruleType,
                 'text' => $ruleText,
                 'sourceText' => $sourceText,
                 'score' => $ruleScore,
@@ -3372,9 +3424,9 @@ function filter_category_matches_by_threshold(array $matches): array
     return $filtered;
 }
 
-function find_category_matches(string $ocrText, array $categories, array $replacementMap): array
+function find_category_matches(string $ocrText, array $categories, array $replacementMap, array $context = []): array
 {
-    $signalMatches = find_category_signal_matches($ocrText, $categories, $replacementMap);
+    $signalMatches = find_category_signal_matches($ocrText, $categories, $replacementMap, $context);
     return filter_category_matches_by_threshold($signalMatches);
 }
 
@@ -4684,6 +4736,8 @@ function process_claimed_job(
     }
 
     $ocrProcessedPdf = false;
+    $sourceHadExtractableText = false;
+    $ocrUsedExistingText = false;
     $textSourcePdfPath = $sourcePdfPath;
     if ($runOcr) {
         foreach (glob($jobDir . '/tesseract_page_*.json') ?: [] as $path) {
@@ -4713,6 +4767,8 @@ function process_claimed_job(
         if (is_file($jobDir . '/merged_objects.txt')) {
             @unlink($jobDir . '/merged_objects.txt');
         }
+        $sourceHadExtractableText = pdf_has_extractable_text($sourcePdfPath);
+        $ocrUsedExistingText = $ocrSkipExistingText && $sourceHadExtractableText;
         $ocrProcessedPdf = run_ocrmypdf(
             $sourcePdfPath,
             $reviewPdfPath,
@@ -4816,7 +4872,9 @@ function process_claimed_job(
         }
     }
 
-    $categoryMatches = find_category_matches($ocrText, $categoryGroups['normalCategories'], $replacementMap);
+    $categoryMatches = find_category_matches($ocrText, $categoryGroups['normalCategories'], $replacementMap, [
+        'invoiceDetection' => $invoiceDetection,
+    ]);
     $extractedData = [
         'matchedClientDirName' => $matched,
         'categoryMatches' => $categoryMatches,
@@ -4842,6 +4900,13 @@ function process_claimed_job(
             'preselectedClient' => $preselectedClient,
             'preselectedSender' => $preselectedSender,
             'senderLookup' => $senderLookup,
+        ],
+        'ocr' => [
+            'runOcr' => $runOcr,
+            'skipExistingTextConfigured' => $ocrSkipExistingText,
+            'sourceHadExtractableText' => $sourceHadExtractableText,
+            'usedExistingText' => $ocrUsedExistingText,
+            'textSourcePdf' => basename($textSourcePdfPath),
         ],
     ];
 }
@@ -5008,6 +5073,7 @@ function process_job_by_id(
         if ($reprocessMode !== 'post-ocr') {
             $reprocessMode = 'full';
         }
+        $forceOcr = ($jobData['forceOcr'] ?? false) === true;
         $result = process_claimed_job(
             $jobDir,
             $sourcePdfPath,
@@ -5016,7 +5082,7 @@ function process_job_by_id(
             $categories,
             $replacementMap,
             $invoiceFieldMinConfidence,
-            (bool) ($config['ocrSkipExistingText'] ?? true),
+            $forceOcr ? false : (bool) ($config['ocrSkipExistingText'] ?? true),
             (int) ($config['ocrOptimizeLevel'] ?? 1),
             (string) ($config['ocrTextExtractionMethod'] ?? 'layout'),
             is_array($config['ocrPdfTextSubstitutions'] ?? null) ? $config['ocrPdfTextSubstitutions'] : [],
@@ -5027,16 +5093,20 @@ function process_job_by_id(
         if (is_array($analysis)) {
             $jobData['analysis'] = $analysis;
         }
+        $ocr = $result['ocr'] ?? null;
+        if (is_array($ocr) && ($reprocessMode !== 'post-ocr' || !is_array($jobData['ocr'] ?? null))) {
+            $jobData['ocr'] = $ocr;
+        }
 
         $jobData['status'] = 'ready';
         $jobData['updatedAt'] = now_iso();
-        unset($jobData['error'], $jobData['reprocessMode']);
+        unset($jobData['error'], $jobData['reprocessMode'], $jobData['forceOcr']);
         write_json_file($jobJsonPath, $jobData);
     } catch (Throwable $e) {
         $jobData['status'] = 'failed';
         $jobData['updatedAt'] = now_iso();
         $jobData['error'] = $e->getMessage();
-        unset($jobData['reprocessMode']);
+        unset($jobData['reprocessMode'], $jobData['forceOcr']);
         write_json_file($jobJsonPath, $jobData);
     }
 }
@@ -5342,6 +5412,7 @@ function read_jobs_state(array $config): array
                 'createdAt' => $createdAt,
                 'hasReviewPdf' => $hasReviewPdf,
                 'hasSourcePdf' => $hasSourcePdf,
+                'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
                 'matchedClientDirName' => $matchedClientDirName,
                 'matchedSenderId' => $matchedSenderId,
                 'topMatchedCategoryId' => $topMatchedCategoryId,
@@ -5356,6 +5427,7 @@ function read_jobs_state(array $config): array
                 'createdAt' => $createdAt,
                 'hasReviewPdf' => $hasReviewPdf,
                 'hasSourcePdf' => $hasSourcePdf,
+                'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
             ];
         } elseif ($status === 'failed') {
             $failed[] = [
@@ -5365,6 +5437,7 @@ function read_jobs_state(array $config): array
                 'createdAt' => $createdAt,
                 'hasReviewPdf' => $hasReviewPdf,
                 'hasSourcePdf' => $hasSourcePdf,
+                'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
                 'error' => is_string($job['error'] ?? null) ? $job['error'] : null,
             ];
         }
@@ -5577,7 +5650,7 @@ function reset_job_by_id(array $config, string $jobId): array
     ];
 }
 
-function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-ocr'): array
+function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-ocr', bool $forceOcr = false): array
 {
     if (!is_valid_job_id($jobId)) {
         throw new RuntimeException('Invalid job id');
@@ -5653,6 +5726,11 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
     $job['status'] = 'processing';
     $job['updatedAt'] = now_iso();
     $job['reprocessMode'] = $normalizedMode;
+    if ($normalizedMode === 'full' && $forceOcr) {
+        $job['forceOcr'] = true;
+    } else {
+        unset($job['forceOcr']);
+    }
     write_json_file($jobJsonPath, $job);
 
     trigger_processing_worker();

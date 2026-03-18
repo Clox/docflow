@@ -24,8 +24,8 @@
         <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
         <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
         <div class="selected-job-actions">
-          <button id="selected-job-reprocess" type="button" disabled>Kör om efter OCR</button>
-          <button id="selected-job-rerun-ocr" type="button" disabled>Kör om från grunden</button>
+          <button id="selected-job-reprocess" type="button" disabled>Kör om analys</button>
+          <button id="selected-job-rerun-ocr" type="button" disabled title="Ignorerar befintlig OCR-text och bygger om dokumentets OCR från source.pdf">Kör ny OCR</button>
         </div>
       </section>
     </aside>
@@ -93,6 +93,10 @@
               <button id="ocr-zoom-in" type="button" aria-label="Zooma in">+</button>
             </div>
           </div>
+          <label id="ocr-page-image-toggle" class="ocr-page-image-toggle hidden" for="ocr-show-page-image">
+            <input id="ocr-show-page-image" type="checkbox">
+            <span>Visa PDF-bakgrund</span>
+          </label>
           <div id="ocr-search-bar" class="ocr-search-bar hidden">
             <input id="ocr-search-input" type="text" placeholder="Sök i OCR">
             <label class="ocr-search-toggle" for="ocr-search-regex">
