@@ -32,6 +32,7 @@ try {
     $response = [
         'processingJobs' => $jobsPayload['processingJobs'],
         'readyJobs' => $jobsPayload['readyJobs'],
+        'archivedJobs' => $jobsPayload['archivedJobs'],
         'failedJobs' => $jobsPayload['failedJobs'],
         'jobsSig' => $jobsSig,
         'stateUpdateTransport' => (string) $config['stateUpdateTransport'],
@@ -51,6 +52,7 @@ try {
     json_response([
         'processingJobs' => [],
         'readyJobs' => [],
+        'archivedJobs' => [],
         'failedJobs' => [],
         'jobsSig' => '',
         'stateUpdateTransport' => 'polling',

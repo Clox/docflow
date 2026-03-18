@@ -9,14 +9,21 @@
 <body>
   <div class="app">
     <aside class="sidebar">
-      <h1 class="sidebar-title">
-        <span>Klara jobb</span>
-        <span id="processing-indicator" class="processing hidden">
-          <span class="spinner" aria-hidden="true"></span>
-          <span id="processing-text"></span>
-        </span>
-      </h1>
       <div class="sidebar-list-wrap">
+        <div class="sidebar-title">
+          <span>Jobb</span>
+          <div class="sidebar-title-controls">
+            <span id="processing-indicator" class="processing hidden">
+              <span class="spinner" aria-hidden="true"></span>
+              <span id="processing-text"></span>
+            </span>
+            <select id="job-list-mode" aria-label="Jobblista">
+              <option value="ready">Klara</option>
+              <option value="processing">Pågående</option>
+              <option value="archived">Arkiverade</option>
+            </select>
+          </div>
+        </div>
         <ul id="job-list" class="job-list"></ul>
       </div>
       <section id="selected-job-panel" class="selected-job-panel">
@@ -24,8 +31,8 @@
         <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
         <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
         <div class="selected-job-actions">
-          <button id="selected-job-reprocess" type="button" disabled>Kör om analys</button>
-          <button id="selected-job-rerun-ocr" type="button" disabled title="Ignorerar befintlig OCR-text och bygger om dokumentets OCR från source.pdf">Kör ny OCR + Analys</button>
+          <button id="selected-job-reprocess" type="button" disabled>Analysera igen</button>
+          <button id="selected-job-rerun-ocr" type="button" disabled title="Ignorerar befintlig OCR-text och bygger om dokumentets OCR från source.pdf">Ny OCR + analys</button>
         </div>
       </section>
     </aside>
@@ -51,6 +58,11 @@
               <option value="" hidden>Välj kategori</option>
             </select>
           </div>
+          <div class="field-group field-group-filename">
+            <label class="floating-label" for="filename-input">Filnamn</label>
+            <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">
+          </div>
+          <button id="archive-action" type="button" disabled title="Flyttar review.pdf till vald huvudmans arkivmapp med angivet filnamn. Om jobbet redan är arkiverat återställs PDF-filen tillbaka till jobbet.">Arkivera</button>
         </div>
         <div class="topbar-right">
           <div class="field-group">
@@ -139,6 +151,7 @@
         <button class="settings-tab" data-settings-tab="matching" type="button">OCR-matchning</button>
         <button class="settings-tab" data-settings-tab="ocr-processing" type="button">Bild-OCR</button>
         <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
+        <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
         <button class="settings-tab" data-settings-tab="jobs" type="button">Jobb</button>
         <button class="settings-tab" data-settings-tab="paths" type="button">Sökvägar</button>
         <button class="settings-tab" data-settings-tab="system" type="button">System</button>
@@ -149,6 +162,7 @@
         <div id="settings-panel-matching" class="settings-panel hidden"></div>
         <div id="settings-panel-ocr-processing" class="settings-panel hidden"></div>
         <div id="settings-panel-categories" class="settings-panel hidden"></div>
+        <div id="settings-panel-data-fields" class="settings-panel hidden"></div>
         <div id="settings-panel-jobs" class="settings-panel hidden"></div>
         <div id="settings-panel-paths" class="settings-panel hidden"></div>
         <div id="settings-panel-system" class="settings-panel hidden"></div>
@@ -385,6 +399,19 @@
     <p>Ogiltigförklara alla jobb och flytta tillbaka <code>source.pdf</code> till inbox.</p>
     <div class="settings-danger">
       <button id="settings-reset-jobs" type="button">Återställ alla jobb</button>
+    </div>
+  </template>
+
+  <template id="settings-template-data-fields">
+    <h3>Datafält</h3>
+    <p>Definiera egna datafält som extraheras från OCR-texten med samma märkordslogik som övrig fakturautvinning.</p>
+    <div id="extraction-fields-editor" class="categories-list"></div>
+    <div class="categories-actions">
+      <button id="extraction-fields-add-row" type="button">Lägg till datafält</button>
+    </div>
+    <div class="panel-actions">
+      <button id="extraction-fields-cancel" type="button">Avbryt</button>
+      <button id="extraction-fields-apply" type="button">Spara</button>
     </div>
   </template>
 

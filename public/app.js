@@ -25,9 +25,12 @@ const ocrSearchNextEl = document.getElementById('ocr-search-next');
 const ocrSearchStatusEl = document.getElementById('ocr-search-status');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
+const jobListModeEl = document.getElementById('job-list-mode');
 const clientSelectEl = document.getElementById('client-select');
 const senderSelectEl = document.getElementById('sender-select');
 const categorySelectEl = document.getElementById('category-select');
+const filenameInputEl = document.getElementById('filename-input');
+const archiveActionEl = document.getElementById('archive-action');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
 const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]'));
@@ -43,6 +46,7 @@ const settingsPanelTemplateIds = {
   matching: 'settings-template-matching',
   'ocr-processing': 'settings-template-ocr-processing',
   categories: 'settings-template-categories',
+  'data-fields': 'settings-template-data-fields',
   jobs: 'settings-template-jobs',
   paths: 'settings-template-paths',
   system: 'settings-template-system'
@@ -101,6 +105,10 @@ let systemCategoryEditorEl = null;
 let categoriesAddCategoryEl = null;
 let categoriesCancelEl = null;
 let categoriesApplyEl = null;
+let extractionFieldsEditorEl = null;
+let extractionFieldsAddRowEl = null;
+let extractionFieldsCancelEl = null;
+let extractionFieldsApplyEl = null;
 let archiveTabEls = [];
 let archiveViewCategoriesEl = null;
 let archiveViewSystemEl = null;
@@ -113,6 +121,7 @@ let pathsApplyEl = null;
 let state = {
   processingJobs: [],
   readyJobs: [],
+  archivedJobs: [],
   failedJobs: [],
   clients: [],
   senders: [],
@@ -139,6 +148,17 @@ const SYSTEM_CATEGORIES = {
     ]
   }
 };
+
+const FILENAME_TEMPLATE_BASE_FIELDS = [
+  { key: 'date', label: 'Datum', tone: 'special' },
+  { key: 'category', label: 'Kategori', tone: 'base' },
+  { key: 'supplier', label: 'Leverantör', tone: 'base' },
+  { key: 'payment_receiver', label: 'Betalningsmottagare', tone: 'base' },
+  { key: 'amount', label: 'Belopp', tone: 'base' },
+  { key: 'ocr', label: 'OCR', tone: 'base' },
+  { key: 'client', label: 'Huvudman', tone: 'base' },
+  { key: 'sender', label: 'Avsändare', tone: 'base' },
+];
 
 let selectedJobId = '';
 let loadedOcrJobId = '';
@@ -193,7 +213,8 @@ let matchingBaselineJson = JSON.stringify({
 let pathsBaselineValue = '';
 let categoriesBaselineJson = JSON.stringify({
   archiveFolders: [],
-  systemCategories: systemCategoriesDraft
+  systemCategories: systemCategoriesDraft,
+  extractionFields: []
 });
 let clientOptionsSignature = '';
 let senderOptionsSignature = '';
@@ -217,6 +238,8 @@ let hasLoadedInitialJobsState = false;
 const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
 const selectedCategoryByJobId = new Map();
+const filenameByJobId = new Map();
+const filenameSaveTimerByJobId = new Map();
 const lastKnownJobDisplayById = new Map();
 const pinnedProcessingJobIds = new Set();
 const jobListNodeByKey = new Map();
@@ -232,8 +255,13 @@ const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
 const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta']);
+const VALID_JOB_LIST_MODES = new Set(['ready', 'processing', 'archived']);
 
 let senderMergeState = null;
+let currentJobListMode = 'ready';
+let extractionFieldsDraft = [];
+
+jobListModeEl.value = currentJobListMode;
 
 clientSelectEl.disabled = true;
 senderSelectEl.disabled = true;
@@ -433,99 +461,66 @@ function renderCategorySelect(categories) {
 }
 
 function setClientForJob(job) {
-  clientSelectEl.disabled = !job || job.status === 'processing';
+  clientSelectEl.disabled = !job || job.status !== 'ready' || job.archived === true;
 
   if (!job) {
     clientSelectEl.value = '';
     return;
   }
 
-  const manualValue = selectedClientByJobId.get(job.id);
-  if (manualValue) {
+  const resolvedValue = effectiveClientDirName(job);
+  if (resolvedValue) {
     const hasManualOption = Array.from(clientSelectEl.options).some(
-      (option) => option.value === manualValue
+      (option) => option.value === resolvedValue
     );
     if (hasManualOption) {
-      clientSelectEl.value = manualValue;
+      clientSelectEl.value = resolvedValue;
       return;
     }
   }
-
-  if (!job.matchedClientDirName) {
-    clientSelectEl.value = '';
-    return;
-  }
-
-  const hasOption = Array.from(clientSelectEl.options).some(
-    (option) => option.value === job.matchedClientDirName
-  );
-
-  clientSelectEl.value = hasOption ? job.matchedClientDirName : '';
+  clientSelectEl.value = '';
 }
 
 function setSenderForJob(job) {
-  senderSelectEl.disabled = !job || job.status === 'processing';
+  senderSelectEl.disabled = !job || job.status !== 'ready' || job.archived === true;
 
   if (!job) {
     senderSelectEl.value = '';
     return;
   }
 
-  const manualValue = selectedSenderByJobId.get(job.id);
-  if (manualValue) {
+  const resolvedValue = effectiveSenderId(job);
+  if (resolvedValue) {
     const hasManualOption = Array.from(senderSelectEl.options).some(
-      (option) => option.value === manualValue
+      (option) => option.value === resolvedValue
     );
     if (hasManualOption) {
-      senderSelectEl.value = manualValue;
+      senderSelectEl.value = resolvedValue;
       return;
     }
   }
-
-  const matchedSenderId = Number.isInteger(job.matchedSenderId) && job.matchedSenderId > 0
-    ? String(job.matchedSenderId)
-    : '';
-  if (!matchedSenderId) {
-    senderSelectEl.value = '';
-    return;
-  }
-
-  const hasOption = Array.from(senderSelectEl.options).some(
-    (option) => option.value === matchedSenderId
-  );
-  senderSelectEl.value = hasOption ? matchedSenderId : '';
+  senderSelectEl.value = '';
 }
 
 function setCategoryForJob(job) {
-  categorySelectEl.disabled = !job || job.status === 'processing';
+  categorySelectEl.disabled = !job || job.status !== 'ready' || job.archived === true;
 
   if (!job) {
     categorySelectEl.value = '';
     return;
   }
 
-  const manualValue = selectedCategoryByJobId.get(job.id);
-  if (manualValue) {
+  const resolvedValue = effectiveCategoryId(job);
+  if (resolvedValue) {
     const hasManualOption = Array.from(categorySelectEl.options).some(
-      (option) => option.value === manualValue
+      (option) => option.value === resolvedValue
     );
     if (hasManualOption) {
-      categorySelectEl.value = manualValue;
+      categorySelectEl.value = resolvedValue;
       return;
     }
   }
-
-  const topScore = Number(job.topMatchedCategoryScore ?? 0);
-  const topId = typeof job.topMatchedCategoryId === 'string' ? job.topMatchedCategoryId : '';
-  if (!(topScore > 0) || topId === '') {
-    categorySelectEl.value = '';
-    return;
-  }
-
-  const hasOptionById = Array.from(categorySelectEl.options).some(
-    (option) => option.value === topId
-  );
-  categorySelectEl.value = hasOptionById ? topId : '';
+  categorySelectEl.value = '';
 }
 
 function pdfUrlForJob(jobId) {
@@ -1159,6 +1154,9 @@ function updateReadyJobListItem(li, job) {
   if (job.status === 'processing') {
     li.classList.add('is-processing');
   }
+  if (job.archived === true) {
+    li.classList.add('is-archived');
+  }
   if (job.id === selectedJobId) {
     li.classList.add('selected');
   }
@@ -1178,6 +1176,29 @@ function updateReadyJobListItem(li, job) {
   } else {
     removeJobListItemSpinnerNode(li);
   }
+}
+
+function updateArchivedJobListItem(li, job) {
+  li.className = 'job-item is-archived';
+  if (job.id === selectedJobId) {
+    li.classList.add('selected');
+  }
+
+  li.dataset.jobId = job.id;
+  li._nameEl.textContent = job.originalFilename;
+
+  const archivedLabel = job.filename
+    ? job.filename
+    : (typeof job.archivedAt === 'string' && job.archivedAt ? job.archivedAt : '');
+
+  if (archivedLabel) {
+    const secondary = ensureJobListItemSecondaryNode(li, 'job-client');
+    secondary.textContent = archivedLabel;
+  } else {
+    removeJobListItemSecondaryNode(li);
+  }
+
+  removeJobListItemSpinnerNode(li);
 }
 
 function updateFailedJobListItem(li, job) {
@@ -1201,26 +1222,54 @@ function updateFailedJobListItem(li, job) {
 
 function renderJobList(processingJobs, readyJobs, failedJobs) {
   const displayedReadyJobs = buildDisplayedReadyJobs(processingJobs, readyJobs);
+  const displayedArchivedJobs = Array.isArray(state.archivedJobs) ? state.archivedJobs : [];
   const safeFailedJobs = Array.isArray(failedJobs) ? failedJobs : [];
   const desiredNodes = [];
   const activeKeys = new Set();
+  const isReadyMode = currentJobListMode === 'ready';
+  const isProcessingMode = currentJobListMode === 'processing';
+  const isArchivedMode = currentJobListMode === 'archived';
 
-  if (displayedReadyJobs.length === 0 && safeFailedJobs.length === 0) {
+  if (
+    (isReadyMode && displayedReadyJobs.length === 0)
+    || (isProcessingMode && processingJobs.length === 0 && safeFailedJobs.length === 0)
+    || (isArchivedMode && displayedArchivedJobs.length === 0)
+  ) {
     const messageNode = ensureJobListMessageNode();
-    messageNode.textContent = 'Inga klara jobb ännu.';
+    messageNode.textContent = isProcessingMode
+      ? 'Inga pågående jobb just nu.'
+      : (isArchivedMode ? 'Inga arkiverade jobb ännu.' : 'Inga klara jobb ännu.');
     desiredNodes.push(messageNode);
     activeKeys.add('message:empty');
   } else {
-    displayedReadyJobs.forEach((job) => {
-      const key = `ready:${job.id}`;
-      const li = ensureJobListItemNode(key);
-      updateReadyJobListItem(li, job);
-      desiredNodes.push(li);
-      activeKeys.add(key);
-    });
+    if (isReadyMode) {
+      displayedReadyJobs.forEach((job) => {
+        const key = `ready:${job.id}`;
+        const li = ensureJobListItemNode(key);
+        updateReadyJobListItem(li, job);
+        desiredNodes.push(li);
+        activeKeys.add(key);
+      });
+    } else if (isProcessingMode) {
+      (Array.isArray(processingJobs) ? processingJobs : []).forEach((job) => {
+        const key = `processing:${job.id}`;
+        const li = ensureJobListItemNode(key);
+        updateReadyJobListItem(li, job);
+        desiredNodes.push(li);
+        activeKeys.add(key);
+      });
+    } else if (isArchivedMode) {
+      displayedArchivedJobs.forEach((job) => {
+        const key = `archived:${job.id}`;
+        const li = ensureJobListItemNode(key);
+        updateArchivedJobListItem(li, job);
+        desiredNodes.push(li);
+        activeKeys.add(key);
+      });
+    }
 
-    if (safeFailedJobs.length > 0) {
-      if (displayedReadyJobs.length > 0) {
+    if (isProcessingMode && safeFailedJobs.length > 0) {
+      if ((Array.isArray(processingJobs) ? processingJobs : []).length > 0) {
         const labelNode = ensureJobListSectionLabelNode('Misslyckade jobb');
         desiredNodes.push(labelNode);
         activeKeys.add('label:failed');
@@ -1259,11 +1308,12 @@ function findJobById(jobId) {
     return null;
   }
 
-  const readyOrFailedJobs = []
+  const readyOrArchivedOrFailedJobs = []
     .concat(Array.isArray(state.readyJobs) ? state.readyJobs : [])
+    .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
     .concat(Array.isArray(state.failedJobs) ? state.failedJobs : []);
 
-  const directJob = readyOrFailedJobs.find((entry) => entry.id === jobId) || null;
+  const directJob = readyOrArchivedOrFailedJobs.find((entry) => entry.id === jobId) || null;
   if (directJob) {
     return directJob;
   }
@@ -1290,6 +1340,309 @@ function findJobById(jobId) {
   };
 }
 
+function jobsForCurrentListMode() {
+  if (currentJobListMode === 'processing') {
+    return Array.isArray(state.processingJobs) ? state.processingJobs : [];
+  }
+  if (currentJobListMode === 'archived') {
+    return Array.isArray(state.archivedJobs) ? state.archivedJobs : [];
+  }
+  return Array.isArray(state.readyJobs) ? state.readyJobs : [];
+}
+
+function isJobVisibleInCurrentList(jobId) {
+  return jobsForCurrentListMode().some((job) => job && job.id === jobId);
+}
+
+function findCategoryById(categoryId) {
+  if (!categoryId) {
+    return null;
+  }
+  return (Array.isArray(state.categories) ? state.categories : []).find((category) => category && category.id === categoryId) || null;
+}
+
+function findSenderById(senderId) {
+  const normalizedId = Number.parseInt(String(senderId || ''), 10);
+  if (!Number.isInteger(normalizedId) || normalizedId < 1) {
+    return null;
+  }
+  return (Array.isArray(state.senders) ? state.senders : []).find((sender) => Number(sender && sender.id) === normalizedId) || null;
+}
+
+function effectiveClientDirName(job) {
+  if (!job) {
+    return '';
+  }
+  const localValue = selectedClientByJobId.get(job.id);
+  if (localValue) {
+    return localValue;
+  }
+  if (typeof job.selectedClientDirName === 'string' && job.selectedClientDirName.trim() !== '') {
+    return job.selectedClientDirName.trim();
+  }
+  return typeof job.matchedClientDirName === 'string' ? job.matchedClientDirName : '';
+}
+
+function effectiveSenderId(job) {
+  if (!job) {
+    return '';
+  }
+  const localValue = selectedSenderByJobId.get(job.id);
+  if (localValue) {
+    return localValue;
+  }
+  if (Number.isInteger(job.selectedSenderId) && job.selectedSenderId > 0) {
+    return String(job.selectedSenderId);
+  }
+  if (Number.isInteger(job.matchedSenderId) && job.matchedSenderId > 0) {
+    return String(job.matchedSenderId);
+  }
+  return '';
+}
+
+function effectiveCategoryId(job) {
+  if (!job) {
+    return '';
+  }
+  const localValue = selectedCategoryByJobId.get(job.id);
+  if (localValue) {
+    return localValue;
+  }
+  if (typeof job.selectedCategoryId === 'string' && job.selectedCategoryId.trim() !== '') {
+    return job.selectedCategoryId.trim();
+  }
+  return typeof job.topMatchedCategoryId === 'string' ? job.topMatchedCategoryId : '';
+}
+
+function formatFilenameAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return null;
+  }
+  return amount.toLocaleString('sv-SE', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function buildFilenameFieldValues(job) {
+  if (!job) {
+    return new Map();
+  }
+
+  const invoice = job.analysis && typeof job.analysis === 'object' && job.analysis.invoice && typeof job.analysis.invoice === 'object'
+    ? job.analysis.invoice
+    : {};
+  const extractionFields = job.analysis && typeof job.analysis === 'object' && job.analysis.extractionFields && typeof job.analysis.extractionFields === 'object'
+    ? job.analysis.extractionFields
+    : {};
+  const clientDirName = effectiveClientDirName(job);
+  const sender = findSenderById(effectiveSenderId(job));
+  const category = findCategoryById(effectiveCategoryId(job));
+
+  const values = new Map();
+  const setValue = (key, value) => {
+    if (value === null || value === undefined) {
+      return;
+    }
+    const text = String(value).trim();
+    if (text !== '') {
+      values.set(key, text);
+    }
+  };
+
+  setValue('category', category && category.name);
+  setValue('client', clientDirName);
+  setValue('main_client', clientDirName);
+  setValue('sender', sender && sender.name);
+  setValue('supplier', invoice && invoice.supplier);
+  setValue('payment_receiver', invoice && invoice.payee);
+  setValue('payee', invoice && invoice.payee);
+  setValue('amount', formatFilenameAmount(invoice && invoice.amount));
+  setValue('ocr', invoice && invoice.ocr);
+  setValue('date', invoice && invoice.dueDate);
+  setValue('due_date', invoice && invoice.dueDate);
+  setValue('swift', invoice && invoice.swift);
+  setValue('iban', invoice && invoice.iban);
+
+  Object.values(extractionFields).forEach((field) => {
+    if (!field || typeof field !== 'object') {
+      return;
+    }
+    const key = typeof field.key === 'string' ? field.key.trim() : '';
+    const value = typeof field.value === 'string' ? field.value.trim() : '';
+    if (key && value) {
+      setValue(key, value);
+    }
+  });
+
+  return values;
+}
+
+function evaluateFilenameTemplateParts(parts, fieldValues) {
+  if (!Array.isArray(parts) || parts.length === 0) {
+    return '';
+  }
+
+  let result = '';
+  parts.forEach((part) => {
+    if (!part || typeof part !== 'object') {
+      return;
+    }
+
+    if (part.type === 'field') {
+      const key = typeof part.key === 'string' ? part.key.trim() : '';
+      const value = key ? (fieldValues.get(key) || '') : '';
+      if (!value) {
+        return;
+      }
+      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
+      result += value;
+      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
+      return;
+    }
+
+    if (part.type === 'firstAvailable') {
+      const candidates = Array.isArray(part.parts) ? part.parts : [];
+      let resolved = '';
+      for (const candidate of candidates) {
+        resolved = evaluateFilenameTemplateParts([candidate], fieldValues);
+        if (resolved !== '') {
+          break;
+        }
+      }
+      if (resolved === '') {
+        return;
+      }
+      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
+      result += resolved;
+      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
+      return;
+    }
+
+    result += typeof part.value === 'string' ? part.value : '';
+  });
+
+  return result;
+}
+
+function generateFilenameForJob(job) {
+  if (!job) {
+    return '';
+  }
+
+  const category = findCategoryById(effectiveCategoryId(job));
+  const template = category && category.filenameTemplate && typeof category.filenameTemplate === 'object'
+    ? sanitizeFilenameTemplate(category.filenameTemplate)
+    : { parts: [] };
+  const fieldValues = buildFilenameFieldValues(job);
+  const rendered = evaluateFilenameTemplateParts(template.parts || [], fieldValues)
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (rendered !== '') {
+    return rendered.endsWith('.pdf') ? rendered : `${rendered}.pdf`;
+  }
+
+  return job.originalFilename || 'dokument.pdf';
+}
+
+function displayedFilenameForJob(job) {
+  if (!job) {
+    return '';
+  }
+  const localValue = filenameByJobId.get(job.id);
+  if (localValue) {
+    return localValue;
+  }
+  if (typeof job.filename === 'string' && job.filename.trim() !== '') {
+    return job.filename.trim();
+  }
+  return generateFilenameForJob(job);
+}
+
+function syncFilenameField(job) {
+  if (!filenameInputEl) {
+    return;
+  }
+
+  const disabled = !job || job.status !== 'ready' || job.archived === true;
+  filenameInputEl.disabled = disabled;
+  filenameInputEl.value = job ? displayedFilenameForJob(job) : '';
+}
+
+function updateArchiveAction(job) {
+  if (!archiveActionEl) {
+    return;
+  }
+
+  if (!job) {
+    archiveActionEl.disabled = true;
+    archiveActionEl.textContent = 'Arkivera';
+    return;
+  }
+
+  const isArchived = job.archived === true;
+  archiveActionEl.textContent = isArchived ? 'Återställ' : 'Arkivera';
+  if (isArchived) {
+    archiveActionEl.disabled = false;
+    return;
+  }
+
+  archiveActionEl.disabled = job.status !== 'ready'
+    || !effectiveClientDirName(job)
+    || !effectiveSenderId(job)
+    || !effectiveCategoryId(job)
+    || !String(filenameInputEl ? filenameInputEl.value : displayedFilenameForJob(job)).trim();
+}
+
+let saveSelectedJobFieldsSeq = 0;
+
+async function saveSelectedJobFields(jobId, payload) {
+  const requestSeq = ++saveSelectedJobFieldsSeq;
+  const response = await fetch('/api/save-job-fields.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      jobId,
+      ...payload,
+    })
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || data.ok !== true || !data.job || typeof data.job !== 'object') {
+    const message = data && typeof data.error === 'string' ? data.error : 'Kunde inte spara jobbdata';
+    throw new Error(message);
+  }
+
+  if (requestSeq !== saveSelectedJobFieldsSeq) {
+    return;
+  }
+
+  await fetchState();
+}
+
+function scheduleFilenameSave(jobId, filename) {
+  const existingTimer = filenameSaveTimerByJobId.get(jobId);
+  if (existingTimer) {
+    window.clearTimeout(existingTimer);
+  }
+
+  const nextTimer = window.setTimeout(async () => {
+    filenameSaveTimerByJobId.delete(jobId);
+    try {
+      await saveSelectedJobFields(jobId, { filename });
+    } catch (error) {
+      await fetchState();
+      alert(error.message || 'Kunde inte spara filnamn.');
+    }
+  }, 350);
+
+  filenameSaveTimerByJobId.set(jobId, nextTimer);
+}
+
 function renderSelectedJobPanel() {
   const selectedJob = findJobById(selectedJobId);
   if (!selectedJob) {
@@ -1298,6 +1651,8 @@ function renderSelectedJobPanel() {
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
     selectedJobReprocessEl.disabled = true;
     selectedJobRerunOcrEl.disabled = true;
+    syncFilenameField(null);
+    updateArchiveAction(null);
     return;
   }
 
@@ -1316,6 +1671,8 @@ function renderSelectedJobPanel() {
     appendLine('Status: Bearbetas');
   } else if (selectedJob.status === 'failed') {
     appendLine('Status: Misslyckat');
+  } else if (selectedJob.archived === true) {
+    appendLine('Status: Arkiverat');
   } else {
     appendLine('Status: Klar');
   }
@@ -1327,10 +1684,15 @@ function renderSelectedJobPanel() {
   if (selectedJob.status === 'failed' && selectedJob.error) {
     appendLine('Fel: ' + selectedJob.error, 'is-error');
   }
+  if (selectedJob.archived === true && typeof selectedJob.archivedAt === 'string' && selectedJob.archivedAt) {
+    appendLine('Arkiverat: ' + selectedJob.archivedAt.replace('T', ' ').replace(/\+00:00$/, ' UTC'));
+  }
 
   selectedJobMetaEl.replaceChildren(...metaLines);
-  selectedJobReprocessEl.disabled = selectedJob.status === 'processing' || !selectedJob.hasReviewPdf;
-  selectedJobRerunOcrEl.disabled = selectedJob.status === 'processing' || !selectedJob.hasSourcePdf;
+  selectedJobReprocessEl.disabled = selectedJob.status === 'processing' || selectedJob.archived === true || !selectedJob.hasReviewPdf;
+  selectedJobRerunOcrEl.disabled = selectedJob.status === 'processing' || selectedJob.archived === true || !selectedJob.hasSourcePdf;
+  syncFilenameField(selectedJob);
+  updateArchiveAction(selectedJob);
 }
 
 function buildDisplayedReadyJobs(processingJobs, readyJobs) {
@@ -2461,18 +2823,19 @@ function moveSelectionBy(offset) {
     return;
   }
 
-  if (!Array.isArray(state.readyJobs) || state.readyJobs.length === 0) {
+  const currentJobs = jobsForCurrentListMode();
+  if (!Array.isArray(currentJobs) || currentJobs.length === 0) {
     return;
   }
 
-  const currentIndex = state.readyJobs.findIndex((job) => job.id === selectedJobId);
+  const currentIndex = currentJobs.findIndex((job) => job.id === selectedJobId);
   const safeCurrent = currentIndex >= 0 ? currentIndex : 0;
-  const nextIndex = Math.max(0, Math.min(state.readyJobs.length - 1, safeCurrent + offset));
+  const nextIndex = Math.max(0, Math.min(currentJobs.length - 1, safeCurrent + offset));
   if (nextIndex === safeCurrent && currentIndex >= 0) {
     return;
   }
 
-  const targetJob = state.readyJobs[nextIndex];
+  const targetJob = currentJobs[nextIndex];
   if (!targetJob) {
     return;
   }
@@ -2483,30 +2846,33 @@ function moveSelectionBy(offset) {
 function refreshSelection() {
   if (preferredJobIdFromHash) {
     const preferredJob = findJobById(preferredJobIdFromHash);
-    if (preferredJob) {
+    if (preferredJob && isJobVisibleInCurrentList(preferredJob.id)) {
       applySelectedJobId(preferredJob.id, { syncHash: false });
       updateHashState();
       return;
     }
   }
 
-  if (!Array.isArray(state.readyJobs) || state.readyJobs.length === 0) {
-    const failedFallback = Array.isArray(state.failedJobs) && state.failedJobs.length > 0
-      ? state.failedJobs[0]
-      : null;
-    applySelectedJobId(failedFallback ? failedFallback.id : '', { syncHash: false });
+  const visibleJobs = jobsForCurrentListMode();
+  if (!Array.isArray(visibleJobs) || visibleJobs.length === 0) {
+    if (currentJobListMode === 'processing' && Array.isArray(state.failedJobs) && state.failedJobs.length > 0) {
+      applySelectedJobId(state.failedJobs[0].id, { syncHash: false });
+      updateHashState();
+      return;
+    }
+    applySelectedJobId('', { syncHash: false });
     updateHashState();
     return;
   }
 
   const currentSelection = findJobById(selectedJobId);
-  if (currentSelection) {
+  if (currentSelection && isJobVisibleInCurrentList(currentSelection.id)) {
     applySelectedJobId(currentSelection.id, { syncHash: false });
     updateHashState();
     return;
   }
 
-  applySelectedJobId(state.readyJobs[0].id, { syncHash: false });
+  applySelectedJobId(visibleJobs[0].id, { syncHash: false });
   updateHashState();
 }
 
@@ -2526,13 +2892,20 @@ function applyState(nextState) {
   state = {
     processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : state.processingJobs,
     readyJobs: Array.isArray(nextState.readyJobs) ? nextState.readyJobs : state.readyJobs,
+    archivedJobs: Array.isArray(nextState.archivedJobs) ? nextState.archivedJobs : state.archivedJobs,
     failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : state.failedJobs,
     clients: shouldUpdateClients ? nextState.clients : state.clients,
     senders: shouldUpdateSenders ? nextState.senders : state.senders,
     categories: shouldUpdateCategories ? nextState.categories : state.categories
   };
 
-  const validJobIds = new Set(state.readyJobs.map((job) => job.id));
+  const validJobIds = new Set(
+    []
+      .concat(Array.isArray(state.readyJobs) ? state.readyJobs.map((job) => job.id) : [])
+      .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs.map((job) => job.id) : [])
+      .concat(Array.isArray(state.processingJobs) ? state.processingJobs.map((job) => job.id) : [])
+      .concat(Array.isArray(state.failedJobs) ? state.failedJobs.map((job) => job.id) : [])
+  );
   Array.from(selectedClientByJobId.keys()).forEach((jobId) => {
     if (!validJobIds.has(jobId)) {
       selectedClientByJobId.delete(jobId);
@@ -2548,11 +2921,17 @@ function applyState(nextState) {
       selectedCategoryByJobId.delete(jobId);
     }
   });
+  Array.from(filenameByJobId.keys()).forEach((jobId) => {
+    if (!validJobIds.has(jobId)) {
+      filenameByJobId.delete(jobId);
+    }
+  });
 
   const activeJobIds = new Set(
     []
       .concat(Array.isArray(state.processingJobs) ? state.processingJobs.map((job) => job.id) : [])
       .concat(Array.isArray(state.readyJobs) ? state.readyJobs.map((job) => job.id) : [])
+      .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs.map((job) => job.id) : [])
       .filter((jobId) => typeof jobId === 'string' && jobId !== '')
   );
   Array.from(lastKnownJobDisplayById.keys()).forEach((jobId) => {
@@ -2930,8 +3309,12 @@ function bindSettingsPanelRefs(tabId) {
       }
       categoriesDraft = Array.isArray(parsed.archiveFolders) ? parsed.archiveFolders.map(sanitizeArchiveFolder) : [];
       systemCategoriesDraft = sanitizeSystemCategories(parsed.systemCategories);
+      extractionFieldsDraft = Array.isArray(parsed.extractionFields)
+        ? parsed.extractionFields.map((field, index) => sanitizeExtractionField(field, index))
+        : [];
       renderCategoriesEditor();
       renderSystemCategoryEditor();
+      renderExtractionFieldsEditor();
       updateSettingsActionButtons();
     });
     categoriesApplyEl.addEventListener('click', async () => {
@@ -2939,6 +3322,38 @@ function bindSettingsPanelRefs(tabId) {
         await saveCategories();
       } catch (error) {
         alert(error.message || 'Kunde inte spara arkivstruktur.');
+      }
+    });
+  } else if (tabId === 'data-fields') {
+    extractionFieldsEditorEl = document.getElementById('extraction-fields-editor');
+    extractionFieldsAddRowEl = document.getElementById('extraction-fields-add-row');
+    extractionFieldsCancelEl = document.getElementById('extraction-fields-cancel');
+    extractionFieldsApplyEl = document.getElementById('extraction-fields-apply');
+    extractionFieldsAddRowEl.addEventListener('click', () => {
+      extractionFieldsDraft.push(defaultExtractionField());
+      renderExtractionFieldsEditor();
+      updateSettingsActionButtons();
+    });
+    extractionFieldsCancelEl.addEventListener('click', () => {
+      let parsed = {};
+      try {
+        parsed = JSON.parse(categoriesBaselineJson);
+      } catch (error) {
+        parsed = {};
+      }
+      categoriesDraft = Array.isArray(parsed.archiveFolders) ? parsed.archiveFolders.map(sanitizeArchiveFolder) : [];
+      systemCategoriesDraft = sanitizeSystemCategories(parsed.systemCategories);
+      extractionFieldsDraft = Array.isArray(parsed.extractionFields)
+        ? parsed.extractionFields.map((field, index) => sanitizeExtractionField(field, index))
+        : [];
+      renderExtractionFieldsEditor();
+      updateSettingsActionButtons();
+    });
+    extractionFieldsApplyEl.addEventListener('click', async () => {
+      try {
+        await saveCategories();
+      } catch (error) {
+        alert(error.message || 'Kunde inte spara datafält.');
       }
     });
   } else if (tabId === 'jobs') {
@@ -3027,6 +3442,8 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
   } else if (tabId === 'categories') {
     await loadCategories();
     setArchiveTab('categories');
+  } else if (tabId === 'data-fields') {
+    await loadCategories();
   } else if (tabId === 'paths') {
     await loadPathSettings();
   } else if (tabId === 'system') {
@@ -3099,9 +3516,11 @@ async function openCategoriesSettingsDirect() {
     alert('Kunde inte ladda arkivstruktur.');
     categoriesDraft = [];
     systemCategoriesDraft = createDefaultSystemCategories();
-    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+    extractionFieldsDraft = [];
+    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
     renderCategoriesEditor();
     renderSystemCategoryEditor();
+    renderExtractionFieldsEditor();
     updateSettingsActionButtons();
     return false;
   }
@@ -3139,7 +3558,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'jobs', 'paths', 'system'];
+  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'data-fields', 'jobs', 'paths', 'system'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -3156,6 +3575,7 @@ function isEditableSettingsTab(tabId) {
     || tabId === 'matching'
     || tabId === 'ocr-processing'
     || tabId === 'categories'
+    || tabId === 'data-fields'
     || tabId === 'paths';
 }
 
@@ -3211,10 +3631,13 @@ function normalizedSendersJson(senders) {
   return JSON.stringify(senders.map(sanitizeSenderDraft));
 }
 
-function normalizedCategoriesJson(categories, systemCategories) {
+function normalizedCategoriesJson(categories, systemCategories, extractionFields) {
   return JSON.stringify({
     archiveFolders: categories.map(sanitizeArchiveFolder),
-    systemCategories: sanitizeSystemCategories(systemCategories)
+    systemCategories: sanitizeSystemCategories(systemCategories),
+    extractionFields: Array.isArray(extractionFields)
+      ? extractionFields.map((field, index) => sanitizeExtractionField(field, index))
+      : []
   });
 }
 
@@ -3231,7 +3654,7 @@ function isSendersDirty() {
 }
 
 function isCategoriesDirty() {
-  return normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft) !== categoriesBaselineJson;
+  return normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft) !== categoriesBaselineJson;
 }
 
 function isOcrProcessingDirty() {
@@ -4024,7 +4447,8 @@ function sanitizeCategory(category) {
   return {
     name: typeof input.name === 'string' ? input.name : '',
     minScore: sanitizePositiveInt(input.minScore, 1),
-    rules: rules.length > 0 ? rules : [defaultRule()]
+    rules: rules.length > 0 ? rules : [defaultRule()],
+    filenameTemplate: sanitizeFilenameTemplate(input.filenameTemplate)
   };
 }
 
@@ -4037,6 +4461,132 @@ function sanitizeArchiveFolder(archiveFolder) {
     path: typeof input.path === 'string' ? input.path : '',
     categories: categories.length > 0 ? categories : [defaultCategory()]
   };
+}
+
+function sanitizeFilenameTemplateParts(parts, depth = 0) {
+  if (!Array.isArray(parts) || depth > 6) {
+    return [];
+  }
+
+  return parts
+    .map((part) => sanitizeFilenameTemplatePart(part, depth + 1))
+    .filter((part) => part !== null);
+}
+
+function sanitizeFilenameTemplatePart(part, depth = 0) {
+  const input = part && typeof part === 'object' ? part : null;
+  if (!input || depth > 6) {
+    return null;
+  }
+
+  const type = typeof input.type === 'string' ? input.type.trim() : 'text';
+  if (type === 'field') {
+    const key = typeof input.key === 'string' ? input.key.trim() : '';
+    if (!key) {
+      return null;
+    }
+    return {
+      type: 'field',
+      key,
+      prefixParts: sanitizeFilenameTemplateParts(input.prefixParts, depth + 1),
+      suffixParts: sanitizeFilenameTemplateParts(input.suffixParts, depth + 1),
+    };
+  }
+  if (type === 'firstAvailable') {
+    const normalizedParts = sanitizeFilenameTemplateParts(input.parts, depth + 1);
+    if (normalizedParts.length === 0) {
+      return null;
+    }
+    return {
+      type: 'firstAvailable',
+      parts: normalizedParts,
+      prefixParts: sanitizeFilenameTemplateParts(input.prefixParts, depth + 1),
+      suffixParts: sanitizeFilenameTemplateParts(input.suffixParts, depth + 1),
+    };
+  }
+  return {
+    type: 'text',
+    value: typeof input.value === 'string' ? input.value : '',
+  };
+}
+
+function sanitizeFilenameTemplate(template) {
+  const input = template && typeof template === 'object' ? template : {};
+  return {
+    parts: sanitizeFilenameTemplateParts(input.parts)
+  };
+}
+
+function defaultFilenameTemplatePart(type = 'text') {
+  if (type === 'field') {
+    return {
+      type: 'field',
+      key: 'category',
+      prefixParts: [],
+      suffixParts: [],
+    };
+  }
+  if (type === 'firstAvailable') {
+    return {
+      type: 'firstAvailable',
+      parts: [defaultFilenameTemplatePart('field')],
+      prefixParts: [],
+      suffixParts: [],
+    };
+  }
+  return {
+    type: 'text',
+    value: '',
+  };
+}
+
+function filenameTemplateFieldOptions() {
+  const options = [...FILENAME_TEMPLATE_BASE_FIELDS];
+  extractionFieldsDraft.forEach((field, index) => {
+    const normalized = sanitizeExtractionField(field, index);
+    if (!normalized.key || !normalized.name) {
+      return;
+    }
+    options.push({
+      key: normalized.key,
+      label: normalized.name,
+      tone: 'extraction',
+    });
+  });
+  return options;
+}
+
+function defaultExtractionField() {
+  return {
+    key: '',
+    name: '',
+    searchString: '',
+  };
+}
+
+function sanitizeExtractionField(field, fallbackIndex = 0) {
+  const input = field && typeof field === 'object' ? field : {};
+  const name = typeof input.name === 'string' ? input.name : '';
+  const normalizedKey = typeof input.key === 'string' && input.key.trim() !== ''
+    ? input.key.trim()
+    : normalizeConfigKey(name || `field_${fallbackIndex + 1}`);
+  return {
+    key: normalizedKey,
+    name,
+    searchString: typeof input.searchString === 'string'
+      ? input.searchString
+      : (typeof input.query === 'string' ? input.query : ''),
+  };
+}
+
+function normalizeConfigKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[åä]/g, 'a')
+    .replace(/ö/g, 'o')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'field';
 }
 
 function sanitizeSystemCategoryByKey(key, category) {
@@ -4867,6 +5417,238 @@ function renderOcrPdfSubstitutionsEditor() {
   updateSettingsActionButtons();
 }
 
+function renderExtractionFieldsEditor() {
+  if (!extractionFieldsEditorEl) {
+    return;
+  }
+
+  extractionFieldsEditorEl.innerHTML = '';
+
+  const label = document.createElement('div');
+  label.className = 'archive-folders-label';
+  label.textContent = 'Datafält';
+  extractionFieldsEditorEl.appendChild(label);
+
+  if (extractionFieldsDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Inga datafält ännu.';
+    extractionFieldsEditorEl.appendChild(empty);
+    return;
+  }
+
+  extractionFieldsDraft.forEach((field, index) => {
+    const fieldNode = document.createElement('div');
+    fieldNode.className = 'tree-node tree-category';
+
+    const fieldRow = createTreeRow({ markerless: true });
+    const fieldBody = document.createElement('div');
+    fieldBody.className = 'tree-body category-body';
+    appendTreeBodyIcon(fieldBody, 'tree-body-icon tree-body-icon-category');
+
+    const fields = document.createElement('div');
+    fields.className = 'category-fields category-fields--wide';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Ex: "Huvudman"';
+    nameInput.value = field.name;
+    nameInput.addEventListener('input', () => {
+      extractionFieldsDraft[index].name = nameInput.value;
+      if (!String(extractionFieldsDraft[index].key || '').trim()) {
+        extractionFieldsDraft[index].key = normalizeConfigKey(nameInput.value || `field_${index + 1}`);
+      }
+      updateSettingsActionButtons();
+    });
+
+    const queryInput = document.createElement('input');
+    queryInput.type = 'text';
+    queryInput.placeholder = 'Ex: "huvudman"';
+    queryInput.value = field.searchString;
+    queryInput.addEventListener('input', () => {
+      extractionFieldsDraft[index].searchString = queryInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'category-remove';
+    removeButton.textContent = 'Ta bort';
+    removeButton.addEventListener('click', () => {
+      extractionFieldsDraft.splice(index, 1);
+      renderExtractionFieldsEditor();
+      updateSettingsActionButtons();
+    });
+
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.value = field.key;
+    keyInput.disabled = true;
+
+    fields.appendChild(createFloatingField('Namn', nameInput));
+    fields.appendChild(createFloatingField('Söksträng', queryInput));
+    fields.appendChild(createFloatingField('Nyckel', keyInput));
+    fields.appendChild(removeButton);
+    fieldBody.appendChild(fields);
+    fieldRow.appendChild(fieldBody);
+    fieldNode.appendChild(fieldRow);
+    extractionFieldsEditorEl.appendChild(fieldNode);
+  });
+}
+
+function createFilenameTemplateToolbar(onAddPart) {
+  const toolbar = document.createElement('div');
+  toolbar.className = 'filename-template-toolbar';
+
+  const addTextButton = document.createElement('button');
+  addTextButton.type = 'button';
+  addTextButton.className = 'filename-template-chip filename-template-chip--text';
+  addTextButton.textContent = 'Text';
+  addTextButton.addEventListener('click', () => onAddPart(defaultFilenameTemplatePart('text')));
+  toolbar.appendChild(addTextButton);
+
+  filenameTemplateFieldOptions().forEach((field) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = `filename-template-chip filename-template-chip--${field.tone || 'base'}`;
+    chip.textContent = field.label;
+    chip.addEventListener('click', () => {
+      const part = defaultFilenameTemplatePart('field');
+      part.key = field.key;
+      onAddPart(part);
+    });
+    toolbar.appendChild(chip);
+  });
+
+  const firstAvailableButton = document.createElement('button');
+  firstAvailableButton.type = 'button';
+  firstAvailableButton.className = 'filename-template-chip filename-template-chip--special';
+  firstAvailableButton.textContent = 'Första tillgängliga';
+  firstAvailableButton.addEventListener('click', () => onAddPart(defaultFilenameTemplatePart('firstAvailable')));
+  toolbar.appendChild(firstAvailableButton);
+
+  return toolbar;
+}
+
+function createFilenameTemplateSection(labelText, parts, onChange, depth) {
+  const section = document.createElement('div');
+  section.className = 'filename-template-section';
+
+  const label = document.createElement('div');
+  label.className = 'archive-level-label filename-template-section-label';
+  label.textContent = labelText;
+  section.appendChild(label);
+  section.appendChild(createFilenameTemplatePartsEditor(parts, onChange, depth + 1));
+
+  return section;
+}
+
+function createFilenameTemplatePartsEditor(parts, onChange, depth = 0) {
+  const wrapper = document.createElement('div');
+  wrapper.className = depth === 0 ? 'filename-template-editor' : 'filename-template-editor is-nested';
+
+  wrapper.appendChild(createFilenameTemplateToolbar((part) => {
+    parts.push(part);
+    onChange();
+  }));
+
+  const list = document.createElement('div');
+  list.className = 'filename-template-parts';
+
+  if (!Array.isArray(parts) || parts.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Tom filnamnsmall.';
+    list.appendChild(empty);
+  } else {
+    parts.forEach((part, index) => {
+      const normalizedPart = sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
+      parts[index] = normalizedPart;
+
+      const node = document.createElement('div');
+      node.className = 'filename-template-part';
+
+      const typeSelect = document.createElement('select');
+      [
+        ['text', 'Text'],
+        ['field', 'Fält'],
+        ['firstAvailable', 'Första tillgängliga'],
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        typeSelect.appendChild(option);
+      });
+      typeSelect.value = normalizedPart.type;
+      typeSelect.addEventListener('change', () => {
+        parts[index] = defaultFilenameTemplatePart(typeSelect.value);
+        onChange();
+      });
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'rule-remove';
+      removeButton.textContent = 'Ta bort';
+      removeButton.addEventListener('click', () => {
+        parts.splice(index, 1);
+        onChange();
+      });
+
+      const controls = document.createElement('div');
+      controls.className = 'filename-template-part-controls';
+      controls.appendChild(createFloatingField('Deltyp', typeSelect));
+
+      if (normalizedPart.type === 'text') {
+        controls.classList.add('filename-template-part-controls--text');
+        const textInput = document.createElement('input');
+        textInput.type = 'text';
+        textInput.value = normalizedPart.value || '';
+        textInput.placeholder = 'Text';
+        textInput.addEventListener('input', () => {
+          parts[index].value = textInput.value;
+          updateSettingsActionButtons();
+        });
+        controls.appendChild(createFloatingField('Text', textInput));
+      } else if (normalizedPart.type === 'field') {
+        controls.classList.add('filename-template-part-controls--field');
+        const fieldSelect = document.createElement('select');
+        filenameTemplateFieldOptions().forEach((field) => {
+          const option = document.createElement('option');
+          option.value = field.key;
+          option.textContent = field.label;
+          fieldSelect.appendChild(option);
+        });
+        fieldSelect.value = normalizedPart.key;
+        fieldSelect.addEventListener('change', () => {
+          parts[index].key = fieldSelect.value;
+          updateSettingsActionButtons();
+        });
+
+        controls.appendChild(createFloatingField('Fält', fieldSelect));
+      } else if (normalizedPart.type === 'firstAvailable') {
+        controls.classList.add('filename-template-part-controls--container');
+      }
+
+      controls.appendChild(removeButton);
+      node.appendChild(controls);
+
+      if (normalizedPart.type === 'field') {
+        node.appendChild(createFilenameTemplateSection('Prefix', parts[index].prefixParts, onChange, depth));
+        node.appendChild(createFilenameTemplateSection('Suffix', parts[index].suffixParts, onChange, depth));
+      } else if (normalizedPart.type === 'firstAvailable') {
+        node.appendChild(createFilenameTemplateSection('Kandidater', parts[index].parts, onChange, depth));
+        node.appendChild(createFilenameTemplateSection('Prefix', parts[index].prefixParts, onChange, depth));
+        node.appendChild(createFilenameTemplateSection('Suffix', parts[index].suffixParts, onChange, depth));
+      }
+
+      list.appendChild(node);
+    });
+  }
+
+  wrapper.appendChild(list);
+  return wrapper;
+}
+
 function renderCategoriesEditor() {
   categoriesListEl.innerHTML = '';
 
@@ -4985,6 +5767,20 @@ function renderCategoriesEditor() {
       fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
       fields.appendChild(removeCategoryButton);
       categoryBody.appendChild(fields);
+
+      const filenameTemplateLabel = document.createElement('div');
+      filenameTemplateLabel.className = 'archive-level-label';
+      filenameTemplateLabel.textContent = 'Filnamnsmall';
+      categoryBody.appendChild(filenameTemplateLabel);
+      categoryBody.appendChild(
+        createFilenameTemplatePartsEditor(
+          categoriesDraft[archiveFolderIndex].categories[categoryIndex].filenameTemplate.parts,
+          () => {
+            renderCategoriesEditor();
+            updateSettingsActionButtons();
+          }
+        )
+      );
 
       const ruleList = createTreeChildren({ markerless: true });
 
@@ -5805,15 +6601,23 @@ async function loadCategories() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.archiveFolders) || !payload.systemCategories || typeof payload.systemCategories !== 'object') {
+  if (
+    !payload
+    || !Array.isArray(payload.archiveFolders)
+    || !payload.systemCategories
+    || typeof payload.systemCategories !== 'object'
+    || !Array.isArray(payload.extractionFields)
+  ) {
     throw new Error('Ogiltigt svar för arkivstruktur');
   }
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   systemCategoriesDraft = sanitizeSystemCategories(payload.systemCategories);
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+  extractionFieldsDraft = payload.extractionFields.map((field, index) => sanitizeExtractionField(field, index));
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
   renderCategoriesEditor();
   renderSystemCategoryEditor();
+  renderExtractionFieldsEditor();
   updateSettingsActionButtons();
 }
 
@@ -5901,6 +6705,7 @@ async function saveMatchingSettings() {
 async function saveCategories() {
   const normalized = categoriesDraft.map(sanitizeArchiveFolder);
   const normalizedSystemCategories = sanitizeSystemCategories(systemCategoriesDraft);
+  const normalizedExtractionFields = extractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const response = await fetch('/api/save-categories.php', {
     method: 'POST',
     headers: {
@@ -5908,7 +6713,8 @@ async function saveCategories() {
     },
     body: JSON.stringify({
       archiveFolders: normalized,
-      systemCategories: normalizedSystemCategories
+      systemCategories: normalizedSystemCategories,
+      extractionFields: normalizedExtractionFields,
     })
   });
 
@@ -5920,6 +6726,7 @@ async function saveCategories() {
     || !Array.isArray(payload.archiveFolders)
     || !payload.systemCategories
     || typeof payload.systemCategories !== 'object'
+    || !Array.isArray(payload.extractionFields)
   ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
@@ -5929,9 +6736,11 @@ async function saveCategories() {
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   systemCategoriesDraft = sanitizeSystemCategories(payload.systemCategories);
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+  extractionFieldsDraft = payload.extractionFields.map((field, index) => sanitizeExtractionField(field, index));
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
   renderCategoriesEditor();
   renderSystemCategoryEditor();
+  renderExtractionFieldsEditor();
   updateSettingsActionButtons();
   await fetchState({ refreshCategories: true });
 }
@@ -6037,6 +6846,7 @@ function cloneCurrentStateForRollback() {
   return {
     processingJobs: Array.isArray(state.processingJobs) ? state.processingJobs.map((job) => ({ ...job })) : [],
     readyJobs: Array.isArray(state.readyJobs) ? state.readyJobs.map((job) => ({ ...job })) : [],
+    archivedJobs: Array.isArray(state.archivedJobs) ? state.archivedJobs.map((job) => ({ ...job })) : [],
     failedJobs: Array.isArray(state.failedJobs) ? state.failedJobs.map((job) => ({ ...job })) : [],
     clients: state.clients,
     senders: state.senders,
@@ -6136,6 +6946,14 @@ viewModeEl.addEventListener('change', () => {
   setViewMode(viewModeEl.value);
 });
 
+jobListModeEl.addEventListener('change', () => {
+  const nextMode = VALID_JOB_LIST_MODES.has(jobListModeEl.value) ? jobListModeEl.value : 'ready';
+  currentJobListMode = nextMode;
+  jobListModeEl.value = currentJobListMode;
+  renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
+  refreshSelection();
+});
+
 clientSelectEl.addEventListener('change', () => {
   if (clientSelectEl.value === EDIT_CLIENTS_OPTION_VALUE) {
     const selectedJob = state.readyJobs.find((job) => job.id === selectedJobId) || null;
@@ -6149,13 +6967,25 @@ clientSelectEl.addEventListener('change', () => {
     return;
   }
 
-  const value = clientSelectEl.value;
-  if (!value) {
-    selectedClientByJobId.delete(selectedJobId);
+  const selectedJob = findJobById(selectedJobId);
+  if (selectedJob && selectedJob.archived === true) {
+    setClientForJob(selectedJob);
     return;
   }
 
-  selectedClientByJobId.set(selectedJobId, value);
+  const value = clientSelectEl.value;
+  if (!value) {
+    selectedClientByJobId.delete(selectedJobId);
+  } else {
+    selectedClientByJobId.set(selectedJobId, value);
+  }
+  const currentJob = findJobById(selectedJobId);
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+  saveSelectedJobFields(selectedJobId, { selectedClientDirName: value || null }).catch(async (error) => {
+    await fetchState();
+    alert(error.message || 'Kunde inte spara huvudman.');
+  });
 });
 
 senderSelectEl.addEventListener('change', () => {
@@ -6171,13 +7001,25 @@ senderSelectEl.addEventListener('change', () => {
     return;
   }
 
-  const value = senderSelectEl.value;
-  if (!value) {
-    selectedSenderByJobId.delete(selectedJobId);
+  const selectedJob = findJobById(selectedJobId);
+  if (selectedJob && selectedJob.archived === true) {
+    setSenderForJob(selectedJob);
     return;
   }
 
-  selectedSenderByJobId.set(selectedJobId, value);
+  const value = senderSelectEl.value;
+  if (!value) {
+    selectedSenderByJobId.delete(selectedJobId);
+  } else {
+    selectedSenderByJobId.set(selectedJobId, value);
+  }
+  const currentJob = findJobById(selectedJobId);
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+  saveSelectedJobFields(selectedJobId, { selectedSenderId: value || null }).catch(async (error) => {
+    await fetchState();
+    alert(error.message || 'Kunde inte spara avsändare.');
+  });
 });
 
 categorySelectEl.addEventListener('change', () => {
@@ -6193,13 +7035,95 @@ categorySelectEl.addEventListener('change', () => {
     return;
   }
 
-  const value = categorySelectEl.value;
-  if (!value) {
-    selectedCategoryByJobId.delete(selectedJobId);
+  const selectedJob = findJobById(selectedJobId);
+  if (selectedJob && selectedJob.archived === true) {
+    setCategoryForJob(selectedJob);
     return;
   }
 
-  selectedCategoryByJobId.set(selectedJobId, value);
+  const value = categorySelectEl.value;
+  if (!value) {
+    selectedCategoryByJobId.delete(selectedJobId);
+  } else {
+    selectedCategoryByJobId.set(selectedJobId, value);
+  }
+  const currentJob = findJobById(selectedJobId);
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+  saveSelectedJobFields(selectedJobId, { selectedCategoryId: value || null }).catch(async (error) => {
+    await fetchState();
+    alert(error.message || 'Kunde inte spara kategori.');
+  });
+});
+
+filenameInputEl.addEventListener('input', () => {
+  if (!selectedJobId) {
+    return;
+  }
+  const currentJob = findJobById(selectedJobId);
+  if (!currentJob || currentJob.archived === true) {
+    syncFilenameField(currentJob);
+    return;
+  }
+
+  const value = filenameInputEl.value;
+  if (!value.trim()) {
+    filenameByJobId.delete(selectedJobId);
+  } else {
+    filenameByJobId.set(selectedJobId, value);
+  }
+  updateArchiveAction(currentJob);
+  scheduleFilenameSave(selectedJobId, value);
+});
+
+filenameInputEl.addEventListener('focus', () => {
+  filenameInputEl.select();
+});
+
+archiveActionEl.addEventListener('click', async () => {
+  const selectedJob = findJobById(selectedJobId);
+  if (!selectedJob) {
+    return;
+  }
+
+  const action = selectedJob.archived === true ? 'restore' : 'archive';
+  const filenameTimer = filenameSaveTimerByJobId.get(selectedJob.id);
+  if (filenameTimer) {
+    window.clearTimeout(filenameTimer);
+    filenameSaveTimerByJobId.delete(selectedJob.id);
+  }
+  archiveActionEl.disabled = true;
+  try {
+    const response = await fetch('/api/archive-job.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        jobId: selectedJob.id,
+        action,
+        selectedClientDirName: effectiveClientDirName(selectedJob) || null,
+        selectedSenderId: effectiveSenderId(selectedJob) || null,
+        selectedCategoryId: effectiveCategoryId(selectedJob) || null,
+        filename: filenameInputEl.value || displayedFilenameForJob(selectedJob),
+      })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) {
+      const message = payload && typeof payload.error === 'string'
+        ? payload.error
+        : (action === 'restore' ? 'Kunde inte återställa jobbet.' : 'Kunde inte arkivera jobbet.');
+      throw new Error(message);
+    }
+
+    filenameByJobId.delete(selectedJob.id);
+    await fetchState();
+  } catch (error) {
+    await fetchState();
+    alert(error.message || 'Kunde inte uppdatera arkiveringen.');
+  } finally {
+    updateArchiveAction(findJobById(selectedJobId));
+  }
 });
 
 settingsButtonEl.addEventListener('click', async () => {
@@ -6265,9 +7189,16 @@ settingsTabEls.forEach((tabButton) => {
         alert('Kunde inte ladda arkivstruktur.');
         categoriesDraft = [];
         systemCategoriesDraft = createDefaultSystemCategories();
-        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+        extractionFieldsDraft = [];
+        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
         renderCategoriesEditor();
         renderSystemCategoryEditor();
+        renderExtractionFieldsEditor();
+      } else if (tabId === 'data-fields') {
+        alert('Kunde inte ladda datafält.');
+        extractionFieldsDraft = [];
+        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
+        renderExtractionFieldsEditor();
       } else if (tabId === 'paths') {
         alert('Kunde inte ladda sökvägsinställningar.');
         pathsBaselineValue = normalizedPathValue(outputBasePathEl ? outputBasePathEl.value : '');
@@ -6462,7 +7393,7 @@ async function fetchState(options = {}) {
     }
 
     const nextState = await response.json();
-    if (!nextState || !Array.isArray(nextState.readyJobs)) {
+    if (!nextState || !Array.isArray(nextState.readyJobs) || !Array.isArray(nextState.archivedJobs)) {
       throw new Error('Ogiltigt statussvar');
     }
 
@@ -6474,6 +7405,7 @@ async function fetchState(options = {}) {
     applyState({
       processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : [],
       readyJobs: nextState.readyJobs,
+      archivedJobs: nextState.archivedJobs,
       failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : [],
       clients: includeClients && Array.isArray(nextState.clients) ? nextState.clients : undefined,
       senders: includeSenders && Array.isArray(nextState.senders) ? nextState.senders : undefined,
@@ -6587,6 +7519,7 @@ function startStateStream() {
         !nextState
         || !Array.isArray(nextState.processingJobs)
         || !Array.isArray(nextState.readyJobs)
+        || !Array.isArray(nextState.archivedJobs)
         || !Array.isArray(nextState.failedJobs)
       ) {
         return;
@@ -6599,6 +7532,7 @@ function startStateStream() {
       applyState({
         processingJobs: nextState.processingJobs,
         readyJobs: nextState.readyJobs,
+        archivedJobs: nextState.archivedJobs,
         failedJobs: nextState.failedJobs
       });
     } catch (error) {

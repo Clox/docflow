@@ -28,12 +28,19 @@ try {
 
     $jobDir = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $id;
     $preferredPdf = ($variant === 'source' ? 'source.pdf' : 'review.pdf');
-    $pdfPath = $jobDir . DIRECTORY_SEPARATOR . $preferredPdf;
-    if (!is_file($pdfPath)) {
+    if ($preferredPdf === 'review.pdf') {
+        $pdfPath = job_review_pdf_path($config, $id);
+    } else {
+        $pdfPath = $jobDir . DIRECTORY_SEPARATOR . 'source.pdf';
+    }
+    if (!is_string($pdfPath) || !is_file($pdfPath)) {
         $fallbackPdf = $jobDir . DIRECTORY_SEPARATOR . ($preferredPdf === 'review.pdf' ? 'source.pdf' : 'review.pdf');
+        if ($preferredPdf === 'source' && !is_file($fallbackPdf)) {
+            $fallbackPdf = job_review_pdf_path($config, $id);
+        }
         $pdfPath = is_file($fallbackPdf) ? $fallbackPdf : $pdfPath;
     }
-    if (!is_file($pdfPath)) {
+    if (!is_string($pdfPath) || !is_file($pdfPath)) {
         http_response_code(404);
         exit;
     }

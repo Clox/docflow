@@ -11,9 +11,9 @@ if (!is_string($id) || !is_valid_job_id($id)) {
     exit;
 }
 
-$reviewPath = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $id . DIRECTORY_SEPARATOR . 'review.pdf';
+$reviewPath = job_review_pdf_path($config, $id);
 
-if (!is_file($reviewPath)) {
+if (!is_string($reviewPath) || !is_file($reviewPath)) {
     http_response_code(404);
     exit;
 }

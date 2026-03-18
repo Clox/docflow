@@ -44,6 +44,22 @@ body {
   gap: 10px;
 }
 
+.sidebar-title-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+#job-list-mode {
+  min-width: 116px;
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+}
+
 .job-list {
   list-style: none;
   margin: 0;
@@ -90,6 +106,14 @@ body {
 .job-item.failed.selected {
   background: #fde2e2;
   border-color: #e8b4b4;
+}
+
+.job-item.is-archived {
+  background: #eef6ee;
+}
+
+.job-item.is-archived.selected {
+  background: #dcefdc;
 }
 
 .job-item.failed {
@@ -231,6 +255,11 @@ body {
   gap: 12px;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.field-group-filename {
+  min-width: min(420px, 40vw);
+  flex: 1 1 320px;
 }
 
 .title {
@@ -522,6 +551,35 @@ body {
   border: 1px solid #ccc;
   border-radius: 4px;
   background: #fff;
+}
+
+#filename-input {
+  width: 100%;
+  min-width: 280px;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+}
+
+#archive-action {
+  font: inherit;
+  padding: 6px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+}
+
+#archive-action:hover {
+  background: #f8fafc;
+}
+
+#archive-action:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 #view-mode {
@@ -1893,6 +1951,10 @@ body {
   align-items: start;
 }
 
+.category-fields--wide {
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.2fr) minmax(150px, 1fr) auto;
+}
+
 .category-fields input,
 .rule-fields select,
 .rule-fields input[type="text"],
@@ -1962,6 +2024,89 @@ body {
 .categories-actions button:hover,
 .folder-actions button:hover {
   background: #ebebeb;
+}
+
+.filename-template-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 10px 22px;
+}
+
+.filename-template-editor.is-nested {
+  margin: 8px 0 0;
+}
+
+.filename-template-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filename-template-chip {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  cursor: pointer;
+}
+
+.filename-template-chip--base {
+  background: #eef4ff;
+  border-color: #bfd3ff;
+}
+
+.filename-template-chip--extraction {
+  background: #eefcf4;
+  border-color: #b8e6c5;
+}
+
+.filename-template-chip--special {
+  background: #fff4e7;
+  border-color: #f2d1a9;
+}
+
+.filename-template-chip--text {
+  background: #f4f4f5;
+  border-color: #d4d4d8;
+}
+
+.filename-template-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filename-template-part {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px;
+}
+
+.filename-template-part-controls {
+  display: grid;
+  grid-template-columns: minmax(120px, 150px) minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.filename-template-part-controls--text {
+  grid-template-columns: minmax(120px, 150px) minmax(220px, 1fr) auto;
+}
+
+.filename-template-part-controls--container {
+  grid-template-columns: minmax(160px, 220px) auto;
+}
+
+.filename-template-section {
+  margin-top: 8px;
+}
+
+.filename-template-section-label {
+  margin-bottom: 6px;
 }
 
 .categories-actions {
