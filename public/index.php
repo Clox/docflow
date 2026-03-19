@@ -105,10 +105,21 @@
               <button id="ocr-zoom-in" type="button" aria-label="Zooma in">+</button>
             </div>
           </div>
-          <label id="ocr-page-image-toggle" class="ocr-page-image-toggle hidden" for="ocr-show-page-image">
-            <input id="ocr-show-page-image" type="checkbox">
-            <span>Visa PDF-bakgrund</span>
-          </label>
+          <div id="ocr-page-image-controls" class="ocr-page-image-controls hidden">
+            <label id="ocr-page-image-toggle" class="ocr-page-image-toggle" for="ocr-show-page-image">
+              <input id="ocr-show-page-image" type="checkbox">
+              <span>Visa PDF-bakgrund</span>
+            </label>
+            <input
+              id="ocr-page-image-opacity"
+              class="ocr-page-image-opacity"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value="100"
+              aria-label="Opacitet för PDF-bakgrund">
+          </div>
           <div id="ocr-search-bar" class="ocr-search-bar hidden">
             <input id="ocr-search-input" type="text" placeholder="Sök i OCR">
             <label class="ocr-search-toggle" for="ocr-search-regex">

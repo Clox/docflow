@@ -12,8 +12,10 @@ const ocrPageTotalEl = document.getElementById('ocr-page-total');
 const ocrZoomOutEl = document.getElementById('ocr-zoom-out');
 const ocrZoomInputEl = document.getElementById('ocr-zoom-input');
 const ocrZoomInEl = document.getElementById('ocr-zoom-in');
+const ocrPageImageControlsEl = document.getElementById('ocr-page-image-controls');
 const ocrPageImageToggleEl = document.getElementById('ocr-page-image-toggle');
 const ocrShowPageImageEl = document.getElementById('ocr-show-page-image');
+const ocrPageImageOpacityEl = document.getElementById('ocr-page-image-opacity');
 const matchesViewEl = document.getElementById('matches-view');
 const metaViewEl = document.getElementById('meta-view');
 const viewModeEl = document.getElementById('view-mode');
@@ -175,6 +177,7 @@ let currentOcrSource = 'merged';
 let currentOcrZoom = 100;
 let currentOcrDocumentMode = 'text';
 let ocrShowPageImage = false;
+let ocrPageImageOpacity = 1;
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
 let ocrSearchActiveIndex = -1;
@@ -1967,10 +1970,21 @@ function setOcrControlsVisible(visible) {
 }
 
 function setOcrPageImageToggleVisible(visible) {
-  if (!ocrPageImageToggleEl) {
+  if (!ocrPageImageControlsEl) {
     return;
   }
-  ocrPageImageToggleEl.classList.toggle('hidden', !visible);
+  ocrPageImageControlsEl.classList.toggle('hidden', !visible);
+}
+
+function updateOcrPageImageControls() {
+  if (ocrShowPageImageEl) {
+    ocrShowPageImageEl.checked = ocrShowPageImage;
+  }
+  if (ocrPageImageOpacityEl) {
+    ocrPageImageOpacityEl.disabled = !ocrShowPageImage;
+    ocrPageImageOpacityEl.value = String(Math.round(ocrPageImageOpacity * 100));
+  }
+  ocrPagesViewEl.style.setProperty('--ocr-page-image-opacity', String(ocrPageImageOpacity));
 }
 
 function setActiveOcrSource(source, options = {}) {
@@ -2114,6 +2128,7 @@ function appendOcrPageImage(wrapperEl, pageNumber) {
 function applyOcrZoom() {
   const scale = currentOcrZoom / 100;
   ocrPagesViewEl.style.setProperty('--ocr-page-scale', String(scale));
+  updateOcrPageImageControls();
   renderOcrPages();
   updateOcrPageControls();
 }
@@ -8092,9 +8107,20 @@ selectedJobReprocessEl.addEventListener('click', async () => {
 if (ocrShowPageImageEl) {
   ocrShowPageImageEl.addEventListener('change', () => {
     ocrShowPageImage = ocrShowPageImageEl.checked;
+    updateOcrPageImageControls();
     if (currentViewMode === 'ocr') {
       rerenderOcrPagesPreservingScroll();
     }
+  });
+}
+
+if (ocrPageImageOpacityEl) {
+  ocrPageImageOpacityEl.addEventListener('input', () => {
+    const nextValue = Number.parseInt(ocrPageImageOpacityEl.value, 10);
+    ocrPageImageOpacity = Number.isFinite(nextValue)
+      ? Math.max(0, Math.min(100, nextValue)) / 100
+      : 1;
+    updateOcrPageImageControls();
   });
 }
 
@@ -8408,6 +8434,7 @@ function syncStateUpdateTransport() {
 updateSettingsActionButtons();
 renderJbig2Status(null);
 renderOcrProcessingCommand();
+updateOcrPageImageControls();
 applyOcrZoom();
 setActiveOcrSource(currentOcrSource, { reload: false });
 applyHashState();
