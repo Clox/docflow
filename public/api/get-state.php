@@ -8,23 +8,36 @@ try {
     $includeClients = array_key_exists('includeClients', $_GET);
     $includeSenders = array_key_exists('includeSenders', $_GET);
     $includeCategories = array_key_exists('includeCategories', $_GET);
+    $hasAfterEventId = array_key_exists('afterEventId', $_GET);
+    $afterEventId = filter_var($_GET['afterEventId'] ?? null, FILTER_VALIDATE_INT);
+    if ($afterEventId === false || $afterEventId === null || $afterEventId < 0) {
+        $afterEventId = 0;
+    }
 
-    $jobsPayload = build_jobs_state_payload($config);
-    $encodedJobsPayload = encode_jobs_state_payload($jobsPayload);
-    $jobsSig = jobs_state_signature($encodedJobsPayload);
+    if (!$includeClients && !$includeSenders && !$includeCategories && $hasAfterEventId) {
+        $events = read_job_events_since($afterEventId);
+        if (count($events) === 0) {
+            http_response_code(204);
+            exit;
+        }
 
-    $requestedJobsSig = is_string($_GET['jobsSig'] ?? null) ? trim((string) $_GET['jobsSig']) : '';
-    if (
-        !$includeClients
-        && !$includeSenders
-        && !$includeCategories
-        && $requestedJobsSig !== ''
-        && hash_equals($jobsSig, $requestedJobsSig)
-    ) {
-        http_response_code(204);
+        $lastEventId = $afterEventId;
+        foreach ($events as $event) {
+            $eventId = isset($event['id']) ? (int) $event['id'] : 0;
+            if ($eventId > $lastEventId) {
+                $lastEventId = $eventId;
+            }
+        }
+
+        json_response([
+            'events' => $events,
+            'lastEventId' => $lastEventId,
+            'stateUpdateTransport' => (string) $config['stateUpdateTransport'],
+        ]);
         exit;
     }
 
+    $jobsPayload = build_jobs_state_payload($config);
     $clients = $includeClients ? load_clients() : [];
     $senders = $includeSenders ? load_senders() : [];
     $categories = $includeCategories ? load_categories() : [];
@@ -34,7 +47,7 @@ try {
         'readyJobs' => $jobsPayload['readyJobs'],
         'archivedJobs' => $jobsPayload['archivedJobs'],
         'failedJobs' => $jobsPayload['failedJobs'],
-        'jobsSig' => $jobsSig,
+        'lastEventId' => latest_job_event_id(),
         'stateUpdateTransport' => (string) $config['stateUpdateTransport'],
     ];
     if ($includeClients) {
@@ -54,7 +67,7 @@ try {
         'readyJobs' => [],
         'archivedJobs' => [],
         'failedJobs' => [],
-        'jobsSig' => '',
+        'lastEventId' => 0,
         'stateUpdateTransport' => 'polling',
         'error' => $e->getMessage(),
     ], 500);

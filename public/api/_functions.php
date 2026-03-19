@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 
+const DOCFLOW_OCR_VERSION = 1;
+const DOCFLOW_OCR_METADATA_KEY = 'docflow-ocr-version';
+
 function json_response(array $payload, int $status = 200): void
 {
     http_response_code($status);
@@ -11,6 +14,11 @@ function json_response(array $payload, int $status = 200): void
 function now_iso(): string
 {
     return date(DATE_ATOM);
+}
+
+function docflow_ocr_version(): int
+{
+    return DOCFLOW_OCR_VERSION;
 }
 
 function config_file_path(): string
@@ -582,10 +590,38 @@ function normalize_extraction_fields(mixed $input): array
 
 function load_extraction_fields(): array
 {
-    $structure = load_archive_structure_data();
-    return is_array($structure['extractionFields'] ?? null)
-        ? $structure['extractionFields']
-        : [];
+    $data = load_extraction_fields_data();
+    return is_array($data['fields'] ?? null) ? $data['fields'] : [];
+}
+
+function load_extraction_fields_data(): array
+{
+    $fieldsPath = DATA_DIR . '/extraction-fields.json';
+    if (is_file($fieldsPath)) {
+        $decoded = load_json_file($fieldsPath);
+        $fields = normalize_extraction_fields(is_array($decoded) ? ($decoded['fields'] ?? $decoded) : []);
+        $normalized = ['fields' => $fields];
+        if ($decoded !== $normalized) {
+            try {
+                write_json_file($fieldsPath, $normalized);
+            } catch (Throwable $ignored) {
+                // Keep runtime resilient if file cannot be updated right now.
+            }
+        }
+        return $normalized;
+    }
+
+    $legacyStructure = load_json_file(DATA_DIR . '/archive-structure.json');
+    $legacyFields = normalize_extraction_fields(
+        is_array($legacyStructure) ? ($legacyStructure['extractionFields'] ?? []) : []
+    );
+    $normalized = ['fields' => $legacyFields];
+    try {
+        write_json_file($fieldsPath, $normalized);
+    } catch (Throwable $ignored) {
+        // Keep runtime resilient if file cannot be created right now.
+    }
+    return $normalized;
 }
 
 function normalize_system_archive_category_with_defaults(mixed $input, array $defaults): array
@@ -758,16 +794,13 @@ function normalize_archive_structure_data(mixed $input): array
 
     $rawArchiveFolders = is_array($decoded['archiveFolders'] ?? null) ? $decoded['archiveFolders'] : [];
     $rawSystemCategories = is_array($decoded['systemCategories'] ?? null) ? $decoded['systemCategories'] : [];
-    $rawExtractionFields = is_array($decoded['extractionFields'] ?? null) ? $decoded['extractionFields'] : [];
 
     $archiveFolders = normalize_archive_structure($rawArchiveFolders);
     $systemCategories = normalize_system_archive_categories($rawSystemCategories);
-    $extractionFields = normalize_extraction_fields($rawExtractionFields);
 
     return [
         'archiveFolders' => $archiveFolders,
         'systemCategories' => $systemCategories,
-        'extractionFields' => $extractionFields,
     ];
 }
 
@@ -1173,6 +1206,7 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
 
     $job['updatedAt'] = now_iso();
     write_json_file($jobPath, $job);
+    queue_job_upsert_event($config, $jobId);
     return $job;
 }
 
@@ -1210,6 +1244,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
         $job['updatedAt'] = now_iso();
         unset($job['archivedAt'], $job['archivedPdfPath']);
         write_json_file($jobPath, $job);
+        queue_job_upsert_event($config, $jobId);
         return $job;
     }
 
@@ -1288,6 +1323,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $job['archivedPdfPath'] = $targetPath;
     $job['updatedAt'] = now_iso();
     write_json_file($jobPath, $job);
+    queue_job_upsert_event($config, $jobId);
 
     return $job;
 }
@@ -1443,6 +1479,88 @@ function python_command_path(): ?string
     $python = trim((string) shell_exec('command -v python 2>/dev/null'));
     $cached = $python !== '' ? $python : null;
     return $cached;
+}
+
+function pdf_docflow_ocr_version(string $pdfPath): ?int
+{
+    $python = python_command_path();
+    $scriptPath = docflow_pdf_metadata_script_path();
+    if ($python === null || $scriptPath === null || !is_file($pdfPath)) {
+        return null;
+    }
+
+    $command = escapeshellarg($python)
+        . ' '
+        . escapeshellarg($scriptPath)
+        . ' read '
+        . escapeshellarg($pdfPath)
+        . ' '
+        . escapeshellarg(DOCFLOW_OCR_METADATA_KEY)
+        . ' 2>/dev/null';
+    $output = shell_exec($command);
+    if (!is_string($output) || trim($output) === '') {
+        return null;
+    }
+
+    $payload = json_decode($output, true);
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    $value = $payload['value'] ?? null;
+    if (!is_string($value) && !is_int($value) && !is_float($value)) {
+        return null;
+    }
+
+    $parsed = filter_var($value, FILTER_VALIDATE_INT);
+    if ($parsed === false || (int) $parsed <= 0) {
+        return null;
+    }
+
+    return (int) $parsed;
+}
+
+function write_pdf_docflow_ocr_version(string $pdfPath, ?int $version): bool
+{
+    $python = python_command_path();
+    $scriptPath = docflow_pdf_metadata_script_path();
+    if ($python === null || $scriptPath === null || !is_file($pdfPath)) {
+        return false;
+    }
+
+    $command = escapeshellarg($python)
+        . ' '
+        . escapeshellarg($scriptPath)
+        . ' ';
+    if (is_int($version) && $version > 0) {
+        $command .= 'write '
+            . escapeshellarg($pdfPath)
+            . ' '
+            . escapeshellarg(DOCFLOW_OCR_METADATA_KEY)
+            . ' '
+            . escapeshellarg((string) $version);
+    } else {
+        $command .= 'remove '
+            . escapeshellarg($pdfPath)
+            . ' '
+            . escapeshellarg(DOCFLOW_OCR_METADATA_KEY);
+    }
+    $command .= ' 2>&1';
+
+    $output = [];
+    $exitCode = 0;
+    exec($command, $output, $exitCode);
+    return $exitCode === 0;
+}
+
+function job_docflow_ocr_version(array $job): ?int
+{
+    $value = $job[DOCFLOW_OCR_METADATA_KEY] ?? null;
+    $parsed = filter_var($value, FILTER_VALIDATE_INT);
+    if ($parsed === false || (int) $parsed <= 0) {
+        return null;
+    }
+    return (int) $parsed;
 }
 
 function python_status_payload(): array
@@ -1622,6 +1740,12 @@ function rapidocr_runtime_python_path(): ?string
 function docflow_ocrmypdf_plugin_path(): ?string
 {
     $path = PROJECT_ROOT . '/docflow-ocrmypdf-plugin/docflow_ocrmypdf_plugin.py';
+    return is_file($path) ? $path : null;
+}
+
+function docflow_pdf_metadata_script_path(): ?string
+{
+    $path = PROJECT_ROOT . '/docflow-ocrmypdf-plugin/docflow_pdf_metadata.py';
     return is_file($path) ? $path : null;
 }
 
@@ -5270,6 +5394,8 @@ function process_claimed_job(
     $sourceHadExtractableText = false;
     $ocrUsedExistingText = false;
     $textSourcePdfPath = $sourcePdfPath;
+    $sourceDocflowOcrVersion = pdf_docflow_ocr_version($sourcePdfPath);
+    $resolvedDocflowOcrVersion = $sourceDocflowOcrVersion;
     if ($runOcr) {
         foreach (glob($jobDir . '/tesseract_page_*.json') ?: [] as $path) {
             @unlink($path);
@@ -5324,6 +5450,30 @@ function process_claimed_job(
         }
 
         $textSourcePdfPath = $ocrProcessedPdf ? $reviewPdfPath : $sourcePdfPath;
+        if (is_file($reviewPdfPath)) {
+            if ($ocrProcessedPdf && !$ocrUsedExistingText) {
+                $candidateVersion = docflow_ocr_version();
+                if (write_pdf_docflow_ocr_version($reviewPdfPath, $candidateVersion)) {
+                    $resolvedDocflowOcrVersion = $candidateVersion;
+                } else {
+                    $resolvedDocflowOcrVersion = pdf_docflow_ocr_version($reviewPdfPath);
+                }
+            } else {
+                $resolvedDocflowOcrVersion = pdf_docflow_ocr_version($reviewPdfPath);
+                if ($resolvedDocflowOcrVersion === null) {
+                    if (write_pdf_docflow_ocr_version($reviewPdfPath, $sourceDocflowOcrVersion)) {
+                        $resolvedDocflowOcrVersion = $sourceDocflowOcrVersion;
+                    }
+                }
+            }
+            if (
+                $ocrProcessedPdf
+                && !$ocrUsedExistingText
+                && $resolvedDocflowOcrVersion !== null
+            ) {
+                write_pdf_docflow_ocr_version($sourcePdfPath, (int) $resolvedDocflowOcrVersion);
+            }
+        }
         regenerate_debug_text_files_from_json($jobDir, 'tesseract');
         regenerate_debug_text_files_from_json($jobDir, 'rapidocr');
         write_merged_object_debug_files_from_rapidocr($jobDir);
@@ -5332,6 +5482,7 @@ function process_claimed_job(
             throw new RuntimeException('Missing review.pdf');
         }
         $textSourcePdfPath = $reviewPdfPath;
+        $resolvedDocflowOcrVersion = pdf_docflow_ocr_version($reviewPdfPath);
     }
 
     $ocrText = '';
@@ -5447,6 +5598,7 @@ function process_claimed_job(
             'usedExistingText' => $ocrUsedExistingText,
             'textSourcePdf' => basename($textSourcePdfPath),
         ],
+        'docflowOcrVersion' => $resolvedDocflowOcrVersion,
     ];
 }
 
@@ -5508,13 +5660,20 @@ function claim_and_process_inbox(array $config, array $clients): void
                 throw new RuntimeException('Could not claim inbox PDF');
             }
 
+            $sourceDocflowOcrVersion = pdf_docflow_ocr_version($sourcePdfPath);
+            if (is_int($sourceDocflowOcrVersion) && $sourceDocflowOcrVersion > 0) {
+                $jobData[DOCFLOW_OCR_METADATA_KEY] = $sourceDocflowOcrVersion;
+            }
+
             write_json_file($jobDir . '/job.json', $jobData);
+            queue_job_upsert_event($config, $jobId);
         } catch (Throwable $e) {
             $jobData['status'] = 'failed';
             $jobData['updatedAt'] = now_iso();
             $jobData['error'] = $e->getMessage();
             try {
                 write_json_file($jobDir . '/job.json', $jobData);
+                queue_job_upsert_event($config, $jobId);
             } catch (Throwable $ignored) {
                 // Ignore secondary failure while writing failed state.
             }
@@ -5636,17 +5795,25 @@ function process_job_by_id(
         if (is_array($ocr) && ($reprocessMode !== 'post-ocr' || !is_array($jobData['ocr'] ?? null))) {
             $jobData['ocr'] = $ocr;
         }
+        $resolvedDocflowOcrVersion = filter_var($result['docflowOcrVersion'] ?? null, FILTER_VALIDATE_INT);
+        if ($resolvedDocflowOcrVersion !== false && (int) $resolvedDocflowOcrVersion > 0) {
+            $jobData[DOCFLOW_OCR_METADATA_KEY] = (int) $resolvedDocflowOcrVersion;
+        } else {
+            unset($jobData[DOCFLOW_OCR_METADATA_KEY]);
+        }
 
         $jobData['status'] = 'ready';
         $jobData['updatedAt'] = now_iso();
         unset($jobData['error'], $jobData['reprocessMode'], $jobData['forceOcr']);
         write_json_file($jobJsonPath, $jobData);
+        queue_job_upsert_event($config, $jobId);
     } catch (Throwable $e) {
         $jobData['status'] = 'failed';
         $jobData['updatedAt'] = now_iso();
         $jobData['error'] = $e->getMessage();
         unset($jobData['reprocessMode'], $jobData['forceOcr']);
         write_json_file($jobJsonPath, $jobData);
+        queue_job_upsert_event($config, $jobId);
     }
 }
 
@@ -5807,10 +5974,8 @@ function ensure_job_dispatcher_running(array $config): void
     start_job_dispatcher();
 }
 
-function read_jobs_state(array $config): array
+function build_job_state_category_indexes(): array
 {
-    $jobsDir = $config['jobsDirectory'];
-    ensure_directory($jobsDir);
     $categories = load_categories();
     $categoryOrderById = [];
     $categoryNameById = [];
@@ -5821,12 +5986,368 @@ function read_jobs_state(array $config): array
 
         $id = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
         $order = is_int($index) ? $index : 999999;
-
         if ($id !== '' && !isset($categoryOrderById[$id])) {
             $categoryOrderById[$id] = $order;
             $categoryNameById[$id] = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
         }
     }
+
+    return [$categoryOrderById, $categoryNameById];
+}
+
+function build_job_state_entry(
+    array $config,
+    string $jobDir,
+    array $job,
+    array $categoryOrderById,
+    array $categoryNameById
+): ?array {
+    $status = $job['status'] ?? '';
+    if ($status !== 'ready' && $status !== 'processing' && $status !== 'failed') {
+        return null;
+    }
+
+    $entry = basename($jobDir);
+    $id = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+    if ($id === '') {
+        $id = $entry;
+    }
+    $originalFilename = is_string($job['originalFilename'] ?? null) ? $job['originalFilename'] : 'unknown.pdf';
+    $createdAt = is_string($job['createdAt'] ?? null) ? $job['createdAt'] : '';
+    $updatedAt = is_string($job['updatedAt'] ?? null) ? $job['updatedAt'] : $createdAt;
+    $hasReviewPdf = job_review_pdf_path($config, $id, $job) !== null;
+    $hasSourcePdf = is_file($jobDir . '/source.pdf');
+    $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
+    $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null)
+        ? trim((string) $job['selectedClientDirName'])
+        : null;
+    $selectedSenderId = isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : null;
+    if ($selectedSenderId !== null && $selectedSenderId < 1) {
+        $selectedSenderId = null;
+    }
+    $selectedCategoryId = is_string($job['selectedCategoryId'] ?? null)
+        ? trim((string) $job['selectedCategoryId'])
+        : null;
+    $filename = is_string($job['filename'] ?? null)
+        ? trim((string) $job['filename'])
+        : null;
+    $isArchived = ($job['archived'] ?? false) === true;
+    $archivedAt = is_string($job['archivedAt'] ?? null) ? trim((string) $job['archivedAt']) : null;
+    $archivedPdfPath = is_string($job['archivedPdfPath'] ?? null) ? trim((string) $job['archivedPdfPath']) : null;
+
+    if ($status === 'processing') {
+        return [
+            'list' => 'processingJobs',
+            'job' => [
+                'id' => $id,
+                'originalFilename' => $originalFilename,
+                'status' => 'processing',
+                'createdAt' => $createdAt,
+                'updatedAt' => $updatedAt,
+                'hasReviewPdf' => $hasReviewPdf,
+                'hasSourcePdf' => $hasSourcePdf,
+                'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
+                'analysis' => $analysis,
+                'selectedClientDirName' => $selectedClientDirName,
+                'selectedSenderId' => $selectedSenderId,
+                'selectedCategoryId' => $selectedCategoryId,
+                'filename' => $filename,
+                'archived' => $isArchived,
+                'archivedAt' => $archivedAt,
+                'archivedPdfPath' => $archivedPdfPath,
+            ],
+        ];
+    }
+
+    if ($status === 'failed') {
+        return [
+            'list' => 'failedJobs',
+            'job' => [
+                'id' => $id,
+                'originalFilename' => $originalFilename,
+                'status' => 'failed',
+                'createdAt' => $createdAt,
+                'updatedAt' => $updatedAt,
+                'hasReviewPdf' => $hasReviewPdf,
+                'hasSourcePdf' => $hasSourcePdf,
+                'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
+                'analysis' => $analysis,
+                'selectedClientDirName' => $selectedClientDirName,
+                'selectedSenderId' => $selectedSenderId,
+                'selectedCategoryId' => $selectedCategoryId,
+                'filename' => $filename,
+                'archived' => $isArchived,
+                'archivedAt' => $archivedAt,
+                'archivedPdfPath' => $archivedPdfPath,
+                'error' => is_string($job['error'] ?? null) ? $job['error'] : null,
+            ],
+        ];
+    }
+
+    $matchedClientDirName = null;
+    $matchedSenderId = null;
+    $topMatchedCategoryId = null;
+    $topMatchedCategoryName = null;
+    $topMatchedCategoryScore = null;
+    $extracted = load_json_file($jobDir . '/extracted.json');
+
+    $preselectedClient = is_array($analysis['preselectedClient'] ?? null)
+        ? $analysis['preselectedClient']
+        : null;
+    if (is_array($preselectedClient) && is_string($preselectedClient['dirName'] ?? null)) {
+        $value = trim((string) $preselectedClient['dirName']);
+        if ($value !== '') {
+            $matchedClientDirName = $value;
+        }
+    } elseif (is_array($extracted) && array_key_exists('matchedClientDirName', $extracted)) {
+        $value = $extracted['matchedClientDirName'];
+        if (is_string($value) || $value === null) {
+            $matchedClientDirName = $value;
+        }
+    }
+
+    $preselectedSender = is_array($analysis['preselectedSender'] ?? null)
+        ? $analysis['preselectedSender']
+        : null;
+    if (is_array($preselectedSender) && isset($preselectedSender['id'])) {
+        $senderId = (int) $preselectedSender['id'];
+        if ($senderId > 0) {
+            $matchedSenderId = $senderId;
+        }
+    } elseif (is_array($extracted) && is_array($extracted['senderLookup'] ?? null)) {
+        $senderLookup = $extracted['senderLookup'];
+        $sender = is_array($senderLookup['sender'] ?? null) ? $senderLookup['sender'] : null;
+        $senderId = is_array($sender) && isset($sender['id']) ? (int) $sender['id'] : 0;
+        if ($senderId > 0) {
+            $matchedSenderId = $senderId;
+        }
+    }
+
+    if (is_array($extracted) && isset($extracted['categoryMatches']) && is_array($extracted['categoryMatches'])) {
+        $bestOrder = 999999;
+        foreach ($extracted['categoryMatches'] as $categoryMatch) {
+            if (!is_array($categoryMatch)) {
+                continue;
+            }
+
+            $categoryId = is_string($categoryMatch['id'] ?? null) ? trim((string) $categoryMatch['id']) : '';
+            $score = $categoryMatch['score'] ?? null;
+            $numericScore = is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))
+                ? (float) $score
+                : null;
+
+            if ($categoryId === '' || $numericScore === null || $numericScore <= 0) {
+                continue;
+            }
+
+            $order = isset($categoryOrderById[$categoryId]) ? (int) $categoryOrderById[$categoryId] : 999999;
+            $resolvedName = isset($categoryNameById[$categoryId]) ? (string) $categoryNameById[$categoryId] : '';
+            if ($topMatchedCategoryScore === null || $numericScore > $topMatchedCategoryScore) {
+                $topMatchedCategoryId = $categoryId;
+                $topMatchedCategoryName = $resolvedName;
+                $topMatchedCategoryScore = $numericScore;
+                $bestOrder = $order;
+                continue;
+            }
+            if ($numericScore === $topMatchedCategoryScore && $order < $bestOrder) {
+                $topMatchedCategoryId = $categoryId;
+                $topMatchedCategoryName = $resolvedName;
+                $topMatchedCategoryScore = $numericScore;
+                $bestOrder = $order;
+            }
+        }
+    }
+
+    $readyPayload = [
+        'id' => $id,
+        'originalFilename' => $originalFilename,
+        'status' => 'ready',
+        'createdAt' => $createdAt,
+        'updatedAt' => $updatedAt,
+        'hasReviewPdf' => $hasReviewPdf,
+        'hasSourcePdf' => $hasSourcePdf,
+        'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
+        'analysis' => $analysis,
+        'matchedClientDirName' => $matchedClientDirName,
+        'matchedSenderId' => $matchedSenderId,
+        'topMatchedCategoryId' => $topMatchedCategoryId,
+        'topMatchedCategoryName' => $topMatchedCategoryName,
+        'topMatchedCategoryScore' => $topMatchedCategoryScore,
+        'selectedClientDirName' => $selectedClientDirName,
+        'selectedSenderId' => $selectedSenderId,
+        'selectedCategoryId' => $selectedCategoryId,
+        'filename' => $filename,
+        'archived' => $isArchived,
+        'archivedAt' => $archivedAt,
+        'archivedPdfPath' => $archivedPdfPath,
+    ];
+
+    return [
+        'list' => $isArchived ? 'archivedJobs' : 'readyJobs',
+        'job' => $readyPayload,
+    ];
+}
+
+function load_job_state_entry_by_id(array $config, string $jobId): ?array
+{
+    if (!is_valid_job_id($jobId)) {
+        return null;
+    }
+    $jobDir = $config['jobsDirectory'] . DIRECTORY_SEPARATOR . $jobId;
+    if (!is_dir($jobDir)) {
+        return null;
+    }
+    $job = load_json_file($jobDir . '/job.json');
+    if (!is_array($job)) {
+        return null;
+    }
+    [$categoryOrderById, $categoryNameById] = build_job_state_category_indexes();
+    return build_job_state_entry($config, $jobDir, $job, $categoryOrderById, $categoryNameById);
+}
+
+function job_events_log_path(): string
+{
+    return DATA_DIR . '/job-events.jsonl';
+}
+
+function job_events_seq_path(): string
+{
+    return DATA_DIR . '/job-events.seq';
+}
+
+function next_job_event_id(): int
+{
+    $path = job_events_seq_path();
+    $handle = fopen($path, 'c+');
+    if ($handle === false) {
+        throw new RuntimeException('Could not open job event sequence');
+    }
+
+    try {
+        if (!flock($handle, LOCK_EX)) {
+            throw new RuntimeException('Could not lock job event sequence');
+        }
+
+        rewind($handle);
+        $raw = stream_get_contents($handle);
+        $current = is_string($raw) ? (int) trim($raw) : 0;
+        $next = $current + 1;
+        ftruncate($handle, 0);
+        rewind($handle);
+        fwrite($handle, (string) $next);
+        fflush($handle);
+        flock($handle, LOCK_UN);
+        return $next;
+    } finally {
+        fclose($handle);
+    }
+}
+
+function append_job_event(array $event): array
+{
+    ensure_directory(DATA_DIR);
+    $record = $event;
+    $record['id'] = next_job_event_id();
+    $record['at'] = now_iso();
+
+    $encoded = json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded)) {
+        throw new RuntimeException('Could not encode job event');
+    }
+
+    $path = job_events_log_path();
+    $handle = fopen($path, 'ab');
+    if ($handle === false) {
+        throw new RuntimeException('Could not open job event log');
+    }
+
+    try {
+        if (!flock($handle, LOCK_EX)) {
+            throw new RuntimeException('Could not lock job event log');
+        }
+        fwrite($handle, $encoded . "\n");
+        fflush($handle);
+        flock($handle, LOCK_UN);
+    } finally {
+        fclose($handle);
+    }
+
+    return $record;
+}
+
+function read_job_events_since(int $afterEventId, int $limit = 500): array
+{
+    $path = job_events_log_path();
+    if (!is_file($path)) {
+        return [];
+    }
+
+    $handle = fopen($path, 'rb');
+    if ($handle === false) {
+        return [];
+    }
+
+    $events = [];
+    try {
+        while (($line = fgets($handle)) !== false) {
+            $decoded = json_decode(trim($line), true);
+            if (!is_array($decoded)) {
+                continue;
+            }
+            $eventId = isset($decoded['id']) ? (int) $decoded['id'] : 0;
+            if ($eventId <= $afterEventId) {
+                continue;
+            }
+            $events[] = $decoded;
+            if (count($events) >= $limit) {
+                break;
+            }
+        }
+    } finally {
+        fclose($handle);
+    }
+
+    return $events;
+}
+
+function latest_job_event_id(): int
+{
+    $path = job_events_seq_path();
+    if (!is_file($path)) {
+        return 0;
+    }
+    $raw = file_get_contents($path);
+    return is_string($raw) ? max(0, (int) trim($raw)) : 0;
+}
+
+function queue_job_upsert_event(array $config, string $jobId, bool $preserveListPosition = false): ?array
+{
+    $entry = load_job_state_entry_by_id($config, $jobId);
+    if (!is_array($entry) || !is_array($entry['job'] ?? null)) {
+        return null;
+    }
+
+    return append_job_event([
+        'type' => 'job.upsert',
+        'job' => $entry['job'],
+        'list' => is_string($entry['list'] ?? null) ? $entry['list'] : null,
+        'preserveListPosition' => $preserveListPosition,
+    ]);
+}
+
+function queue_job_remove_event(string $jobId): array
+{
+    return append_job_event([
+        'type' => 'job.remove',
+        'jobId' => $jobId,
+    ]);
+}
+
+function read_jobs_state(array $config): array
+{
+    $jobsDir = $config['jobsDirectory'];
+    ensure_directory($jobsDir);
+    [$categoryOrderById, $categoryNameById] = build_job_state_category_indexes();
 
     $entries = scandir($jobsDir);
     if ($entries === false) {
@@ -5857,175 +6378,19 @@ function read_jobs_state(array $config): array
         if (!is_array($job)) {
             continue;
         }
-
-        $status = $job['status'] ?? '';
-        $id = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
-        if ($id === '') {
-            $id = $entry;
+        $stateEntry = build_job_state_entry($config, $jobDir, $job, $categoryOrderById, $categoryNameById);
+        if (!is_array($stateEntry) || !is_array($stateEntry['job'] ?? null)) {
+            continue;
         }
-        $originalFilename = is_string($job['originalFilename'] ?? null) ? $job['originalFilename'] : 'unknown.pdf';
-        $createdAt = is_string($job['createdAt'] ?? null) ? $job['createdAt'] : '';
-        $hasReviewPdf = job_review_pdf_path($config, $id, $job) !== null;
-        $hasSourcePdf = is_file($jobDir . '/source.pdf');
-        $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
-        $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null)
-            ? trim((string) $job['selectedClientDirName'])
-            : null;
-        $selectedSenderId = isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : null;
-        if ($selectedSenderId !== null && $selectedSenderId < 1) {
-            $selectedSenderId = null;
-        }
-        $selectedCategoryId = is_string($job['selectedCategoryId'] ?? null)
-            ? trim((string) $job['selectedCategoryId'])
-            : null;
-        $filename = is_string($job['filename'] ?? null)
-            ? trim((string) $job['filename'])
-            : null;
-        $isArchived = ($job['archived'] ?? false) === true;
-        $archivedAt = is_string($job['archivedAt'] ?? null) ? trim((string) $job['archivedAt']) : null;
-        $archivedPdfPath = is_string($job['archivedPdfPath'] ?? null) ? trim((string) $job['archivedPdfPath']) : null;
-
-        if ($status === 'ready') {
-            $matchedClientDirName = null;
-            $matchedSenderId = null;
-            $topMatchedCategoryId = null;
-            $topMatchedCategoryName = null;
-            $topMatchedCategoryScore = null;
-            $extracted = load_json_file($jobDir . '/extracted.json');
-
-            $preselectedClient = is_array($analysis['preselectedClient'] ?? null)
-                ? $analysis['preselectedClient']
-                : null;
-            if (is_array($preselectedClient) && is_string($preselectedClient['dirName'] ?? null)) {
-                $value = trim((string) $preselectedClient['dirName']);
-                if ($value !== '') {
-                    $matchedClientDirName = $value;
-                }
-            } elseif (is_array($extracted) && array_key_exists('matchedClientDirName', $extracted)) {
-                $value = $extracted['matchedClientDirName'];
-                if (is_string($value) || $value === null) {
-                    $matchedClientDirName = $value;
-                }
-            }
-
-            $preselectedSender = is_array($analysis['preselectedSender'] ?? null)
-                ? $analysis['preselectedSender']
-                : null;
-            if (is_array($preselectedSender) && isset($preselectedSender['id'])) {
-                $senderId = (int) $preselectedSender['id'];
-                if ($senderId > 0) {
-                    $matchedSenderId = $senderId;
-                }
-            } elseif (is_array($extracted) && is_array($extracted['senderLookup'] ?? null)) {
-                $senderLookup = $extracted['senderLookup'];
-                $sender = is_array($senderLookup['sender'] ?? null) ? $senderLookup['sender'] : null;
-                $senderId = is_array($sender) && isset($sender['id']) ? (int) $sender['id'] : 0;
-                if ($senderId > 0) {
-                    $matchedSenderId = $senderId;
-                }
-            }
-
-            if (is_array($extracted) && isset($extracted['categoryMatches']) && is_array($extracted['categoryMatches'])) {
-                $bestOrder = 999999;
-                foreach ($extracted['categoryMatches'] as $categoryMatch) {
-                    if (!is_array($categoryMatch)) {
-                        continue;
-                    }
-
-                    $categoryId = is_string($categoryMatch['id'] ?? null) ? trim((string) $categoryMatch['id']) : '';
-                    $score = $categoryMatch['score'] ?? null;
-                    $numericScore = is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))
-                        ? (float) $score
-                        : null;
-
-                    if ($categoryId === '' || $numericScore === null || $numericScore <= 0) {
-                        continue;
-                    }
-
-                    $order = isset($categoryOrderById[$categoryId]) ? (int) $categoryOrderById[$categoryId] : 999999;
-                    $resolvedName = isset($categoryNameById[$categoryId]) ? (string) $categoryNameById[$categoryId] : '';
-
-                    if ($topMatchedCategoryScore === null || $numericScore > $topMatchedCategoryScore) {
-                        $topMatchedCategoryId = $categoryId;
-                        $topMatchedCategoryName = $resolvedName;
-                        $topMatchedCategoryScore = $numericScore;
-                        $bestOrder = $order;
-                        continue;
-                    }
-
-                    if ($numericScore === $topMatchedCategoryScore && $order < $bestOrder) {
-                        $topMatchedCategoryId = $categoryId;
-                        $topMatchedCategoryName = $resolvedName;
-                        $topMatchedCategoryScore = $numericScore;
-                        $bestOrder = $order;
-                    }
-                }
-            }
-
-            $readyPayload = [
-                'id' => $id,
-                'originalFilename' => $originalFilename,
-                'status' => 'ready',
-                'createdAt' => $createdAt,
-                'hasReviewPdf' => $hasReviewPdf,
-                'hasSourcePdf' => $hasSourcePdf,
-                'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
-                'analysis' => $analysis,
-                'matchedClientDirName' => $matchedClientDirName,
-                'matchedSenderId' => $matchedSenderId,
-                'topMatchedCategoryId' => $topMatchedCategoryId,
-                'topMatchedCategoryName' => $topMatchedCategoryName,
-                'topMatchedCategoryScore' => $topMatchedCategoryScore,
-                'selectedClientDirName' => $selectedClientDirName,
-                'selectedSenderId' => $selectedSenderId,
-                'selectedCategoryId' => $selectedCategoryId,
-                'filename' => $filename,
-                'archived' => $isArchived,
-                'archivedAt' => $archivedAt,
-                'archivedPdfPath' => $archivedPdfPath,
-            ];
-            if ($isArchived) {
-                $archived[] = $readyPayload;
-            } else {
-                $ready[] = $readyPayload;
-            }
-        } elseif ($status === 'processing') {
-            $processing[] = [
-                'id' => $id,
-                'originalFilename' => $originalFilename,
-                'status' => 'processing',
-                'createdAt' => $createdAt,
-                'hasReviewPdf' => $hasReviewPdf,
-                'hasSourcePdf' => $hasSourcePdf,
-                'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
-                'analysis' => $analysis,
-                'selectedClientDirName' => $selectedClientDirName,
-                'selectedSenderId' => $selectedSenderId,
-                'selectedCategoryId' => $selectedCategoryId,
-                'filename' => $filename,
-                'archived' => $isArchived,
-                'archivedAt' => $archivedAt,
-                'archivedPdfPath' => $archivedPdfPath,
-            ];
-        } elseif ($status === 'failed') {
-            $failed[] = [
-                'id' => $id,
-                'originalFilename' => $originalFilename,
-                'status' => 'failed',
-                'createdAt' => $createdAt,
-                'hasReviewPdf' => $hasReviewPdf,
-                'hasSourcePdf' => $hasSourcePdf,
-                'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
-                'analysis' => $analysis,
-                'selectedClientDirName' => $selectedClientDirName,
-                'selectedSenderId' => $selectedSenderId,
-                'selectedCategoryId' => $selectedCategoryId,
-                'filename' => $filename,
-                'archived' => $isArchived,
-                'archivedAt' => $archivedAt,
-                'archivedPdfPath' => $archivedPdfPath,
-                'error' => is_string($job['error'] ?? null) ? $job['error'] : null,
-            ];
+        $listKey = is_string($stateEntry['list'] ?? null) ? $stateEntry['list'] : '';
+        if ($listKey === 'processingJobs') {
+            $processing[] = $stateEntry['job'];
+        } elseif ($listKey === 'readyJobs') {
+            $ready[] = $stateEntry['job'];
+        } elseif ($listKey === 'archivedJobs') {
+            $archived[] = $stateEntry['job'];
+        } elseif ($listKey === 'failedJobs') {
+            $failed[] = $stateEntry['job'];
         }
     }
 
@@ -6183,6 +6548,7 @@ function reset_all_jobs(array $config): array
         }
 
         $removedJobFolders++;
+        queue_job_remove_event($entry);
     }
 
     return [
@@ -6235,6 +6601,7 @@ function reset_job_by_id(array $config, string $jobId): array
         $errors[] = 'Could not remove job directory ' . $jobId;
     } else {
         $removedJobFolders = 1;
+        queue_job_remove_event($jobId);
     }
 
     return [
@@ -6244,7 +6611,7 @@ function reset_job_by_id(array $config, string $jobId): array
     ];
 }
 
-function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-ocr', bool $forceOcr = false): array
+function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-ocr'): array
 {
     if (!is_valid_job_id($jobId)) {
         throw new RuntimeException('Invalid job id');
@@ -6272,6 +6639,14 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
     $sourcePath = $jobDir . '/source.pdf';
     if (!is_file($sourcePath)) {
         throw new RuntimeException('Missing source.pdf');
+    }
+
+    $forceOcr = false;
+    $storedDocflowOcrVersion = job_docflow_ocr_version($job);
+    $requiresFreshOcr = $storedDocflowOcrVersion === null || $storedDocflowOcrVersion < docflow_ocr_version();
+    if ($normalizedMode === 'post-ocr' && $requiresFreshOcr) {
+        $normalizedMode = 'full';
+        $forceOcr = true;
     }
 
     if ($normalizedMode === 'post-ocr' && !is_file($jobDir . '/review.pdf')) {
@@ -6326,11 +6701,13 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         unset($job['forceOcr']);
     }
     write_json_file($jobJsonPath, $job);
+    queue_job_upsert_event($config, $jobId, true);
 
     trigger_processing_worker();
 
     return [
         'jobId' => $jobId,
         'mode' => $normalizedMode,
+        'forceOcr' => $forceOcr,
     ];
 }

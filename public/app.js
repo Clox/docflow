@@ -39,7 +39,6 @@ const selectedJobPanelEl = document.getElementById('selected-job-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
 const selectedJobMetaEl = document.getElementById('selected-job-meta');
 const selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
-const selectedJobRerunOcrEl = document.getElementById('selected-job-rerun-ocr');
 const settingsPanelTemplateIds = {
   clients: 'settings-template-clients',
   senders: 'settings-template-senders',
@@ -173,7 +172,7 @@ let statePollTimer = null;
 let jobsTickTimer = null;
 let jobsTickWatchdogStarted = false;
 let stateUpdateTransport = 'polling';
-let jobsStateSig = '';
+let stateEventCursor = 0;
 let currentViewMode = 'pdf';
 let currentOcrSource = 'merged';
 let currentOcrZoom = 100;
@@ -214,8 +213,8 @@ let pathsBaselineValue = '';
 let categoriesBaselineJson = JSON.stringify({
   archiveFolders: [],
   systemCategories: systemCategoriesDraft,
-  extractionFields: []
 });
+let extractionFieldsBaselineJson = JSON.stringify([]);
 let clientOptionsSignature = '';
 let senderOptionsSignature = '';
 let categoryOptionsSignature = '';
@@ -235,6 +234,7 @@ const OCR_OBJECT_LETTER_SPACING_BY_SOURCE = {
 let hasLoadedSenders = false;
 let hasLoadedCategories = false;
 let hasLoadedInitialJobsState = false;
+let selectedJobStateSig = '';
 const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
 const selectedCategoryByJobId = new Map();
@@ -242,6 +242,7 @@ const filenameByJobId = new Map();
 const filenameSaveTimerByJobId = new Map();
 const lastKnownJobDisplayById = new Map();
 const pinnedProcessingJobIds = new Set();
+const ocrPageImageCache = new Map();
 const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
 const ocrViewContentBySource = new Map();
@@ -255,7 +256,7 @@ const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
 const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta']);
-const VALID_JOB_LIST_MODES = new Set(['ready', 'processing', 'archived']);
+const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'processing', 'archived']);
 
 let senderMergeState = null;
 let currentJobListMode = 'ready';
@@ -752,17 +753,18 @@ async function setViewerOcr(jobId) {
     clearOcrViewCache();
   }
 
+  if (loadedOcrJobId === jobId && loadedOcrSource === currentOcrSource && ocrDocumentPages.length > 0) {
+    refreshOcrSearch();
+    restoreOcrViewState(currentOcrSource);
+    return;
+  }
+
   const cachedContent = getCachedOcrViewContent(currentOcrSource);
   if (cachedContent && typeof cachedContent === 'object') {
     loadedOcrJobId = jobId;
     loadedOcrSource = currentOcrSource;
     setOcrDocumentPages(cachedContent.pages, cachedContent.text || '', cachedContent.mode || 'text');
     refreshOcrSearch();
-    restoreOcrViewState(currentOcrSource);
-    return;
-  }
-
-  if (loadedOcrJobId === jobId && loadedOcrSource === currentOcrSource) {
     restoreOcrViewState(currentOcrSource);
     return;
   }
@@ -1079,8 +1081,8 @@ function ensureJobListMessageNode() {
   });
 }
 
-function ensureJobListSectionLabelNode(text) {
-  const node = ensureJobListNode('label:failed', () => {
+function ensureJobListSectionLabelNode(text, key = 'label:failed') {
+  const node = ensureJobListNode(key, () => {
     const li = document.createElement('li');
     li.className = 'job-section-label';
     return li;
@@ -1226,23 +1228,79 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
   const safeFailedJobs = Array.isArray(failedJobs) ? failedJobs : [];
   const desiredNodes = [];
   const activeKeys = new Set();
+  const safeProcessingJobs = Array.isArray(processingJobs) ? processingJobs : [];
   const isReadyMode = currentJobListMode === 'ready';
+  const isAllMode = currentJobListMode === 'all';
   const isProcessingMode = currentJobListMode === 'processing';
   const isArchivedMode = currentJobListMode === 'archived';
 
   if (
-    (isReadyMode && displayedReadyJobs.length === 0)
-    || (isProcessingMode && processingJobs.length === 0 && safeFailedJobs.length === 0)
+    ((isReadyMode || isAllMode) && displayedReadyJobs.length === 0 && safeProcessingJobs.length === 0 && displayedArchivedJobs.length === 0 && safeFailedJobs.length === 0)
+    || (isProcessingMode && safeProcessingJobs.length === 0 && safeFailedJobs.length === 0)
     || (isArchivedMode && displayedArchivedJobs.length === 0)
   ) {
     const messageNode = ensureJobListMessageNode();
-    messageNode.textContent = isProcessingMode
-      ? 'Inga pågående jobb just nu.'
-      : (isArchivedMode ? 'Inga arkiverade jobb ännu.' : 'Inga klara jobb ännu.');
+    messageNode.textContent = isAllMode
+      ? 'Inga jobb ännu.'
+      : isProcessingMode
+      ? 'Inga jobb bearbetas just nu.'
+      : (isArchivedMode ? 'Inga arkiverade jobb ännu.' : 'Inga jobb att granska just nu.');
     desiredNodes.push(messageNode);
     activeKeys.add('message:empty');
   } else {
-    if (isReadyMode) {
+    if (isAllMode) {
+      if (safeProcessingJobs.length > 0) {
+        const labelNode = ensureJobListSectionLabelNode('Bearbetas', 'label:all:processing');
+        desiredNodes.push(labelNode);
+        activeKeys.add('label:all:processing');
+        safeProcessingJobs.forEach((job) => {
+          const key = `all:processing:${job.id}`;
+          const li = ensureJobListItemNode(key);
+          updateReadyJobListItem(li, job);
+          desiredNodes.push(li);
+          activeKeys.add(key);
+        });
+      }
+
+      if (displayedReadyJobs.length > 0) {
+        const labelNode = ensureJobListSectionLabelNode('Att granska', 'label:all:ready');
+        desiredNodes.push(labelNode);
+        activeKeys.add('label:all:ready');
+        displayedReadyJobs.forEach((job) => {
+          const key = `all:ready:${job.id}`;
+          const li = ensureJobListItemNode(key);
+          updateReadyJobListItem(li, job);
+          desiredNodes.push(li);
+          activeKeys.add(key);
+        });
+      }
+
+      if (displayedArchivedJobs.length > 0) {
+        const labelNode = ensureJobListSectionLabelNode('Arkiverade jobb', 'label:all:archived');
+        desiredNodes.push(labelNode);
+        activeKeys.add('label:all:archived');
+        displayedArchivedJobs.forEach((job) => {
+          const key = `all:archived:${job.id}`;
+          const li = ensureJobListItemNode(key);
+          updateArchivedJobListItem(li, job);
+          desiredNodes.push(li);
+          activeKeys.add(key);
+        });
+      }
+
+      if (safeFailedJobs.length > 0) {
+        const labelNode = ensureJobListSectionLabelNode('Misslyckade jobb', 'label:all:failed');
+        desiredNodes.push(labelNode);
+        activeKeys.add('label:all:failed');
+        safeFailedJobs.forEach((job) => {
+          const key = `all:failed:${job.id}`;
+          const li = ensureJobListItemNode(key);
+          updateFailedJobListItem(li, job);
+          desiredNodes.push(li);
+          activeKeys.add(key);
+        });
+      }
+    } else if (isReadyMode) {
       displayedReadyJobs.forEach((job) => {
         const key = `ready:${job.id}`;
         const li = ensureJobListItemNode(key);
@@ -1251,7 +1309,7 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
         activeKeys.add(key);
       });
     } else if (isProcessingMode) {
-      (Array.isArray(processingJobs) ? processingJobs : []).forEach((job) => {
+      safeProcessingJobs.forEach((job) => {
         const key = `processing:${job.id}`;
         const li = ensureJobListItemNode(key);
         updateReadyJobListItem(li, job);
@@ -1269,8 +1327,8 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
     }
 
     if (isProcessingMode && safeFailedJobs.length > 0) {
-      if ((Array.isArray(processingJobs) ? processingJobs : []).length > 0) {
-        const labelNode = ensureJobListSectionLabelNode('Misslyckade jobb');
+      if (safeProcessingJobs.length > 0) {
+        const labelNode = ensureJobListSectionLabelNode('Misslyckade jobb', 'label:failed');
         desiredNodes.push(labelNode);
         activeKeys.add('label:failed');
       }
@@ -1340,7 +1398,31 @@ function findJobById(jobId) {
   };
 }
 
+function jobStateSignature(job) {
+  if (!job || typeof job !== 'object') {
+    return '';
+  }
+
+  const error = typeof job.error === 'string' ? job.error : '';
+  const updatedAt = typeof job.updatedAt === 'string' ? job.updatedAt : '';
+  const archivedAt = typeof job.archivedAt === 'string' ? job.archivedAt : '';
+  return [
+    typeof job.id === 'string' ? job.id : '',
+    typeof job.status === 'string' ? job.status : '',
+    updatedAt,
+    archivedAt,
+    error,
+  ].join('|');
+}
+
 function jobsForCurrentListMode() {
+  if (currentJobListMode === 'all') {
+    return []
+      .concat(Array.isArray(state.processingJobs) ? state.processingJobs : [])
+      .concat(Array.isArray(state.readyJobs) ? state.readyJobs : [])
+      .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
+      .concat(Array.isArray(state.failedJobs) ? state.failedJobs : []);
+  }
   if (currentJobListMode === 'processing') {
     return Array.isArray(state.processingJobs) ? state.processingJobs : [];
   }
@@ -1353,6 +1435,13 @@ function jobsForCurrentListMode() {
 function displayedJobsForCurrentListMode() {
   if (currentJobListMode === 'ready') {
     return buildDisplayedReadyJobs(state.processingJobs, state.readyJobs);
+  }
+  if (currentJobListMode === 'all') {
+    return []
+      .concat(Array.isArray(state.processingJobs) ? state.processingJobs : [])
+      .concat(buildDisplayedReadyJobs([], state.readyJobs))
+      .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
+      .concat(Array.isArray(state.failedJobs) ? state.failedJobs : []);
   }
   return jobsForCurrentListMode();
 }
@@ -1377,48 +1466,87 @@ function findSenderById(senderId) {
 }
 
 function effectiveClientDirName(job) {
+  const isKnownClient = (value) => {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    if (!normalized) {
+      return false;
+    }
+    return Array.isArray(state.clients) && state.clients.some((client) => {
+      return client && typeof client.dirName === 'string' && client.dirName.trim() === normalized;
+    });
+  };
+
   if (!job) {
     return '';
   }
   const localValue = selectedClientByJobId.get(job.id);
-  if (localValue) {
+  if (isKnownClient(localValue)) {
     return localValue;
   }
-  if (typeof job.selectedClientDirName === 'string' && job.selectedClientDirName.trim() !== '') {
+  if (typeof job.selectedClientDirName === 'string' && isKnownClient(job.selectedClientDirName)) {
     return job.selectedClientDirName.trim();
   }
-  return typeof job.matchedClientDirName === 'string' ? job.matchedClientDirName : '';
+  if (typeof job.matchedClientDirName === 'string' && isKnownClient(job.matchedClientDirName)) {
+    return job.matchedClientDirName.trim();
+  }
+  return '';
 }
 
 function effectiveSenderId(job) {
+  const isKnownSender = (value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      return false;
+    }
+    return Array.isArray(state.senders) && state.senders.some((sender) => {
+      return sender && Number.isInteger(sender.id) && String(sender.id) === normalized;
+    });
+  };
+
   if (!job) {
     return '';
   }
   const localValue = selectedSenderByJobId.get(job.id);
-  if (localValue) {
+  if (isKnownSender(localValue)) {
     return localValue;
   }
-  if (Number.isInteger(job.selectedSenderId) && job.selectedSenderId > 0) {
+  if (Number.isInteger(job.selectedSenderId) && job.selectedSenderId > 0 && isKnownSender(job.selectedSenderId)) {
     return String(job.selectedSenderId);
   }
-  if (Number.isInteger(job.matchedSenderId) && job.matchedSenderId > 0) {
+  if (Number.isInteger(job.matchedSenderId) && job.matchedSenderId > 0 && isKnownSender(job.matchedSenderId)) {
     return String(job.matchedSenderId);
   }
   return '';
 }
 
 function effectiveCategoryId(job) {
+  const isKnownCategory = (value) => {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    if (!normalized) {
+      return false;
+    }
+    return Array.isArray(state.categories) && state.categories.some((category) => {
+      return category
+        && category.isSystemCategory !== true
+        && typeof category.id === 'string'
+        && category.id.trim() === normalized;
+    });
+  };
+
   if (!job) {
     return '';
   }
   const localValue = selectedCategoryByJobId.get(job.id);
-  if (localValue) {
+  if (isKnownCategory(localValue)) {
     return localValue;
   }
-  if (typeof job.selectedCategoryId === 'string' && job.selectedCategoryId.trim() !== '') {
+  if (typeof job.selectedCategoryId === 'string' && isKnownCategory(job.selectedCategoryId)) {
     return job.selectedCategoryId.trim();
   }
-  return typeof job.topMatchedCategoryId === 'string' ? job.topMatchedCategoryId : '';
+  if (typeof job.topMatchedCategoryId === 'string' && isKnownCategory(job.topMatchedCategoryId)) {
+    return job.topMatchedCategoryId.trim();
+  }
+  return '';
 }
 
 function formatFilenameAmount(value) {
@@ -1586,6 +1714,7 @@ function updateArchiveAction(job) {
   if (!job) {
     archiveActionEl.disabled = true;
     archiveActionEl.textContent = 'Arkivera';
+    archiveActionEl.title = 'Markera ett jobb först.';
     return;
   }
 
@@ -1593,14 +1722,30 @@ function updateArchiveAction(job) {
   archiveActionEl.textContent = isArchived ? 'Återställ' : 'Arkivera';
   if (isArchived) {
     archiveActionEl.disabled = false;
+    archiveActionEl.title = 'Flyttar tillbaka den arkiverade PDF-filen till jobbet och markerar jobbet som ej arkiverat.';
     return;
   }
 
-  archiveActionEl.disabled = job.status !== 'ready'
-    || !effectiveClientDirName(job)
-    || !effectiveSenderId(job)
-    || !effectiveCategoryId(job)
-    || !String(filenameInputEl ? filenameInputEl.value : displayedFilenameForJob(job)).trim();
+  const missingFields = [];
+  if (!effectiveClientDirName(job)) {
+    missingFields.push('Huvudman');
+  }
+  if (!effectiveSenderId(job)) {
+    missingFields.push('Avsändare');
+  }
+  if (!effectiveCategoryId(job)) {
+    missingFields.push('Kategori');
+  }
+  if (!String(filenameInputEl ? filenameInputEl.value : displayedFilenameForJob(job)).trim()) {
+    missingFields.push('Filnamn');
+  }
+
+  archiveActionEl.disabled = job.status !== 'ready' || missingFields.length > 0;
+  archiveActionEl.title = archiveActionEl.disabled
+    ? (job.status !== 'ready'
+      ? 'Jobbet måste vara klart innan det kan arkiveras.'
+      : `Fyll i ${missingFields.join(', ')} innan jobbet kan arkiveras.`)
+    : 'Flyttar review.pdf till vald huvudmans arkivmapp med angivet filnamn.';
 }
 
 let saveSelectedJobFieldsSeq = 0;
@@ -1657,7 +1802,6 @@ function renderSelectedJobPanel() {
     selectedJobNameEl.textContent = 'Inget jobb markerat';
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
     selectedJobReprocessEl.disabled = true;
-    selectedJobRerunOcrEl.disabled = true;
     syncFilenameField(null);
     updateArchiveAction(null);
     return;
@@ -1692,12 +1836,11 @@ function renderSelectedJobPanel() {
     appendLine('Fel: ' + selectedJob.error, 'is-error');
   }
   if (selectedJob.archived === true && typeof selectedJob.archivedAt === 'string' && selectedJob.archivedAt) {
-    appendLine('Arkiverat: ' + selectedJob.archivedAt.replace('T', ' ').replace(/\+00:00$/, ' UTC'));
+    appendLine('Arkiverat: ' + selectedJob.archivedAt.replace('T', ' ').replace(/([+-]\d{2}:\d{2}|Z)$/, '').trim());
   }
 
   selectedJobMetaEl.replaceChildren(...metaLines);
   selectedJobReprocessEl.disabled = selectedJob.status === 'processing' || selectedJob.archived === true || !selectedJob.hasReviewPdf;
-  selectedJobRerunOcrEl.disabled = selectedJob.status === 'processing' || selectedJob.archived === true || !selectedJob.hasSourcePdf;
   syncFilenameField(selectedJob);
   updateArchiveAction(selectedJob);
 }
@@ -1913,20 +2056,47 @@ function buildOcrPageImageUrl(pageNumber) {
     + '&dpi=150&variant=review';
 }
 
-function appendOcrPageImage(wrapperEl, pageNumber) {
-  if (!ocrShowPageImage) {
-    return;
+function ocrPageImageCacheKey(pageNumber) {
+  const jobId = loadedOcrJobId || selectedJobId;
+  if (!jobId || !Number.isInteger(pageNumber) || pageNumber < 1) {
+    return '';
   }
+  return `${jobId}:review:${pageNumber}:150`;
+}
+
+function getOrCreateOcrPageImage(pageNumber) {
+  const cacheKey = ocrPageImageCacheKey(pageNumber);
   const imageUrl = buildOcrPageImageUrl(pageNumber);
-  if (!imageUrl) {
-    return;
+  if (!cacheKey || !imageUrl) {
+    return null;
   }
+
+  const existing = ocrPageImageCache.get(cacheKey) || null;
+  if (existing && existing.imageEl instanceof HTMLImageElement) {
+    return existing.imageEl;
+  }
+
   const imageEl = document.createElement('img');
   imageEl.className = 'ocr-page-image';
   imageEl.alt = '';
   imageEl.decoding = 'async';
-  imageEl.loading = 'lazy';
+  imageEl.loading = 'eager';
   imageEl.src = imageUrl;
+  ocrPageImageCache.set(cacheKey, {
+    imageEl,
+    url: imageUrl,
+  });
+  return imageEl;
+}
+
+function appendOcrPageImage(wrapperEl, pageNumber) {
+  if (!ocrShowPageImage) {
+    return;
+  }
+  const imageEl = getOrCreateOcrPageImage(pageNumber);
+  if (!(imageEl instanceof HTMLImageElement)) {
+    return;
+  }
   wrapperEl.classList.add('has-page-image');
   wrapperEl.appendChild(imageEl);
 }
@@ -2034,6 +2204,7 @@ function restoreOcrViewState(source) {
 function clearOcrViewCache() {
   ocrViewContentBySource.clear();
   ocrViewStateBySource.clear();
+  ocrPageImageCache.clear();
 }
 
 function splitOcrTextIntoPages(text) {
@@ -2410,7 +2581,7 @@ function measureOcrWordFontSize(word, scaledHeight, objectScale) {
     ? Number(word.rowTypicalHeight)
     : Number.isFinite(Number(word && word.rowHeight))
       ? Number(word.rowHeight)
-    : (Number.isFinite(Number(word && word.rect && word.rect.height)) ? Number(word.rect.height) : scaledHeight / Math.max(objectScale, 0.0001));
+      : (Number.isFinite(Number(word && word.rect && word.rect.height)) ? Number(word.rect.height) : scaledHeight / Math.max(objectScale, 0.0001));
   const scaledTypicalRowHeight = Math.max(scaledHeight, rowTypicalHeight * objectScale);
   const ownHeightCap = scaledHeight * 1;
   const renderSource = objectRenderSource(currentOcrSource);
@@ -2490,7 +2661,7 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
     wordEl.style.fontSize = `${fontSize}px`;
     wordEl.style.lineHeight = '1';
     const textEl = document.createElement('span');
-    textEl.className = 'ocr-word-text';
+    textEl.classList.add('ocr-word-text');
     textEl.textContent = word.text;
     textEl.style.fontFamily = OCR_OBJECT_FONT_FAMILY;
     textEl.style.transform = `scaleX(${measureOcrWordHorizontalScale(word.text, fontSize, scaledWidth)})`;
@@ -2604,6 +2775,18 @@ function renderOcrPages() {
 
   syncOcrHighlightPresentation();
   updateOcrPageControls();
+}
+
+function rerenderOcrPagesPreservingScroll() {
+  const scrollTop = ocrPagesViewEl.scrollTop;
+  const scrollLeft = ocrPagesViewEl.scrollLeft;
+  renderOcrPages();
+  window.requestAnimationFrame(() => {
+    ocrPagesViewEl.scrollTop = scrollTop;
+    ocrPagesViewEl.scrollLeft = scrollLeft;
+    syncOcrHighlightScroll();
+    updateOcrPageControls();
+  });
 }
 
 function setOcrDocumentText(rawText) {
@@ -2817,6 +3000,7 @@ function applySelectedJobId(jobId, options = {}) {
   selectedJobId = selectedJob ? selectedJob.id : '';
   renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
   setViewerJob(selectedJobId);
+  selectedJobStateSig = jobStateSignature(selectedJob);
   setClientForJob(selectedJob);
   setSenderForJob(selectedJob);
   setCategoryForJob(selectedJob);
@@ -2874,7 +3058,19 @@ function refreshSelection() {
 
   const currentSelection = findJobById(selectedJobId);
   if (currentSelection && isJobVisibleInCurrentList(currentSelection.id)) {
-    applySelectedJobId(currentSelection.id, { syncHash: false });
+    const nextJobStateSig = jobStateSignature(currentSelection);
+    const shouldRefreshViewer = currentSelection.status !== 'processing'
+      && nextJobStateSig !== selectedJobStateSig;
+    selectedJobId = currentSelection.id;
+    if (shouldRefreshViewer) {
+      setViewerJob(currentSelection.id);
+    }
+    selectedJobStateSig = nextJobStateSig;
+    setClientForJob(currentSelection);
+    setSenderForJob(currentSelection);
+    setCategoryForJob(currentSelection);
+    syncFilenameField(currentSelection);
+    updateArchiveAction(currentSelection);
     updateHashState();
     return;
   }
@@ -2973,6 +3169,158 @@ function applyState(nextState) {
   if (!hasLoadedInitialJobsState) {
     hasLoadedInitialJobsState = true;
   }
+}
+
+function cloneJobList(list) {
+  return Array.isArray(list)
+    ? list
+      .filter((job) => job && typeof job === 'object')
+      .map((job) => ({ ...job }))
+    : [];
+}
+
+function sortJobsForList(listKey, jobs) {
+  const sorted = cloneJobList(jobs);
+  sorted.sort((a, b) => {
+    const aValue = listKey === 'archivedJobs'
+      ? String(a.archivedAt || a.createdAt || '')
+      : String(a.createdAt || '');
+    const bValue = listKey === 'archivedJobs'
+      ? String(b.archivedAt || b.createdAt || '')
+      : String(b.createdAt || '');
+    return bValue.localeCompare(aValue);
+  });
+  return sorted;
+}
+
+function removeJobFromAllLists(nextState, jobId) {
+  nextState.processingJobs = nextState.processingJobs.filter((job) => job && job.id !== jobId);
+  nextState.readyJobs = nextState.readyJobs.filter((job) => job && job.id !== jobId);
+  nextState.archivedJobs = nextState.archivedJobs.filter((job) => job && job.id !== jobId);
+  nextState.failedJobs = nextState.failedJobs.filter((job) => job && job.id !== jobId);
+}
+
+function captureReadyListPosition(jobId, processingJobs, readyJobs) {
+  if (typeof jobId !== 'string' || jobId === '' || lastKnownJobDisplayById.has(jobId)) {
+    return;
+  }
+
+  const displayedReadyJobs = buildDisplayedReadyJobs(processingJobs, readyJobs);
+  const readyIndex = displayedReadyJobs.findIndex((job) => job && job.id === jobId);
+  if (readyIndex < 0) {
+    return;
+  }
+
+  const snapshot = displayedReadyJobs[readyIndex];
+  if (!snapshot || typeof snapshot !== 'object') {
+    return;
+  }
+
+  lastKnownJobDisplayById.set(jobId, {
+    ...snapshot,
+    _displayOrder: readyIndex,
+  });
+}
+
+function applyJobEvents(events) {
+  if (!Array.isArray(events) || events.length === 0) {
+    return;
+  }
+
+  const nextState = {
+    processingJobs: cloneJobList(state.processingJobs),
+    readyJobs: cloneJobList(state.readyJobs),
+    archivedJobs: cloneJobList(state.archivedJobs),
+    failedJobs: cloneJobList(state.failedJobs),
+    clients: state.clients,
+    senders: state.senders,
+    categories: state.categories,
+  };
+
+  events.forEach((eventPayload) => {
+    if (!eventPayload || typeof eventPayload !== 'object') {
+      return;
+    }
+
+    const eventId = Number.parseInt(String(eventPayload.id || ''), 10);
+    if (Number.isInteger(eventId) && eventId > stateEventCursor) {
+      stateEventCursor = eventId;
+    }
+
+    if (eventPayload.type === 'job.remove') {
+      const jobId = typeof eventPayload.jobId === 'string' ? eventPayload.jobId.trim() : '';
+      if (!jobId) {
+        return;
+      }
+      pinnedProcessingJobIds.delete(jobId);
+      removeJobFromAllLists(nextState, jobId);
+      return;
+    }
+
+    if (eventPayload.type !== 'job.upsert') {
+      return;
+    }
+
+    const listKey = typeof eventPayload.list === 'string' ? eventPayload.list.trim() : '';
+    const validList = listKey === 'processingJobs'
+      || listKey === 'readyJobs'
+      || listKey === 'archivedJobs'
+      || listKey === 'failedJobs';
+    const job = eventPayload.job && typeof eventPayload.job === 'object' ? eventPayload.job : null;
+    const jobId = job && typeof job.id === 'string' ? job.id.trim() : '';
+    if (!validList || !job || !jobId) {
+      return;
+    }
+
+    if (listKey === 'processingJobs' && eventPayload.preserveListPosition === true) {
+      captureReadyListPosition(jobId, nextState.processingJobs, nextState.readyJobs);
+      pinnedProcessingJobIds.add(jobId);
+    } else if (listKey !== 'processingJobs') {
+      pinnedProcessingJobIds.delete(jobId);
+    }
+
+    removeJobFromAllLists(nextState, jobId);
+    nextState[listKey].push({ ...job });
+    nextState[listKey] = sortJobsForList(listKey, nextState[listKey]);
+  });
+
+  applyState(nextState);
+}
+
+function applyOptimisticReprocess(jobId) {
+  const sourceJob = findJobById(jobId);
+  if (!sourceJob) {
+    return false;
+  }
+
+  captureReadyListPosition(jobId, state.processingJobs, state.readyJobs);
+  pinnedProcessingJobIds.add(jobId);
+  clearOcrViewCache();
+
+  const processingJob = {
+    ...sourceJob,
+    status: 'processing',
+    error: null
+  };
+
+  applyState({
+    processingJobs: sortJobsForList('processingJobs', [
+      processingJob,
+      ...state.processingJobs.filter((job) => job && job.id !== jobId)
+    ]),
+    readyJobs: state.readyJobs.filter((job) => job && job.id !== jobId),
+    failedJobs: state.failedJobs.filter((job) => job && job.id !== jobId)
+  });
+
+  if (selectedJobId === jobId) {
+    loadedOcrJobId = '';
+    loadedOcrSource = '';
+    loadedMatchesJobId = '';
+    loadedMetaJobId = '';
+    clearPdfFrames();
+  }
+
+  return true;
 }
 
 function openSettingsModal() {
@@ -3316,12 +3664,8 @@ function bindSettingsPanelRefs(tabId) {
       }
       categoriesDraft = Array.isArray(parsed.archiveFolders) ? parsed.archiveFolders.map(sanitizeArchiveFolder) : [];
       systemCategoriesDraft = sanitizeSystemCategories(parsed.systemCategories);
-      extractionFieldsDraft = Array.isArray(parsed.extractionFields)
-        ? parsed.extractionFields.map((field, index) => sanitizeExtractionField(field, index))
-        : [];
       renderCategoriesEditor();
       renderSystemCategoryEditor();
-      renderExtractionFieldsEditor();
       updateSettingsActionButtons();
     });
     categoriesApplyEl.addEventListener('click', async () => {
@@ -3342,23 +3686,21 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     extractionFieldsCancelEl.addEventListener('click', () => {
-      let parsed = {};
+      let parsed = [];
       try {
-        parsed = JSON.parse(categoriesBaselineJson);
+        parsed = JSON.parse(extractionFieldsBaselineJson);
       } catch (error) {
-        parsed = {};
+        parsed = [];
       }
-      categoriesDraft = Array.isArray(parsed.archiveFolders) ? parsed.archiveFolders.map(sanitizeArchiveFolder) : [];
-      systemCategoriesDraft = sanitizeSystemCategories(parsed.systemCategories);
-      extractionFieldsDraft = Array.isArray(parsed.extractionFields)
-        ? parsed.extractionFields.map((field, index) => sanitizeExtractionField(field, index))
+      extractionFieldsDraft = Array.isArray(parsed)
+        ? parsed.map((field, index) => sanitizeExtractionField(field, index))
         : [];
       renderExtractionFieldsEditor();
       updateSettingsActionButtons();
     });
     extractionFieldsApplyEl.addEventListener('click', async () => {
       try {
-        await saveCategories();
+        await saveExtractionFields();
       } catch (error) {
         alert(error.message || 'Kunde inte spara datafält.');
       }
@@ -3447,10 +3789,11 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
   } else if (tabId === 'ocr-processing') {
     await loadOcrProcessingSettings(options);
   } else if (tabId === 'categories') {
-    await loadCategories();
+    await Promise.all([loadCategories(), loadExtractionFields()]);
+    renderCategoriesEditor();
     setArchiveTab('categories');
   } else if (tabId === 'data-fields') {
-    await loadCategories();
+    await loadExtractionFields();
   } else if (tabId === 'paths') {
     await loadPathSettings();
   } else if (tabId === 'system') {
@@ -3523,11 +3866,9 @@ async function openCategoriesSettingsDirect() {
     alert('Kunde inte ladda arkivstruktur.');
     categoriesDraft = [];
     systemCategoriesDraft = createDefaultSystemCategories();
-    extractionFieldsDraft = [];
-    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
+    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
     renderCategoriesEditor();
     renderSystemCategoryEditor();
-    renderExtractionFieldsEditor();
     updateSettingsActionButtons();
     return false;
   }
@@ -3638,14 +3979,19 @@ function normalizedSendersJson(senders) {
   return JSON.stringify(senders.map(sanitizeSenderDraft));
 }
 
-function normalizedCategoriesJson(categories, systemCategories, extractionFields) {
+function normalizedCategoriesJson(categories, systemCategories) {
   return JSON.stringify({
     archiveFolders: categories.map(sanitizeArchiveFolder),
     systemCategories: sanitizeSystemCategories(systemCategories),
-    extractionFields: Array.isArray(extractionFields)
+  });
+}
+
+function normalizedExtractionFieldsJson(extractionFields) {
+  return JSON.stringify(
+    Array.isArray(extractionFields)
       ? extractionFields.map((field, index) => sanitizeExtractionField(field, index))
       : []
-  });
+  );
 }
 
 function isClientsDirty() {
@@ -3661,7 +4007,11 @@ function isSendersDirty() {
 }
 
 function isCategoriesDirty() {
-  return normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft) !== categoriesBaselineJson;
+  return normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft) !== categoriesBaselineJson;
+}
+
+function isExtractionFieldsDirty() {
+  return normalizedExtractionFieldsJson(extractionFieldsDraft) !== extractionFieldsBaselineJson;
 }
 
 function isOcrProcessingDirty() {
@@ -3694,6 +4044,9 @@ function isSettingsTabDirty(tabId) {
   if (tabId === 'categories') {
     return isCategoriesDirty();
   }
+  if (tabId === 'data-fields') {
+    return isExtractionFieldsDirty();
+  }
   if (tabId === 'ocr-processing') {
     return isOcrProcessingDirty();
   }
@@ -3704,7 +4057,7 @@ function isSettingsTabDirty(tabId) {
 }
 
 function hasAnyUnsavedSettingsChanges() {
-  return isClientsDirty() || isSendersDirty() || isMatchingDirty() || isOcrProcessingDirty() || isCategoriesDirty() || isPathsDirty();
+  return isClientsDirty() || isSendersDirty() || isMatchingDirty() || isOcrProcessingDirty() || isCategoriesDirty() || isExtractionFieldsDirty() || isPathsDirty();
 }
 
 function panelActionButtonsForTab(tabId) {
@@ -3719,6 +4072,9 @@ function panelActionButtonsForTab(tabId) {
   }
   if (tabId === 'categories') {
     return [categoriesCancelEl, categoriesApplyEl];
+  }
+  if (tabId === 'data-fields') {
+    return [extractionFieldsCancelEl, extractionFieldsApplyEl];
   }
   if (tabId === 'ocr-processing') {
     return [ocrProcessingCancelEl, ocrProcessingApplyEl];
@@ -3735,6 +4091,7 @@ function updateSettingsActionButtons() {
   const matchingDirty = isMatchingDirty();
   const ocrProcessingDirty = isOcrProcessingDirty();
   const categoriesDirty = isCategoriesDirty();
+  const extractionFieldsDirty = isExtractionFieldsDirty();
   const pathsDirty = isPathsDirty();
 
   if (clientsCancelEl && clientsApplyEl) {
@@ -3760,6 +4117,11 @@ function updateSettingsActionButtons() {
   if (categoriesCancelEl && categoriesApplyEl) {
     categoriesCancelEl.disabled = !categoriesDirty;
     categoriesApplyEl.disabled = !categoriesDirty;
+  }
+
+  if (extractionFieldsCancelEl && extractionFieldsApplyEl) {
+    extractionFieldsCancelEl.disabled = !extractionFieldsDirty;
+    extractionFieldsApplyEl.disabled = !extractionFieldsDirty;
   }
 
   if (pathsCancelEl && pathsApplyEl) {
@@ -3805,7 +4167,10 @@ function defaultCategory() {
   return {
     name: '',
     minScore: 1,
-    rules: [defaultRule()]
+    rules: [defaultRule()],
+    filenameTemplate: {
+      parts: [defaultFilenameTemplatePart('text')]
+    }
   };
 }
 
@@ -5503,16 +5868,45 @@ function renderExtractionFieldsEditor() {
   });
 }
 
-function createFilenameTemplateToolbar(onAddPart) {
+function normalizeEditableFilenameTemplateParts(parts) {
+  const sanitized = sanitizeFilenameTemplateParts(parts);
+  if (sanitized.length === 0) {
+    return [defaultFilenameTemplatePart('text')];
+  }
+
+  const normalized = [];
+  const appendTextPart = (value = '') => {
+    const textValue = typeof value === 'string' ? value : '';
+    const previous = normalized[normalized.length - 1] || null;
+    if (previous && previous.type === 'text') {
+      previous.value = String(previous.value || '') + textValue;
+      return;
+    }
+    normalized.push({
+      type: 'text',
+      value: textValue,
+    });
+  };
+
+  sanitized.forEach((part) => {
+    if (part.type === 'text') {
+      appendTextPart(part.value || '');
+      return;
+    }
+
+    if (normalized.length === 0) {
+      appendTextPart('');
+    }
+    normalized.push(part);
+    appendTextPart('');
+  });
+
+  return normalized.length > 0 ? normalized : [defaultFilenameTemplatePart('text')];
+}
+
+function createFilenameTemplateToolbar(context) {
   const toolbar = document.createElement('div');
   toolbar.className = 'filename-template-toolbar';
-
-  const addTextButton = document.createElement('button');
-  addTextButton.type = 'button';
-  addTextButton.className = 'filename-template-chip filename-template-chip--text';
-  addTextButton.textContent = 'Text';
-  addTextButton.addEventListener('click', () => onAddPart(defaultFilenameTemplatePart('text')));
-  toolbar.appendChild(addTextButton);
 
   filenameTemplateFieldOptions().forEach((field) => {
     const chip = document.createElement('button');
@@ -5522,7 +5916,9 @@ function createFilenameTemplateToolbar(onAddPart) {
     chip.addEventListener('click', () => {
       const part = defaultFilenameTemplatePart('field');
       part.key = field.key;
-      onAddPart(part);
+      if (context && typeof context.insertPart === 'function') {
+        context.insertPart(part);
+      }
     });
     toolbar.appendChild(chip);
   });
@@ -5531,221 +5927,360 @@ function createFilenameTemplateToolbar(onAddPart) {
   firstAvailableButton.type = 'button';
   firstAvailableButton.className = 'filename-template-chip filename-template-chip--special';
   firstAvailableButton.textContent = 'Första tillgängliga';
-  firstAvailableButton.addEventListener('click', () => onAddPart(defaultFilenameTemplatePart('firstAvailable')));
+  firstAvailableButton.addEventListener('click', () => {
+    if (context && typeof context.insertPart === 'function') {
+      context.insertPart(defaultFilenameTemplatePart('firstAvailable'));
+    }
+  });
   toolbar.appendChild(firstAvailableButton);
 
   return toolbar;
 }
 
-function createFilenameTemplateSection(labelText, parts, onChange, depth) {
-  const section = document.createElement('div');
-  section.className = 'filename-template-section';
+function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context = null, options = {}) {
+  if (!Array.isArray(parts)) {
+    parts = [];
+  }
+  parts.splice(0, parts.length, ...sanitizeFilenameTemplateParts(parts));
 
-  const label = document.createElement('div');
-  label.className = 'archive-level-label filename-template-section-label';
-  label.textContent = labelText;
-  section.appendChild(label);
-  section.appendChild(createFilenameTemplatePartsEditor(parts, onChange, depth + 1));
-
-  return section;
-}
-
-function createFilenameTemplatePartsEditor(parts, onChange, depth = 0) {
+  const isSlotEditor = options && options.variant === 'slot';
+  const inlinePlaceholder = options && typeof options.placeholder === 'string'
+    ? options.placeholder
+    : '';
   const wrapper = document.createElement('div');
   wrapper.className = depth === 0 ? 'filename-template-editor' : 'filename-template-editor is-nested';
+  if (isSlotEditor) {
+    wrapper.classList.add('is-slot');
+  }
+  const sharedContext = context && typeof context === 'object'
+    ? context
+    : { insertPart: null };
 
-  let insertionIndex = Array.isArray(parts) ? parts.length : 0;
-  let insertionTextPartIndex = null;
-  let insertionCursor = 0;
+  if (!context && !isSlotEditor) {
+    wrapper.appendChild(createFilenameTemplateToolbar(sharedContext));
+  }
 
-  const insertPartAtCurrentPosition = (part) => {
-    if (!Array.isArray(parts)) {
+  const sequence = document.createElement(depth === 0 && !isSlotEditor ? 'div' : 'span');
+  sequence.className = 'filename-template-inline-flow';
+  if (isSlotEditor) {
+    sequence.classList.add('is-slot');
+  }
+  const collapseTextParts = (inputParts) => {
+    const collapsed = [];
+    const appendText = (value) => {
+      const textValue = typeof value === 'string' ? value : '';
+      if (textValue === '') {
+        return;
+      }
+      const previous = collapsed[collapsed.length - 1] || null;
+      if (previous && previous.type === 'text') {
+        previous.value = String(previous.value || '') + textValue;
+        return;
+      }
+      collapsed.push({ type: 'text', value: textValue });
+    };
+
+    (Array.isArray(inputParts) ? inputParts : []).forEach((part) => {
+      const normalized = sanitizeFilenameTemplatePart(part);
+      if (!normalized) {
+        return;
+      }
+      if (normalized.type === 'text') {
+        appendText(normalized.value || '');
+        return;
+      }
+      collapsed.push(normalized);
+    });
+    return collapsed;
+  };
+
+  const replaceParts = (targetParts, nextParts) => {
+    targetParts.splice(0, targetParts.length, ...collapseTextParts(nextParts));
+  };
+
+  const setCaretToEnd = (editable) => {
+    if (!(editable instanceof HTMLElement)) {
       return;
     }
-
-    const normalizedPart = sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
-    if (
-      Number.isInteger(insertionTextPartIndex)
-      && insertionTextPartIndex >= 0
-      && insertionTextPartIndex < parts.length
-      && parts[insertionTextPartIndex]
-      && parts[insertionTextPartIndex].type === 'text'
-    ) {
-      const currentText = String(parts[insertionTextPartIndex].value || '');
-      const cursor = Math.max(0, Math.min(currentText.length, Number.isInteger(insertionCursor) ? insertionCursor : currentText.length));
-      const beforeText = currentText.slice(0, cursor);
-      const afterText = currentText.slice(cursor);
-      const replacement = [];
-      if (beforeText !== '') {
-        replacement.push({ type: 'text', value: beforeText });
-      }
-      replacement.push(normalizedPart);
-      if (afterText !== '') {
-        replacement.push({ type: 'text', value: afterText });
-      }
-      parts.splice(insertionTextPartIndex, 1, ...replacement);
-      onChange();
+    editable.focus();
+    const range = document.createRange();
+    range.selectNodeContents(editable);
+    range.collapse(false);
+    const selection = window.getSelection();
+    if (!selection) {
       return;
     }
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
 
-    const targetIndex = Math.max(0, Math.min(parts.length, Number.isInteger(insertionIndex) ? insertionIndex : parts.length));
-    parts.splice(targetIndex, 0, normalizedPart);
+  const ensureRangeInEditable = (editable) => {
+    const selection = window.getSelection();
+    if (!selection) {
+      return null;
+    }
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      const anchorNode = range.startContainer;
+      if (anchorNode && editable.contains(anchorNode)) {
+        return range;
+      }
+    }
+    setCaretToEnd(editable);
+    return selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  };
+
+  const isTokenNode = (node) =>
+    node instanceof HTMLElement
+    && node.classList.contains('filename-template-dom-token');
+
+  const removeAdjacentToken = (editable, direction) => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      return false;
+    }
+    const range = selection.getRangeAt(0);
+    if (!range.collapsed) {
+      return false;
+    }
+
+    const node = range.startContainer;
+    const offset = range.startOffset;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (direction === 'back' && offset === 0) {
+        const prev = node.previousSibling;
+        if (isTokenNode(prev)) {
+          prev.remove();
+          return true;
+        }
+      }
+      if (direction === 'fwd' && offset === node.nodeValue.length) {
+        const next = node.nextSibling;
+        if (isTokenNode(next)) {
+          next.remove();
+          return true;
+        }
+      }
+    }
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      if (direction === 'back') {
+        const prev = node.childNodes[offset - 1];
+        if (isTokenNode(prev)) {
+          prev.remove();
+          return true;
+        }
+      }
+      if (direction === 'fwd') {
+        const next = node.childNodes[offset];
+        if (isTokenNode(next)) {
+          next.remove();
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const createPartObject = (part) => sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
+
+  let activeEditable = null;
+
+  const setActiveEditable = (editable) => {
+    if (!(editable instanceof HTMLElement)) {
+      return;
+    }
+    if (activeEditable === editable) {
+      sharedContext.insertPart = (part) => insertPartIntoEditable(editable, part);
+      return;
+    }
+    wrapper.querySelectorAll('.filename-template-editable.is-active').forEach((node) => node.classList.remove('is-active'));
+    editable.classList.add('is-active');
+    activeEditable = editable;
+    sharedContext.insertPart = (part) => insertPartIntoEditable(editable, part);
+  };
+
+  const syncEditableFromDom = (editable) => {
+    if (!(editable instanceof HTMLElement) || !Array.isArray(editable._filenameTemplateTargetParts)) {
+      return;
+    }
+    const nextParts = [];
+    const appendText = (value) => {
+      if (value === '') {
+        return;
+      }
+      const previous = nextParts[nextParts.length - 1] || null;
+      if (previous && previous.type === 'text') {
+        previous.value = String(previous.value || '') + value;
+        return;
+      }
+      nextParts.push({ type: 'text', value });
+    };
+
+    Array.from(editable.childNodes).forEach((child) => {
+      if (child.nodeType === Node.TEXT_NODE) {
+        appendText(child.nodeValue || '');
+        return;
+      }
+      if (!isTokenNode(child)) {
+        return;
+      }
+      const partObject = child._filenameTemplatePart;
+      const normalized = sanitizeFilenameTemplatePart(partObject);
+      if (normalized) {
+        nextParts.push(normalized);
+      }
+    });
+
+    replaceParts(editable._filenameTemplateTargetParts, nextParts);
     onChange();
   };
 
-  wrapper.appendChild(createFilenameTemplateToolbar(insertPartAtCurrentPosition));
-
-  const sequence = document.createElement('div');
-  sequence.className = 'filename-template-inline-flow';
-  sequence.addEventListener('click', (event) => {
-    if (event.target === sequence) {
-      insertionIndex = Array.isArray(parts) ? parts.length : 0;
-      insertionTextPartIndex = null;
-      insertionCursor = 0;
+  const attachEditableHandlers = (editable) => {
+    editable.spellcheck = false;
+    editable.setAttribute('contenteditable', 'true');
+    editable.setAttribute('tabindex', '0');
+    editable.classList.add('filename-template-editable');
+    if (inlinePlaceholder) {
+      editable.dataset.placeholder = inlinePlaceholder;
     }
-  });
-
-  const details = document.createElement('div');
-  details.className = 'filename-template-parts';
-
-  if (!Array.isArray(parts) || parts.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'categories-empty';
-    empty.textContent = 'Tom filnamnsmall.';
-    sequence.appendChild(empty);
-  } else {
-    parts.forEach((part, index) => {
-      const normalizedPart = sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
-      parts[index] = normalizedPart;
-
-      const removeButton = document.createElement('button');
-      removeButton.type = 'button';
-      removeButton.className = 'filename-template-inline-remove';
-      removeButton.textContent = '×';
-      removeButton.title = 'Ta bort del';
-      removeButton.addEventListener('click', () => {
-        parts.splice(index, 1);
-        onChange();
-      });
-
-      if (normalizedPart.type === 'text') {
-        const textWrap = document.createElement('div');
-        textWrap.className = 'filename-template-inline-item filename-template-inline-item--text';
-
-        const textInput = document.createElement('input');
-        textInput.type = 'text';
-        textInput.className = 'filename-template-inline-text';
-        textInput.value = normalizedPart.value || '';
-        textInput.placeholder = 'Text';
-        const captureCursor = () => {
-          insertionIndex = index;
-          insertionTextPartIndex = index;
-          insertionCursor = textInput.selectionStart ?? textInput.value.length;
-        };
-        textInput.addEventListener('input', () => {
-          parts[index].value = textInput.value;
-          captureCursor();
-          updateSettingsActionButtons();
-        });
-        textInput.addEventListener('focus', captureCursor);
-        textInput.addEventListener('click', captureCursor);
-        textInput.addEventListener('keyup', captureCursor);
-        textWrap.appendChild(textInput);
-        textWrap.appendChild(removeButton);
-        sequence.appendChild(textWrap);
+    editable.addEventListener('focus', () => setActiveEditable(editable));
+    editable.addEventListener('click', () => setActiveEditable(editable));
+    editable.addEventListener('input', () => {
+      setActiveEditable(editable);
+      syncEditableFromDom(editable);
+    });
+    editable.addEventListener('keydown', (event) => {
+      setActiveEditable(editable);
+      if (event.key === 'Enter') {
+        event.preventDefault();
         return;
       }
-
-      const tokenWrap = document.createElement('div');
-      tokenWrap.className = 'filename-template-inline-item filename-template-inline-item--token';
-
-      const tokenButton = document.createElement('button');
-      tokenButton.type = 'button';
-      tokenButton.className = 'filename-template-inline-token';
-
-      if (normalizedPart.type === 'field') {
-        const fieldOptions = filenameTemplateFieldOptions();
-        const currentField = fieldOptions.find((field) => field.key === normalizedPart.key) || null;
-        tokenButton.classList.add(`filename-template-inline-token--${currentField && currentField.tone ? currentField.tone : 'base'}`);
-        tokenButton.textContent = currentField ? currentField.label : normalizedPart.key;
-      } else {
-        tokenButton.classList.add('filename-template-inline-token--special');
-        tokenButton.textContent = 'Första tillgängliga';
+      if (event.key === 'Backspace' && removeAdjacentToken(editable, 'back')) {
+        event.preventDefault();
+        syncEditableFromDom(editable);
+        return;
       }
-
-      tokenButton.addEventListener('click', () => {
-        insertionIndex = index + 1;
-        insertionTextPartIndex = null;
-        insertionCursor = 0;
-      });
-
-      tokenWrap.appendChild(tokenButton);
-      tokenWrap.appendChild(removeButton);
-      sequence.appendChild(tokenWrap);
-
-      const node = document.createElement('div');
-      node.className = 'filename-template-part';
-
-      const typeSelect = document.createElement('select');
-      [
-        ['text', 'Text'],
-        ['field', 'Fält'],
-        ['firstAvailable', 'Första tillgängliga'],
-      ].forEach(([value, label]) => {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = label;
-        typeSelect.appendChild(option);
-      });
-      typeSelect.value = normalizedPart.type;
-      typeSelect.addEventListener('change', () => {
-        parts[index] = defaultFilenameTemplatePart(typeSelect.value);
-        onChange();
-      });
-
-      const controls = document.createElement('div');
-      controls.className = 'filename-template-part-controls';
-      controls.appendChild(createFloatingField('Deltyp', typeSelect));
-
-      if (normalizedPart.type === 'field') {
-        controls.classList.add('filename-template-part-controls--field');
-        const fieldSelect = document.createElement('select');
-        filenameTemplateFieldOptions().forEach((field) => {
-          const option = document.createElement('option');
-          option.value = field.key;
-          option.textContent = field.label;
-          fieldSelect.appendChild(option);
-        });
-        fieldSelect.value = normalizedPart.key;
-        fieldSelect.addEventListener('change', () => {
-          parts[index].key = fieldSelect.value;
-          updateSettingsActionButtons();
-        });
-
-        controls.appendChild(createFloatingField('Fält', fieldSelect));
-      } else if (normalizedPart.type === 'firstAvailable') {
-        controls.classList.add('filename-template-part-controls--container');
+      if (event.key === 'Delete' && removeAdjacentToken(editable, 'fwd')) {
+        event.preventDefault();
+        syncEditableFromDom(editable);
       }
-
-      node.appendChild(controls);
-
-      if (normalizedPart.type === 'field') {
-        node.appendChild(createFilenameTemplateSection('Prefix', parts[index].prefixParts, onChange, depth));
-        node.appendChild(createFilenameTemplateSection('Suffix', parts[index].suffixParts, onChange, depth));
-      } else if (normalizedPart.type === 'firstAvailable') {
-        node.appendChild(createFilenameTemplateSection('Kandidater', parts[index].parts, onChange, depth));
-        node.appendChild(createFilenameTemplateSection('Prefix', parts[index].prefixParts, onChange, depth));
-        node.appendChild(createFilenameTemplateSection('Suffix', parts[index].suffixParts, onChange, depth));
-      }
-
-      details.appendChild(node);
     });
+  };
+
+  const renderEditorParts = (editable, targetParts) => {
+    editable.replaceChildren();
+    targetParts.forEach((part) => {
+      if (part.type === 'text') {
+        editable.appendChild(document.createTextNode(part.value || ''));
+        return;
+      }
+      editable.appendChild(createTokenNode(part, editable));
+    });
+  };
+
+  const buildSlotEditor = (targetParts, placeholder, slotClassName = '') => {
+    const slot = document.createElement('span');
+    slot.className = `filename-template-inline-token-slot ${slotClassName}`.trim();
+    const slotEditable = document.createElement('span');
+    slotEditable.className = 'filename-template-inline-flow is-slot';
+    if (placeholder) {
+      slotEditable.dataset.placeholder = placeholder;
+    }
+    slotEditable._filenameTemplateTargetParts = targetParts;
+    attachEditableHandlers(slotEditable);
+    renderEditorParts(slotEditable, targetParts);
+    slot.appendChild(slotEditable);
+    return slot;
+  };
+
+  const createTokenNode = (part, ownerEditable) => {
+    const normalizedPart = createPartObject(part);
+    const token = document.createElement('span');
+    token.className = 'filename-template-dom-token';
+    token.setAttribute('contenteditable', 'false');
+    token._filenameTemplatePart = normalizedPart;
+
+    const shell = document.createElement('span');
+    shell.className = 'filename-template-inline-token-shell';
+
+    if (normalizedPart.type === 'field') {
+      shell.appendChild(buildSlotEditor(normalizedPart.prefixParts, 'Prefix', 'filename-template-inline-token-slot--prefix'));
+    } else {
+      shell.appendChild(buildSlotEditor(normalizedPart.prefixParts, 'Prefix', 'filename-template-inline-token-slot--prefix'));
+    }
+
+    const label = document.createElement('span');
+    label.className = 'filename-template-inline-token';
+    if (normalizedPart.type === 'field') {
+      const fieldMeta = filenameTemplateFieldOptions().find((field) => field.key === normalizedPart.key) || null;
+      label.classList.add(`filename-template-inline-token--${fieldMeta && fieldMeta.tone ? fieldMeta.tone : 'base'}`);
+      label.textContent = fieldMeta ? fieldMeta.label : normalizedPart.key;
+    } else {
+      label.classList.add('filename-template-inline-token--special');
+      label.textContent = 'Första tillgängliga';
+    }
+    shell.appendChild(label);
+
+    if (normalizedPart.type === 'firstAvailable') {
+      shell.appendChild(buildSlotEditor(normalizedPart.parts, 'Kandidater', 'filename-template-inline-token-slot--candidates'));
+    }
+
+    shell.appendChild(buildSlotEditor(normalizedPart.suffixParts, 'Suffix', 'filename-template-inline-token-slot--suffix'));
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'filename-template-inline-remove';
+    removeButton.textContent = '×';
+    removeButton.title = 'Ta bort del';
+    removeButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      token.remove();
+      syncEditableFromDom(ownerEditable);
+      setActiveEditable(ownerEditable);
+      setCaretToEnd(ownerEditable);
+    });
+    shell.appendChild(removeButton);
+    token.appendChild(shell);
+    return token;
+  };
+
+  const insertPartIntoEditable = (editable, part) => {
+    if (!(editable instanceof HTMLElement)) {
+      return;
+    }
+    const normalizedPart = createPartObject(part);
+    const range = ensureRangeInEditable(editable);
+    if (!range) {
+      return;
+    }
+    range.deleteContents();
+    const tokenNode = createTokenNode(normalizedPart, editable);
+    range.insertNode(tokenNode);
+    syncEditableFromDom(editable);
+
+    const firstSlot = tokenNode.querySelector('.filename-template-editable');
+    if (firstSlot instanceof HTMLElement) {
+      setActiveEditable(firstSlot);
+      setCaretToEnd(firstSlot);
+      return;
+    }
+    setActiveEditable(editable);
+    setCaretToEnd(editable);
+  };
+
+  sequence._filenameTemplateTargetParts = parts;
+  attachEditableHandlers(sequence);
+  sequence.dataset.placeholder = depth === 0 && !isSlotEditor
+    ? 'Skriv filnamnsmall...'
+    : inlinePlaceholder;
+  renderEditorParts(sequence, parts);
+  wrapper.appendChild(sequence);
+  if (!context && !isSlotEditor) {
+    setActiveEditable(sequence);
   }
 
-  wrapper.appendChild(sequence);
-  if (details.childNodes.length > 0) {
-    wrapper.appendChild(details);
-  }
   return wrapper;
 }
 
@@ -5875,11 +6410,14 @@ function renderCategoriesEditor() {
       filenameTemplateLabel.className = 'archive-level-label';
       filenameTemplateLabel.textContent = 'Filnamnsmall';
       categoryBody.appendChild(filenameTemplateLabel);
+      const filenameTemplate = sanitizeFilenameTemplate(
+        categoriesDraft[archiveFolderIndex].categories[categoryIndex].filenameTemplate
+      );
+      categoriesDraft[archiveFolderIndex].categories[categoryIndex].filenameTemplate = filenameTemplate;
       categoryBody.appendChild(
         createFilenameTemplatePartsEditor(
-          categoriesDraft[archiveFolderIndex].categories[categoryIndex].filenameTemplate.parts,
+          filenameTemplate.parts,
           () => {
-            renderCategoriesEditor();
             updateSettingsActionButtons();
           }
         )
@@ -6712,18 +7250,36 @@ async function loadCategories() {
     || !Array.isArray(payload.archiveFolders)
     || !payload.systemCategories
     || typeof payload.systemCategories !== 'object'
-    || !Array.isArray(payload.extractionFields)
   ) {
     throw new Error('Ogiltigt svar för arkivstruktur');
   }
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   systemCategoriesDraft = sanitizeSystemCategories(payload.systemCategories);
-  extractionFieldsDraft = payload.extractionFields.map((field, index) => sanitizeExtractionField(field, index));
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
   renderCategoriesEditor();
   renderSystemCategoryEditor();
+  updateSettingsActionButtons();
+}
+
+async function loadExtractionFields() {
+  const response = await fetch('/api/get-extraction-fields.php', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Kunde inte ladda datafält');
+  }
+
+  const payload = await response.json();
+  if (!payload || !Array.isArray(payload.fields)) {
+    throw new Error('Ogiltigt svar för datafält');
+  }
+
+  extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
+  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft);
   renderExtractionFieldsEditor();
+  if (categoriesListEl || systemCategoryEditorEl) {
+    renderCategoriesEditor();
+    renderSystemCategoryEditor();
+  }
   updateSettingsActionButtons();
 }
 
@@ -6811,7 +7367,6 @@ async function saveMatchingSettings() {
 async function saveCategories() {
   const normalized = categoriesDraft.map(sanitizeArchiveFolder);
   const normalizedSystemCategories = sanitizeSystemCategories(systemCategoriesDraft);
-  const normalizedExtractionFields = extractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const response = await fetch('/api/save-categories.php', {
     method: 'POST',
     headers: {
@@ -6820,7 +7375,6 @@ async function saveCategories() {
     body: JSON.stringify({
       archiveFolders: normalized,
       systemCategories: normalizedSystemCategories,
-      extractionFields: normalizedExtractionFields,
     })
   });
 
@@ -6832,7 +7386,6 @@ async function saveCategories() {
     || !Array.isArray(payload.archiveFolders)
     || !payload.systemCategories
     || typeof payload.systemCategories !== 'object'
-    || !Array.isArray(payload.extractionFields)
   ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
@@ -6842,13 +7395,41 @@ async function saveCategories() {
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   systemCategoriesDraft = sanitizeSystemCategories(payload.systemCategories);
-  extractionFieldsDraft = payload.extractionFields.map((field, index) => sanitizeExtractionField(field, index));
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
   renderCategoriesEditor();
   renderSystemCategoryEditor();
-  renderExtractionFieldsEditor();
   updateSettingsActionButtons();
   await fetchState({ refreshCategories: true });
+}
+
+async function saveExtractionFields() {
+  const normalizedExtractionFields = extractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+  const response = await fetch('/api/save-extraction-fields.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      fields: normalizedExtractionFields,
+    })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.fields)) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Kunde inte spara datafält';
+    throw new Error(message);
+  }
+
+  extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
+  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft);
+  renderExtractionFieldsEditor();
+  if (categoriesListEl || systemCategoryEditorEl) {
+    renderCategoriesEditor();
+    renderSystemCategoryEditor();
+  }
+  updateSettingsActionButtons();
 }
 
 async function savePathSettings() {
@@ -6960,52 +7541,7 @@ function cloneCurrentStateForRollback() {
   };
 }
 
-function applyOptimisticReprocess(jobId) {
-  const sourceJob = findJobById(jobId);
-  if (!sourceJob) {
-    return false;
-  }
-
-  const readyIndex = Array.isArray(state.readyJobs)
-    ? state.readyJobs.findIndex((job) => job && job.id === jobId)
-    : -1;
-  if (readyIndex >= 0) {
-    lastKnownJobDisplayById.set(jobId, {
-      ...sourceJob,
-      _displayOrder: readyIndex
-    });
-  }
-
-  pinnedProcessingJobIds.add(jobId);
-  clearOcrViewCache();
-
-  const processingJob = {
-    ...sourceJob,
-    status: 'processing',
-    error: null
-  };
-
-  applyState({
-    processingJobs: [
-      processingJob,
-      ...state.processingJobs.filter((job) => job && job.id !== jobId)
-    ],
-    readyJobs: state.readyJobs.filter((job) => job && job.id !== jobId),
-    failedJobs: state.failedJobs.filter((job) => job && job.id !== jobId)
-  });
-
-  if (selectedJobId === jobId) {
-    loadedOcrJobId = '';
-    loadedOcrSource = '';
-    loadedMatchesJobId = '';
-    loadedMetaJobId = '';
-    clearPdfFrames();
-  }
-
-  return true;
-}
-
-async function reprocessSingleJob(jobId, mode, options = {}) {
+async function reprocessSingleJob(jobId, mode) {
   const rollbackState = cloneCurrentStateForRollback();
   applyOptimisticReprocess(jobId);
   try {
@@ -7017,7 +7553,6 @@ async function reprocessSingleJob(jobId, mode, options = {}) {
       body: JSON.stringify({
         jobId,
         mode,
-        forceOcr: options.forceOcr === true,
       })
     });
 
@@ -7038,22 +7573,26 @@ async function reprocessSingleJob(jobId, mode, options = {}) {
       clearPdfFrames();
     }
 
-    await fetchState();
+    if (stateUpdateTransport !== 'sse') {
+      scheduleStatePoll(0);
+    }
   } catch (error) {
     applyState(rollbackState);
     throw error;
   }
 }
 
-async function handleSelectedJobReprocess(mode, options = {}) {
+async function handleSelectedJobReprocess(mode) {
   if (!selectedJobId) {
     return;
   }
 
   try {
-    await reprocessSingleJob(selectedJobId, mode, options);
+    await reprocessSingleJob(selectedJobId, mode);
   } catch (error) {
-    await fetchState();
+    if (stateUpdateTransport !== 'sse') {
+      scheduleStatePoll(0);
+    }
     alert(error.message || 'Kunde inte köra om jobbet.');
   }
 }
@@ -7308,15 +7847,13 @@ settingsTabEls.forEach((tabButton) => {
         alert('Kunde inte ladda arkivstruktur.');
         categoriesDraft = [];
         systemCategoriesDraft = createDefaultSystemCategories();
-        extractionFieldsDraft = [];
-        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
+        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
         renderCategoriesEditor();
         renderSystemCategoryEditor();
-        renderExtractionFieldsEditor();
       } else if (tabId === 'data-fields') {
         alert('Kunde inte ladda datafält.');
         extractionFieldsDraft = [];
-        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft, extractionFieldsDraft);
+        extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft);
         renderExtractionFieldsEditor();
       } else if (tabId === 'paths') {
         alert('Kunde inte ladda sökvägsinställningar.');
@@ -7335,15 +7872,11 @@ selectedJobReprocessEl.addEventListener('click', async () => {
   await handleSelectedJobReprocess('post-ocr');
 });
 
-selectedJobRerunOcrEl.addEventListener('click', async () => {
-  await handleSelectedJobReprocess('full', { forceOcr: true });
-});
-
 if (ocrShowPageImageEl) {
   ocrShowPageImageEl.addEventListener('change', () => {
     ocrShowPageImage = ocrShowPageImageEl.checked;
     if (currentViewMode === 'ocr') {
-      renderOcrPages();
+      rerenderOcrPagesPreservingScroll();
     }
   });
 }
@@ -7482,6 +8015,7 @@ async function fetchState(options = {}) {
   const refreshClients = options.refreshClients === true;
   const refreshSenders = options.refreshSenders === true;
   const refreshCategories = options.refreshCategories === true;
+  const force = options.force === true;
   const includeClients = !hasLoadedClients || refreshClients;
   const includeSenders = !hasLoadedSenders || refreshSenders;
   const includeCategories = !hasLoadedCategories || refreshCategories;
@@ -7498,8 +8032,8 @@ async function fetchState(options = {}) {
     if (includeCategories) {
       params.set('includeCategories', '1');
     }
-    if (!includeClients && !includeSenders && !includeCategories && jobsStateSig) {
-      params.set('jobsSig', jobsStateSig);
+    if (!force && !includeClients && !includeSenders && !includeCategories && hasLoadedInitialJobsState) {
+      params.set('afterEventId', String(stateEventCursor));
     }
 
     const url = params.toString() ? `/api/get-state.php?${params.toString()}` : '/api/get-state.php';
@@ -7521,6 +8055,15 @@ async function fetchState(options = {}) {
       stateUpdateTransport
     );
 
+    if (Array.isArray(nextState.events)) {
+      applyJobEvents(nextState.events);
+      const lastEventId = Number.parseInt(String(nextState.lastEventId || ''), 10);
+      if (Number.isInteger(lastEventId) && lastEventId > stateEventCursor) {
+        stateEventCursor = lastEventId;
+      }
+      return;
+    }
+
     applyState({
       processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : [],
       readyJobs: nextState.readyJobs,
@@ -7531,8 +8074,9 @@ async function fetchState(options = {}) {
       categories: includeCategories && Array.isArray(nextState.categories) ? nextState.categories : undefined
     });
 
-    if (typeof nextState.jobsSig === 'string' && nextState.jobsSig !== '') {
-      jobsStateSig = nextState.jobsSig;
+    const lastEventId = Number.parseInt(String(nextState.lastEventId || ''), 10);
+    if (Number.isInteger(lastEventId) && lastEventId >= 0) {
+      stateEventCursor = lastEventId;
     }
 
     if (includeClients) {
@@ -7626,36 +8170,40 @@ function startStateStream() {
     return;
   }
 
-  const stream = new EventSource('/api/stream-state.php');
-  stream.addEventListener('state', (event) => {
+  const streamUrl = `/api/stream-state.php?afterEventId=${encodeURIComponent(String(stateEventCursor))}`;
+  const stream = new EventSource(streamUrl);
+  stream.addEventListener('job', (event) => {
     if (!event || typeof event.data !== 'string' || event.data === '') {
       return;
     }
 
     try {
-      const nextState = JSON.parse(event.data);
-      if (
-        !nextState
-        || !Array.isArray(nextState.processingJobs)
-        || !Array.isArray(nextState.readyJobs)
-        || !Array.isArray(nextState.archivedJobs)
-        || !Array.isArray(nextState.failedJobs)
-      ) {
+      const jobEvent = JSON.parse(event.data);
+      if (!jobEvent || typeof jobEvent !== 'object') {
         return;
       }
-
-      if (typeof nextState.jobsSig === 'string' && nextState.jobsSig !== '') {
-        jobsStateSig = nextState.jobsSig;
+      const eventId = Number.parseInt(String(event.lastEventId || ''), 10);
+      if (Number.isInteger(eventId) && eventId > stateEventCursor) {
+        stateEventCursor = eventId;
       }
-
-      applyState({
-        processingJobs: nextState.processingJobs,
-        readyJobs: nextState.readyJobs,
-        archivedJobs: nextState.archivedJobs,
-        failedJobs: nextState.failedJobs
-      });
+      applyJobEvents([jobEvent]);
     } catch (error) {
       // Ignore malformed stream payloads and wait for next event.
+    }
+  });
+
+  stream.addEventListener('keepalive', (event) => {
+    if (!event || typeof event.data !== 'string' || event.data === '') {
+      return;
+    }
+    try {
+      const payload = JSON.parse(event.data);
+      const lastEventId = Number.parseInt(String(payload && payload.lastEventId || ''), 10);
+      if (Number.isInteger(lastEventId) && lastEventId > stateEventCursor) {
+        stateEventCursor = lastEventId;
+      }
+    } catch (error) {
+      // Ignore keepalive payload parse failures.
     }
   });
 

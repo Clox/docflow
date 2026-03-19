@@ -24,9 +24,8 @@ try {
     if (is_string($payload['jobId'] ?? null) && trim((string) $payload['jobId']) !== '') {
         $jobId = trim((string) $payload['jobId']);
         $mode = is_string($payload['mode'] ?? null) ? trim((string) $payload['mode']) : '';
-        $forceOcr = ($payload['forceOcr'] ?? false) === true;
         if ($mode === 'full' || $mode === 'post-ocr') {
-            $result = reprocess_job_by_id($config, $jobId, $mode, $forceOcr);
+            $result = reprocess_job_by_id($config, $jobId, $mode);
         } else {
             $result = reset_job_by_id($config, $jobId);
         }

@@ -18,9 +18,10 @@
               <span id="processing-text"></span>
             </span>
             <select id="job-list-mode" aria-label="Jobblista">
-              <option value="ready">Klara</option>
-              <option value="processing">Pågående</option>
+              <option value="ready">Att granska</option>
+              <option value="processing">Bearbetas</option>
               <option value="archived">Arkiverade</option>
+              <option value="all">Alla</option>
             </select>
           </div>
         </div>
@@ -32,7 +33,6 @@
         <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
         <div class="selected-job-actions">
           <button id="selected-job-reprocess" type="button" disabled>Analysera igen</button>
-          <button id="selected-job-rerun-ocr" type="button" disabled title="Ignorerar befintlig OCR-text och bygger om dokumentets OCR från source.pdf">Ny OCR + analys</button>
         </div>
       </section>
     </aside>
@@ -62,7 +62,7 @@
             <label class="floating-label" for="filename-input">Filnamn</label>
             <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">
           </div>
-          <button id="archive-action" type="button" disabled title="Flyttar review.pdf till vald huvudmans arkivmapp med angivet filnamn. Om jobbet redan är arkiverat återställs PDF-filen tillbaka till jobbet.">Arkivera</button>
+          <button id="archive-action" type="button" disabled title="Markera ett jobb först.">Arkivera</button>
         </div>
         <div class="topbar-right">
           <div class="field-group">

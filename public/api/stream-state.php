@@ -20,30 +20,58 @@ echo "retry: 2000\n\n";
 @ob_flush();
 flush();
 
-$lastSignature = '';
-$lastKeepaliveAt = 0;
-$startedAt = time();
+$requestedAfterEventId = filter_var($_GET['afterEventId'] ?? null, FILTER_VALIDATE_INT);
+if ($requestedAfterEventId === false || $requestedAfterEventId === null || $requestedAfterEventId < 0) {
+    $requestedAfterEventId = 0;
+}
 
-while (!connection_aborted() && (time() - $startedAt) < 55) {
+$headerAfterEventId = filter_var($_SERVER['HTTP_LAST_EVENT_ID'] ?? null, FILTER_VALIDATE_INT);
+if ($headerAfterEventId === false || $headerAfterEventId === null || $headerAfterEventId < 0) {
+    $headerAfterEventId = 0;
+}
+
+$lastEventId = max((int) $requestedAfterEventId, (int) $headerAfterEventId);
+$lastKeepaliveAt = time();
+
+while (!connection_aborted()) {
     try {
-        $config = load_config();
-        $payload = build_jobs_state_payload($config);
-        $encodedPayload = encode_jobs_state_payload($payload);
-        $signature = jobs_state_signature($encodedPayload);
-        if ($signature !== $lastSignature) {
-            $envelopePayload = ['jobsSig' => $signature] + $payload;
-            $encodedEnvelope = json_encode($envelopePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if (!is_string($encodedEnvelope)) {
-                throw new RuntimeException('Kunde inte serialisera state');
+        $events = read_job_events_since($lastEventId);
+        if (count($events) > 0) {
+            foreach ($events as $event) {
+                if (!is_array($event)) {
+                    continue;
+                }
+
+                $eventId = isset($event['id']) ? (int) $event['id'] : 0;
+                if ($eventId <= $lastEventId) {
+                    continue;
+                }
+
+                $encodedEvent = json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                if (!is_string($encodedEvent)) {
+                    throw new RuntimeException('Kunde inte serialisera jobbevent');
+                }
+
+                echo 'id: ' . $eventId . "\n";
+                echo "event: job\n";
+                echo 'data: ' . $encodedEvent . "\n\n";
+                $lastEventId = $eventId;
             }
-            echo "event: state\n";
-            echo 'data: ' . $encodedEnvelope . "\n\n";
-            $lastSignature = $signature;
+
             $lastKeepaliveAt = time();
             @ob_flush();
             flush();
         } elseif ((time() - $lastKeepaliveAt) >= 10) {
-            echo ": keepalive\n\n";
+            $keepalivePayload = json_encode([
+                'at' => gmdate(DATE_ATOM),
+                'lastEventId' => $lastEventId,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (!is_string($keepalivePayload)) {
+                throw new RuntimeException('Kunde inte serialisera keepalive');
+            }
+
+            echo "event: keepalive\n";
+            echo 'data: ' . $keepalivePayload . "\n\n";
             $lastKeepaliveAt = time();
             @ob_flush();
             flush();
