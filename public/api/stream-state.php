@@ -35,6 +35,8 @@ $lastKeepaliveAt = time();
 
 while (!connection_aborted()) {
     try {
+        $config = load_config();
+        ensure_job_dispatcher_running($config);
         $events = read_job_events_since($lastEventId);
         if (count($events) > 0) {
             foreach ($events as $event) {

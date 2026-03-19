@@ -5,6 +5,7 @@ require_once __DIR__ . '/_bootstrap.php';
 
 try {
     $config = load_config();
+    ensure_job_dispatcher_running($config);
     $includeClients = array_key_exists('includeClients', $_GET);
     $includeSenders = array_key_exists('includeSenders', $_GET);
     $includeCategories = array_key_exists('includeCategories', $_GET);

@@ -166,11 +166,8 @@ let loadedMatchesJobId = '';
 let loadedMetaJobId = '';
 let pdfFrameJobIds = pdfFrameEls.map(() => '');
 let pollInFlight = false;
-let jobsTickInFlight = false;
 let stateStream = null;
 let statePollTimer = null;
-let jobsTickTimer = null;
-let jobsTickWatchdogStarted = false;
 let stateUpdateTransport = 'polling';
 let stateEventCursor = 0;
 let currentViewMode = 'pdf';
@@ -3201,7 +3198,7 @@ function removeJobFromAllLists(nextState, jobId) {
 }
 
 function captureReadyListPosition(jobId, processingJobs, readyJobs) {
-  if (typeof jobId !== 'string' || jobId === '' || lastKnownJobDisplayById.has(jobId)) {
+  if (typeof jobId !== 'string' || jobId === '') {
     return;
   }
 
@@ -3275,6 +3272,10 @@ function applyJobEvents(events) {
     if (listKey === 'processingJobs' && eventPayload.preserveListPosition === true) {
       captureReadyListPosition(jobId, nextState.processingJobs, nextState.readyJobs);
       pinnedProcessingJobIds.add(jobId);
+      const existingProcessingJob = nextState.processingJobs.find((entry) => entry && entry.id === jobId) || null;
+      if (existingProcessingJob && existingProcessingJob.status === 'processing') {
+        return;
+      }
     } else if (listKey !== 'processingJobs') {
       pinnedProcessingJobIds.delete(jobId);
     }
@@ -6083,6 +6084,161 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     return false;
   };
 
+  const setCaretAtEditableBoundary = (editable, direction) => {
+    if (!(editable instanceof HTMLElement)) {
+      return false;
+    }
+    editable.focus();
+    const range = document.createRange();
+    range.selectNodeContents(editable);
+    range.collapse(direction === 'back');
+    const selection = window.getSelection();
+    if (!selection) {
+      return false;
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  };
+
+  const isCaretAtEditableBoundary = (editable, direction) => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      return false;
+    }
+    const range = selection.getRangeAt(0);
+    if (!range.collapsed) {
+      return false;
+    }
+    const boundary = document.createRange();
+    boundary.selectNodeContents(editable);
+    boundary.collapse(direction === 'back');
+    const comparison = direction === 'back'
+      ? range.compareBoundaryPoints(Range.START_TO_START, boundary)
+      : range.compareBoundaryPoints(Range.END_TO_END, boundary);
+    return comparison === 0;
+  };
+
+  const setCaretAdjacentToNode = (editable, node, direction) => {
+    if (!(editable instanceof HTMLElement) || !node || !editable.contains(node)) {
+      return false;
+    }
+    const index = Array.prototype.indexOf.call(editable.childNodes, node);
+    if (index < 0) {
+      return false;
+    }
+    editable.focus();
+    const range = document.createRange();
+    range.setStart(editable, direction === 'back' ? index : index + 1);
+    range.collapse(true);
+    const selection = window.getSelection();
+    if (!selection) {
+      return false;
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  };
+
+  const adjacentTokenAtCaret = (editable, direction) => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      return null;
+    }
+    const range = selection.getRangeAt(0);
+    if (!range.collapsed) {
+      return null;
+    }
+
+    const node = range.startContainer;
+    const offset = range.startOffset;
+    let candidate = null;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (direction === 'back' && offset === 0) {
+        candidate = node.previousSibling;
+      } else if (direction === 'fwd' && offset === (node.nodeValue || '').length) {
+        candidate = node.nextSibling;
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      candidate = direction === 'back'
+        ? node.childNodes[offset - 1] || null
+        : node.childNodes[offset] || null;
+    }
+
+    return isTokenNode(candidate) ? candidate : null;
+  };
+
+  const tokenEditables = (token) => Array.from(
+    token instanceof HTMLElement
+      ? token.querySelectorAll('.filename-template-editable')
+      : []
+  );
+
+  const focusTokenBoundaryEditable = (token, direction) => {
+    const editables = tokenEditables(token);
+    if (editables.length === 0) {
+      return false;
+    }
+    const targetEditable = direction === 'back'
+      ? editables[editables.length - 1]
+      : editables[0];
+    setActiveEditable(targetEditable);
+    return setCaretAtEditableBoundary(targetEditable, direction === 'back' ? 'fwd' : 'back');
+  };
+
+  const moveCaretAcrossTokenBoundary = (editable, direction) => {
+    if (!(editable instanceof HTMLElement) || !isCaretAtEditableBoundary(editable, direction)) {
+      return false;
+    }
+
+    const nearbyToken = adjacentTokenAtCaret(editable, direction);
+    if (nearbyToken) {
+      return focusTokenBoundaryEditable(nearbyToken, direction);
+    }
+
+    const currentToken = editable.closest('.filename-template-dom-token');
+    if (!(currentToken instanceof HTMLElement)) {
+      return false;
+    }
+
+    const editables = tokenEditables(currentToken);
+    const currentIndex = editables.indexOf(editable);
+    if (currentIndex >= 0) {
+      const nextIndex = direction === 'back' ? currentIndex - 1 : currentIndex + 1;
+      if (nextIndex >= 0 && nextIndex < editables.length) {
+        const siblingEditable = editables[nextIndex];
+        setActiveEditable(siblingEditable);
+        return setCaretAtEditableBoundary(siblingEditable, direction === 'back' ? 'fwd' : 'back');
+      }
+    }
+
+    const ownerEditable = currentToken.parentElement instanceof HTMLElement
+      ? currentToken.parentElement.closest('.filename-template-editable')
+      : null;
+    if (!(ownerEditable instanceof HTMLElement)) {
+      return false;
+    }
+
+    const ownerAdjacentToken = (() => {
+      const index = Array.prototype.indexOf.call(ownerEditable.childNodes, currentToken);
+      if (index < 0) {
+        return null;
+      }
+      const candidate = direction === 'back'
+        ? ownerEditable.childNodes[index - 1] || null
+        : ownerEditable.childNodes[index + 1] || null;
+      return isTokenNode(candidate) ? candidate : null;
+    })();
+
+    if (ownerAdjacentToken) {
+      return focusTokenBoundaryEditable(ownerAdjacentToken, direction);
+    }
+
+    setActiveEditable(ownerEditable);
+    return setCaretAdjacentToNode(ownerEditable, currentToken, direction);
+  };
+
   const createPartObject = (part) => sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
 
   let activeEditable = null;
@@ -6165,6 +6321,10 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
       if (event.key === 'Delete' && removeAdjacentToken(editable, 'fwd')) {
         event.preventDefault();
         syncEditableFromDom(editable);
+        return;
+      }
+      if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && moveCaretAcrossTokenBoundary(editable, event.key === 'ArrowLeft' ? 'back' : 'fwd')) {
+        event.preventDefault();
       }
     });
   };
@@ -8103,21 +8263,6 @@ async function fetchState(options = {}) {
   }
 }
 
-async function tickJobs() {
-  if (jobsTickInFlight) {
-    return;
-  }
-
-  jobsTickInFlight = true;
-  try {
-    await fetch('/api/tick-jobs.php', { cache: 'no-store' });
-  } catch (error) {
-    // Ignore tick failures and try again on next scheduled run.
-  } finally {
-    jobsTickInFlight = false;
-  }
-}
-
 function stopStateStream() {
   if (!stateStream) {
     return;
@@ -8125,33 +8270,6 @@ function stopStateStream() {
 
   stateStream.close();
   stateStream = null;
-}
-
-function stopJobsTick() {
-  if (jobsTickTimer === null) {
-    return;
-  }
-  window.clearTimeout(jobsTickTimer);
-  jobsTickTimer = null;
-}
-
-function scheduleJobsTick(delay = 1500) {
-  stopJobsTick();
-  jobsTickTimer = window.setTimeout(async () => {
-    jobsTickTimer = null;
-    await tickJobs();
-    scheduleJobsTick(120000);
-  }, delay);
-}
-
-function startJobsTickWatchdog() {
-  if (jobsTickWatchdogStarted) {
-    return;
-  }
-  jobsTickWatchdogStarted = true;
-  tickJobs().finally(() => {
-    scheduleJobsTick(120000);
-  });
 }
 
 function scheduleStatePoll(delay = 1500) {
@@ -8217,8 +8335,6 @@ function startStateStream() {
 }
 
 function syncStateUpdateTransport() {
-  startJobsTickWatchdog();
-
   if (stateUpdateTransport === 'sse') {
     if (statePollTimer !== null) {
       window.clearTimeout(statePollTimer);
