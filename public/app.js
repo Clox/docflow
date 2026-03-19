@@ -239,6 +239,7 @@ const filenameByJobId = new Map();
 const filenameSaveTimerByJobId = new Map();
 const lastKnownJobDisplayById = new Map();
 const pinnedProcessingJobIds = new Set();
+const pinnedProcessingOrderById = new Map();
 const ocrPageImageCache = new Map();
 const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
@@ -1127,7 +1128,7 @@ function ensureJobListItemSpinnerNode(li) {
   }
 
   const spinner = document.createElement('span');
-  spinner.className = 'job-item-spinner';
+  spinner.className = 'job-item-spinner is-hidden';
   spinner.setAttribute('aria-hidden', 'true');
   li.appendChild(spinner);
   li._spinnerEl = spinner;
@@ -1142,10 +1143,10 @@ function removeJobListItemSecondaryNode(li) {
 }
 
 function removeJobListItemSpinnerNode(li) {
-  if (li._spinnerEl && li._spinnerEl.parentNode === li) {
-    li.removeChild(li._spinnerEl);
+  if (!li._spinnerEl) {
+    return;
   }
-  li._spinnerEl = null;
+  li._spinnerEl.classList.add('is-hidden');
 }
 
 function updateReadyJobListItem(li, job) {
@@ -1170,8 +1171,9 @@ function updateReadyJobListItem(li, job) {
     removeJobListItemSecondaryNode(li);
   }
 
+  const spinner = ensureJobListItemSpinnerNode(li);
   if (job.status === 'processing') {
-    ensureJobListItemSpinnerNode(li);
+    spinner.classList.remove('is-hidden');
   } else {
     removeJobListItemSpinnerNode(li);
   }
@@ -1846,9 +1848,12 @@ function buildDisplayedReadyJobs(processingJobs, readyJobs) {
   const displayed = Array.isArray(readyJobs)
     ? readyJobs.map((job, index) => {
         const snapshot = lastKnownJobDisplayById.get(job.id);
+        const pinnedOrder = pinnedProcessingOrderById.get(job.id);
         return {
           ...job,
-          _displayOrder: typeof snapshot?._displayOrder === 'number' ? snapshot._displayOrder : index
+          _displayOrder: typeof snapshot?._displayOrder === 'number'
+            ? snapshot._displayOrder
+            : (typeof pinnedOrder === 'number' ? pinnedOrder : index)
         };
       })
     : [];
@@ -1875,7 +1880,13 @@ function buildDisplayedReadyJobs(processingJobs, readyJobs) {
         matchedClientDirName: '\u00A0',
         _displayOrder: orderById.has(processingJob.id)
           ? orderById.get(processingJob.id)
-          : (typeof snapshot._displayOrder === 'number' ? snapshot._displayOrder : Number.MAX_SAFE_INTEGER)
+          : (
+            typeof snapshot._displayOrder === 'number'
+              ? snapshot._displayOrder
+              : (typeof pinnedProcessingOrderById.get(processingJob.id) === 'number'
+                ? pinnedProcessingOrderById.get(processingJob.id)
+                : Number.MAX_SAFE_INTEGER)
+          )
       });
       return;
     }
@@ -1884,7 +1895,9 @@ function buildDisplayedReadyJobs(processingJobs, readyJobs) {
       ...processingJob,
       _displayOrder: orderById.has(processingJob.id)
         ? orderById.get(processingJob.id)
-        : Number.MAX_SAFE_INTEGER
+        : (typeof pinnedProcessingOrderById.get(processingJob.id) === 'number'
+          ? pinnedProcessingOrderById.get(processingJob.id)
+          : Number.MAX_SAFE_INTEGER)
     });
   });
 
@@ -3077,8 +3090,8 @@ function refreshSelection() {
 }
 
 function applyState(nextState) {
-  const previousReadyJobs = Array.isArray(state.readyJobs) ? state.readyJobs : [];
-  previousReadyJobs.forEach((job, index) => {
+  const previousDisplayedReadyJobs = buildDisplayedReadyJobs(state.processingJobs, state.readyJobs);
+  previousDisplayedReadyJobs.forEach((job, index) => {
     if (!job || typeof job.id !== 'string' || job.id === '') {
       return;
     }
@@ -3150,6 +3163,11 @@ function applyState(nextState) {
       pinnedProcessingJobIds.delete(jobId);
     }
   });
+  Array.from(pinnedProcessingOrderById.keys()).forEach((jobId) => {
+    if (!activeProcessingJobIds.has(jobId)) {
+      pinnedProcessingOrderById.delete(jobId);
+    }
+  });
 
   setProcessingInfo(state.processingJobs);
   notifyFailedJobs(state.failedJobs);
@@ -3190,6 +3208,14 @@ function sortJobsForList(listKey, jobs) {
   return sorted;
 }
 
+function insertJobAtIndex(list, job, index) {
+  const next = cloneJobList(list);
+  const normalizedIndex = Number.isInteger(index) ? index : next.length;
+  const targetIndex = Math.max(0, Math.min(next.length, normalizedIndex));
+  next.splice(targetIndex, 0, { ...job });
+  return next;
+}
+
 function removeJobFromAllLists(nextState, jobId) {
   nextState.processingJobs = nextState.processingJobs.filter((job) => job && job.id !== jobId);
   nextState.readyJobs = nextState.readyJobs.filter((job) => job && job.id !== jobId);
@@ -3217,6 +3243,7 @@ function captureReadyListPosition(jobId, processingJobs, readyJobs) {
     ...snapshot,
     _displayOrder: readyIndex,
   });
+  pinnedProcessingOrderById.set(jobId, readyIndex);
 }
 
 function applyJobEvents(events) {
@@ -3233,6 +3260,7 @@ function applyJobEvents(events) {
     senders: state.senders,
     categories: state.categories,
   };
+  let mutated = false;
 
   events.forEach((eventPayload) => {
     if (!eventPayload || typeof eventPayload !== 'object') {
@@ -3250,7 +3278,9 @@ function applyJobEvents(events) {
         return;
       }
       pinnedProcessingJobIds.delete(jobId);
+      pinnedProcessingOrderById.delete(jobId);
       removeJobFromAllLists(nextState, jobId);
+      mutated = true;
       return;
     }
 
@@ -3278,14 +3308,41 @@ function applyJobEvents(events) {
       }
     } else if (listKey !== 'processingJobs') {
       pinnedProcessingJobIds.delete(jobId);
+      const pinnedOrder = pinnedProcessingOrderById.get(jobId);
+      if (typeof pinnedOrder === 'number') {
+        lastKnownJobDisplayById.set(jobId, {
+          ...job,
+          _displayOrder: pinnedOrder,
+        });
+      }
     }
 
     removeJobFromAllLists(nextState, jobId);
-    nextState[listKey].push({ ...job });
-    nextState[listKey] = sortJobsForList(listKey, nextState[listKey]);
+    if (listKey === 'readyJobs') {
+      const preferredIndex = (() => {
+        const snapshot = lastKnownJobDisplayById.get(jobId);
+        if (snapshot && typeof snapshot._displayOrder === 'number') {
+          return snapshot._displayOrder;
+        }
+        const pinnedOrder = pinnedProcessingOrderById.get(jobId);
+        return typeof pinnedOrder === 'number' ? pinnedOrder : null;
+      })();
+      if (preferredIndex !== null) {
+        nextState.readyJobs = insertJobAtIndex(nextState.readyJobs, job, preferredIndex);
+      } else {
+        nextState.readyJobs.push({ ...job });
+        nextState.readyJobs = sortJobsForList(listKey, nextState.readyJobs);
+      }
+    } else {
+      nextState[listKey].push({ ...job });
+      nextState[listKey] = sortJobsForList(listKey, nextState[listKey]);
+    }
+    mutated = true;
   });
 
-  applyState(nextState);
+  if (mutated) {
+    applyState(nextState);
+  }
 }
 
 function applyOptimisticReprocess(jobId) {

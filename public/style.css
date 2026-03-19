@@ -95,6 +95,10 @@ body {
   pointer-events: none;
 }
 
+.job-item-spinner.is-hidden {
+  visibility: hidden;
+}
+
 .job-item:hover {
   background: #ececec;
 }
