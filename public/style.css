@@ -715,6 +715,11 @@ body {
   user-select: none;
 }
 
+.ocr-page-surface {
+  position: relative;
+  opacity: var(--ocr-page-surface-opacity, 1);
+}
+
 
 
 .ocr-word-box {
@@ -766,6 +771,7 @@ body {
   font-family: monospace;
   font-size: calc(12px * var(--ocr-page-scale, 1));
   line-height: calc(17.4px * var(--ocr-page-scale, 1));
+  opacity: var(--ocr-page-surface-opacity, 1);
 }
 
 .ocr-page-highlight {
@@ -862,6 +868,7 @@ body {
   background: transparent;
   color: transparent;
   caret-color: transparent;
+  opacity: var(--ocr-page-surface-opacity, 1);
 }
 
 .ocr-page-image-controls {

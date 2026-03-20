@@ -117,8 +117,8 @@
               min="0"
               max="100"
               step="1"
-              value="100"
-              aria-label="Opacitet för PDF-bakgrund">
+              value="50"
+              aria-label="Blandning mellan PDF-bakgrund och OCR-lager">
           </div>
           <div id="ocr-search-bar" class="ocr-search-bar hidden">
             <input id="ocr-search-input" type="text" placeholder="Sök i OCR">

@@ -177,7 +177,7 @@ let currentOcrSource = 'merged';
 let currentOcrZoom = 100;
 let currentOcrDocumentMode = 'text';
 let ocrShowPageImage = false;
-let ocrPageImageOpacity = 1;
+let ocrPageImageBlend = 0.5;
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
 let ocrSearchActiveIndex = -1;
@@ -1982,9 +1982,15 @@ function updateOcrPageImageControls() {
   }
   if (ocrPageImageOpacityEl) {
     ocrPageImageOpacityEl.disabled = !ocrShowPageImage;
-    ocrPageImageOpacityEl.value = String(Math.round(ocrPageImageOpacity * 100));
+    ocrPageImageOpacityEl.value = String(Math.round(ocrPageImageBlend * 100));
   }
-  ocrPagesViewEl.style.setProperty('--ocr-page-image-opacity', String(ocrPageImageOpacity));
+  const blend = Number.isFinite(ocrPageImageBlend)
+    ? Math.max(0, Math.min(1, ocrPageImageBlend))
+    : 0.5;
+  const imageOpacity = blend <= 0.5 ? blend / 0.5 : 1;
+  const surfaceOpacity = blend >= 0.5 ? (1 - blend) / 0.5 : 1;
+  ocrPagesViewEl.style.setProperty('--ocr-page-image-opacity', String(imageOpacity));
+  ocrPagesViewEl.style.setProperty('--ocr-page-surface-opacity', String(surfaceOpacity));
 }
 
 function setActiveOcrSource(source, options = {}) {
@@ -8117,9 +8123,9 @@ if (ocrShowPageImageEl) {
 if (ocrPageImageOpacityEl) {
   ocrPageImageOpacityEl.addEventListener('input', () => {
     const nextValue = Number.parseInt(ocrPageImageOpacityEl.value, 10);
-    ocrPageImageOpacity = Number.isFinite(nextValue)
+    ocrPageImageBlend = Number.isFinite(nextValue)
       ? Math.max(0, Math.min(100, nextValue)) / 100
-      : 1;
+      : 0.5;
     updateOcrPageImageControls();
   });
 }
