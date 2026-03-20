@@ -220,16 +220,15 @@ let senderOptionsSignature = '';
 let categoryOptionsSignature = '';
 let hasLoadedClients = false;
 const OCR_ZOOM_STEPS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
-const OCR_OBJECT_FONT_SCALE_BY_SOURCE = {
-  tesseract: 1.21,
-  rapidocr: 1.04,
-  merged: 1.04,
+const OCR_OBJECT_TEXT_FIT_X_SCALE_BY_SOURCE = {
+  tesseract: 1.03,
+  rapidocr: .98,
+  merged: .98,
 };
-const OCR_OBJECT_FONT_FAMILY = '"Arial Narrow", Arial, sans-serif';
-const OCR_OBJECT_LETTER_SPACING_BY_SOURCE = {
-  tesseract: '-0.05em',
-  rapidocr: '-0.05em',
-  merged: '-0.05em',
+const OCR_OBJECT_TEXT_FIT_Y_SCALE_BY_SOURCE = {
+  tesseract: 1.6,
+  rapidocr: 1.00,
+  merged: 1.00,
 };
 let hasLoadedSenders = false;
 let hasLoadedCategories = false;
@@ -1984,11 +1983,15 @@ function updateOcrPageImageControls() {
     ocrPageImageOpacityEl.disabled = !ocrShowPageImage;
     ocrPageImageOpacityEl.value = String(Math.round(ocrPageImageBlend * 100));
   }
-  const blend = Number.isFinite(ocrPageImageBlend)
-    ? Math.max(0, Math.min(1, ocrPageImageBlend))
-    : 0.5;
-  const imageOpacity = blend <= 0.5 ? blend / 0.5 : 1;
-  const surfaceOpacity = blend >= 0.5 ? (1 - blend) / 0.5 : 1;
+  let imageOpacity = 0;
+  let surfaceOpacity = 1;
+  if (ocrShowPageImage) {
+    const blend = Number.isFinite(ocrPageImageBlend)
+      ? Math.max(0, Math.min(1, ocrPageImageBlend))
+      : 0.5;
+    imageOpacity = blend <= 0.5 ? blend / 0.5 : 1;
+    surfaceOpacity = blend >= 0.5 ? (1 - blend) / 0.5 : 1;
+  }
   ocrPagesViewEl.style.setProperty('--ocr-page-image-opacity', String(imageOpacity));
   ocrPagesViewEl.style.setProperty('--ocr-page-surface-opacity', String(surfaceOpacity));
 }
@@ -2598,49 +2601,63 @@ function buildWordTooltip(word) {
   return parts.join('\n');
 }
 
-let ocrWordMeasureCanvas = null;
+function fitTextSvg(el, text, xScale = 1.03, yScale = 1.6) {
+  const font = [
+    'Arial, Helvetica, sans-serif',
+    'Tahoma, Geneva, sans-serif',
+    'Trebuchet MS, sans-serif',
+    'Impact, sans-serif',
+    'system-ui, sans-serif',
+    'Georgia, serif'
+  ].join(', ');
 
-function getOcrWordMeasureContext() {
-  if (!ocrWordMeasureCanvas) {
-    ocrWordMeasureCanvas = document.createElement('canvas');
-  }
-  return ocrWordMeasureCanvas.getContext('2d');
-}
+  const NS = 'http://www.w3.org/2000/svg';
 
-function measureOcrWordFontSize(word, scaledHeight, objectScale) {
-  const rowTypicalHeight = Number.isFinite(Number(word && word.rowTypicalHeight))
-    ? Number(word.rowTypicalHeight)
-    : Number.isFinite(Number(word && word.rowHeight))
-      ? Number(word.rowHeight)
-      : (Number.isFinite(Number(word && word.rect && word.rect.height)) ? Number(word.rect.height) : scaledHeight / Math.max(objectScale, 0.0001));
-  const scaledTypicalRowHeight = Math.max(scaledHeight, rowTypicalHeight * objectScale);
-  const ownHeightCap = scaledHeight * 1;
-  const renderSource = objectRenderSource(currentOcrSource);
-  const sourceScale = Number.isFinite(Number(OCR_OBJECT_FONT_SCALE_BY_SOURCE[renderSource]))
-    ? Number(OCR_OBJECT_FONT_SCALE_BY_SOURCE[renderSource])
-    : 1;
-  return Math.max(8, Math.min(scaledTypicalRowHeight * 0.84 * sourceScale, ownHeightCap));
-}
+  const w = el.clientWidth;
+  const h = el.clientHeight;
 
-function measureOcrWordHorizontalScale(text, fontSize, boxWidth) {
-  const content = String(text || '');
-  if (content === '') {
-    return 1;
+  el.innerHTML = '';
+  if (!(w > 0) || !(h > 0)) {
+    return;
   }
 
-  const context = getOcrWordMeasureContext();
-  if (!context) {
-    return 1;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', '100%');
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+
+  const txt = document.createElementNS(NS, 'text');
+  txt.textContent = text;
+  txt.setAttribute('x', '0');
+  txt.setAttribute('y', '0');
+  txt.setAttribute('font-size', '100');
+  txt.setAttribute('font-family', font);
+  txt.setAttribute('xml:space', 'preserve');
+
+  svg.appendChild(txt);
+  el.appendChild(svg);
+
+  const bbox = txt.getBBox();
+  if (!bbox.width || !bbox.height) {
+    return;
   }
 
-  context.font = `${fontSize}px monospace`;
-  const measuredWidth = context.measureText(content).width;
-  if (!(measuredWidth > 0)) {
-    return 1;
-  }
+  const baseScaleX = w / bbox.width;
+  const baseScaleY = h / bbox.height;
 
-  const availableWidth = Math.max(1, boxWidth - 3);
-  return Math.max(0.78, Math.min(1, availableWidth / measuredWidth));
+  const sx = baseScaleX * xScale;
+  const sy = baseScaleY * yScale;
+
+  const finalW = bbox.width * sx;
+  const finalH = bbox.height * sy;
+
+  const tx = -bbox.x * sx + (w - finalW) / 2;
+  const ty = -bbox.y * sy + (h - finalH) / 2;
+
+  txt.setAttribute(
+    'transform',
+    `matrix(${sx},0,0,${sy},${tx},${ty})`
+  );
 }
 
 function renderObjectOcrPage(page, pageMatches, objectScale) {
@@ -2658,6 +2675,7 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
 
   const matchLookup = buildObjectPageMatchLookup(page, pageMatches);
   const wordElements = new Map();
+  const wordsToFit = [];
 
   const layeredWords = [...page.words].sort((left, right) => {
     const leftArea = left.rect.width * left.rect.height;
@@ -2684,30 +2702,28 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
     const scaledTop = word.rect.y0 * objectScale;
     const scaledWidth = Math.max(1, word.rect.width * objectScale);
     const scaledHeight = Math.max(1, word.rect.height * objectScale);
-    const fontSize = measureOcrWordFontSize(word, scaledHeight, objectScale);
     wordEl.style.left = `${scaledLeft}px`;
     wordEl.style.top = `${scaledTop}px`;
     wordEl.style.width = `${scaledWidth}px`;
     wordEl.style.height = `${scaledHeight}px`;
-    wordEl.style.fontSize = `${fontSize}px`;
-    wordEl.style.lineHeight = '1';
-    const textEl = document.createElement('span');
-    textEl.classList.add('ocr-word-text');
-    textEl.textContent = word.text;
-    textEl.style.fontFamily = OCR_OBJECT_FONT_FAMILY;
-    textEl.style.transform = `scaleX(${measureOcrWordHorizontalScale(word.text, fontSize, scaledWidth)})`;
-    const renderSource = objectRenderSource(currentOcrSource);
-    textEl.style.letterSpacing = typeof OCR_OBJECT_LETTER_SPACING_BY_SOURCE[renderSource] === 'string'
-      ? OCR_OBJECT_LETTER_SPACING_BY_SOURCE[renderSource]
-      : '0em';
-    wordEl.appendChild(textEl);
     wordEl.title = buildWordTooltip(word);
     surfaceEl.appendChild(wordEl);
     wordElements.set(word.index, wordEl);
+    wordsToFit.push({ wordEl, text: word.text });
   });
 
   wrapperEl.appendChild(surfaceEl);
   ocrPagesViewEl.appendChild(wrapperEl);
+  const renderSource = objectRenderSource(currentOcrSource);
+  const xScale = Number.isFinite(Number(OCR_OBJECT_TEXT_FIT_X_SCALE_BY_SOURCE[renderSource]))
+    ? Number(OCR_OBJECT_TEXT_FIT_X_SCALE_BY_SOURCE[renderSource])
+    : 1.03;
+  const yScale = Number.isFinite(Number(OCR_OBJECT_TEXT_FIT_Y_SCALE_BY_SOURCE[renderSource]))
+    ? Number(OCR_OBJECT_TEXT_FIT_Y_SCALE_BY_SOURCE[renderSource])
+    : 1.6;
+  wordsToFit.forEach(({ wordEl, text }) => {
+    fitTextSvg(wordEl, text, xScale, yScale);
+  });
 
   return {
     ...page,
@@ -6162,40 +6178,67 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     return false;
   };
 
-  const setCaretAtEditableBoundary = (editable, direction) => {
-    if (!(editable instanceof HTMLElement)) {
-      return false;
-    }
-    editable.focus();
-    const range = document.createRange();
-    range.selectNodeContents(editable);
-    range.collapse(direction === 'back');
-    const selection = window.getSelection();
-    if (!selection) {
-      return false;
-    }
+const setCaretAtEditableBoundary = (editable, direction) => {
+  if (!(editable instanceof HTMLElement)) {
+    return false;
+  }
+
+  editable.focus();
+
+  const selection = window.getSelection();
+  if (!selection) {
+    return false;
+  }
+
+  const range = document.createRange();
+
+  if (editable.childNodes.length === 0) {
+    range.setStart(editable, 0);
+    range.collapse(true);
     selection.removeAllRanges();
     selection.addRange(range);
     return true;
-  };
+  }
 
-  const isCaretAtEditableBoundary = (editable, direction) => {
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
-      return false;
-    }
-    const range = selection.getRangeAt(0);
-    if (!range.collapsed) {
-      return false;
-    }
-    const boundary = document.createRange();
-    boundary.selectNodeContents(editable);
-    boundary.collapse(direction === 'back');
-    const comparison = direction === 'back'
-      ? range.compareBoundaryPoints(Range.START_TO_START, boundary)
-      : range.compareBoundaryPoints(Range.END_TO_END, boundary);
-    return comparison === 0;
-  };
+  if (direction === 'back') {
+    range.selectNodeContents(editable);
+    range.collapse(true);
+  } else {
+    range.selectNodeContents(editable);
+    range.collapse(false);
+  }
+
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+};
+
+const isCaretAtEditableBoundary = (editable, direction) => {
+	if (!(editable instanceof HTMLElement)) {
+		return false;
+	}
+
+	const selection = window.getSelection();
+	if (!selection || selection.rangeCount === 0) {
+		return false;
+	}
+
+	const range = selection.getRangeAt(0);
+	if (!range.collapsed) {
+		return false;
+	}
+
+	const container = range.startContainer;
+	if (container !== editable && !editable.contains(container)) {
+		return false;
+	}
+
+	const boundaryRange = document.createRange();
+	boundaryRange.selectNodeContents(editable);
+	boundaryRange.collapse(direction === 'back');
+
+	return range.compareBoundaryPoints(Range.START_TO_START, boundaryRange) === 0;
+};
 
   const setCaretAdjacentToNode = (editable, node, direction) => {
     if (!(editable instanceof HTMLElement) || !node || !editable.contains(node)) {
@@ -6218,43 +6261,89 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     return true;
   };
 
-  const adjacentTokenAtCaret = (editable, direction) => {
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
-      return null;
-    }
-    const range = selection.getRangeAt(0);
-    if (!range.collapsed) {
-      return null;
-    }
+	const adjacentTokenAtCaret = (editable, direction) => {
+	const selection = window.getSelection();
+	if (!selection || selection.rangeCount === 0) {
+		return null;
+	}
 
-    const node = range.startContainer;
-    const offset = range.startOffset;
-    let candidate = null;
+	const range = selection.getRangeAt(0);
+	if (!range.collapsed) {
+		return null;
+	}
 
-    if (node.nodeType === Node.TEXT_NODE) {
-      if (direction === 'back' && offset === 0) {
-        candidate = node.previousSibling;
-      } else if (direction === 'fwd' && offset === (node.nodeValue || '').length) {
-        candidate = node.nextSibling;
-      }
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      candidate = direction === 'back'
-        ? node.childNodes[offset - 1] || null
-        : node.childNodes[offset] || null;
-    }
+	let node = range.startContainer;
+	let offset = range.startOffset;
 
-    return isTokenNode(candidate) ? candidate : null;
-  };
+	while (node && node !== editable) {
+		if (node.nodeType === Node.TEXT_NODE) {
+		const textLength = (node.nodeValue || '').length;
 
-  const tokenEditables = (token) => Array.from(
-    token instanceof HTMLElement
-      ? token.querySelectorAll('.filename-template-editable')
-      : []
-  );
+		if (direction === 'back') {
+			if (offset > 0) {
+			return null;
+			}
+
+			const sibling = node.previousSibling;
+			if (isTokenNode(sibling)) {
+			return sibling;
+			}
+		} else {
+			if (offset < textLength) {
+			return null;
+			}
+
+			const sibling = node.nextSibling;
+			if (isTokenNode(sibling)) {
+			return sibling;
+			}
+		}
+		} else if (node.nodeType === Node.ELEMENT_NODE) {
+		const candidate = direction === 'back'
+			? node.childNodes[offset - 1] || null
+			: node.childNodes[offset] || null;
+
+		if (isTokenNode(candidate)) {
+			return candidate;
+		}
+		}
+
+		const parent = node.parentNode;
+		if (!(parent instanceof Node)) {
+		break;
+		}
+
+		offset = Array.prototype.indexOf.call(parent.childNodes, node);
+		if (direction === 'fwd') {
+		offset += 1;
+		}
+		node = parent;
+	}
+
+	if (node === editable && node.nodeType === Node.ELEMENT_NODE) {
+		const candidate = direction === 'back'
+		? node.childNodes[offset - 1] || null
+		: node.childNodes[offset] || null;
+
+		if (isTokenNode(candidate)) {
+		return candidate;
+		}
+	}
+
+	return null;
+	};
+
+	const tokenOwnEditables = (token) => {
+	if (!(token instanceof HTMLElement)) {
+		return [];
+	}
+
+	return Array.from(token.querySelectorAll('.filename-template-editable'))
+		.filter((editable) => editable.closest('.filename-template-dom-token') === token);
+	};
 
   const focusTokenBoundaryEditable = (token, direction) => {
-    const editables = tokenEditables(token);
+    const editables = tokenOwnEditables(token);
     if (editables.length === 0) {
       return false;
     }
@@ -6265,57 +6354,64 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     return setCaretAtEditableBoundary(targetEditable, direction === 'back' ? 'fwd' : 'back');
   };
 
-  const moveCaretAcrossTokenBoundary = (editable, direction) => {
-    if (!(editable instanceof HTMLElement) || !isCaretAtEditableBoundary(editable, direction)) {
-      return false;
-    }
+	const moveCaretAcrossTokenBoundary = (editable, direction) => {
+	if (!(editable instanceof HTMLElement)) {
+		return false;
+	}
 
-    const nearbyToken = adjacentTokenAtCaret(editable, direction);
-    if (nearbyToken) {
-      return focusTokenBoundaryEditable(nearbyToken, direction);
-    }
+	const nearbyToken = adjacentTokenAtCaret(editable, direction);
+	if (nearbyToken) {
+		return focusTokenBoundaryEditable(nearbyToken, direction);
+	}
 
-    const currentToken = editable.closest('.filename-template-dom-token');
-    if (!(currentToken instanceof HTMLElement)) {
-      return false;
-    }
+	if (!isCaretAtEditableBoundary(editable, direction)) {
+		return false;
+	}
 
-    const editables = tokenEditables(currentToken);
-    const currentIndex = editables.indexOf(editable);
-    if (currentIndex >= 0) {
-      const nextIndex = direction === 'back' ? currentIndex - 1 : currentIndex + 1;
-      if (nextIndex >= 0 && nextIndex < editables.length) {
-        const siblingEditable = editables[nextIndex];
-        setActiveEditable(siblingEditable);
-        return setCaretAtEditableBoundary(siblingEditable, direction === 'back' ? 'fwd' : 'back');
-      }
-    }
+	const currentToken = editable.closest('.filename-template-dom-token');
+	if (!(currentToken instanceof HTMLElement)) {
+		return false;
+	}
 
-    const ownerEditable = currentToken.parentElement instanceof HTMLElement
-      ? currentToken.parentElement.closest('.filename-template-editable')
-      : null;
-    if (!(ownerEditable instanceof HTMLElement)) {
-      return false;
-    }
+	const editables = tokenOwnEditables(currentToken);
+	const currentIndex = editables.indexOf(editable);
+	if (currentIndex >= 0) {
+		const nextIndex = direction === 'back' ? currentIndex - 1 : currentIndex + 1;
+		if (nextIndex >= 0 && nextIndex < editables.length) {
+		const siblingEditable = editables[nextIndex];
+		setActiveEditable(siblingEditable);
+		return setCaretAtEditableBoundary(siblingEditable, direction === 'back' ? 'fwd' : 'back');
+		}
+	}
 
-    const ownerAdjacentToken = (() => {
-      const index = Array.prototype.indexOf.call(ownerEditable.childNodes, currentToken);
-      if (index < 0) {
-        return null;
-      }
-      const candidate = direction === 'back'
-        ? ownerEditable.childNodes[index - 1] || null
-        : ownerEditable.childNodes[index + 1] || null;
-      return isTokenNode(candidate) ? candidate : null;
-    })();
+	const ownerEditable = currentToken.parentElement instanceof HTMLElement
+		? currentToken.parentElement.closest('.filename-template-editable')
+		: null;
+	if (!(ownerEditable instanceof HTMLElement)) {
+		return false;
+	}
 
-    if (ownerAdjacentToken) {
-      return focusTokenBoundaryEditable(ownerAdjacentToken, direction);
-    }
+	const ownerAdjacentToken = (() => {
+		const siblings = Array.from(ownerEditable.childNodes);
+		const index = siblings.indexOf(currentToken);
+		if (index < 0) {
+		return null;
+		}
 
-    setActiveEditable(ownerEditable);
-    return setCaretAdjacentToNode(ownerEditable, currentToken, direction);
-  };
+		const candidate = direction === 'back'
+		? siblings[index - 1] || null
+		: siblings[index + 1] || null;
+
+		return isTokenNode(candidate) ? candidate : null;
+	})();
+
+	if (ownerAdjacentToken) {
+		return focusTokenBoundaryEditable(ownerAdjacentToken, direction);
+	}
+
+	setActiveEditable(ownerEditable);
+	return setCaretAdjacentToNode(ownerEditable, currentToken, direction);
+	};
 
   const createPartObject = (part) => sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
 
