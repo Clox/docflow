@@ -2106,8 +2106,6 @@ body {
   display: block;
   min-height: 42px;
   padding: 8px;
-  border: 1px dashed #cbd5e1;
-  border-radius: 8px;
   background: #fff;
   line-height: 1.7;
   white-space: pre-wrap;
@@ -2115,24 +2113,12 @@ body {
   cursor: text;
 }
 
-.filename-template-inline-flow.is-slot {
-  display: inline-block;
-  min-height: 22px;
-  min-width: 28px;
-  padding: 2px 6px;
-  border-style: solid;
-  background: #fff;
-  vertical-align: middle;
-}
+
 
 .filename-template-editable {
   outline: none;
 }
 
-.filename-template-editable.is-active {
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
-}
 
 .filename-template-editable:empty::before {
   content: attr(data-placeholder);
@@ -2143,13 +2129,22 @@ body {
 .filename-template-inline-token {
   display: inline-flex;
   align-items: center;
+  align-self: stretch;
+  justify-content: center;
+  box-sizing: border-box;
   font: inherit;
   font-size: 12px;
-  padding: 6px 10px;
+  padding: 0 10px;
+  min-height: var(--filename-template-chip-inner-height);
   border-radius: 999px;
   border: 1px solid #cbd5e1;
   background: #fff;
   white-space: nowrap;
+  margin: 0 -1px;
+}
+
+.filename-template-inline-token-label {
+  display: inline-block;
 }
 
 .filename-template-dom-token {
@@ -2159,20 +2154,43 @@ body {
 }
 
 .filename-template-inline-token-shell {
+  position: relative;
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 4px;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  isolation: isolate;
+  --filename-template-chip-inner-height: 28px;
+  min-height: var(--filename-template-chip-inner-height);
+}
+
+.filename-template-inline-token-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
   border: 1px solid #d4dbe7;
   border-radius: 999px;
   background: #fff;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.filename-template-inline-token-shell > * {
+  position: relative;
+  z-index: 1;
 }
 
 .filename-template-inline-token-slot {
   display: inline-flex;
   align-items: center;
+  align-self: stretch;
+  box-sizing: border-box;
   min-width: 32px;
   max-width: 240px;
+  padding: 0;
 }
 
 .filename-template-inline-token-slot--candidates {
@@ -2180,13 +2198,29 @@ body {
   max-width: 360px;
 }
 
-.filename-template-inline-token-slot .filename-template-editor.is-slot {
-  width: 100%;
+.filename-template-inline-token-slot.is-slot {
+  display: block;
+  align-self: stretch;
+  box-sizing: border-box;
+  min-height: var(--filename-template-chip-inner-height);
+  padding: 3px 6px;
+  background: transparent;
+  line-height: 1;
+  white-space: pre-wrap;
+  word-break: normal;
+  cursor: text;
 }
 
-.filename-template-inline-token-slot .filename-template-inline-flow.is-slot {
-  border-radius: 999px;
-  white-space: pre-wrap;
+.filename-template-inline-token-slot--prefix.is-slot {
+  border-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.filename-template-inline-token-slot--suffix.is-slot {
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
 }
 
 .filename-template-inline-token--base {
@@ -2202,23 +2236,6 @@ body {
 .filename-template-inline-token--special {
   background: #fff4e7;
   border-color: #f2d1a9;
-}
-
-.filename-template-inline-remove {
-  font: inherit;
-  line-height: 1;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 1px solid #e5a4a4;
-  border-radius: 999px;
-  background: #fff;
-  color: #a11;
-  cursor: pointer;
-}
-
-.filename-template-inline-remove:hover {
-  background: #fff1f1;
 }
 
 .filename-template-chip {

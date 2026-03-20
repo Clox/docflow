@@ -6147,7 +6147,9 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
       ? Array.from(slot.classList).find((className) => className.startsWith('filename-template-inline-token-slot--')) || 'root'
       : 'root';
     const tokenName = token instanceof HTMLElement
-      ? token.querySelector('.filename-template-inline-token')?.textContent?.trim() || 'token'
+      ? token.querySelector('.filename-template-inline-token-label')?.textContent?.trim()
+        || token.querySelector('.filename-template-inline-token')?.textContent?.trim()
+        || 'token'
       : null;
     const selection = window.getSelection();
     let anchor = null;
@@ -6420,13 +6422,6 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		return [];
 	}
 
-	const shell = Array.from(token.children).find(
-		(child) => child instanceof HTMLElement && child.classList.contains('filename-template-inline-token-shell')
-	);
-	if (!(shell instanceof HTMLElement)) {
-		return [];
-	}
-
 	const slotSelectors = [
 		'filename-template-inline-token-slot--prefix',
 		'filename-template-inline-token-slot--candidates',
@@ -6434,13 +6429,11 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 	];
 
 	return slotSelectors
-		.map((slotClassName) => Array.from(shell.children).find(
+		.map((slotClassName) => Array.from(token.children).find(
 			(child) => child instanceof HTMLElement && child.classList.contains(slotClassName)
 		))
-		.map((slot) => slot instanceof HTMLElement
-			? Array.from(slot.children).find(
-				(child) => child instanceof HTMLElement && child.classList.contains('filename-template-editable')
-			  )
+		.map((slot) => slot instanceof HTMLElement && slot.classList.contains('filename-template-editable')
+			? slot
 			: null)
 		.filter((editable) => editable instanceof HTMLElement);
 	};
@@ -6472,7 +6465,9 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		debugFilenameTemplateNav('nearby-token', {
 			direction,
 			editable: describeEditable(editable),
-			token: nearbyToken.querySelector('.filename-template-inline-token')?.textContent?.trim() || 'token',
+			token: nearbyToken.querySelector('.filename-template-inline-token-label')?.textContent?.trim()
+			  || nearbyToken.querySelector('.filename-template-inline-token')?.textContent?.trim()
+			  || 'token',
 		});
 		return focusTokenBoundaryEditable(nearbyToken, direction);
 	}
@@ -6547,7 +6542,9 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 			direction,
 			editable: describeEditable(editable),
 			ownerEditable: describeEditable(ownerEditable),
-			token: ownerAdjacentToken.querySelector('.filename-template-inline-token')?.textContent?.trim() || 'token',
+			token: ownerAdjacentToken.querySelector('.filename-template-inline-token-label')?.textContent?.trim()
+			  || ownerAdjacentToken.querySelector('.filename-template-inline-token')?.textContent?.trim()
+			  || 'token',
 		});
 		return focusTokenBoundaryEditable(ownerAdjacentToken, direction);
 	}
@@ -6686,68 +6683,45 @@ const isCaretAtEditableBoundary = (editable, direction) => {
   };
 
   const buildSlotEditor = (targetParts, placeholder, slotClassName = '') => {
-    const slot = document.createElement('span');
-    slot.className = `filename-template-inline-token-slot ${slotClassName}`.trim();
     const slotEditable = document.createElement('span');
-    slotEditable.className = 'filename-template-inline-flow is-slot';
+    slotEditable.className = `filename-template-inline-token-slot ${slotClassName} filename-template-inline-flow is-slot`.trim();
     if (placeholder) {
       slotEditable.dataset.placeholder = placeholder;
     }
     slotEditable._filenameTemplateTargetParts = targetParts;
     attachEditableHandlers(slotEditable);
     renderEditorParts(slotEditable, targetParts);
-    slot.appendChild(slotEditable);
-    return slot;
+    return slotEditable;
   };
 
   const createTokenNode = (part, ownerEditable) => {
     const normalizedPart = createPartObject(part);
     const token = document.createElement('span');
-    token.className = 'filename-template-dom-token';
+    token.className = 'filename-template-dom-token filename-template-inline-token-shell';
     token.setAttribute('contenteditable', 'false');
     token._filenameTemplatePart = normalizedPart;
-
-    const shell = document.createElement('span');
-    shell.className = 'filename-template-inline-token-shell';
-
-    if (normalizedPart.type === 'field') {
-      shell.appendChild(buildSlotEditor(normalizedPart.prefixParts, 'Prefix', 'filename-template-inline-token-slot--prefix'));
-    } else {
-      shell.appendChild(buildSlotEditor(normalizedPart.prefixParts, 'Prefix', 'filename-template-inline-token-slot--prefix'));
-    }
+    token.appendChild(buildSlotEditor(normalizedPart.prefixParts, '', 'filename-template-inline-token-slot--prefix'));
 
     const label = document.createElement('span');
     label.className = 'filename-template-inline-token';
+    const labelText = document.createElement('span');
+    labelText.className = 'filename-template-inline-token-label';
     if (normalizedPart.type === 'field') {
       const fieldMeta = filenameTemplateFieldOptions().find((field) => field.key === normalizedPart.key) || null;
       label.classList.add(`filename-template-inline-token--${fieldMeta && fieldMeta.tone ? fieldMeta.tone : 'base'}`);
-      label.textContent = fieldMeta ? fieldMeta.label : normalizedPart.key;
+      labelText.textContent = fieldMeta ? fieldMeta.label : normalizedPart.key;
     } else {
       label.classList.add('filename-template-inline-token--special');
-      label.textContent = 'Första tillgängliga';
+      labelText.textContent = 'Första tillgängliga';
     }
-    shell.appendChild(label);
+    label.appendChild(labelText);
+    token.appendChild(label);
 
     if (normalizedPart.type === 'firstAvailable') {
-      shell.appendChild(buildSlotEditor(normalizedPart.parts, 'Kandidater', 'filename-template-inline-token-slot--candidates'));
+      token.appendChild(buildSlotEditor(normalizedPart.parts, 'Kandidater', 'filename-template-inline-token-slot--candidates'));
     }
 
-    shell.appendChild(buildSlotEditor(normalizedPart.suffixParts, 'Suffix', 'filename-template-inline-token-slot--suffix'));
-
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'filename-template-inline-remove';
-    removeButton.textContent = '×';
-    removeButton.title = 'Ta bort del';
-    removeButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      token.remove();
-      syncEditableFromDom(ownerEditable);
-      setActiveEditable(ownerEditable);
-      setCaretToEnd(ownerEditable);
-    });
-    shell.appendChild(removeButton);
-    token.appendChild(shell);
+    token.appendChild(buildSlotEditor(normalizedPart.suffixParts, '', 'filename-template-inline-token-slot--suffix'));
     return token;
   };
 
