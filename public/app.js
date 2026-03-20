@@ -230,6 +230,7 @@ const OCR_OBJECT_TEXT_FIT_Y_SCALE_BY_SOURCE = {
   rapidocr: 1.00,
   merged: 1.00,
 };
+const DEBUG_FILENAME_TEMPLATE_NAV = false;
 let hasLoadedSenders = false;
 let hasLoadedCategories = false;
 let hasLoadedInitialJobsState = false;
@@ -6129,6 +6130,46 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     node instanceof HTMLElement
     && node.classList.contains('filename-template-dom-token');
 
+  const debugFilenameTemplateNav = (...args) => {
+    if (!DEBUG_FILENAME_TEMPLATE_NAV) {
+      return;
+    }
+    console.log('[filename-nav]', ...args);
+  };
+
+  const describeEditable = (editable) => {
+    if (!(editable instanceof HTMLElement)) {
+      return null;
+    }
+    const slot = editable.closest('.filename-template-inline-token-slot');
+    const token = editable.closest('.filename-template-dom-token');
+    const slotName = slot instanceof HTMLElement
+      ? Array.from(slot.classList).find((className) => className.startsWith('filename-template-inline-token-slot--')) || 'root'
+      : 'root';
+    const tokenName = token instanceof HTMLElement
+      ? token.querySelector('.filename-template-inline-token')?.textContent?.trim() || 'token'
+      : null;
+    const selection = window.getSelection();
+    let anchor = null;
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      anchor = {
+        containerType: range.startContainer.nodeType,
+        containerText: range.startContainer.nodeType === Node.TEXT_NODE
+          ? range.startContainer.nodeValue
+          : range.startContainer.textContent,
+        offset: range.startOffset,
+      };
+    }
+    return {
+      slotName,
+      tokenName,
+      text: editable.textContent,
+      childNodes: editable.childNodes.length,
+      anchor,
+    };
+  };
+
   const removeAdjacentToken = (editable, direction) => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) {
@@ -6235,9 +6276,29 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 
 	const boundaryRange = document.createRange();
 	boundaryRange.selectNodeContents(editable);
-	boundaryRange.collapse(direction === 'back');
 
-	return range.compareBoundaryPoints(Range.START_TO_START, boundaryRange) === 0;
+	try {
+		if (direction === 'back') {
+			boundaryRange.setEnd(range.startContainer, range.startOffset);
+		} else {
+			boundaryRange.setStart(range.startContainer, range.startOffset);
+		}
+		const result = boundaryRange.toString() === '';
+		debugFilenameTemplateNav('boundary', {
+			direction,
+			editable: describeEditable(editable),
+			result,
+			text: boundaryRange.toString(),
+		});
+		return result;
+	} catch (error) {
+		debugFilenameTemplateNav('boundary-error', {
+			direction,
+			editable: describeEditable(editable),
+			error: String(error),
+		});
+		return false;
+	}
 };
 
   const setCaretAdjacentToNode = (editable, node, direction) => {
@@ -6270,6 +6331,27 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 	const range = selection.getRangeAt(0);
 	if (!range.collapsed) {
 		return null;
+	}
+
+	const directToken = Array.from(editable.childNodes).find((childNode) => {
+		if (!isTokenNode(childNode)) {
+			return false;
+		}
+		const pointRange = document.createRange();
+		if (direction === 'back') {
+			pointRange.setStartAfter(childNode);
+		} else {
+			pointRange.setStartBefore(childNode);
+		}
+		pointRange.collapse(true);
+		try {
+			return pointRange.comparePoint(range.startContainer, range.startOffset) === 0;
+		} catch (error) {
+			return false;
+		}
+	});
+	if (directToken) {
+		return directToken;
 	}
 
 	let node = range.startContainer;
@@ -6333,17 +6415,38 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 	return null;
 	};
 
-	const tokenOwnEditables = (token) => {
+	const tokenEditables = (token) => {
 	if (!(token instanceof HTMLElement)) {
 		return [];
 	}
 
-	return Array.from(token.querySelectorAll('.filename-template-editable'))
-		.filter((editable) => editable.closest('.filename-template-dom-token') === token);
+	const shell = Array.from(token.children).find(
+		(child) => child instanceof HTMLElement && child.classList.contains('filename-template-inline-token-shell')
+	);
+	if (!(shell instanceof HTMLElement)) {
+		return [];
+	}
+
+	const slotSelectors = [
+		'filename-template-inline-token-slot--prefix',
+		'filename-template-inline-token-slot--candidates',
+		'filename-template-inline-token-slot--suffix',
+	];
+
+	return slotSelectors
+		.map((slotClassName) => Array.from(shell.children).find(
+			(child) => child instanceof HTMLElement && child.classList.contains(slotClassName)
+		))
+		.map((slot) => slot instanceof HTMLElement
+			? Array.from(slot.children).find(
+				(child) => child instanceof HTMLElement && child.classList.contains('filename-template-editable')
+			  )
+			: null)
+		.filter((editable) => editable instanceof HTMLElement);
 	};
 
   const focusTokenBoundaryEditable = (token, direction) => {
-    const editables = tokenOwnEditables(token);
+    const editables = tokenEditables(token);
     if (editables.length === 0) {
       return false;
     }
@@ -6359,26 +6462,56 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		return false;
 	}
 
+	debugFilenameTemplateNav('move-start', {
+		direction,
+		editable: describeEditable(editable),
+	});
+
 	const nearbyToken = adjacentTokenAtCaret(editable, direction);
 	if (nearbyToken) {
+		debugFilenameTemplateNav('nearby-token', {
+			direction,
+			editable: describeEditable(editable),
+			token: nearbyToken.querySelector('.filename-template-inline-token')?.textContent?.trim() || 'token',
+		});
 		return focusTokenBoundaryEditable(nearbyToken, direction);
 	}
 
-	if (!isCaretAtEditableBoundary(editable, direction)) {
+	const atBoundary = isCaretAtEditableBoundary(editable, direction);
+	if (!atBoundary) {
+		debugFilenameTemplateNav('not-at-boundary', {
+			direction,
+			editable: describeEditable(editable),
+		});
 		return false;
 	}
 
 	const currentToken = editable.closest('.filename-template-dom-token');
 	if (!(currentToken instanceof HTMLElement)) {
+		debugFilenameTemplateNav('no-current-token', {
+			direction,
+			editable: describeEditable(editable),
+		});
 		return false;
 	}
 
-	const editables = tokenOwnEditables(currentToken);
+	const editables = tokenEditables(currentToken);
 	const currentIndex = editables.indexOf(editable);
+	debugFilenameTemplateNav('token-editables', {
+		direction,
+		editable: describeEditable(editable),
+		currentIndex,
+		editables: editables.map((node) => describeEditable(node)),
+	});
 	if (currentIndex >= 0) {
 		const nextIndex = direction === 'back' ? currentIndex - 1 : currentIndex + 1;
 		if (nextIndex >= 0 && nextIndex < editables.length) {
 		const siblingEditable = editables[nextIndex];
+		debugFilenameTemplateNav('sibling-editable', {
+			direction,
+			from: describeEditable(editable),
+			to: describeEditable(siblingEditable),
+		});
 		setActiveEditable(siblingEditable);
 		return setCaretAtEditableBoundary(siblingEditable, direction === 'back' ? 'fwd' : 'back');
 		}
@@ -6388,6 +6521,10 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		? currentToken.parentElement.closest('.filename-template-editable')
 		: null;
 	if (!(ownerEditable instanceof HTMLElement)) {
+		debugFilenameTemplateNav('no-owner-editable', {
+			direction,
+			editable: describeEditable(editable),
+		});
 		return false;
 	}
 
@@ -6406,9 +6543,20 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 	})();
 
 	if (ownerAdjacentToken) {
+		debugFilenameTemplateNav('owner-adjacent-token', {
+			direction,
+			editable: describeEditable(editable),
+			ownerEditable: describeEditable(ownerEditable),
+			token: ownerAdjacentToken.querySelector('.filename-template-inline-token')?.textContent?.trim() || 'token',
+		});
 		return focusTokenBoundaryEditable(ownerAdjacentToken, direction);
 	}
 
+	debugFilenameTemplateNav('owner-adjacent-node', {
+		direction,
+		editable: describeEditable(editable),
+		ownerEditable: describeEditable(ownerEditable),
+	});
 	setActiveEditable(ownerEditable);
 	return setCaretAdjacentToNode(ownerEditable, currentToken, direction);
 	};
@@ -6468,6 +6616,18 @@ const isCaretAtEditableBoundary = (editable, direction) => {
   };
 
   const attachEditableHandlers = (editable) => {
+    const isInnermostEditableEventTarget = (eventTarget) => {
+      if (!(eventTarget instanceof Node)) {
+        return false;
+      }
+      const closestEditable = eventTarget instanceof HTMLElement
+        ? eventTarget.closest('.filename-template-editable')
+        : eventTarget.parentElement instanceof HTMLElement
+          ? eventTarget.parentElement.closest('.filename-template-editable')
+          : null;
+      return closestEditable === editable;
+    };
+
     editable.spellcheck = false;
     editable.setAttribute('contenteditable', 'true');
     editable.setAttribute('tabindex', '0');
@@ -6476,12 +6636,23 @@ const isCaretAtEditableBoundary = (editable, direction) => {
       editable.dataset.placeholder = inlinePlaceholder;
     }
     editable.addEventListener('focus', () => setActiveEditable(editable));
-    editable.addEventListener('click', () => setActiveEditable(editable));
-    editable.addEventListener('input', () => {
+    editable.addEventListener('click', (event) => {
+      if (!isInnermostEditableEventTarget(event.target)) {
+        return;
+      }
+      setActiveEditable(editable);
+    });
+    editable.addEventListener('input', (event) => {
+      if (!isInnermostEditableEventTarget(event.target)) {
+        return;
+      }
       setActiveEditable(editable);
       syncEditableFromDom(editable);
     });
     editable.addEventListener('keydown', (event) => {
+      if (!isInnermostEditableEventTarget(event.target)) {
+        return;
+      }
       setActiveEditable(editable);
       if (event.key === 'Enter') {
         event.preventDefault();
