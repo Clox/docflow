@@ -6004,17 +6004,29 @@ function createFilenameTemplateToolbar(context) {
   const toolbar = document.createElement('div');
   toolbar.className = 'filename-template-toolbar';
 
+  const bindInsertButton = (button, createPart) => {
+    const preserveSelection = (event) => {
+      event.preventDefault();
+    };
+    button.addEventListener('mousedown', preserveSelection);
+    button.addEventListener('pointerdown', preserveSelection);
+    button.addEventListener('click', () => {
+      if (!context || typeof context.insertPart !== 'function') {
+        return;
+      }
+      context.insertPart(createPart());
+    });
+  };
+
   filenameTemplateFieldOptions().forEach((field) => {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = `filename-template-chip filename-template-chip--${field.tone || 'base'}`;
     chip.textContent = field.label;
-    chip.addEventListener('click', () => {
+    bindInsertButton(chip, () => {
       const part = defaultFilenameTemplatePart('field');
       part.key = field.key;
-      if (context && typeof context.insertPart === 'function') {
-        context.insertPart(part);
-      }
+      return part;
     });
     toolbar.appendChild(chip);
   });
@@ -6023,11 +6035,7 @@ function createFilenameTemplateToolbar(context) {
   firstAvailableButton.type = 'button';
   firstAvailableButton.className = 'filename-template-chip filename-template-chip--special';
   firstAvailableButton.textContent = 'Första tillgängliga';
-  firstAvailableButton.addEventListener('click', () => {
-    if (context && typeof context.insertPart === 'function') {
-      context.insertPart(defaultFilenameTemplatePart('firstAvailable'));
-    }
-  });
+  bindInsertButton(firstAvailableButton, () => defaultFilenameTemplatePart('firstAvailable'));
   toolbar.appendChild(firstAvailableButton);
 
   return toolbar;
@@ -6422,6 +6430,13 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		return [];
 	}
 
+	const shell = Array.from(token.children).find(
+		(child) => child instanceof HTMLElement && child.classList.contains('filename-template-inline-token-shell')
+	);
+	if (!(shell instanceof HTMLElement)) {
+		return [];
+	}
+
 	const slotSelectors = [
 		'filename-template-inline-token-slot--prefix',
 		'filename-template-inline-token-slot--candidates',
@@ -6429,7 +6444,7 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 	];
 
 	return slotSelectors
-		.map((slotClassName) => Array.from(token.children).find(
+		.map((slotClassName) => Array.from(shell.children).find(
 			(child) => child instanceof HTMLElement && child.classList.contains(slotClassName)
 		))
 		.map((slot) => slot instanceof HTMLElement && slot.classList.contains('filename-template-editable')
@@ -6697,10 +6712,13 @@ const isCaretAtEditableBoundary = (editable, direction) => {
   const createTokenNode = (part, ownerEditable) => {
     const normalizedPart = createPartObject(part);
     const token = document.createElement('span');
-    token.className = 'filename-template-dom-token filename-template-inline-token-shell';
+    token.className = 'filename-template-dom-token';
     token.setAttribute('contenteditable', 'false');
     token._filenameTemplatePart = normalizedPart;
-    token.appendChild(buildSlotEditor(normalizedPart.prefixParts, '', 'filename-template-inline-token-slot--prefix'));
+
+    const shell = document.createElement('span');
+    shell.className = 'filename-template-inline-token-shell';
+    shell.appendChild(buildSlotEditor(normalizedPart.prefixParts, '', 'filename-template-inline-token-slot--prefix'));
 
     const label = document.createElement('span');
     label.className = 'filename-template-inline-token';
@@ -6715,13 +6733,14 @@ const isCaretAtEditableBoundary = (editable, direction) => {
       labelText.textContent = 'Första tillgängliga';
     }
     label.appendChild(labelText);
-    token.appendChild(label);
+    shell.appendChild(label);
 
     if (normalizedPart.type === 'firstAvailable') {
-      token.appendChild(buildSlotEditor(normalizedPart.parts, 'Kandidater', 'filename-template-inline-token-slot--candidates'));
+      shell.appendChild(buildSlotEditor(normalizedPart.parts, 'Kandidater', 'filename-template-inline-token-slot--candidates'));
     }
 
-    token.appendChild(buildSlotEditor(normalizedPart.suffixParts, '', 'filename-template-inline-token-slot--suffix'));
+    shell.appendChild(buildSlotEditor(normalizedPart.suffixParts, '', 'filename-template-inline-token-slot--suffix'));
+    token.appendChild(shell);
     return token;
   };
 
