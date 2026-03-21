@@ -696,6 +696,7 @@ function load_categories(): array
 
         $archiveFolderName = is_string($archiveFolder['name'] ?? null) ? trim((string) $archiveFolder['name']) : '';
         $archiveFolderPath = is_string($archiveFolder['path'] ?? null) ? trim((string) $archiveFolder['path']) : '';
+        $archiveFolderFilenameTemplate = normalize_filename_template($archiveFolder['filenameTemplate'] ?? null);
         $archiveFolderCategories = $archiveFolder['categories'] ?? [];
         if (!is_array($archiveFolderCategories)) {
             continue;
@@ -730,7 +731,7 @@ function load_categories(): array
                 'isSystemCategory' => false,
                 'minScore' => positive_int($category['minScore'] ?? 1, 1),
                 'rules' => $rules,
-                'filenameTemplate' => normalize_filename_template($category['filenameTemplate'] ?? null),
+                'filenameTemplate' => $archiveFolderFilenameTemplate,
             ];
         }
     }
@@ -778,9 +779,27 @@ function normalize_archive_structure(array $input): array
             continue;
         }
 
+        $filenameTemplate = null;
+        if (array_key_exists('filenameTemplate', $row)) {
+            $filenameTemplate = normalize_filename_template($row['filenameTemplate']);
+        } else {
+            $rawCategories = is_array($row['categories'] ?? null) ? $row['categories'] : [];
+            foreach ($rawCategories as $rawCategory) {
+                if (!is_array($rawCategory) || !array_key_exists('filenameTemplate', $rawCategory)) {
+                    continue;
+                }
+                $filenameTemplate = normalize_filename_template($rawCategory['filenameTemplate']);
+                break;
+            }
+        }
+        if (!is_array($filenameTemplate)) {
+            $filenameTemplate = normalize_filename_template(null);
+        }
+
         $archiveFolders[] = [
             'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
             'path' => is_string($row['path'] ?? null) ? trim((string) $row['path']) : '',
+            'filenameTemplate' => $filenameTemplate,
             'categories' => normalize_archive_categories($row['categories'] ?? []),
         ];
     }
@@ -900,7 +919,6 @@ function normalize_archive_category(array $input): array
         'name' => is_string($input['name'] ?? null) ? trim((string) $input['name']) : '',
         'minScore' => positive_int($input['minScore'] ?? 1, 1),
         'rules' => $rules,
-        'filenameTemplate' => normalize_filename_template($input['filenameTemplate'] ?? null),
     ];
 }
 

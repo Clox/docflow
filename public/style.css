@@ -2107,10 +2107,17 @@ body {
   min-height: 42px;
   padding: 8px;
   background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
   cursor: text;
+}
+
+.filename-template-inline-flow.is-slot {
+  border: 0;
+  border-radius: 0;
 }
 
 

@@ -4264,9 +4264,6 @@ function defaultCategory() {
     name: '',
     minScore: 1,
     rules: [defaultRule()],
-    filenameTemplate: {
-      parts: [defaultFilenameTemplatePart('text')]
-    }
   };
 }
 
@@ -4274,6 +4271,9 @@ function defaultArchiveFolder() {
   return {
     name: '',
     path: '',
+    filenameTemplate: {
+      parts: [defaultFilenameTemplatePart('text')]
+    },
     categories: [defaultCategory()]
   };
 }
@@ -4916,7 +4916,6 @@ function sanitizeCategory(category) {
     name: typeof input.name === 'string' ? input.name : '',
     minScore: sanitizePositiveInt(input.minScore, 1),
     rules: rules.length > 0 ? rules : [defaultRule()],
-    filenameTemplate: sanitizeFilenameTemplate(input.filenameTemplate)
   };
 }
 
@@ -4924,9 +4923,13 @@ function sanitizeArchiveFolder(archiveFolder) {
   const input = archiveFolder && typeof archiveFolder === 'object' ? archiveFolder : {};
   const rawCategories = Array.isArray(input.categories) ? input.categories : [];
   const categories = rawCategories.map(sanitizeCategory);
+  const migratedFilenameTemplate = input.filenameTemplate && typeof input.filenameTemplate === 'object'
+    ? input.filenameTemplate
+    : rawCategories.find((category) => category && typeof category === 'object' && category.filenameTemplate && typeof category.filenameTemplate === 'object')?.filenameTemplate;
   return {
     name: typeof input.name === 'string' ? input.name : '',
     path: typeof input.path === 'string' ? input.path : '',
+    filenameTemplate: sanitizeFilenameTemplate(migratedFilenameTemplate),
     categories: categories.length > 0 ? categories : [defaultCategory()]
   };
 }
@@ -6847,6 +6850,23 @@ function renderCategoriesEditor() {
     archiveFolderFields.appendChild(removeArchiveFolderButton);
     archiveFolderBody.appendChild(archiveFolderFields);
 
+    const filenameTemplateLabel = document.createElement('div');
+    filenameTemplateLabel.className = 'archive-level-label';
+    filenameTemplateLabel.textContent = 'Filnamnsmall';
+    archiveFolderBody.appendChild(filenameTemplateLabel);
+    const filenameTemplate = sanitizeFilenameTemplate(
+      categoriesDraft[archiveFolderIndex].filenameTemplate
+    );
+    categoriesDraft[archiveFolderIndex].filenameTemplate = filenameTemplate;
+    archiveFolderBody.appendChild(
+      createFilenameTemplatePartsEditor(
+        filenameTemplate.parts,
+        () => {
+          updateSettingsActionButtons();
+        }
+      )
+    );
+
     const archiveFolderCategories = createTreeChildren({ markerless: true });
 
     const categoriesLabel = document.createElement('div');
@@ -6903,23 +6923,6 @@ function renderCategoriesEditor() {
       fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
       fields.appendChild(removeCategoryButton);
       categoryBody.appendChild(fields);
-
-      const filenameTemplateLabel = document.createElement('div');
-      filenameTemplateLabel.className = 'archive-level-label';
-      filenameTemplateLabel.textContent = 'Filnamnsmall';
-      categoryBody.appendChild(filenameTemplateLabel);
-      const filenameTemplate = sanitizeFilenameTemplate(
-        categoriesDraft[archiveFolderIndex].categories[categoryIndex].filenameTemplate
-      );
-      categoriesDraft[archiveFolderIndex].categories[categoryIndex].filenameTemplate = filenameTemplate;
-      categoryBody.appendChild(
-        createFilenameTemplatePartsEditor(
-          filenameTemplate.parts,
-          () => {
-            updateSettingsActionButtons();
-          }
-        )
-      );
 
       const ruleList = createTreeChildren({ markerless: true });
 
