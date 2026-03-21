@@ -6149,6 +6149,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   const field = sanitizeExtractionField(collection[index], index);
   const showLock = options.showLock === true;
   const allowRemove = options.allowRemove !== false;
+  const readOnly = options.readOnly === true;
+  const isDocumentDateField = field.extractor === 'document_date'
+    || field.systemFieldKey === 'document_date';
 
   const fieldNode = document.createElement('div');
   fieldNode.className = 'tree-node tree-category';
@@ -6171,22 +6174,32 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   nameInput.type = 'text';
   nameInput.placeholder = 'Ex: "Huvudman"';
   nameInput.value = field.name;
-  nameInput.addEventListener('input', () => {
-    collection[index].name = nameInput.value;
-    if (!String(collection[index].key || '').trim()) {
-      collection[index].key = normalizeConfigKey(nameInput.value || `field_${index + 1}`);
-    }
-    updateSettingsActionButtons();
-  });
+  if (readOnly) {
+    nameInput.disabled = true;
+  } else {
+    nameInput.addEventListener('input', () => {
+      collection[index].name = nameInput.value;
+      if (!String(collection[index].key || '').trim()) {
+        collection[index].key = normalizeConfigKey(nameInput.value || `field_${index + 1}`);
+      }
+      updateSettingsActionButtons();
+    });
+  }
 
   const queryInput = document.createElement('input');
   queryInput.type = 'text';
-  queryInput.placeholder = 'Ex: "huvudman"';
-  queryInput.value = field.searchString;
-  queryInput.addEventListener('input', () => {
-    collection[index].searchString = queryInput.value;
-    updateSettingsActionButtons();
-  });
+  queryInput.placeholder = isDocumentDateField ? 'Särskild intern heuristik' : 'Ex: "huvudman"';
+  queryInput.value = isDocumentDateField
+    ? 'Ort + datum / brevhuvud / fristående datum'
+    : field.searchString;
+  if (readOnly || isDocumentDateField) {
+    queryInput.disabled = true;
+  } else {
+    queryInput.addEventListener('input', () => {
+      collection[index].searchString = queryInput.value;
+      updateSettingsActionButtons();
+    });
+  }
 
   const keyInput = document.createElement('input');
   keyInput.type = 'text';
@@ -6194,7 +6207,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   keyInput.disabled = true;
 
   fields.appendChild(createFloatingField('Namn', nameInput));
-  fields.appendChild(createFloatingField('Söksträng', queryInput));
+  fields.appendChild(createFloatingField(isDocumentDateField ? 'Extraktion' : 'Söksträng', queryInput));
   fields.appendChild(createFloatingField('Nyckel', keyInput));
 
   if (allowRemove) {
@@ -6289,6 +6302,7 @@ function renderSystemExtractionFieldsEditor() {
     renderSingleExtractionFieldEditor(systemExtractionFieldsEditorEl, systemExtractionFieldsDraft, index, {
       showLock: true,
       allowRemove: false,
+      readOnly: true,
     });
   });
 }

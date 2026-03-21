@@ -638,6 +638,7 @@ function valid_extraction_field_extractor(string $extractor, string $fallback = 
         'generic_label',
         'amount',
         'due_date',
+        'document_date',
         'bankgiro',
         'plusgiro',
         'supplier',
@@ -700,6 +701,17 @@ function predefined_extraction_field_definitions(): array
     ];
 }
 
+function system_extraction_field_definitions(): array
+{
+    return [
+        'document_date' => [
+            'name' => 'Dokumentdatum',
+            'searchString' => '',
+            'extractor' => 'document_date',
+        ],
+    ];
+}
+
 function normalize_extraction_fields(mixed $input): array
 {
     if (!is_array($input)) {
@@ -722,7 +734,7 @@ function normalize_extraction_fields(mixed $input): array
             is_string($row['extractor'] ?? null) ? (string) $row['extractor'] : 'generic_label'
         );
 
-        if ($name === '' || $searchString === '') {
+        if ($name === '' || ($searchString === '' && $extractor === 'generic_label')) {
             continue;
         }
 
@@ -806,12 +818,65 @@ function normalize_predefined_extraction_fields(mixed $input): array
 
 function system_extraction_fields_template(): array
 {
-    return [];
+    $definitions = system_extraction_field_definitions();
+    $fields = [];
+    foreach ($definitions as $key => $defaults) {
+        $fields[] = normalize_system_extraction_field_with_defaults($key, [], $defaults);
+    }
+    return $fields;
 }
 
 function normalize_system_extraction_fields(mixed $input): array
 {
-    return normalize_extraction_fields($input);
+    $decoded = is_array($input) ? $input : [];
+    $byKey = [];
+    foreach ($decoded as $field) {
+        if (!is_array($field)) {
+            continue;
+        }
+        $systemKey = is_string($field['systemFieldKey'] ?? null) ? trim((string) $field['systemFieldKey']) : '';
+        $key = $systemKey !== ''
+            ? $systemKey
+            : (is_string($field['key'] ?? null) ? trim((string) $field['key']) : '');
+        if ($key !== '') {
+            $byKey[$key] = $field;
+        }
+    }
+
+    $definitions = system_extraction_field_definitions();
+    $fields = [];
+    foreach ($definitions as $key => $defaults) {
+        $fields[] = normalize_system_extraction_field_with_defaults($key, $byKey[$key] ?? [], $defaults);
+    }
+    return $fields;
+}
+
+function normalize_system_extraction_field_with_defaults(string $key, mixed $input, array $defaults): array
+{
+    $field = is_array($input) ? $input : [];
+    $name = is_string($field['name'] ?? null) ? trim((string) $field['name']) : '';
+    if ($name === '') {
+        $name = is_string($defaults['name'] ?? null) ? trim((string) $defaults['name']) : '';
+    }
+
+    $searchString = is_string($field['searchString'] ?? null)
+        ? trim((string) $field['searchString'])
+        : (is_string($field['query'] ?? null) ? trim((string) $field['query']) : '');
+    if ($searchString === '') {
+        $searchString = is_string($defaults['searchString'] ?? null) ? trim((string) $defaults['searchString']) : '';
+    }
+
+    return [
+        'key' => $key,
+        'name' => $name,
+        'searchString' => $searchString,
+        'extractor' => valid_extraction_field_extractor(
+            is_string($field['extractor'] ?? null) ? (string) $field['extractor'] : (string) ($defaults['extractor'] ?? 'generic_label'),
+            valid_extraction_field_extractor((string) ($defaults['extractor'] ?? 'generic_label'))
+        ),
+        'systemFieldKey' => $key,
+        'isSystemField' => true,
+    ];
 }
 
 function load_extraction_fields(): array
@@ -4973,6 +5038,701 @@ function due_date_candidates_from_text(string $text, int $offsetBase = 0): array
     return $candidates;
 }
 
+function document_date_month_lookup(): array
+{
+    return [
+        'jan' => 1,
+        'januari' => 1,
+        'january' => 1,
+        'feb' => 2,
+        'februari' => 2,
+        'february' => 2,
+        'mar' => 3,
+        'mars' => 3,
+        'march' => 3,
+        'apr' => 4,
+        'april' => 4,
+        'maj' => 5,
+        'may' => 5,
+        'jun' => 6,
+        'juni' => 6,
+        'june' => 6,
+        'jul' => 7,
+        'juli' => 7,
+        'july' => 7,
+        'aug' => 8,
+        'augusti' => 8,
+        'august' => 8,
+        'sep' => 9,
+        'sept' => 9,
+        'september' => 9,
+        'okt' => 10,
+        'oktober' => 10,
+        'oct' => 10,
+        'october' => 10,
+        'nov' => 11,
+        'november' => 11,
+        'dec' => 12,
+        'december' => 12,
+    ];
+}
+
+function add_document_date_candidate(array &$candidates, array &$seen, ?string $value, string $raw, int $start, string $format): void
+{
+    $value = is_string($value) ? trim($value) : '';
+    $raw = trim($raw);
+    if ($value === '' || $raw === '' || $start < 0) {
+        return;
+    }
+
+    $key = $start . '|' . $value . '|' . $raw;
+    if (isset($seen[$key])) {
+        return;
+    }
+    $seen[$key] = true;
+
+    $candidates[] = [
+        'value' => $value,
+        'raw' => $raw,
+        'start' => $start,
+        'end' => $start + strlen($raw),
+        'format' => $format,
+    ];
+}
+
+function document_date_candidates_from_text(string $text, int $offsetBase = 0): array
+{
+    $candidates = [];
+    $seen = [];
+
+    $matches = [];
+    if (@preg_match_all('/\b(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) >= 1) {
+        $all = is_array($matches[0] ?? null) ? $matches[0] : [];
+        foreach ($all as $index => $group) {
+            if (!is_array($group) || count($group) < 2) {
+                continue;
+            }
+            $raw = is_string($group[0] ?? null) ? (string) $group[0] : '';
+            $start = is_int($group[1] ?? null) ? (int) $group[1] : -1;
+            $year = isset($matches[1][$index][0]) ? (int) $matches[1][$index][0] : 0;
+            $month = isset($matches[2][$index][0]) ? (int) $matches[2][$index][0] : 0;
+            $day = isset($matches[3][$index][0]) ? (int) $matches[3][$index][0] : 0;
+            $value = checkdate($month, $day, $year)
+                ? sprintf('%04d-%02d-%02d', $year, $month, $day)
+                : null;
+            add_document_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'ymd_numeric');
+        }
+    }
+
+    $matches = [];
+    if (@preg_match_all('/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](20\d{2})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) >= 1) {
+        $all = is_array($matches[0] ?? null) ? $matches[0] : [];
+        foreach ($all as $index => $group) {
+            if (!is_array($group) || count($group) < 2) {
+                continue;
+            }
+            $raw = is_string($group[0] ?? null) ? (string) $group[0] : '';
+            $start = is_int($group[1] ?? null) ? (int) $group[1] : -1;
+            $day = isset($matches[1][$index][0]) ? (int) $matches[1][$index][0] : 0;
+            $month = isset($matches[2][$index][0]) ? (int) $matches[2][$index][0] : 0;
+            $year = isset($matches[3][$index][0]) ? (int) $matches[3][$index][0] : 0;
+            $value = checkdate($month, $day, $year)
+                ? sprintf('%04d-%02d-%02d', $year, $month, $day)
+                : null;
+            add_document_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'dmy_numeric');
+        }
+    }
+
+    $monthPattern = 'jan(?:uari|uary)?|feb(?:ruari|ruary)?|mar(?:s|ch)?|apr(?:il)?|maj|may|jun(?:i|e)?|jul(?:i|y)?|aug(?:usti|ust)?|sep(?:t(?:ember)?)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+    $matches = [];
+    if (@preg_match_all('/\b((?:den\s+)?(\d{1,2})\s+(' . $monthPattern . ')\s+(20\d{2}))\b/iu', $text, $matches, PREG_OFFSET_CAPTURE) >= 1) {
+        $all = is_array($matches[1] ?? null) ? $matches[1] : [];
+        $monthLookup = document_date_month_lookup();
+        foreach ($all as $index => $group) {
+            if (!is_array($group) || count($group) < 2) {
+                continue;
+            }
+            $raw = is_string($group[0] ?? null) ? (string) $group[0] : '';
+            $start = is_int($group[1] ?? null) ? (int) $group[1] : -1;
+            $day = isset($matches[2][$index][0]) ? (int) $matches[2][$index][0] : 0;
+            $monthKey = isset($matches[3][$index][0]) ? lowercase_text((string) $matches[3][$index][0]) : '';
+            $year = isset($matches[4][$index][0]) ? (int) $matches[4][$index][0] : 0;
+            $month = $monthLookup[$monthKey] ?? 0;
+            $value = ($month > 0 && checkdate($month, $day, $year))
+                ? sprintf('%04d-%02d-%02d', $year, $month, $day)
+                : null;
+            add_document_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'd_mon_y');
+        }
+    }
+
+    usort($candidates, static function (array $a, array $b): int {
+        $startCompare = ((int) ($a['start'] ?? 0)) <=> ((int) ($b['start'] ?? 0));
+        if ($startCompare !== 0) {
+            return $startCompare;
+        }
+        return strcmp((string) ($a['value'] ?? ''), (string) ($b['value'] ?? ''));
+    });
+
+    return $candidates;
+}
+
+function normalize_document_date_lookup_text(string $text): string
+{
+    $normalized = lowercase_text(trim($text));
+    $normalized = strtr($normalized, [
+        'å' => 'a',
+        'ä' => 'a',
+        'ö' => 'o',
+        'á' => 'a',
+        'à' => 'a',
+        'â' => 'a',
+        'ã' => 'a',
+        'æ' => 'ae',
+        'ç' => 'c',
+        'č' => 'c',
+        'ď' => 'd',
+        'ð' => 'd',
+        'é' => 'e',
+        'è' => 'e',
+        'ê' => 'e',
+        'ë' => 'e',
+        'ě' => 'e',
+        'í' => 'i',
+        'ì' => 'i',
+        'î' => 'i',
+        'ï' => 'i',
+        'ľ' => 'l',
+        'ĺ' => 'l',
+        'ł' => 'l',
+        'ñ' => 'n',
+        'ň' => 'n',
+        'ó' => 'o',
+        'ò' => 'o',
+        'ô' => 'o',
+        'õ' => 'o',
+        'ø' => 'o',
+        'œ' => 'oe',
+        'ŕ' => 'r',
+        'ř' => 'r',
+        'š' => 's',
+        'ß' => 'ss',
+        'ť' => 't',
+        'þ' => 'th',
+        'ú' => 'u',
+        'ù' => 'u',
+        'û' => 'u',
+        'ü' => 'u',
+        'ů' => 'u',
+        'ý' => 'y',
+        'ÿ' => 'y',
+        'ž' => 'z',
+    ]);
+    $normalized = preg_replace('/[^a-z0-9]+/u', ' ', $normalized);
+    if (!is_string($normalized)) {
+        return '';
+    }
+    return normalize_inline_whitespace($normalized);
+}
+
+function document_date_reference_localities(): array
+{
+    static $cached = null;
+    if (is_array($cached)) {
+        return $cached;
+    }
+
+    $cached = [];
+    $path = PROJECT_ROOT . '/public/assets/reference/svenska-tatorter-over-500-invanare-2023.txt';
+    if (!is_file($path)) {
+        return $cached;
+    }
+
+    $lines = @file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if (!is_array($lines)) {
+        return $cached;
+    }
+
+    foreach ($lines as $line) {
+        if (!is_string($line)) {
+            continue;
+        }
+        $name = trim($line);
+        if ($name === '') {
+            continue;
+        }
+        $normalized = normalize_document_date_lookup_text($name);
+        if ($normalized === '') {
+            continue;
+        }
+        $cached[$normalized] = $name;
+    }
+
+    uksort($cached, static function (string $a, string $b): int {
+        $lenCompare = strlen($b) <=> strlen($a);
+        if ($lenCompare !== 0) {
+            return $lenCompare;
+        }
+        return strcmp($a, $b);
+    });
+
+    return $cached;
+}
+
+function document_date_label_definitions(): array
+{
+    return [
+        [
+            'code' => 'invoice_date_label',
+            'score' => -110,
+            'detail' => 'fakturadatum',
+            'patterns' => ['fakturadatum'],
+        ],
+        [
+            'code' => 'due_date_label',
+            'score' => -110,
+            'detail' => 'förfallodatum/förfaller',
+            'patterns' => ['forfallodatum', 'forfaller'],
+        ],
+        [
+            'code' => 'decision_date_label',
+            'score' => -110,
+            'detail' => 'beslutsdatum',
+            'patterns' => ['beslutsdatum'],
+        ],
+        [
+            'code' => 'payment_date_label',
+            'score' => -95,
+            'detail' => 'betalningsdatum/betalas senast',
+            'patterns' => ['betalningsdatum', 'betalas senast', 'att betala senast'],
+        ],
+        [
+            'code' => 'payment_out_date_label',
+            'score' => -100,
+            'detail' => 'utbetalningsdatum',
+            'patterns' => ['utbetalningsdatum'],
+        ],
+        [
+            'code' => 'dispatch_date_label',
+            'score' => -90,
+            'detail' => 'utskicksdatum/utskriftsdatum',
+            'patterns' => ['utskicksdatum', 'utskriftsdatum'],
+        ],
+        [
+            'code' => 'accounting_date_label',
+            'score' => -60,
+            'detail' => 'bokföringsdatum/verifikationsdatum',
+            'patterns' => ['bokforingsdatum', 'verifikationsdatum'],
+        ],
+        [
+            'code' => 'period_label',
+            'score' => -45,
+            'detail' => 'period',
+            'patterns' => ['period', 'galler for tiden'],
+        ],
+        [
+            'code' => 'generic_date_label',
+            'score' => -18,
+            'detail' => 'datum',
+            'patterns' => ['datum'],
+        ],
+    ];
+}
+
+function previous_nonempty_line_index(array $lines, int $index, int $distance = 2): ?int
+{
+    for ($step = 1; $step <= $distance; $step++) {
+        $candidateIndex = $index - $step;
+        if (!array_key_exists($candidateIndex, $lines)) {
+            continue;
+        }
+        $line = is_string($lines[$candidateIndex] ?? null) ? trim((string) $lines[$candidateIndex]) : '';
+        if ($line !== '') {
+            return $candidateIndex;
+        }
+    }
+
+    return null;
+}
+
+function document_date_context_label_signals(string $normalizedContext, string $contextKey): array
+{
+    if ($normalizedContext === '') {
+        return [];
+    }
+
+    $matches = [];
+    foreach (document_date_label_definitions() as $definition) {
+        if (!is_array($definition)) {
+            continue;
+        }
+
+        $patterns = is_array($definition['patterns'] ?? null) ? $definition['patterns'] : [];
+        foreach ($patterns as $pattern) {
+            if (!is_string($pattern) || $pattern === '') {
+                continue;
+            }
+            $quoted = preg_quote($pattern, '/');
+            if (@preg_match('/\b' . $quoted . '\b/u', $normalizedContext) !== 1) {
+                continue;
+            }
+
+            $matches[] = [
+                'code' => is_string($definition['code'] ?? null) ? (string) $definition['code'] : 'context_label',
+                'score' => (int) ($definition['score'] ?? 0),
+                'detail' => is_string($definition['detail'] ?? null) ? (string) $definition['detail'] : $pattern,
+                'context' => $contextKey,
+            ];
+            break;
+        }
+    }
+
+    return $matches;
+}
+
+function document_date_place_match(string $prefixText): ?array
+{
+    $normalizedPrefix = normalize_document_date_lookup_text($prefixText);
+    if ($normalizedPrefix === '') {
+        return null;
+    }
+
+    $best = null;
+    foreach (document_date_reference_localities() as $normalizedPlace => $rawPlace) {
+        $quoted = preg_quote($normalizedPlace, '/');
+        if (@preg_match('/\b' . $quoted . '\b(?:\s+\w+){0,3}\s*$/u', $normalizedPrefix, $matches) !== 1) {
+            continue;
+        }
+        $suffix = is_string($matches[0] ?? null) ? trim((string) $matches[0]) : '';
+        if ($suffix === '') {
+            continue;
+        }
+
+        $suffixWithoutPlace = trim(preg_replace('/\b' . $quoted . '\b/u', '', $suffix, 1));
+        $gapWords = $suffixWithoutPlace === '' ? 0 : count(preg_split('/\s+/u', $suffixWithoutPlace));
+        if ($gapWords < 0 || $gapWords > 3) {
+            continue;
+        }
+
+        $candidate = [
+            'name' => $rawPlace,
+            'normalized' => $normalizedPlace,
+            'gapWords' => $gapWords,
+        ];
+        if (!is_array($best)) {
+            $best = $candidate;
+            continue;
+        }
+        $bestGap = (int) ($best['gapWords'] ?? 99);
+        if ($gapWords < $bestGap) {
+            $best = $candidate;
+            continue;
+        }
+        if ($gapWords === $bestGap && strlen($normalizedPlace) > strlen((string) ($best['normalized'] ?? ''))) {
+            $best = $candidate;
+        }
+    }
+
+    return $best;
+}
+
+function is_document_title_line(string $text): bool
+{
+    $normalized = normalize_inline_whitespace($text);
+    $textLength = function_exists('mb_strlen') ? mb_strlen($normalized) : strlen($normalized);
+    if ($normalized === '' || $textLength > 48) {
+        return false;
+    }
+    if (@preg_match('/[:;]/u', $normalized) === 1) {
+        return false;
+    }
+    if (count_pattern_matches('/\d/u', $normalized) > 0) {
+        return false;
+    }
+    if (count_pattern_matches('/\pL/u', $normalized) < 3) {
+        return false;
+    }
+    $lookup = normalize_document_date_lookup_text($normalized);
+    $headerishPatterns = [
+        'fakturanummer',
+        'org nr',
+        'pers nr',
+        'referensnummer',
+        'belopp',
+        'moms',
+        'datum',
+        'handelse',
+        'ocr',
+        'forfallodatum',
+    ];
+    foreach ($headerishPatterns as $pattern) {
+        if (@preg_match('/\b' . preg_quote($pattern, '/') . '\b/u', $lookup) === 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function score_document_date_candidate(array $candidate, array $lines): array
+{
+    $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
+    $line = is_string($candidate['line'] ?? null) ? (string) $candidate['line'] : '';
+    $raw = is_string($candidate['raw'] ?? null) ? trim((string) $candidate['raw']) : '';
+    $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+
+    $result = $candidate;
+    $result['signals'] = [];
+    $result['excluded'] = false;
+    $result['excludedReason'] = null;
+    $result['score'] = 0;
+
+    if ($lineIndex < 0 || $line === '' || $raw === '' || $start < 0) {
+        return $result;
+    }
+
+    $prefix = substr($line, 0, $start);
+    $prefix = is_string($prefix) ? $prefix : '';
+    $suffix = substr($line, $start + strlen($raw));
+    $suffix = is_string($suffix) ? $suffix : '';
+    $previousLineIndex = previous_nonempty_line_index($lines, $lineIndex, 2);
+    $previousLine = $previousLineIndex !== null && is_string($lines[$previousLineIndex] ?? null)
+        ? (string) $lines[$previousLineIndex]
+        : '';
+    $normalizedPrefix = normalize_document_date_lookup_text($prefix);
+    $normalizedLine = normalize_document_date_lookup_text($line);
+    $normalizedSuffix = normalize_document_date_lookup_text($suffix);
+    $previousNormalized = normalize_document_date_lookup_text($previousLine);
+    $result['sameLinePrefix'] = normalize_inline_whitespace($prefix);
+    $result['sameLineSuffix'] = normalize_inline_whitespace($suffix);
+    $result['previousLine'] = normalize_inline_whitespace($previousLine);
+
+    $score = 0;
+    $signals = [];
+
+    $placeMatch = document_date_place_match($prefix);
+    if (is_array($placeMatch)) {
+        $score += 100;
+        $signals[] = [
+            'type' => 'positive',
+            'code' => 'place_before_date',
+            'score' => 100,
+            'detail' => $placeMatch['name'],
+        ];
+        $result['matchedPlace'] = $placeMatch['name'];
+        $result['matchedPlaceGapWords'] = (int) ($placeMatch['gapWords'] ?? 0);
+    }
+
+    $placeAboveMatch = $previousLine !== '' ? document_date_place_match($previousLine) : null;
+    if (is_array($placeAboveMatch)) {
+        $score += 90;
+        $signals[] = [
+            'type' => 'positive',
+            'code' => 'place_above_date',
+            'score' => 90,
+            'detail' => $placeAboveMatch['name'],
+        ];
+        $result['matchedPlaceAbove'] = $placeAboveMatch['name'];
+        $result['matchedPlaceAboveGapWords'] = (int) ($placeAboveMatch['gapWords'] ?? 0);
+    }
+
+    if ($lineIndex <= 14) {
+        $score += 50;
+        $signals[] = [
+            'type' => 'positive',
+            'code' => 'high_in_document',
+            'score' => 50,
+            'detail' => 'line:' . ($lineIndex + 1),
+        ];
+    }
+
+    if ($previousLine !== '' && $lineIndex <= 20) {
+        $score += 10;
+        $signals[] = [
+            'type' => 'positive',
+            'code' => 'context_above_date',
+            'score' => 10,
+            'detail' => 'line:' . ($previousLineIndex !== null ? ($previousLineIndex + 1) : $lineIndex),
+        ];
+    }
+
+    $headerWindowStart = max(0, $lineIndex - 3);
+    $headerWindowEnd = min(count($lines) - 1, $lineIndex + 1);
+    $headerPatterns = ['till', 'fran', 'handlaggare', 'diarienummer', 'avdelning'];
+    $headerMatched = null;
+    for ($i = $headerWindowStart; $i <= $headerWindowEnd; $i++) {
+        $windowLine = is_string($lines[$i] ?? null) ? (string) $lines[$i] : '';
+        $normalizedWindowLine = normalize_document_date_lookup_text($windowLine);
+        foreach ($headerPatterns as $pattern) {
+            if (@preg_match('/\b' . preg_quote($pattern, '/') . '\b/u', $normalizedWindowLine) === 1) {
+                $headerMatched = $pattern;
+                break 2;
+            }
+        }
+    }
+    if ($headerMatched !== null && $lineIndex <= 24) {
+        $score += 40;
+        $signals[] = [
+            'type' => 'positive',
+            'code' => 'letterhead_context',
+            'score' => 40,
+            'detail' => $headerMatched,
+        ];
+    }
+
+    $trimmedLine = normalize_inline_whitespace($line);
+    if (
+        $trimmedLine === $raw
+        || $trimmedLine === ('den ' . $raw)
+    ) {
+        $score += 30;
+        $signals[] = [
+            'type' => 'positive',
+            'code' => 'single_date_line',
+            'score' => 30,
+            'detail' => $trimmedLine,
+        ];
+    }
+
+    if ($previousLine !== '' && is_document_title_line($previousLine)) {
+        $score += 30;
+        $signals[] = [
+            'type' => 'positive',
+            'code' => 'near_title',
+            'score' => 30,
+            'detail' => normalize_inline_whitespace($previousLine),
+        ];
+    }
+
+    $contextSignals = [];
+    foreach (document_date_context_label_signals($normalizedPrefix, 'same_line_prefix') as $signal) {
+        $contextSignals[$signal['code'] . '::' . $signal['context']] = $signal;
+    }
+    foreach (document_date_context_label_signals($normalizedSuffix, 'same_line_suffix') as $signal) {
+        $contextSignals[$signal['code'] . '::' . $signal['context']] = $signal;
+    }
+    foreach (document_date_context_label_signals($previousNormalized, 'line_above') as $signal) {
+        $contextSignals[$signal['code'] . '::' . $signal['context']] = $signal;
+    }
+    foreach (document_date_context_label_signals($normalizedLine, 'same_line') as $signal) {
+        $existingPrefix = $signal['code'] . '::same_line_prefix';
+        $existingSuffix = $signal['code'] . '::same_line_suffix';
+        $existingAbove = $signal['code'] . '::line_above';
+        if (isset($contextSignals[$existingPrefix]) || isset($contextSignals[$existingSuffix]) || isset($contextSignals[$existingAbove])) {
+            continue;
+        }
+        $contextSignals[$signal['code'] . '::' . $signal['context']] = $signal;
+    }
+    foreach (array_values($contextSignals) as $signal) {
+        $score += (int) ($signal['score'] ?? 0);
+        $signals[] = [
+            'type' => ((int) ($signal['score'] ?? 0)) >= 0 ? 'positive' : 'negative',
+            'code' => (string) ($signal['code'] ?? 'context_label'),
+            'score' => (int) ($signal['score'] ?? 0),
+            'detail' => (string) ($signal['detail'] ?? ''),
+            'context' => (string) ($signal['context'] ?? ''),
+        ];
+    }
+
+    $longIdentifierCount = count_pattern_matches('/\b\d{6,}\b/u', $line)
+        + count_pattern_matches('/\b\d{2,6}-\d{4,}\b/u', $line);
+    if (!is_array($placeMatch) && $headerMatched === null && $longIdentifierCount >= 2) {
+        $score -= 60;
+        $signals[] = [
+            'type' => 'negative',
+            'code' => 'identifier_row',
+            'score' => -60,
+            'detail' => 'long_identifiers:' . $longIdentifierCount,
+        ];
+    }
+
+    $lineCount = count($lines);
+    if ($lineIndex >= 100 || ($lineCount > 0 && $lineIndex >= max(100, $lineCount - 12))) {
+        $score -= 30;
+        $signals[] = [
+            'type' => 'negative',
+            'code' => 'late_in_document',
+            'score' => -30,
+            'detail' => 'line:' . ($lineIndex + 1),
+        ];
+    }
+
+    $result['score'] = $score;
+    $result['signals'] = $signals;
+    return $result;
+}
+
+function extract_document_date_field_result(array $lines): array
+{
+    $candidates = [];
+    foreach ($lines as $lineIndex => $line) {
+        if (!is_string($line)) {
+            continue;
+        }
+        $trimmedLine = trim($line);
+        if ($trimmedLine === '') {
+            continue;
+        }
+        $lineCandidates = document_date_candidates_from_text($line, 0);
+        foreach ($lineCandidates as $candidate) {
+            $candidate['lineIndex'] = is_int($lineIndex) ? $lineIndex : 0;
+            $candidate['line'] = $line;
+            $candidates[] = score_document_date_candidate($candidate, $lines);
+        }
+    }
+
+    usort($candidates, static function (array $a, array $b): int {
+        $excludedCompare = ((bool) ($a['excluded'] ?? false)) <=> ((bool) ($b['excluded'] ?? false));
+        if ($excludedCompare !== 0) {
+            return $excludedCompare;
+        }
+        $scoreCompare = ((int) ($b['score'] ?? 0)) <=> ((int) ($a['score'] ?? 0));
+        if ($scoreCompare !== 0) {
+            return $scoreCompare;
+        }
+        $lineCompare = ((int) ($a['lineIndex'] ?? 0)) <=> ((int) ($b['lineIndex'] ?? 0));
+        if ($lineCompare !== 0) {
+            return $lineCompare;
+        }
+        return ((int) ($a['start'] ?? 0)) <=> ((int) ($b['start'] ?? 0));
+    });
+
+    $selected = null;
+    foreach ($candidates as $candidate) {
+        if (($candidate['excluded'] ?? false) === true) {
+            continue;
+        }
+        if ((int) ($candidate['score'] ?? 0) <= 0) {
+            continue;
+        }
+        $selected = $candidate;
+        break;
+    }
+
+    if (!is_array($selected)) {
+        return [
+            'value' => null,
+            'confidence' => 0.0,
+            'lineIndex' => null,
+            'source' => 'document_date_heuristic',
+            'raw' => null,
+            'selectedValue' => null,
+            'selectedCandidate' => null,
+            'candidates' => $candidates,
+        ];
+    }
+
+    $score = (int) ($selected['score'] ?? 0);
+    return [
+        'value' => is_string($selected['value'] ?? null) ? (string) $selected['value'] : null,
+        'confidence' => clamp_confidence($score / 180),
+        'lineIndex' => is_int($selected['lineIndex'] ?? null) ? (int) $selected['lineIndex'] : null,
+        'source' => 'document_date_heuristic',
+        'raw' => is_string($selected['raw'] ?? null) ? (string) $selected['raw'] : null,
+        'selectedValue' => is_string($selected['value'] ?? null) ? (string) $selected['value'] : null,
+        'selectedCandidate' => $selected,
+        'candidates' => $candidates,
+    ];
+}
+
 function amount_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
@@ -5493,6 +6253,8 @@ function extract_configured_text_field_results(array $lines, array $replacementM
             $result = extract_amount_field_result($lines, $replacementMap);
         } elseif ($extractor === 'due_date') {
             $result = extract_due_date_field_result($lines, $replacementMap);
+        } elseif ($extractor === 'document_date') {
+            $result = extract_document_date_field_result($lines);
         } elseif ($extractor === 'bankgiro') {
             $result = extract_bankgiro_field_result($lines, $replacementMap);
         } elseif ($extractor === 'plusgiro') {
@@ -5517,7 +6279,11 @@ function extract_configured_text_field_results(array $lines, array $replacementM
             );
         }
 
-        if (($result['value'] ?? null) === null) {
+        if (
+            ($result['value'] ?? null) === null
+            && !array_key_exists('selectedValue', $result)
+            && !is_array($result['candidates'] ?? null)
+        ) {
             $result = empty_extraction_field_result();
         }
 
@@ -5537,6 +6303,15 @@ function extract_configured_text_field_results(array $lines, array $replacementM
             'source' => is_string($result['source'] ?? null) ? (string) $result['source'] : 'none',
             'raw' => is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
         ];
+        if (array_key_exists('selectedValue', $result)) {
+            $results[$key]['selectedValue'] = $result['selectedValue'];
+        }
+        if (is_array($result['selectedCandidate'] ?? null)) {
+            $results[$key]['selectedCandidate'] = $result['selectedCandidate'];
+        }
+        if (is_array($result['candidates'] ?? null)) {
+            $results[$key]['candidates'] = $result['candidates'];
+        }
     }
 
     return $results;
@@ -5570,6 +6345,36 @@ function simplify_extraction_field_values(array $results): array
     return $values;
 }
 
+function simplify_extraction_field_meta(array $results): array
+{
+    $meta = [];
+    foreach ($results as $key => $result) {
+        $resolvedKey = is_string($key) && trim($key) !== ''
+            ? trim($key)
+            : (is_string($result['key'] ?? null) ? trim((string) $result['key']) : '');
+        if ($resolvedKey === '' || !is_array($result)) {
+            continue;
+        }
+
+        $fieldMeta = [];
+        if (array_key_exists('selectedValue', $result)) {
+            $fieldMeta['selectedValue'] = $result['selectedValue'];
+        }
+        if (is_array($result['selectedCandidate'] ?? null)) {
+            $fieldMeta['selectedCandidate'] = $result['selectedCandidate'];
+        }
+        if (is_array($result['candidates'] ?? null)) {
+            $fieldMeta['candidates'] = $result['candidates'];
+        }
+
+        if ($fieldMeta !== []) {
+            $meta[$resolvedKey] = $fieldMeta;
+        }
+    }
+
+    return $meta;
+}
+
 function initial_job_data(string $jobId, string $originalFilename, ?string $fallbackTxtPath = null): array
 {
     $now = now_iso();
@@ -5595,6 +6400,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
                 'sender' => null,
             ],
             'extractionFields' => new stdClass(),
+            'extractionFieldMeta' => new stdClass(),
             'labels' => [],
         ],
         'files' => [
@@ -5779,6 +6585,7 @@ function process_claimed_job(
         $configuredExtractionFields
     );
     $configuredFieldValues = simplify_extraction_field_values($configuredFieldResults);
+    $configuredFieldMeta = simplify_extraction_field_meta($configuredFieldResults);
     $orgNumber = detect_org_number_from_ocr_text($ocrText);
     $bankgiroValue = is_string($configuredFieldValues['bankgiro'] ?? null)
         ? trim((string) $configuredFieldValues['bankgiro'])
@@ -5842,6 +6649,7 @@ function process_claimed_job(
             'preselectedSender' => $preselectedSender,
             'senderLookup' => $senderLookup,
             'extractionFields' => $configuredFieldValues,
+            'extractionFieldMeta' => $configuredFieldMeta !== [] ? $configuredFieldMeta : new stdClass(),
             'labels' => $resolvedLabels,
         ],
         'ocr' => [
@@ -6273,6 +7081,9 @@ function build_job_state_entry(
     $hasReviewPdf = job_review_pdf_path($config, $id, $job) !== null;
     $hasSourcePdf = is_file($jobDir . '/source.pdf');
     $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
+    if (is_array($analysis) && array_key_exists('extractionFieldMeta', $analysis)) {
+        unset($analysis['extractionFieldMeta']);
+    }
     $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null)
         ? trim((string) $job['selectedClientDirName'])
         : null;
