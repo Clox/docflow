@@ -1616,7 +1616,10 @@ function buildFilenameFieldValues(job) {
 
   const extractionFieldValue = (key) => {
     const field = extractionFields && typeof extractionFields === 'object' ? extractionFields[key] : null;
-    return field && typeof field === 'object' ? field.value : null;
+    if (field && typeof field === 'object' && Object.prototype.hasOwnProperty.call(field, 'value')) {
+      return field.value;
+    }
+    return field;
   };
 
   setValue('supplier', extractionFieldValue('supplier'));
@@ -1629,12 +1632,14 @@ function buildFilenameFieldValues(job) {
   setValue('swift', extractionFieldValue('swift'));
   setValue('iban', extractionFieldValue('iban'));
 
-  Object.values(extractionFields).forEach((field) => {
-    if (!field || typeof field !== 'object') {
-      return;
-    }
-    const key = typeof field.key === 'string' ? field.key.trim() : '';
-    const rawValue = field.value;
+  Object.entries(extractionFields).forEach(([fieldKey, field]) => {
+    const entry = field && typeof field === 'object' && Object.prototype.hasOwnProperty.call(field, 'value')
+      ? field
+      : null;
+    const key = entry && typeof entry.key === 'string'
+      ? entry.key.trim()
+      : (typeof fieldKey === 'string' ? fieldKey.trim() : '');
+    const rawValue = entry ? entry.value : field;
     const value = typeof rawValue === 'string'
       ? rawValue.trim()
       : (rawValue === null || rawValue === undefined ? '' : String(rawValue).trim());

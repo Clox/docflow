@@ -5542,6 +5542,34 @@ function extract_configured_text_field_results(array $lines, array $replacementM
     return $results;
 }
 
+function simplify_extraction_field_values(array $results): array
+{
+    $values = [];
+    foreach ($results as $key => $result) {
+        $resolvedKey = is_string($key) && trim($key) !== ''
+            ? trim($key)
+            : (is_string($result['key'] ?? null) ? trim((string) $result['key']) : '');
+        if ($resolvedKey === '') {
+            continue;
+        }
+
+        $value = is_array($result) ? ($result['value'] ?? null) : null;
+        if ($value === null) {
+            continue;
+        }
+        if (is_string($value)) {
+            $value = trim($value);
+            if ($value === '') {
+                continue;
+            }
+        }
+
+        $values[$resolvedKey] = $value;
+    }
+
+    return $values;
+}
+
 function initial_job_data(string $jobId, string $originalFilename, ?string $fallbackTxtPath = null): array
 {
     $now = now_iso();
@@ -5566,7 +5594,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
                 'matchedValue' => null,
                 'sender' => null,
             ],
-            'extractionFields' => [],
+            'extractionFields' => new stdClass(),
             'labels' => [],
         ],
         'files' => [
@@ -5750,12 +5778,13 @@ function process_claimed_job(
         $replacementMap,
         $configuredExtractionFields
     );
+    $configuredFieldValues = simplify_extraction_field_values($configuredFieldResults);
     $orgNumber = detect_org_number_from_ocr_text($ocrText);
-    $bankgiroValue = is_string($configuredFieldResults['bankgiro']['value'] ?? null)
-        ? trim((string) $configuredFieldResults['bankgiro']['value'])
+    $bankgiroValue = is_string($configuredFieldValues['bankgiro'] ?? null)
+        ? trim((string) $configuredFieldValues['bankgiro'])
         : null;
-    $plusgiroValue = is_string($configuredFieldResults['plusgiro']['value'] ?? null)
-        ? trim((string) $configuredFieldResults['plusgiro']['value'])
+    $plusgiroValue = is_string($configuredFieldValues['plusgiro'] ?? null)
+        ? trim((string) $configuredFieldValues['plusgiro'])
         : null;
     $senderLookup = sender_lookup_result(
         $orgNumber,
@@ -5812,7 +5841,7 @@ function process_claimed_job(
             'preselectedClient' => $preselectedClient,
             'preselectedSender' => $preselectedSender,
             'senderLookup' => $senderLookup,
-            'extractionFields' => $configuredFieldResults,
+            'extractionFields' => $configuredFieldValues,
             'labels' => $resolvedLabels,
         ],
         'ocr' => [
