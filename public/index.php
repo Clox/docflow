@@ -162,6 +162,7 @@
         <button class="settings-tab" data-settings-tab="matching" type="button">OCR-matchning</button>
         <button class="settings-tab" data-settings-tab="ocr-processing" type="button">Bild-OCR</button>
         <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
+        <button class="settings-tab" data-settings-tab="labels" type="button">Etiketter</button>
         <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
         <button class="settings-tab" data-settings-tab="jobs" type="button">Jobb</button>
         <button class="settings-tab" data-settings-tab="paths" type="button">Sökvägar</button>
@@ -173,6 +174,7 @@
         <div id="settings-panel-matching" class="settings-panel hidden"></div>
         <div id="settings-panel-ocr-processing" class="settings-panel hidden"></div>
         <div id="settings-panel-categories" class="settings-panel hidden"></div>
+        <div id="settings-panel-labels" class="settings-panel hidden"></div>
         <div id="settings-panel-data-fields" class="settings-panel hidden"></div>
         <div id="settings-panel-jobs" class="settings-panel hidden"></div>
         <div id="settings-panel-paths" class="settings-panel hidden"></div>
@@ -410,6 +412,19 @@
     <p>Ogiltigförklara alla jobb och flytta tillbaka <code>source.pdf</code> till inbox.</p>
     <div class="settings-danger">
       <button id="settings-reset-jobs" type="button">Återställ alla jobb</button>
+    </div>
+  </template>
+
+  <template id="settings-template-labels">
+    <h3>Etiketter</h3>
+    <p>Globala etiketter som matchas mot OCR-texten med samma regelmodell som kategorier.</p>
+    <div id="labels-list" class="categories-list"></div>
+    <div class="categories-actions">
+      <button id="labels-add-row" type="button">Lägg till etikett</button>
+    </div>
+    <div class="panel-actions">
+      <button id="labels-cancel" type="button">Avbryt</button>
+      <button id="labels-apply" type="button">Spara</button>
     </div>
   </template>
 

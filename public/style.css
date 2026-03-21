@@ -2016,6 +2016,11 @@ body {
   background: #fff;
 }
 
+.settings-field-invalid {
+  border-color: #dc2626 !important;
+  background: #fff5f5 !important;
+}
+
 .rule-fields .floating-input-group select {
   background: #fff;
 }

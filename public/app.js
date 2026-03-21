@@ -47,6 +47,7 @@ const settingsPanelTemplateIds = {
   matching: 'settings-template-matching',
   'ocr-processing': 'settings-template-ocr-processing',
   categories: 'settings-template-categories',
+  labels: 'settings-template-labels',
   'data-fields': 'settings-template-data-fields',
   jobs: 'settings-template-jobs',
   paths: 'settings-template-paths',
@@ -106,6 +107,10 @@ let systemCategoryEditorEl = null;
 let categoriesAddCategoryEl = null;
 let categoriesCancelEl = null;
 let categoriesApplyEl = null;
+let labelsListEl = null;
+let labelsAddRowEl = null;
+let labelsCancelEl = null;
+let labelsApplyEl = null;
 let extractionFieldsEditorEl = null;
 let extractionFieldsAddRowEl = null;
 let extractionFieldsCancelEl = null;
@@ -187,6 +192,7 @@ let matchesRequestSeq = 0;
 let metaRequestSeq = 0;
 let preferredJobIdFromHash = '';
 let categoriesDraft = [];
+let labelsDraft = [];
 let systemCategoriesDraft = createDefaultSystemCategories();
 let sendersDraft = [];
 let matchingDraft = [];
@@ -214,6 +220,7 @@ let categoriesBaselineJson = JSON.stringify({
   archiveFolders: [],
   systemCategories: systemCategoriesDraft,
 });
+let labelsBaselineJson = JSON.stringify([]);
 let extractionFieldsBaselineJson = JSON.stringify([]);
 let clientOptionsSignature = '';
 let senderOptionsSignature = '';
@@ -821,7 +828,7 @@ async function setViewerOcr(jobId) {
   }
 }
 
-function appendMatchesSection(container, title, categories, emptyText) {
+function appendMatchesSection(container, title, categories, emptyText, entityLabel = 'Kategori') {
   const header = document.createElement('h3');
   header.className = 'matches-header';
   header.textContent = title;
@@ -842,7 +849,7 @@ function appendMatchesSection(container, title, categories, emptyText) {
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Kategori', 'Totalpoäng', 'Minpoäng', 'Regeltext', 'Matchad text', 'Regelpoäng'].forEach((label) => {
+  [entityLabel, 'Totalpoäng', 'Minpoäng', 'Regeltext', 'Matchad text', 'Regelpoäng'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Regelpoäng' || label === 'Totalpoäng' || label === 'Minpoäng') {
@@ -956,9 +963,11 @@ function renderMatchesContent(payload) {
 
   const categories = payload && Array.isArray(payload.categories) ? payload.categories : [];
   const systemCategories = payload && Array.isArray(payload.systemCategories) ? payload.systemCategories : [];
+  const labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
 
   appendMatchesSection(matchesViewEl, 'Kategorier', categories, 'Inga kategorimatchningar hittades.');
   appendMatchesSection(matchesViewEl, 'Systemkategorier', systemCategories, 'Inga systemkategorimatchningar hittades.');
+  appendMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
 }
 
 async function setViewerMatches(jobId) {
@@ -3771,6 +3780,34 @@ function bindSettingsPanelRefs(tabId) {
         alert(error.message || 'Kunde inte spara arkivstruktur.');
       }
     });
+  } else if (tabId === 'labels') {
+    labelsListEl = document.getElementById('labels-list');
+    labelsAddRowEl = document.getElementById('labels-add-row');
+    labelsCancelEl = document.getElementById('labels-cancel');
+    labelsApplyEl = document.getElementById('labels-apply');
+    labelsAddRowEl.addEventListener('click', () => {
+      labelsDraft.push(defaultLabel());
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+    labelsCancelEl.addEventListener('click', () => {
+      let parsed = [];
+      try {
+        parsed = JSON.parse(labelsBaselineJson);
+      } catch (error) {
+        parsed = [];
+      }
+      labelsDraft = Array.isArray(parsed) ? parsed.map(sanitizeLabel) : [];
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+    labelsApplyEl.addEventListener('click', async () => {
+      try {
+        await saveLabels();
+      } catch (error) {
+        alert(error.message || 'Kunde inte spara etiketter.');
+      }
+    });
   } else if (tabId === 'data-fields') {
     extractionFieldsEditorEl = document.getElementById('extraction-fields-editor');
     extractionFieldsAddRowEl = document.getElementById('extraction-fields-add-row');
@@ -3888,6 +3925,8 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
     await Promise.all([loadCategories(), loadExtractionFields()]);
     renderCategoriesEditor();
     setArchiveTab('categories');
+  } else if (tabId === 'labels') {
+    await loadLabels();
   } else if (tabId === 'data-fields') {
     await loadExtractionFields();
   } else if (tabId === 'paths') {
@@ -4002,7 +4041,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'data-fields', 'jobs', 'paths', 'system'];
+  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'labels', 'data-fields', 'jobs', 'paths', 'system'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -4019,6 +4058,7 @@ function isEditableSettingsTab(tabId) {
     || tabId === 'matching'
     || tabId === 'ocr-processing'
     || tabId === 'categories'
+    || tabId === 'labels'
     || tabId === 'data-fields'
     || tabId === 'paths';
 }
@@ -4106,6 +4146,10 @@ function isCategoriesDirty() {
   return normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft) !== categoriesBaselineJson;
 }
 
+function isLabelsDirty() {
+  return normalizedLabelsJson(labelsDraft) !== labelsBaselineJson;
+}
+
 function isExtractionFieldsDirty() {
   return normalizedExtractionFieldsJson(extractionFieldsDraft) !== extractionFieldsBaselineJson;
 }
@@ -4140,6 +4184,9 @@ function isSettingsTabDirty(tabId) {
   if (tabId === 'categories') {
     return isCategoriesDirty();
   }
+  if (tabId === 'labels') {
+    return isLabelsDirty();
+  }
   if (tabId === 'data-fields') {
     return isExtractionFieldsDirty();
   }
@@ -4153,7 +4200,7 @@ function isSettingsTabDirty(tabId) {
 }
 
 function hasAnyUnsavedSettingsChanges() {
-  return isClientsDirty() || isSendersDirty() || isMatchingDirty() || isOcrProcessingDirty() || isCategoriesDirty() || isExtractionFieldsDirty() || isPathsDirty();
+  return isClientsDirty() || isSendersDirty() || isMatchingDirty() || isOcrProcessingDirty() || isCategoriesDirty() || isLabelsDirty() || isExtractionFieldsDirty() || isPathsDirty();
 }
 
 function panelActionButtonsForTab(tabId) {
@@ -4168,6 +4215,9 @@ function panelActionButtonsForTab(tabId) {
   }
   if (tabId === 'categories') {
     return [categoriesCancelEl, categoriesApplyEl];
+  }
+  if (tabId === 'labels') {
+    return [labelsCancelEl, labelsApplyEl];
   }
   if (tabId === 'data-fields') {
     return [extractionFieldsCancelEl, extractionFieldsApplyEl];
@@ -4187,6 +4237,8 @@ function updateSettingsActionButtons() {
   const matchingDirty = isMatchingDirty();
   const ocrProcessingDirty = isOcrProcessingDirty();
   const categoriesDirty = isCategoriesDirty();
+  const labelsDirty = isLabelsDirty();
+  const labelsError = labelsValidationError();
   const extractionFieldsDirty = isExtractionFieldsDirty();
   const pathsDirty = isPathsDirty();
 
@@ -4213,6 +4265,12 @@ function updateSettingsActionButtons() {
   if (categoriesCancelEl && categoriesApplyEl) {
     categoriesCancelEl.disabled = !categoriesDirty;
     categoriesApplyEl.disabled = !categoriesDirty;
+  }
+
+  if (labelsCancelEl && labelsApplyEl) {
+    labelsCancelEl.disabled = !labelsDirty;
+    labelsApplyEl.disabled = !labelsDirty || labelsError !== '';
+    labelsApplyEl.title = labelsError || '';
   }
 
   if (extractionFieldsCancelEl && extractionFieldsApplyEl) {
@@ -4261,6 +4319,15 @@ function defaultRule() {
 
 function defaultCategory() {
   return {
+    name: '',
+    minScore: 1,
+    rules: [defaultRule()],
+  };
+}
+
+function defaultLabel() {
+  return {
+    id: '',
     name: '',
     minScore: 1,
     rules: [defaultRule()],
@@ -4934,6 +5001,47 @@ function sanitizeArchiveFolder(archiveFolder) {
   };
 }
 
+function sanitizeLabel(label) {
+  const input = label && typeof label === 'object' ? label : {};
+  const name = typeof input.name === 'string' ? input.name : '';
+  const rawRules = Array.isArray(input.rules) ? input.rules : [];
+  const rules = rawRules.map(sanitizeRule);
+  return {
+    id: slugifyText(name, '-', ''),
+    name,
+    minScore: sanitizePositiveInt(input.minScore, 1),
+    rules: rules.length > 0 ? rules : [defaultRule()],
+  };
+}
+
+function normalizedLabelsJson(labels) {
+  return JSON.stringify(labels.map(sanitizeLabel));
+}
+
+function duplicateLabelIds(labels) {
+  const counts = new Map();
+  labels.map(sanitizeLabel).forEach((label) => {
+    const id = typeof label.id === 'string' ? label.id.trim() : '';
+    if (!id) {
+      return;
+    }
+    counts.set(id, (counts.get(id) || 0) + 1);
+  });
+  return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([id]) => id));
+}
+
+function labelsValidationError() {
+  const duplicates = duplicateLabelIds(labelsDraft);
+  if (duplicates.size > 0) {
+    return `Etikett-id krockar: ${Array.from(duplicates).join(', ')}`;
+  }
+  const blankLabel = labelsDraft.map(sanitizeLabel).find((label) => !label.name.trim() || !label.id.trim());
+  if (blankLabel) {
+    return 'Alla etiketter måste ha ett namn.';
+  }
+  return '';
+}
+
 function sanitizeFilenameTemplateParts(parts, depth = 0) {
   if (!Array.isArray(parts) || depth > 6) {
     return [];
@@ -5050,14 +5158,28 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
   };
 }
 
-function normalizeConfigKey(value) {
-  return String(value || '')
+function slugifyText(value, separator = '-', fallback = '') {
+  const safeSeparator = separator === '_' ? '_' : '-';
+  const normalized = String(value || '')
     .trim()
     .toLowerCase()
-    .replace(/[åä]/g, 'a')
-    .replace(/ö/g, 'o')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '') || 'field';
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/æ/g, 'ae')
+    .replace(/œ/g, 'oe')
+    .replace(/ø/g, 'o')
+    .replace(/ß/g, 'ss')
+    .replace(/þ/g, 'th')
+    .replace(/ð/g, 'd')
+    .replace(/ł/g, 'l')
+    .replace(/[^a-z0-9]+/g, safeSeparator)
+    .replace(new RegExp(`\\${safeSeparator}+`, 'g'), safeSeparator)
+    .replace(new RegExp(`^\\${safeSeparator}+|\\${safeSeparator}+$`, 'g'), '');
+  return normalized || fallback;
+}
+
+function normalizeConfigKey(value) {
+  return slugifyText(value, '_', 'field');
 }
 
 function sanitizeSystemCategoryByKey(key, category) {
@@ -5965,6 +6087,213 @@ function renderExtractionFieldsEditor() {
     fieldNode.appendChild(fieldRow);
     extractionFieldsEditorEl.appendChild(fieldNode);
   });
+}
+
+function syncLabelsEditorValidation() {
+  if (!labelsListEl) {
+    return;
+  }
+
+  const duplicateIds = duplicateLabelIds(labelsDraft);
+  Array.from(labelsListEl.querySelectorAll('[data-label-index]')).forEach((input) => {
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    const labelIndex = parseInt(input.dataset.labelIndex || '', 10);
+    const label = Number.isInteger(labelIndex) ? sanitizeLabel(labelsDraft[labelIndex]) : null;
+    const id = label && typeof label.id === 'string' ? label.id.trim() : '';
+    const name = label && typeof label.name === 'string' ? label.name.trim() : '';
+    const message = !name || !id
+      ? 'Etiketten måste ha ett namn.'
+      : duplicateIds.has(id)
+        ? `Etikett-id krockar: ${id}`
+        : '';
+    input.classList.toggle('settings-field-invalid', message !== '');
+    input.title = message;
+  });
+}
+
+function renderLabelsEditor() {
+  if (!labelsListEl) {
+    return;
+  }
+
+  labelsListEl.innerHTML = '';
+
+  const label = document.createElement('div');
+  label.className = 'archive-folders-label';
+  label.textContent = 'Etiketter';
+  labelsListEl.appendChild(label);
+
+  if (labelsDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Inga etiketter ännu.';
+    labelsListEl.appendChild(empty);
+    return;
+  }
+
+  labelsDraft.forEach((labelDraft, labelIndex) => {
+    const labelNode = document.createElement('div');
+    labelNode.className = 'tree-node tree-category';
+
+    const labelRow = createTreeRow({ markerless: true });
+    const labelBody = document.createElement('div');
+    labelBody.className = 'tree-body category-body';
+    appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-category');
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'category-remove';
+    removeButton.textContent = 'Ta bort etikett';
+    removeButton.addEventListener('click', () => {
+      labelsDraft.splice(labelIndex, 1);
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+
+    const fields = document.createElement('div');
+    fields.className = 'category-fields category-fields--wide';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Ex: "Bostadstillägg"';
+    nameInput.value = labelDraft.name;
+    nameInput.dataset.labelIndex = String(labelIndex);
+    nameInput.addEventListener('input', () => {
+      labelsDraft[labelIndex].name = nameInput.value;
+      const nextId = slugifyText(nameInput.value, '-', '');
+      labelsDraft[labelIndex].id = nextId;
+      idInput.value = nextId;
+      syncLabelsEditorValidation();
+      updateSettingsActionButtons();
+    });
+
+    const idInput = document.createElement('input');
+    idInput.type = 'text';
+    idInput.value = sanitizeLabel(labelDraft).id;
+    idInput.disabled = true;
+    idInput.dataset.labelIndex = String(labelIndex);
+
+    const minScoreInput = document.createElement('input');
+    minScoreInput.type = 'number';
+    minScoreInput.step = '1';
+    minScoreInput.min = '1';
+    minScoreInput.value = String(labelDraft.minScore);
+    minScoreInput.addEventListener('input', () => {
+      labelsDraft[labelIndex].minScore = sanitizePositiveInt(minScoreInput.value, 1);
+      updateSettingsActionButtons();
+    });
+
+    fields.appendChild(createFloatingField('Namn', nameInput));
+    fields.appendChild(createFloatingField('ID', idInput));
+    fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
+    fields.appendChild(removeButton);
+    labelBody.appendChild(fields);
+
+    const ruleList = createTreeChildren({ markerless: true });
+
+    const rulesLabel = document.createElement('div');
+    rulesLabel.className = 'archive-level-label';
+    rulesLabel.textContent = 'Regler';
+    ruleList.appendChild(rulesLabel);
+
+    labelDraft.rules.forEach((rule, ruleIndex) => {
+      const ruleNode = document.createElement('div');
+      ruleNode.className = 'tree-node tree-rule has-parent';
+
+      const ruleRow = createTreeRow({ markerless: true });
+
+      const ruleBody = document.createElement('div');
+      ruleBody.className = 'tree-body rule-body';
+      appendTreeBodyIcon(ruleBody, 'tree-body-icon tree-body-icon-rule');
+
+      const ruleFields = document.createElement('div');
+      ruleFields.className = 'rule-fields';
+
+      const typeSelect = document.createElement('select');
+      [
+        ['text', 'Text'],
+        ['invoice', 'Är faktura']
+      ].forEach(([value, optionLabel]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = optionLabel;
+        typeSelect.appendChild(option);
+      });
+      typeSelect.value = rule.type === 'invoice' ? 'invoice' : 'text';
+      typeSelect.addEventListener('change', () => {
+        labelsDraft[labelIndex].rules[ruleIndex].type = typeSelect.value === 'invoice' ? 'invoice' : 'text';
+        if (labelsDraft[labelIndex].rules[ruleIndex].type === 'invoice') {
+          labelsDraft[labelIndex].rules[ruleIndex].text = '';
+        }
+        renderLabelsEditor();
+        updateSettingsActionButtons();
+      });
+
+      const textInput = document.createElement('input');
+      textInput.type = 'text';
+      textInput.placeholder = 'Ex: "förfallodatum"';
+      textInput.value = rule.text;
+      textInput.addEventListener('input', () => {
+        labelsDraft[labelIndex].rules[ruleIndex].text = textInput.value;
+        updateSettingsActionButtons();
+      });
+
+      const scoreInput = document.createElement('input');
+      scoreInput.type = 'number';
+      scoreInput.step = '1';
+      scoreInput.min = '1';
+      scoreInput.value = String(rule.score);
+      scoreInput.addEventListener('input', () => {
+        labelsDraft[labelIndex].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+        updateSettingsActionButtons();
+      });
+
+      const removeRuleButton = document.createElement('button');
+      removeRuleButton.type = 'button';
+      removeRuleButton.className = 'rule-remove';
+      removeRuleButton.textContent = 'Ta bort';
+      removeRuleButton.addEventListener('click', () => {
+        labelsDraft[labelIndex].rules.splice(ruleIndex, 1);
+        if (labelsDraft[labelIndex].rules.length === 0) {
+          labelsDraft[labelIndex].rules.push(defaultRule());
+        }
+        renderLabelsEditor();
+        updateSettingsActionButtons();
+      });
+
+      ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
+      if (rule.type !== 'invoice') {
+        ruleFields.appendChild(createFloatingField('Regeltext', textInput));
+      }
+      ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
+      ruleFields.appendChild(removeRuleButton);
+      ruleBody.appendChild(ruleFields);
+      ruleRow.appendChild(ruleBody);
+      ruleNode.appendChild(ruleRow);
+      ruleList.appendChild(ruleNode);
+    });
+
+    const ruleActions = document.createElement('div');
+    ruleActions.className = 'category-rule-actions';
+    const addRuleButton = document.createElement('button');
+    addRuleButton.type = 'button';
+    addRuleButton.textContent = 'Lägg till regel';
+    addRuleButton.addEventListener('click', () => {
+      labelsDraft[labelIndex].rules.push(defaultRule());
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+    ruleActions.appendChild(addRuleButton);
+    labelBody.appendChild(ruleList);
+    labelBody.appendChild(ruleActions);
+    labelRow.appendChild(labelBody);
+    labelNode.appendChild(labelRow);
+    labelsListEl.appendChild(labelNode);
+  });
+
+  syncLabelsEditorValidation();
 }
 
 function normalizeEditableFilenameTemplateParts(parts) {
@@ -7763,6 +8092,23 @@ async function loadCategories() {
   updateSettingsActionButtons();
 }
 
+async function loadLabels() {
+  const response = await fetch('/api/get-labels.php', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Kunde inte ladda etiketter');
+  }
+
+  const payload = await response.json();
+  if (!payload || !Array.isArray(payload.labels)) {
+    throw new Error('Ogiltigt svar för etiketter');
+  }
+
+  labelsDraft = payload.labels.map(sanitizeLabel);
+  labelsBaselineJson = normalizedLabelsJson(labelsDraft);
+  renderLabelsEditor();
+  updateSettingsActionButtons();
+}
+
 async function loadExtractionFields() {
   const response = await fetch('/api/get-extraction-fields.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -7901,6 +8247,37 @@ async function saveCategories() {
   renderSystemCategoryEditor();
   updateSettingsActionButtons();
   await fetchState({ refreshCategories: true });
+}
+
+async function saveLabels() {
+  const validationError = labelsValidationError();
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  const normalizedLabels = labelsDraft.map(sanitizeLabel);
+  const response = await fetch('/api/save-labels.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      labels: normalizedLabels,
+    })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.labels)) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Kunde inte spara etiketter';
+    throw new Error(message);
+  }
+
+  labelsDraft = payload.labels.map(sanitizeLabel);
+  labelsBaselineJson = normalizedLabelsJson(labelsDraft);
+  renderLabelsEditor();
+  updateSettingsActionButtons();
 }
 
 async function saveExtractionFields() {

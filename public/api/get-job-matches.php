@@ -37,13 +37,20 @@ try {
         $systemCategories = [];
     }
 
+    $labels = $extracted['labelMatches'] ?? [];
+    if (!is_array($labels)) {
+        $labels = [];
+    }
+
     json_response([
         'categories' => $categories,
         'systemCategories' => $systemCategories,
+        'labels' => $labels,
     ]);
 } catch (Throwable $e) {
     json_response([
         'categories' => [],
         'systemCategories' => [],
+        'labels' => [],
     ], 500);
 }

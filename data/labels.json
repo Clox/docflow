@@ -1,0 +1,16 @@
+{
+    "labels": [
+        {
+            "id": "kommun",
+            "name": "Kommun",
+            "minScore": 1,
+            "rules": [
+                {
+                    "type": "text",
+                    "text": "kommun",
+                    "score": 1
+                }
+            ]
+        }
+    ]
+}

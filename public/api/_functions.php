@@ -441,20 +441,69 @@ function normalize_archive_rule(mixed $input): array
     ];
 }
 
-function normalize_config_key(string $value, string $fallback = 'field'): string
+function slugify_text(string $value, string $separator = '-', string $fallback = ''): string
 {
+    $safeSeparator = $separator === '_' ? '_' : '-';
     $normalized = lowercase_text(trim($value));
     $normalized = strtr($normalized, [
         'å' => 'a',
         'ä' => 'a',
         'ö' => 'o',
+        'á' => 'a',
+        'à' => 'a',
+        'â' => 'a',
+        'ã' => 'a',
+        'æ' => 'ae',
+        'ç' => 'c',
+        'č' => 'c',
+        'ď' => 'd',
+        'ð' => 'd',
+        'é' => 'e',
+        'è' => 'e',
+        'ê' => 'e',
+        'ë' => 'e',
+        'ě' => 'e',
+        'í' => 'i',
+        'ì' => 'i',
+        'î' => 'i',
+        'ï' => 'i',
+        'ľ' => 'l',
+        'ĺ' => 'l',
+        'ł' => 'l',
+        'ñ' => 'n',
+        'ň' => 'n',
+        'ó' => 'o',
+        'ò' => 'o',
+        'ô' => 'o',
+        'õ' => 'o',
+        'ø' => 'o',
+        'œ' => 'oe',
+        'ŕ' => 'r',
+        'ř' => 'r',
+        'š' => 's',
+        'ß' => 'ss',
+        'ť' => 't',
+        'þ' => 'th',
+        'ú' => 'u',
+        'ù' => 'u',
+        'û' => 'u',
+        'ü' => 'u',
+        'ů' => 'u',
+        'ý' => 'y',
+        'ÿ' => 'y',
+        'ž' => 'z',
     ]);
-    $normalized = preg_replace('/[^a-z0-9]+/u', '_', $normalized);
+    $normalized = preg_replace('/[^a-z0-9]+/u', $safeSeparator, $normalized);
     if (!is_string($normalized)) {
         $normalized = '';
     }
-    $normalized = trim($normalized, '_');
+    $normalized = trim($normalized, $safeSeparator);
     return $normalized !== '' ? $normalized : $fallback;
+}
+
+function normalize_config_key(string $value, string $fallback = 'field'): string
+{
+    return slugify_text($value, '_', $fallback);
 }
 
 function ensure_unique_config_key(string $baseKey, array &$usedKeys): string
@@ -678,6 +727,116 @@ function normalize_system_archive_categories(mixed $input): array
         $categories[$key] = normalize_system_archive_category_with_defaults($decoded[$key] ?? [], $defaults);
     }
     return $categories;
+}
+
+function normalize_label_definition(array $input): ?array
+{
+    $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
+    if ($name === '') {
+        return null;
+    }
+
+    $rulesIn = $input['rules'] ?? [];
+    $rules = [];
+    if (is_array($rulesIn)) {
+        foreach ($rulesIn as $ruleIn) {
+            $rules[] = normalize_archive_rule($ruleIn);
+        }
+    }
+
+    if (count($rules) === 0) {
+        $rules[] = normalize_archive_rule([]);
+    }
+
+    return [
+        'id' => slugify_text($name, '-', 'label'),
+        'name' => $name,
+        'minScore' => positive_int($input['minScore'] ?? 1, 1),
+        'rules' => $rules,
+    ];
+}
+
+function normalize_labels(mixed $input): array
+{
+    if (!is_array($input)) {
+        return [];
+    }
+
+    $labels = [];
+    $usedIds = [];
+    foreach ($input as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $normalized = normalize_label_definition($row);
+        if (!is_array($normalized)) {
+            continue;
+        }
+
+        $id = (string) ($normalized['id'] ?? '');
+        if ($id === '' || isset($usedIds[$id])) {
+            throw new RuntimeException('Etikett-id krockar: ' . $id);
+        }
+        $usedIds[$id] = true;
+        $labels[] = $normalized;
+    }
+
+    return $labels;
+}
+
+function load_labels_data(): array
+{
+    $labelsPath = DATA_DIR . '/labels.json';
+    $initial = ['labels' => []];
+
+    if (!is_file($labelsPath)) {
+        try {
+            write_json_file($labelsPath, $initial);
+        } catch (Throwable $ignored) {
+            // Keep runtime resilient if file cannot be created right now.
+        }
+        return $initial;
+    }
+
+    $raw = file_get_contents($labelsPath);
+    if ($raw === false || trim($raw) === '') {
+        try {
+            write_json_file($labelsPath, $initial);
+        } catch (Throwable $ignored) {
+            // Keep runtime resilient if file cannot be repaired right now.
+        }
+        return $initial;
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        try {
+            write_json_file($labelsPath, $initial);
+        } catch (Throwable $ignored) {
+            // Keep runtime resilient if file cannot be repaired right now.
+        }
+        return $initial;
+    }
+
+    $normalized = [
+        'labels' => normalize_labels($decoded['labels'] ?? []),
+    ];
+    if (json_encode($decoded) !== json_encode($normalized)) {
+        try {
+            write_json_file($labelsPath, $normalized);
+        } catch (Throwable $ignored) {
+            // Keep runtime resilient if file cannot be updated right now.
+        }
+    }
+
+    return $normalized;
+}
+
+function load_labels(): array
+{
+    $data = load_labels_data();
+    return is_array($data['labels'] ?? null) ? $data['labels'] : [];
 }
 
 function load_categories(): array
@@ -5389,6 +5548,7 @@ function process_claimed_job(
     ?string $fallbackTxtPath,
     array $clients,
     array $categories,
+    array $labels,
     array $replacementMap,
     float $invoiceFieldMinConfidence,
     bool $ocrSkipExistingText,
@@ -5581,10 +5741,25 @@ function process_claimed_job(
     $categoryMatches = find_category_matches($ocrText, $categoryGroups['normalCategories'], $replacementMap, [
         'invoiceDetection' => $invoiceDetection,
     ]);
+    $labelMatches = find_category_matches($ocrText, $labels, $replacementMap, [
+        'invoiceDetection' => $invoiceDetection,
+    ]);
+    $resolvedLabels = [];
+    foreach ($labelMatches as $labelMatch) {
+        if (!is_array($labelMatch)) {
+            continue;
+        }
+        $labelId = is_string($labelMatch['id'] ?? null) ? trim((string) $labelMatch['id']) : '';
+        if ($labelId !== '') {
+            $resolvedLabels[] = $labelId;
+        }
+    }
     $extractedData = [
         'matchedClientDirName' => $matched,
         'categoryMatches' => $categoryMatches,
         'systemCategoryMatches' => $invoiceSignalMatches,
+        'labelMatches' => $labelMatches,
+        'labels' => $resolvedLabels,
         'invoice' => $invoiceData,
         'invoiceConfidence' => $invoiceConfidence,
         'invoiceFieldMinConfidence' => $invoiceFieldMinConfidence,
@@ -5608,6 +5783,7 @@ function process_claimed_job(
             'preselectedSender' => $preselectedSender,
             'senderLookup' => $senderLookup,
             'extractionFields' => $configuredFieldResults,
+            'labels' => $resolvedLabels,
         ],
         'ocr' => [
             'runOcr' => $runOcr,
@@ -5750,6 +5926,7 @@ function process_job_by_id(
     array $config,
     array $clients,
     array $categories,
+    array $labels,
     array $matchingSettings,
     float $invoiceFieldMinConfidence,
     string $jobId
@@ -5796,6 +5973,7 @@ function process_job_by_id(
             $fallbackTxtPath,
             $clients,
             $categories,
+            $labels,
             $replacementMap,
             $invoiceFieldMinConfidence,
             $forceOcr ? false : (bool) ($config['ocrSkipExistingText'] ?? true),
@@ -5854,6 +6032,7 @@ function run_processing_worker(array $config): void
     try {
         $clients = load_clients();
         $categories = load_categories();
+        $labels = load_labels();
         $matchingPayload = load_matching_settings_payload();
         $matchingSettings = is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : [];
         $invoiceFieldMinConfidence = sanitize_invoice_field_min_confidence(
@@ -5870,6 +6049,7 @@ function run_processing_worker(array $config): void
                 $config,
                 $clients,
                 $categories,
+                $labels,
                 $matchingSettings,
                 $invoiceFieldMinConfidence,
                 $jobId
