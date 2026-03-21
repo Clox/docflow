@@ -1,8 +1,10 @@
 pdfs/*
 
+# Generated Python cache
 __pycache__/
 *.py[cod]
 
+# Local runtime state and user-managed data
 clients.json
 data/
 

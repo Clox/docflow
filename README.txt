@@ -4,6 +4,7 @@ This local PHP tool reviews PDFs through a job pipeline.
 
 How it works:
 - Inbox: incoming untouched PDFs (configured in data/config.json).
+- Runtime JSON and other local state in `data/` are installation-local and are not meant to be versioned. See `docs/RUNTIME_DATA.md`.
 - Jobs: each claimed PDF gets its own jobs/<jobId>/ folder.
 - job.json is the source of truth for job state.
 
