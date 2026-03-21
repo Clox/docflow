@@ -226,6 +226,7 @@ let clientOptionsSignature = '';
 let senderOptionsSignature = '';
 let categoryOptionsSignature = '';
 let hasLoadedClients = false;
+let hasLoadedLabels = false;
 const OCR_ZOOM_STEPS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
 const OCR_OBJECT_TEXT_FIT_X_SCALE_BY_SOURCE = {
   tesseract: 1.03,
@@ -3920,7 +3921,7 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
   } else if (tabId === 'ocr-processing') {
     await loadOcrProcessingSettings(options);
   } else if (tabId === 'categories') {
-    await Promise.all([loadCategories(), loadExtractionFields()]);
+    await Promise.all([loadCategories(), loadExtractionFields(), loadLabels()]);
     renderCategoriesEditor();
   } else if (tabId === 'labels') {
     await loadLabels();
@@ -4314,6 +4315,7 @@ function defaultRule() {
   return {
     type: 'text',
     text: '',
+    labelId: '',
     score: 1
   };
 }
@@ -4968,10 +4970,14 @@ function buildSimilarSenderGroups() {
 
 function sanitizeRule(rule) {
   const input = rule && typeof rule === 'object' ? rule : {};
-  const type = String(input.type || 'text').trim().toLowerCase() === 'invoice' ? 'invoice' : 'text';
+  const rawType = String(input.type || 'text').trim().toLowerCase();
+  const type = rawType === 'invoice'
+    ? 'invoice'
+    : (rawType === 'label' ? 'label' : 'text');
   return {
     type,
     text: typeof input.text === 'string' ? input.text : '',
+    labelId: typeof input.labelId === 'string' ? input.labelId : '',
     score: sanitizePositiveInt(input.score, 1)
   };
 }
@@ -4979,14 +4985,28 @@ function sanitizeRule(rule) {
 function sanitizeSystemLabelRule(rule) {
   const normalized = sanitizeRule(rule);
   normalized.type = 'text';
+  normalized.labelId = '';
   return normalized;
+}
+
+function sanitizeLabelRule(rule) {
+  const normalized = sanitizeRule(rule);
+  if (normalized.type === 'label') {
+    normalized.type = 'text';
+    normalized.labelId = '';
+  }
+  return normalized;
+}
+
+function sanitizeCategoryRule(rule) {
+  return sanitizeRule(rule);
 }
 
 function sanitizeCategory(category) {
   const input = category && typeof category === 'object' ? category : {};
   const name = typeof input.name === 'string' ? input.name : '';
   const rawRules = Array.isArray(input.rules) ? input.rules : [];
-  const rules = rawRules.map(sanitizeRule);
+  const rules = rawRules.map(sanitizeCategoryRule);
   return {
     id: slugifyText(name, '-', ''),
     name,
@@ -5014,13 +5034,17 @@ function sanitizeLabel(label) {
   const input = label && typeof label === 'object' ? label : {};
   const name = typeof input.name === 'string' ? input.name : '';
   const rawRules = Array.isArray(input.rules) ? input.rules : [];
-  const rules = rawRules.map(sanitizeRule);
+  const rules = rawRules.map(sanitizeLabelRule);
   return {
     id: slugifyText(name, '-', ''),
     name,
     minScore: sanitizePositiveInt(input.minScore, 1),
     rules: rules.length > 0 ? rules : [defaultRule()],
   };
+}
+
+function sanitizeLabels(labels) {
+  return Array.isArray(labels) ? labels.map(sanitizeLabel) : [];
 }
 
 function sanitizeSystemLabelByKey(key, label) {
@@ -5056,6 +5080,15 @@ function sanitizeSystemLabels(systemLabels) {
     labels[key] = sanitizeSystemLabelByKey(key, input[key]);
   });
   return labels;
+}
+
+function categoryRuleLabelOptions() {
+  return sanitizeLabels(labelsDraft)
+    .map((label) => ({
+      value: typeof label.id === 'string' ? label.id.trim() : '',
+      label: typeof label.name === 'string' ? label.name.trim() : '',
+    }))
+    .filter((label) => label.value !== '' && label.label !== '');
 }
 
 function duplicateCategoryIds(folders) {
@@ -6258,7 +6291,7 @@ function renderLabelsEditor() {
 
       const typeSelect = document.createElement('select');
       [
-        ['text', 'Text'],
+        ['text', 'Innehåller text...'],
         ['invoice', 'Är faktura']
       ].forEach(([value, optionLabel]) => {
         const option = document.createElement('option');
@@ -7346,22 +7379,40 @@ function renderCategoriesEditor() {
 
         const ruleFields = document.createElement('div');
         ruleFields.className = 'rule-fields';
+        const labelOptions = categoryRuleLabelOptions();
 
         const typeSelect = document.createElement('select');
         [
-          ['text', 'Text'],
+          ['text', 'Innehåller text...'],
           ['invoice', 'Är faktura'],
+          ['label', 'Har etikett...'],
         ].forEach(([value, label]) => {
           const option = document.createElement('option');
           option.value = value;
           option.textContent = label;
           typeSelect.appendChild(option);
         });
-        typeSelect.value = rule.type === 'invoice' ? 'invoice' : 'text';
+        typeSelect.value = rule.type === 'label'
+          ? 'label'
+          : (rule.type === 'invoice' ? 'invoice' : 'text');
         typeSelect.addEventListener('change', () => {
-          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].type = typeSelect.value === 'invoice' ? 'invoice' : 'text';
-          if (typeSelect.value === 'invoice') {
-            categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].text = '';
+          const nextType = typeSelect.value === 'label'
+            ? 'label'
+            : (typeSelect.value === 'invoice' ? 'invoice' : 'text');
+          const nextRule = categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex];
+          nextRule.type = nextType;
+          if (nextType !== 'text') {
+            nextRule.text = '';
+          }
+          if (nextType === 'label') {
+            const fallbackLabelId = labelOptions[0] && typeof labelOptions[0].value === 'string'
+              ? labelOptions[0].value
+              : '';
+            nextRule.labelId = labelOptions.some((option) => option.value === nextRule.labelId)
+              ? nextRule.labelId
+              : fallbackLabelId;
+          } else {
+            nextRule.labelId = '';
           }
           renderCategoriesEditor();
           updateSettingsActionButtons();
@@ -7376,6 +7427,32 @@ function renderCategoriesEditor() {
           updateSettingsActionButtons();
         });
 
+        const labelSelect = document.createElement('select');
+        if (labelOptions.length === 0) {
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = 'Inga etiketter';
+          labelSelect.appendChild(option);
+          labelSelect.disabled = true;
+        } else {
+          labelOptions.forEach((optionData) => {
+            const option = document.createElement('option');
+            option.value = optionData.value;
+            option.textContent = optionData.label;
+            labelSelect.appendChild(option);
+          });
+          const currentLabelId = typeof rule.labelId === 'string' ? rule.labelId.trim() : '';
+          const resolvedLabelId = labelOptions.some((option) => option.value === currentLabelId)
+            ? currentLabelId
+            : labelOptions[0].value;
+          labelSelect.value = resolvedLabelId;
+          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].labelId = resolvedLabelId;
+        }
+        labelSelect.addEventListener('change', () => {
+          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].labelId = labelSelect.value;
+          updateSettingsActionButtons();
+        });
+
         const scoreInput = document.createElement('input');
         scoreInput.type = 'number';
         scoreInput.step = '1';
@@ -7387,7 +7464,9 @@ function renderCategoriesEditor() {
         });
 
         ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
-        if (rule.type !== 'invoice') {
+        if (rule.type === 'label') {
+          ruleFields.appendChild(createFloatingField('Etikett', labelSelect));
+        } else if (rule.type !== 'invoice') {
           ruleFields.appendChild(createFloatingField('Regeltext', textInput));
         }
         ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
@@ -7545,7 +7624,7 @@ function renderSystemLabelEditor() {
 
     const typeSelect = document.createElement('select');
     [
-      ['text', 'Text'],
+      ['text', 'Innehåller text...'],
     ].forEach(([value, label]) => {
       const option = document.createElement('option');
       option.value = value;
@@ -8157,7 +8236,12 @@ async function loadCategories() {
   updateSettingsActionButtons();
 }
 
-async function loadLabels() {
+async function loadLabels(options = {}) {
+  const reload = options.reload === true;
+  if (hasLoadedLabels && !reload) {
+    return;
+  }
+
   const response = await fetch('/api/get-labels.php', { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Kunde inte ladda etiketter');
@@ -8171,8 +8255,12 @@ async function loadLabels() {
   labelsDraft = payload.labels.map(sanitizeLabel);
   systemLabelsDraft = sanitizeSystemLabels(payload.systemLabels);
   labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
+  hasLoadedLabels = true;
   renderLabelsEditor();
   renderSystemLabelEditor();
+  if (categoriesListEl) {
+    renderCategoriesEditor();
+  }
   updateSettingsActionButtons();
 }
 
@@ -8341,6 +8429,9 @@ async function saveLabels() {
   labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
   renderLabelsEditor();
   renderSystemLabelEditor();
+  if (categoriesListEl) {
+    renderCategoriesEditor();
+  }
   updateSettingsActionButtons();
 }
 
@@ -9155,6 +9246,14 @@ applyHashState();
 window.addEventListener('hashchange', () => {
   applyHashState();
 });
-fetchState().finally(() => {
+Promise.all([
+  fetchState(),
+  loadLabels().catch(() => {
+    labelsDraft = [];
+    systemLabelsDraft = createDefaultSystemLabels();
+    labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
+    console.error('Kunde inte ladda etiketter vid app-start.');
+  }),
+]).finally(() => {
   syncStateUpdateTransport();
 });
