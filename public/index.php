@@ -429,7 +429,16 @@
   <template id="settings-template-data-fields">
     <h3>Datafält</h3>
     <p>Definiera egna datafält som extraheras från OCR-texten med samma märkordslogik som övrig fakturautvinning.</p>
-    <div id="extraction-fields-editor" class="categories-list"></div>
+    <div class="archive-subtabs">
+      <button id="extraction-fields-tab-custom" class="archive-subtab active" type="button" data-extraction-fields-tab="fields">Datafält</button>
+      <button id="extraction-fields-tab-system" class="archive-subtab" type="button" data-extraction-fields-tab="system">Systemdatafält</button>
+    </div>
+    <div id="extraction-fields-view-custom" class="archive-view">
+      <div id="extraction-fields-editor" class="categories-list"></div>
+    </div>
+    <div id="extraction-fields-view-system" class="archive-view hidden">
+      <div id="system-extraction-fields-editor" class="categories-list"></div>
+    </div>
     <div class="categories-actions">
       <button id="extraction-fields-add-row" type="button">Lägg till datafält</button>
     </div>

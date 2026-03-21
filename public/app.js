@@ -112,9 +112,13 @@ let labelsAddRowEl = null;
 let labelsCancelEl = null;
 let labelsApplyEl = null;
 let extractionFieldsEditorEl = null;
+let systemExtractionFieldsEditorEl = null;
 let extractionFieldsAddRowEl = null;
 let extractionFieldsCancelEl = null;
 let extractionFieldsApplyEl = null;
+let extractionFieldsTabEls = [];
+let extractionFieldsViewCustomEl = null;
+let extractionFieldsViewSystemEl = null;
 let labelsTabEls = [];
 let labelsViewCustomEl = null;
 let labelsViewSystemEl = null;
@@ -272,6 +276,10 @@ const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'processing', 'archived'])
 let senderMergeState = null;
 let currentJobListMode = 'ready';
 let extractionFieldsDraft = [];
+let systemExtractionFieldsDraft = [];
+let extractionFieldsBuiltInCollapsed = true;
+let extractionFieldsCustomCollapsed = false;
+let activeExtractionFieldsTabId = 'fields';
 
 jobListModeEl.value = currentJobListMode;
 
@@ -3796,25 +3804,46 @@ function bindSettingsPanelRefs(tabId) {
     });
   } else if (tabId === 'data-fields') {
     extractionFieldsEditorEl = document.getElementById('extraction-fields-editor');
+    systemExtractionFieldsEditorEl = document.getElementById('system-extraction-fields-editor');
     extractionFieldsAddRowEl = document.getElementById('extraction-fields-add-row');
     extractionFieldsCancelEl = document.getElementById('extraction-fields-cancel');
     extractionFieldsApplyEl = document.getElementById('extraction-fields-apply');
+    extractionFieldsTabEls = Array.from(document.querySelectorAll('[data-extraction-fields-tab]'));
+    extractionFieldsViewCustomEl = document.getElementById('extraction-fields-view-custom');
+    extractionFieldsViewSystemEl = document.getElementById('extraction-fields-view-system');
+    extractionFieldsTabEls.forEach((tabButton) => {
+      tabButton.addEventListener('click', () => {
+        const nextTabId = tabButton.dataset.extractionFieldsTab;
+        if (!nextTabId || nextTabId === activeExtractionFieldsTabId) {
+          return;
+        }
+        setExtractionFieldsTab(nextTabId);
+      });
+    });
     extractionFieldsAddRowEl.addEventListener('click', () => {
+      if (activeExtractionFieldsTabId !== 'fields') {
+        return;
+      }
       extractionFieldsDraft.push(defaultExtractionField());
       renderExtractionFieldsEditor();
+      renderSystemExtractionFieldsEditor();
       updateSettingsActionButtons();
     });
     extractionFieldsCancelEl.addEventListener('click', () => {
-      let parsed = [];
+      let parsed = {};
       try {
         parsed = JSON.parse(extractionFieldsBaselineJson);
       } catch (error) {
-        parsed = [];
+        parsed = {};
       }
-      extractionFieldsDraft = Array.isArray(parsed)
-        ? parsed.map((field, index) => sanitizeExtractionField(field, index))
+      extractionFieldsDraft = Array.isArray(parsed.fields)
+        ? parsed.fields.map((field, index) => sanitizeExtractionField(field, index))
+        : [];
+      systemExtractionFieldsDraft = Array.isArray(parsed.systemFields)
+        ? parsed.systemFields.map((field, index) => sanitizeExtractionField(field, index))
         : [];
       renderExtractionFieldsEditor();
+      renderSystemExtractionFieldsEditor();
       updateSettingsActionButtons();
     });
     extractionFieldsApplyEl.addEventListener('click', async () => {
@@ -3824,6 +3853,7 @@ function bindSettingsPanelRefs(tabId) {
         alert(error.message || 'Kunde inte spara datafält.');
       }
     });
+    setExtractionFieldsTab('fields');
   } else if (tabId === 'jobs') {
     settingsResetJobsEl = document.getElementById('settings-reset-jobs');
     settingsResetJobsEl.addEventListener('click', async () => {
@@ -4108,11 +4138,12 @@ function normalizedLabelsJson(labels, systemLabels = systemLabelsDraft) {
   });
 }
 
-function normalizedExtractionFieldsJson(extractionFields) {
+function normalizedExtractionFieldsJson(extractionFields, systemExtractionFields = systemExtractionFieldsDraft) {
   return JSON.stringify(
-    Array.isArray(extractionFields)
-      ? extractionFields.map((field, index) => sanitizeExtractionField(field, index))
-      : []
+    {
+      fields: sanitizeExtractionFields(extractionFields),
+      systemFields: sanitizeExtractionFields(systemExtractionFields),
+    }
   );
 }
 
@@ -5238,11 +5269,16 @@ function defaultFilenameTemplatePart(type = 'text') {
 
 function filenameTemplateFieldOptions() {
   const options = [...FILENAME_TEMPLATE_BASE_FIELDS];
-  extractionFieldsDraft.forEach((field, index) => {
+  const seenKeys = new Set(options.map((field) => field.key));
+  [...systemExtractionFieldsDraft, ...extractionFieldsDraft].forEach((field, index) => {
     const normalized = sanitizeExtractionField(field, index);
     if (!normalized.key || !normalized.name) {
       return;
     }
+    if (seenKeys.has(normalized.key)) {
+      return;
+    }
+    seenKeys.add(normalized.key);
     options.push({
       key: normalized.key,
       label: normalized.name,
@@ -5273,6 +5309,10 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
       ? input.searchString
       : (typeof input.query === 'string' ? input.query : ''),
   };
+}
+
+function sanitizeExtractionFields(fields) {
+  return Array.isArray(fields) ? fields.map((field, index) => sanitizeExtractionField(field, index)) : [];
 }
 
 function slugifyText(value, separator = '-', fallback = '') {
@@ -6105,6 +6145,81 @@ function renderOcrPdfSubstitutionsEditor() {
   updateSettingsActionButtons();
 }
 
+function renderSingleExtractionFieldEditor(container, collection, index, options = {}) {
+  if (!(container instanceof HTMLElement) || !Array.isArray(collection)) {
+    return;
+  }
+  const field = sanitizeExtractionField(collection[index], index);
+  const showLock = options.showLock === true;
+  const allowRemove = options.allowRemove !== false;
+
+  const fieldNode = document.createElement('div');
+  fieldNode.className = 'tree-node tree-category';
+  if (showLock) {
+    fieldNode.dataset.systemField = 'true';
+  }
+
+  const fieldRow = createTreeRow({ markerless: true });
+  const fieldBody = document.createElement('div');
+  fieldBody.className = 'tree-body category-body';
+  appendTreeBodyIcon(fieldBody, 'tree-body-icon tree-body-icon-category');
+  if (showLock) {
+    appendTreeBodyLock(fieldBody, 'Låst datafält');
+  }
+
+  const fields = document.createElement('div');
+  fields.className = 'category-fields category-fields--wide';
+
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'Ex: "Huvudman"';
+  nameInput.value = field.name;
+  nameInput.addEventListener('input', () => {
+    collection[index].name = nameInput.value;
+    if (!String(collection[index].key || '').trim()) {
+      collection[index].key = normalizeConfigKey(nameInput.value || `field_${index + 1}`);
+    }
+    updateSettingsActionButtons();
+  });
+
+  const queryInput = document.createElement('input');
+  queryInput.type = 'text';
+  queryInput.placeholder = 'Ex: "huvudman"';
+  queryInput.value = field.searchString;
+  queryInput.addEventListener('input', () => {
+    collection[index].searchString = queryInput.value;
+    updateSettingsActionButtons();
+  });
+
+  const keyInput = document.createElement('input');
+  keyInput.type = 'text';
+  keyInput.value = field.key;
+  keyInput.disabled = true;
+
+  fields.appendChild(createFloatingField('Namn', nameInput));
+  fields.appendChild(createFloatingField('Söksträng', queryInput));
+  fields.appendChild(createFloatingField('Nyckel', keyInput));
+
+  if (allowRemove) {
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'category-remove';
+    removeButton.textContent = 'Ta bort';
+    removeButton.addEventListener('click', () => {
+      collection.splice(index, 1);
+      renderExtractionFieldsEditor();
+      renderSystemExtractionFieldsEditor();
+      updateSettingsActionButtons();
+    });
+    fields.appendChild(removeButton);
+  }
+
+  fieldBody.appendChild(fields);
+  fieldRow.appendChild(fieldBody);
+  fieldNode.appendChild(fieldRow);
+  container.appendChild(fieldNode);
+}
+
 function renderExtractionFieldsEditor() {
   if (!extractionFieldsEditorEl) {
     return;
@@ -6112,75 +6227,72 @@ function renderExtractionFieldsEditor() {
 
   extractionFieldsEditorEl.innerHTML = '';
 
-  const label = document.createElement('div');
-  label.className = 'archive-folders-label';
-  label.textContent = 'Datafält';
-  extractionFieldsEditorEl.appendChild(label);
+  const builtInGroup = createEditorGroup('Fördefinerade', extractionFieldsBuiltInCollapsed, () => {
+    extractionFieldsBuiltInCollapsed = !extractionFieldsBuiltInCollapsed;
+  }, renderExtractionFieldsEditor);
+  const ownGroup = createEditorGroup('Egna', extractionFieldsCustomCollapsed, () => {
+    extractionFieldsCustomCollapsed = !extractionFieldsCustomCollapsed;
+  }, renderExtractionFieldsEditor);
+  ownGroup.section.classList.add('labels-editor-group--spaced');
+
+  extractionFieldsEditorEl.appendChild(builtInGroup.section);
+  extractionFieldsEditorEl.appendChild(ownGroup.section);
+
+  if (systemExtractionFieldsDraft.length === 0) {
+    const emptyBuiltIn = document.createElement('div');
+    emptyBuiltIn.className = 'categories-empty';
+    emptyBuiltIn.textContent = 'Inga fördefinerade datafält ännu.';
+    builtInGroup.content.appendChild(emptyBuiltIn);
+  } else {
+    systemExtractionFieldsDraft.forEach((field, index) => {
+      renderSingleExtractionFieldEditor(builtInGroup.content, systemExtractionFieldsDraft, index, {
+        showLock: true,
+        allowRemove: false,
+      });
+    });
+  }
 
   if (extractionFieldsDraft.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
     empty.textContent = 'Inga datafält ännu.';
-    extractionFieldsEditorEl.appendChild(empty);
+    ownGroup.content.appendChild(empty);
     return;
   }
 
   extractionFieldsDraft.forEach((field, index) => {
-    const fieldNode = document.createElement('div');
-    fieldNode.className = 'tree-node tree-category';
-
-    const fieldRow = createTreeRow({ markerless: true });
-    const fieldBody = document.createElement('div');
-    fieldBody.className = 'tree-body category-body';
-    appendTreeBodyIcon(fieldBody, 'tree-body-icon tree-body-icon-category');
-
-    const fields = document.createElement('div');
-    fields.className = 'category-fields category-fields--wide';
-
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.placeholder = 'Ex: "Huvudman"';
-    nameInput.value = field.name;
-    nameInput.addEventListener('input', () => {
-      extractionFieldsDraft[index].name = nameInput.value;
-      if (!String(extractionFieldsDraft[index].key || '').trim()) {
-        extractionFieldsDraft[index].key = normalizeConfigKey(nameInput.value || `field_${index + 1}`);
-      }
-      updateSettingsActionButtons();
+    renderSingleExtractionFieldEditor(ownGroup.content, extractionFieldsDraft, index, {
+      showLock: false,
+      allowRemove: true,
     });
+  });
+}
 
-    const queryInput = document.createElement('input');
-    queryInput.type = 'text';
-    queryInput.placeholder = 'Ex: "huvudman"';
-    queryInput.value = field.searchString;
-    queryInput.addEventListener('input', () => {
-      extractionFieldsDraft[index].searchString = queryInput.value;
-      updateSettingsActionButtons();
+function renderSystemExtractionFieldsEditor() {
+  if (!systemExtractionFieldsEditorEl) {
+    return;
+  }
+
+  systemExtractionFieldsEditorEl.innerHTML = '';
+
+  const label = document.createElement('div');
+  label.className = 'archive-folders-label';
+  label.textContent = 'Systemdatafält';
+  systemExtractionFieldsEditorEl.appendChild(label);
+
+  if (systemExtractionFieldsDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Inga systemdatafält ännu.';
+    systemExtractionFieldsEditorEl.appendChild(empty);
+    return;
+  }
+
+  systemExtractionFieldsDraft.forEach((field, index) => {
+    renderSingleExtractionFieldEditor(systemExtractionFieldsEditorEl, systemExtractionFieldsDraft, index, {
+      showLock: true,
+      allowRemove: false,
     });
-
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'category-remove';
-    removeButton.textContent = 'Ta bort';
-    removeButton.addEventListener('click', () => {
-      extractionFieldsDraft.splice(index, 1);
-      renderExtractionFieldsEditor();
-      updateSettingsActionButtons();
-    });
-
-    const keyInput = document.createElement('input');
-    keyInput.type = 'text';
-    keyInput.value = field.key;
-    keyInput.disabled = true;
-
-    fields.appendChild(createFloatingField('Namn', nameInput));
-    fields.appendChild(createFloatingField('Söksträng', queryInput));
-    fields.appendChild(createFloatingField('Nyckel', keyInput));
-    fields.appendChild(removeButton);
-    fieldBody.appendChild(fields);
-    fieldRow.appendChild(fieldBody);
-    fieldNode.appendChild(fieldRow);
-    extractionFieldsEditorEl.appendChild(fieldNode);
   });
 }
 
@@ -6208,7 +6320,7 @@ function syncLabelsEditorValidation() {
   });
 }
 
-function createLabelsEditorGroup(title, collapsed, onToggle) {
+function createEditorGroup(title, collapsed, onToggle, onRender) {
   const section = document.createElement('section');
   section.className = 'labels-editor-group';
 
@@ -6221,7 +6333,9 @@ function createLabelsEditorGroup(title, collapsed, onToggle) {
   toggle.textContent = title;
   toggle.addEventListener('click', () => {
     onToggle();
-    renderLabelsEditor();
+    if (typeof onRender === 'function') {
+      onRender();
+    }
   });
 
   const content = document.createElement('div');
@@ -6231,6 +6345,23 @@ function createLabelsEditorGroup(title, collapsed, onToggle) {
   section.appendChild(toggle);
   section.appendChild(content);
   return { section, content };
+}
+
+function setExtractionFieldsTab(tabId) {
+  if (!Array.isArray(extractionFieldsTabEls) || !extractionFieldsViewCustomEl || !extractionFieldsViewSystemEl) {
+    return;
+  }
+  activeExtractionFieldsTabId = tabId === 'system' ? 'system' : 'fields';
+  extractionFieldsTabEls.forEach((button) => {
+    const isActive = button.dataset.extractionFieldsTab === activeExtractionFieldsTabId;
+    button.classList.toggle('active', isActive);
+  });
+  extractionFieldsViewCustomEl.classList.toggle('hidden', activeExtractionFieldsTabId !== 'fields');
+  extractionFieldsViewSystemEl.classList.toggle('hidden', activeExtractionFieldsTabId !== 'system');
+  if (extractionFieldsAddRowEl) {
+    extractionFieldsAddRowEl.classList.toggle('hidden', activeExtractionFieldsTabId === 'system');
+    extractionFieldsAddRowEl.textContent = 'Lägg till datafält';
+  }
 }
 
 function labelRuleOptions(currentLabelId = '') {
@@ -6544,12 +6675,12 @@ function renderLabelsEditor() {
   }
 
   labelsListEl.innerHTML = '';
-  const builtInGroup = createLabelsEditorGroup('Fördefinerade', labelsBuiltInCollapsed, () => {
+  const builtInGroup = createEditorGroup('Fördefinerade', labelsBuiltInCollapsed, () => {
     labelsBuiltInCollapsed = !labelsBuiltInCollapsed;
-  });
-  const ownGroup = createLabelsEditorGroup('Egna', labelsCustomCollapsed, () => {
+  }, renderLabelsEditor);
+  const ownGroup = createEditorGroup('Egna', labelsCustomCollapsed, () => {
     labelsCustomCollapsed = !labelsCustomCollapsed;
-  });
+  }, renderLabelsEditor);
   ownGroup.section.classList.add('labels-editor-group--spaced');
 
   labelsListEl.appendChild(builtInGroup.section);
@@ -8283,13 +8414,15 @@ async function loadExtractionFields() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.fields)) {
+  if (!payload || !Array.isArray(payload.fields) || !Array.isArray(payload.systemFields)) {
     throw new Error('Ogiltigt svar för datafält');
   }
 
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
-  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft);
+  systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
+  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, systemExtractionFieldsDraft);
   renderExtractionFieldsEditor();
+  renderSystemExtractionFieldsEditor();
   if (categoriesListEl) {
     renderCategoriesEditor();
   }
@@ -8448,6 +8581,7 @@ async function saveLabels() {
 
 async function saveExtractionFields() {
   const normalizedExtractionFields = extractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+  const normalizedSystemExtractionFields = systemExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const response = await fetch('/api/save-extraction-fields.php', {
     method: 'POST',
     headers: {
@@ -8455,11 +8589,12 @@ async function saveExtractionFields() {
     },
     body: JSON.stringify({
       fields: normalizedExtractionFields,
+      systemFields: normalizedSystemExtractionFields,
     })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.fields)) {
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.fields) || !Array.isArray(payload.systemFields)) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara datafält';
@@ -8467,8 +8602,10 @@ async function saveExtractionFields() {
   }
 
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
-  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft);
+  systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
+  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, systemExtractionFieldsDraft);
   renderExtractionFieldsEditor();
+  renderSystemExtractionFieldsEditor();
   if (categoriesListEl) {
     renderCategoriesEditor();
   }
@@ -8900,8 +9037,10 @@ settingsTabEls.forEach((tabButton) => {
       } else if (tabId === 'data-fields') {
         alert('Kunde inte ladda datafält.');
         extractionFieldsDraft = [];
-        extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft);
+        systemExtractionFieldsDraft = [];
+        extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, systemExtractionFieldsDraft);
         renderExtractionFieldsEditor();
+        renderSystemExtractionFieldsEditor();
       } else if (tabId === 'paths') {
         alert('Kunde inte ladda sökvägsinställningar.');
         pathsBaselineValue = normalizedPathValue(outputBasePathEl ? outputBasePathEl.value : '');
@@ -9263,6 +9402,12 @@ Promise.all([
     systemLabelsDraft = createDefaultSystemLabels();
     labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
     console.error('Kunde inte ladda etiketter vid app-start.');
+  }),
+  loadExtractionFields().catch(() => {
+    extractionFieldsDraft = [];
+    systemExtractionFieldsDraft = [];
+    extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, systemExtractionFieldsDraft);
+    console.error('Kunde inte ladda datafält vid app-start.');
   }),
 ]).finally(() => {
   syncStateUpdateTransport();

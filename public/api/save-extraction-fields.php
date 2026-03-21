@@ -15,13 +15,20 @@ if ($raw === false) {
 }
 
 $payload = json_decode($raw, true);
-if (!is_array($payload) || !array_key_exists('fields', $payload) || !is_array($payload['fields'])) {
+if (
+    !is_array($payload)
+    || !array_key_exists('fields', $payload)
+    || !is_array($payload['fields'])
+    || !array_key_exists('systemFields', $payload)
+    || !is_array($payload['systemFields'])
+) {
     json_response(['error' => 'Invalid JSON payload'], 400);
     exit;
 }
 
 $normalized = [
     'fields' => normalize_extraction_fields($payload['fields']),
+    'systemFields' => normalize_extraction_fields($payload['systemFields']),
 ];
 
 try {
@@ -29,6 +36,7 @@ try {
     json_response([
         'ok' => true,
         'fields' => $normalized['fields'],
+        'systemFields' => $normalized['systemFields'],
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

@@ -7,10 +7,12 @@ try {
     $data = load_extraction_fields_data();
     json_response([
         'fields' => is_array($data['fields'] ?? null) ? $data['fields'] : [],
+        'systemFields' => is_array($data['systemFields'] ?? null) ? $data['systemFields'] : [],
     ]);
 } catch (Throwable $e) {
     json_response([
         'fields' => [],
+        'systemFields' => [],
         'error' => $e->getMessage(),
     ], 500);
 }

@@ -683,7 +683,9 @@ function normalize_extraction_fields(mixed $input): array
 function load_extraction_fields(): array
 {
     $data = load_extraction_fields_data();
-    return is_array($data['fields'] ?? null) ? $data['fields'] : [];
+    $fields = is_array($data['fields'] ?? null) ? $data['fields'] : [];
+    $systemFields = is_array($data['systemFields'] ?? null) ? $data['systemFields'] : [];
+    return array_values(array_merge($systemFields, $fields));
 }
 
 function load_extraction_fields_data(): array
@@ -692,7 +694,11 @@ function load_extraction_fields_data(): array
     if (is_file($fieldsPath)) {
         $decoded = load_json_file($fieldsPath);
         $fields = normalize_extraction_fields(is_array($decoded) ? ($decoded['fields'] ?? $decoded) : []);
-        $normalized = ['fields' => $fields];
+        $systemFields = normalize_extraction_fields(is_array($decoded) ? ($decoded['systemFields'] ?? []) : []);
+        $normalized = [
+            'fields' => $fields,
+            'systemFields' => $systemFields,
+        ];
         if ($decoded !== $normalized) {
             try {
                 write_json_file($fieldsPath, $normalized);
@@ -707,7 +713,10 @@ function load_extraction_fields_data(): array
     $legacyFields = normalize_extraction_fields(
         is_array($legacyStructure) ? ($legacyStructure['extractionFields'] ?? []) : []
     );
-    $normalized = ['fields' => $legacyFields];
+    $normalized = [
+        'fields' => $legacyFields,
+        'systemFields' => [],
+    ];
     try {
         write_json_file($fieldsPath, $normalized);
     } catch (Throwable $ignored) {
