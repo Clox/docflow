@@ -7326,6 +7326,17 @@ const isCaretAtEditableBoundary = (editable, direction) => {
     if (!(editable instanceof HTMLElement) || !Array.isArray(editable._filenameTemplateTargetParts)) {
       return;
     }
+    Array.from(editable.childNodes).forEach((child) => {
+      if (child.nodeType === Node.TEXT_NODE || isTokenNode(child)) {
+        return;
+      }
+      const fallbackText = child.textContent || '';
+      if (fallbackText !== '') {
+        editable.insertBefore(document.createTextNode(fallbackText), child);
+      }
+      child.remove();
+    });
+    editable.normalize();
     const nextParts = [];
     const appendText = (value) => {
       if (value === '') {
