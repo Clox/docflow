@@ -75,7 +75,6 @@ let matchingListEl = null;
 let matchingAddRowEl = null;
 let matchingCancelEl = null;
 let matchingApplyEl = null;
-let matchingInvoiceThresholdEl = null;
 let ocrSkipExistingTextEl = null;
 let ocrOptimizeLevelEl = null;
 let ocrTextExtractionMethodEl = null;
@@ -152,9 +151,15 @@ const SYSTEM_LABELS = {
       { text: 'ocr', score: 5 },
       { text: 'ocr-nummer', score: 5 },
       { text: 'fakturanummer', score: 5 },
-      { text: 'autogiro', score: 3 },
       { text: 'e-faktura', score: 4 },
       { text: 'betalningsmottagare', score: 2 }
+    ]
+  },
+  autogiro: {
+    name: 'Autogiro',
+    minScore: 3,
+    rules: [
+      { text: 'autogiro', score: 3 }
     ]
   }
 };
@@ -202,7 +207,6 @@ let labelsBuiltInCollapsed = true;
 let labelsCustomCollapsed = false;
 let sendersDraft = [];
 let matchingDraft = [];
-let matchingInvoiceFieldMinConfidenceDraft = 0.7;
 let ocrSkipExistingTextBaseline = true;
 let ocrOptimizeLevelBaseline = 1;
 let ocrTextExtractionMethodBaseline = 'layout';
@@ -218,8 +222,7 @@ let sendersBaselineJson = '[]';
 let sendersSortOrder = 'name';
 let senderDraftUiKeySeq = 1;
 let matchingBaselineJson = JSON.stringify({
-  replacements: [],
-  invoiceFieldMinConfidence: 0.7
+  replacements: []
 });
 let pathsBaselineValue = '';
 let categoriesBaselineJson = JSON.stringify([]);
@@ -227,7 +230,11 @@ let labelsBaselineJson = JSON.stringify({
   labels: [],
   systemLabels: systemLabelsDraft,
 });
-let extractionFieldsBaselineJson = JSON.stringify([]);
+let extractionFieldsBaselineJson = JSON.stringify({
+  fields: [],
+  predefinedFields: [],
+  systemFields: [],
+});
 let clientOptionsSignature = '';
 let senderOptionsSignature = '';
 let categoryOptionsSignature = '';
@@ -276,6 +283,7 @@ const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'processing', 'archived'])
 let senderMergeState = null;
 let currentJobListMode = 'ready';
 let extractionFieldsDraft = [];
+let predefinedExtractionFieldsDraft = [];
 let systemExtractionFieldsDraft = [];
 let extractionFieldsBuiltInCollapsed = true;
 let extractionFieldsCustomCollapsed = false;
@@ -1583,9 +1591,6 @@ function buildFilenameFieldValues(job) {
     return new Map();
   }
 
-  const invoice = job.analysis && typeof job.analysis === 'object' && job.analysis.invoice && typeof job.analysis.invoice === 'object'
-    ? job.analysis.invoice
-    : {};
   const extractionFields = job.analysis && typeof job.analysis === 'object' && job.analysis.extractionFields && typeof job.analysis.extractionFields === 'object'
     ? job.analysis.extractionFields
     : {};
@@ -1608,22 +1613,31 @@ function buildFilenameFieldValues(job) {
   setValue('client', clientDirName);
   setValue('main_client', clientDirName);
   setValue('sender', sender && sender.name);
-  setValue('supplier', invoice && invoice.supplier);
-  setValue('payment_receiver', invoice && invoice.payee);
-  setValue('payee', invoice && invoice.payee);
-  setValue('amount', formatFilenameAmount(invoice && invoice.amount));
-  setValue('ocr', invoice && invoice.ocr);
-  setValue('date', invoice && invoice.dueDate);
-  setValue('due_date', invoice && invoice.dueDate);
-  setValue('swift', invoice && invoice.swift);
-  setValue('iban', invoice && invoice.iban);
+
+  const extractionFieldValue = (key) => {
+    const field = extractionFields && typeof extractionFields === 'object' ? extractionFields[key] : null;
+    return field && typeof field === 'object' ? field.value : null;
+  };
+
+  setValue('supplier', extractionFieldValue('supplier'));
+  setValue('payment_receiver', extractionFieldValue('payment_receiver'));
+  setValue('payee', extractionFieldValue('payment_receiver'));
+  setValue('amount', formatFilenameAmount(extractionFieldValue('amount')));
+  setValue('ocr', extractionFieldValue('ocr'));
+  setValue('date', extractionFieldValue('due_date'));
+  setValue('due_date', extractionFieldValue('due_date'));
+  setValue('swift', extractionFieldValue('swift'));
+  setValue('iban', extractionFieldValue('iban'));
 
   Object.values(extractionFields).forEach((field) => {
     if (!field || typeof field !== 'object') {
       return;
     }
     const key = typeof field.key === 'string' ? field.key.trim() : '';
-    const value = typeof field.value === 'string' ? field.value.trim() : '';
+    const rawValue = field.value;
+    const value = typeof rawValue === 'string'
+      ? rawValue.trim()
+      : (rawValue === null || rawValue === undefined ? '' : String(rawValue).trim());
     if (key && value) {
       setValue(key, value);
     }
@@ -3584,12 +3598,6 @@ function bindSettingsPanelRefs(tabId) {
     matchingAddRowEl = document.getElementById('matching-add-row');
     matchingCancelEl = document.getElementById('matching-cancel');
     matchingApplyEl = document.getElementById('matching-apply');
-    matchingInvoiceThresholdEl = document.getElementById('matching-invoice-threshold');
-    matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
-    matchingInvoiceThresholdEl.addEventListener('input', () => {
-      matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(matchingInvoiceThresholdEl.value, 0.7);
-      updateSettingsActionButtons();
-    });
     matchingAddRowEl.addEventListener('click', () => {
       matchingDraft.push(defaultReplacement());
       renderMatchingEditor();
@@ -3607,8 +3615,6 @@ function bindSettingsPanelRefs(tabId) {
       if (matchingDraft.length === 0) {
         matchingDraft = [defaultReplacement()];
       }
-      matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(parsed.invoiceFieldMinConfidence, 0.7);
-      matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
       renderMatchingEditor();
       updateSettingsActionButtons();
     });
@@ -3838,6 +3844,9 @@ function bindSettingsPanelRefs(tabId) {
       }
       extractionFieldsDraft = Array.isArray(parsed.fields)
         ? parsed.fields.map((field, index) => sanitizeExtractionField(field, index))
+        : [];
+      predefinedExtractionFieldsDraft = Array.isArray(parsed.predefinedFields)
+        ? parsed.predefinedFields.map((field, index) => sanitizeExtractionField(field, index))
         : [];
       systemExtractionFieldsDraft = Array.isArray(parsed.systemFields)
         ? parsed.systemFields.map((field, index) => sanitizeExtractionField(field, index))
@@ -4079,20 +4088,6 @@ function normalizedPathValue(value) {
   return String(value).trim();
 }
 
-function sanitizeInvoiceFieldMinConfidence(value, fallback = 0.7) {
-  const parsed = Number.parseFloat(String(value));
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  if (parsed < 0) {
-    return 0;
-  }
-  if (parsed > 1) {
-    return 1;
-  }
-  return Math.round(parsed * 1000) / 1000;
-}
-
 function sanitizeOcrOptimizeLevel(value, fallback = 1) {
   const parsed = Number.parseInt(String(value), 10);
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 3) {
@@ -4112,10 +4107,9 @@ function sanitizeOcrTextExtractionMethod(value, fallback = 'layout') {
   return fallback;
 }
 
-function normalizedMatchingJson(replacements, invoiceFieldMinConfidence) {
+function normalizedMatchingJson(replacements) {
   return JSON.stringify({
-    replacements: replacements.map(sanitizeReplacement),
-    invoiceFieldMinConfidence: sanitizeInvoiceFieldMinConfidence(invoiceFieldMinConfidence, 0.7)
+    replacements: replacements.map(sanitizeReplacement)
   });
 }
 
@@ -4138,10 +4132,15 @@ function normalizedLabelsJson(labels, systemLabels = systemLabelsDraft) {
   });
 }
 
-function normalizedExtractionFieldsJson(extractionFields, systemExtractionFields = systemExtractionFieldsDraft) {
+function normalizedExtractionFieldsJson(
+  extractionFields,
+  predefinedExtractionFields = predefinedExtractionFieldsDraft,
+  systemExtractionFields = systemExtractionFieldsDraft
+) {
   return JSON.stringify(
     {
       fields: sanitizeExtractionFields(extractionFields),
+      predefinedFields: sanitizeExtractionFields(predefinedExtractionFields),
       systemFields: sanitizeExtractionFields(systemExtractionFields),
     }
   );
@@ -4152,7 +4151,7 @@ function isClientsDirty() {
 }
 
 function isMatchingDirty() {
-  return normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft) !== matchingBaselineJson;
+  return normalizedMatchingJson(matchingDraft) !== matchingBaselineJson;
 }
 
 function isSendersDirty() {
@@ -4988,9 +4987,7 @@ function buildSimilarSenderGroups() {
 function sanitizeRule(rule) {
   const input = rule && typeof rule === 'object' ? rule : {};
   const rawType = String(input.type || 'text').trim().toLowerCase();
-  const type = rawType === 'invoice'
-    ? 'invoice'
-    : (rawType === 'label' ? 'label' : 'text');
+  const type = rawType === 'label' ? 'label' : 'text';
   return {
     type,
     text: typeof input.text === 'string' ? input.text : '',
@@ -5004,23 +5001,11 @@ function sanitizeSystemLabelRule(rule) {
 }
 
 function sanitizeLabelRule(rule) {
-  const normalized = sanitizeRule(rule);
-  if (normalized.type === 'invoice') {
-    normalized.type = 'label';
-    normalized.labelId = 'faktura';
-    normalized.text = '';
-  }
-  return normalized;
+  return sanitizeRule(rule);
 }
 
 function sanitizeCategoryRule(rule) {
-  const normalized = sanitizeRule(rule);
-  if (normalized.type === 'invoice') {
-    normalized.type = 'label';
-    normalized.labelId = 'faktura';
-    normalized.text = '';
-  }
-  return normalized;
+  return sanitizeRule(rule);
 }
 
 function sanitizeCategory(category) {
@@ -5270,7 +5255,7 @@ function defaultFilenameTemplatePart(type = 'text') {
 function filenameTemplateFieldOptions() {
   const options = [...FILENAME_TEMPLATE_BASE_FIELDS];
   const seenKeys = new Set(options.map((field) => field.key));
-  [...systemExtractionFieldsDraft, ...extractionFieldsDraft].forEach((field, index) => {
+  [...predefinedExtractionFieldsDraft, ...systemExtractionFieldsDraft, ...extractionFieldsDraft].forEach((field, index) => {
     const normalized = sanitizeExtractionField(field, index);
     if (!normalized.key || !normalized.name) {
       return;
@@ -5308,6 +5293,13 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
     searchString: typeof input.searchString === 'string'
       ? input.searchString
       : (typeof input.query === 'string' ? input.query : ''),
+    extractor: typeof input.extractor === 'string' && input.extractor.trim() !== ''
+      ? input.extractor.trim()
+      : 'generic_label',
+    predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
+    isPredefinedField: input.isPredefinedField === true,
+    systemFieldKey: typeof input.systemFieldKey === 'string' ? input.systemFieldKey : '',
+    isSystemField: input.isSystemField === true,
   };
 }
 
@@ -6238,14 +6230,14 @@ function renderExtractionFieldsEditor() {
   extractionFieldsEditorEl.appendChild(builtInGroup.section);
   extractionFieldsEditorEl.appendChild(ownGroup.section);
 
-  if (systemExtractionFieldsDraft.length === 0) {
+  if (predefinedExtractionFieldsDraft.length === 0) {
     const emptyBuiltIn = document.createElement('div');
     emptyBuiltIn.className = 'categories-empty';
     emptyBuiltIn.textContent = 'Inga fördefinerade datafält ännu.';
     builtInGroup.content.appendChild(emptyBuiltIn);
   } else {
-    systemExtractionFieldsDraft.forEach((field, index) => {
-      renderSingleExtractionFieldEditor(builtInGroup.content, systemExtractionFieldsDraft, index, {
+    predefinedExtractionFieldsDraft.forEach((field, index) => {
+      renderSingleExtractionFieldEditor(builtInGroup.content, predefinedExtractionFieldsDraft, index, {
         showLock: true,
         allowRemove: false,
       });
@@ -7797,7 +7789,7 @@ function renderCategoriesEditor() {
         ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
         if (rule.type === 'label') {
           ruleFields.appendChild(createFloatingField('Etikett', labelSelect));
-        } else if (rule.type !== 'invoice') {
+        } else {
           ruleFields.appendChild(createFloatingField('Regeltext', textInput));
         }
         ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
@@ -8274,10 +8266,7 @@ async function loadMatchingSettings() {
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(payload.invoiceFieldMinConfidence, 0.7);
-  matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
-
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -8414,13 +8403,14 @@ async function loadExtractionFields() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.fields) || !Array.isArray(payload.systemFields)) {
+  if (!payload || !Array.isArray(payload.fields) || !Array.isArray(payload.predefinedFields) || !Array.isArray(payload.systemFields)) {
     throw new Error('Ogiltigt svar för datafält');
   }
 
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
+  predefinedExtractionFieldsDraft = payload.predefinedFields.map((field, index) => sanitizeExtractionField(field, index));
   systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
-  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, systemExtractionFieldsDraft);
+  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
   renderExtractionFieldsEditor();
   renderSystemExtractionFieldsEditor();
   if (categoriesListEl) {
@@ -8478,15 +8468,13 @@ async function saveSendersSettings() {
 
 async function saveMatchingSettings() {
   const normalized = matchingDraft.map(sanitizeReplacement);
-  const invoiceFieldMinConfidence = sanitizeInvoiceFieldMinConfidence(matchingInvoiceFieldMinConfidenceDraft, 0.7);
   const response = await fetch('/api/save-matching-settings.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      replacements: normalized,
-      invoiceFieldMinConfidence
+      replacements: normalized
     })
   });
 
@@ -8502,10 +8490,7 @@ async function saveMatchingSettings() {
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingInvoiceFieldMinConfidenceDraft = sanitizeInvoiceFieldMinConfidence(payload.invoiceFieldMinConfidence, 0.7);
-  matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
-
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -8581,6 +8566,7 @@ async function saveLabels() {
 
 async function saveExtractionFields() {
   const normalizedExtractionFields = extractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+  const normalizedPredefinedExtractionFields = predefinedExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const normalizedSystemExtractionFields = systemExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const response = await fetch('/api/save-extraction-fields.php', {
     method: 'POST',
@@ -8589,12 +8575,13 @@ async function saveExtractionFields() {
     },
     body: JSON.stringify({
       fields: normalizedExtractionFields,
+      predefinedFields: normalizedPredefinedExtractionFields,
       systemFields: normalizedSystemExtractionFields,
     })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.fields) || !Array.isArray(payload.systemFields)) {
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.fields) || !Array.isArray(payload.predefinedFields) || !Array.isArray(payload.systemFields)) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara datafält';
@@ -8602,8 +8589,9 @@ async function saveExtractionFields() {
   }
 
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
+  predefinedExtractionFieldsDraft = payload.predefinedFields.map((field, index) => sanitizeExtractionField(field, index));
   systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
-  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, systemExtractionFieldsDraft);
+  extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
   renderExtractionFieldsEditor();
   renderSystemExtractionFieldsEditor();
   if (categoriesListEl) {
@@ -8998,11 +8986,7 @@ settingsTabEls.forEach((tabButton) => {
       } else if (tabId === 'matching') {
         alert('Kunde inte ladda matchningsinställningar.');
         matchingDraft = [defaultReplacement()];
-        matchingInvoiceFieldMinConfidenceDraft = 0.7;
-        if (matchingInvoiceThresholdEl) {
-          matchingInvoiceThresholdEl.value = String(matchingInvoiceFieldMinConfidenceDraft);
-        }
-        matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingInvoiceFieldMinConfidenceDraft);
+        matchingBaselineJson = normalizedMatchingJson(matchingDraft);
         renderMatchingEditor();
       } else if (tabId === 'ocr-processing') {
         alert('Kunde inte ladda OCR-inställningar.');
@@ -9037,8 +9021,9 @@ settingsTabEls.forEach((tabButton) => {
       } else if (tabId === 'data-fields') {
         alert('Kunde inte ladda datafält.');
         extractionFieldsDraft = [];
+        predefinedExtractionFieldsDraft = [];
         systemExtractionFieldsDraft = [];
-        extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, systemExtractionFieldsDraft);
+        extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
         renderExtractionFieldsEditor();
         renderSystemExtractionFieldsEditor();
       } else if (tabId === 'paths') {
@@ -9405,8 +9390,9 @@ Promise.all([
   }),
   loadExtractionFields().catch(() => {
     extractionFieldsDraft = [];
+    predefinedExtractionFieldsDraft = [];
     systemExtractionFieldsDraft = [];
-    extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, systemExtractionFieldsDraft);
+    extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
     console.error('Kunde inte ladda datafält vid app-start.');
   }),
 ]).finally(() => {

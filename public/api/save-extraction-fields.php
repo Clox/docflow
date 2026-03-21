@@ -19,6 +19,8 @@ if (
     !is_array($payload)
     || !array_key_exists('fields', $payload)
     || !is_array($payload['fields'])
+    || !array_key_exists('predefinedFields', $payload)
+    || !is_array($payload['predefinedFields'])
     || !array_key_exists('systemFields', $payload)
     || !is_array($payload['systemFields'])
 ) {
@@ -28,15 +30,19 @@ if (
 
 $normalized = [
     'fields' => normalize_extraction_fields($payload['fields']),
-    'systemFields' => normalize_extraction_fields($payload['systemFields']),
+    'predefinedFields' => normalize_predefined_extraction_fields($payload['predefinedFields']),
+    'systemFields' => normalize_system_extraction_fields($payload['systemFields']),
 ];
 
 try {
     write_json_file(DATA_DIR . '/extraction-fields.json', $normalized);
+    $stored = load_extraction_fields_data();
+    write_json_file(DATA_DIR . '/extraction-fields.json', $stored);
     json_response([
         'ok' => true,
-        'fields' => $normalized['fields'],
-        'systemFields' => $normalized['systemFields'],
+        'fields' => is_array($stored['fields'] ?? null) ? $stored['fields'] : [],
+        'predefinedFields' => is_array($stored['predefinedFields'] ?? null) ? $stored['predefinedFields'] : [],
+        'systemFields' => is_array($stored['systemFields'] ?? null) ? $stored['systemFields'] : [],
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

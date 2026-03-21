@@ -261,16 +261,6 @@
       </div>
     </div>
 
-    <div class="matching-threshold-section">
-      <p>Ange lägsta säkerhetspoäng (confidence) för att extraherat fakturadatafält ska accepteras (0.00 - 1.00).</p>
-      <div class="matching-threshold-row">
-        <div class="floating-input-group matching-threshold-field">
-          <label class="floating-input-label" for="matching-invoice-threshold">Tröskel för fakturadata-extraktion</label>
-          <input id="matching-invoice-threshold" type="number" min="0" max="1" step="0.01">
-        </div>
-      </div>
-    </div>
-
     <div class="panel-actions">
       <button id="matching-cancel" type="button">Avbryt</button>
       <button id="matching-apply" type="button">Spara</button>

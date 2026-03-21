@@ -1,5 +1,8 @@
 pdfs/*
 
+__pycache__/
+*.py[cod]
+
 clients.json
 data/
 

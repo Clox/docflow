@@ -418,9 +418,15 @@ function system_label_definitions(): array
                 ['type' => 'text', 'text' => 'ocr', 'score' => 5],
                 ['type' => 'text', 'text' => 'ocr-nummer', 'score' => 5],
                 ['type' => 'text', 'text' => 'fakturanummer', 'score' => 5],
-                ['type' => 'text', 'text' => 'autogiro', 'score' => 3],
                 ['type' => 'text', 'text' => 'e-faktura', 'score' => 4],
                 ['type' => 'text', 'text' => 'betalningsmottagare', 'score' => 2],
+            ],
+        ],
+        'autogiro' => [
+            'name' => 'Autogiro',
+            'minScore' => 3,
+            'rules' => [
+                ['type' => 'text', 'text' => 'autogiro', 'score' => 3],
             ],
         ],
     ];
@@ -429,14 +435,11 @@ function system_label_definitions(): array
 function normalize_archive_rule(mixed $input, array $options = []): array
 {
     $rule = is_array($input) ? $input : [];
-    $allowInvoice = ($options['allowInvoice'] ?? true) !== false;
     $allowLabel = ($options['allowLabel'] ?? false) === true;
     $type = is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text';
-    if ($type === 'invoice' && !$allowInvoice) {
+    if ($type === 'label' && !$allowLabel) {
         $type = 'text';
-    } elseif ($type === 'label' && !$allowLabel) {
-        $type = 'text';
-    } elseif ($type !== 'invoice' && $type !== 'label') {
+    } elseif ($type !== 'label') {
         $type = 'text';
     }
 
@@ -450,38 +453,23 @@ function normalize_archive_rule(mixed $input, array $options = []): array
 
 function normalize_system_label_rule(mixed $input): array
 {
-    return normalize_invoice_reference_rule(normalize_archive_rule($input, [
-        'allowInvoice' => true,
+    return normalize_archive_rule($input, [
         'allowLabel' => true,
-    ]));
-}
-
-function normalize_invoice_reference_rule(array $rule, string $labelId = 'faktura'): array
-{
-    if (($rule['type'] ?? 'text') !== 'invoice') {
-        return $rule;
-    }
-
-    $rule['type'] = 'label';
-    $rule['labelId'] = $labelId;
-    $rule['text'] = '';
-    return $rule;
+    ]);
 }
 
 function normalize_editable_label_rule(mixed $input): array
 {
-    return normalize_invoice_reference_rule(normalize_archive_rule($input, [
-        'allowInvoice' => true,
+    return normalize_archive_rule($input, [
         'allowLabel' => true,
-    ]));
+    ]);
 }
 
 function normalize_category_rule(mixed $input): array
 {
-    return normalize_invoice_reference_rule(normalize_archive_rule($input, [
-        'allowInvoice' => true,
+    return normalize_archive_rule($input, [
         'allowLabel' => true,
-    ]));
+    ]);
 }
 
 function slugify_text(string $value, string $separator = '-', string $fallback = ''): string
@@ -643,6 +631,75 @@ function normalize_filename_template(mixed $input): array
     ];
 }
 
+function valid_extraction_field_extractor(string $extractor, string $fallback = 'generic_label'): string
+{
+    $normalized = trim(strtolower($extractor));
+    $valid = [
+        'generic_label',
+        'amount',
+        'due_date',
+        'bankgiro',
+        'plusgiro',
+        'supplier',
+        'payment_receiver',
+        'iban',
+        'swift',
+        'ocr',
+    ];
+    return in_array($normalized, $valid, true) ? $normalized : $fallback;
+}
+
+function predefined_extraction_field_definitions(): array
+{
+    return [
+        'amount' => [
+            'name' => 'Belopp',
+            'searchString' => 'att betala',
+            'extractor' => 'amount',
+        ],
+        'due_date' => [
+            'name' => 'Förfallodatum',
+            'searchString' => 'förfallodatum',
+            'extractor' => 'due_date',
+        ],
+        'bankgiro' => [
+            'name' => 'Bankgiro',
+            'searchString' => 'bankgiro',
+            'extractor' => 'bankgiro',
+        ],
+        'plusgiro' => [
+            'name' => 'Plusgiro',
+            'searchString' => 'plusgiro',
+            'extractor' => 'plusgiro',
+        ],
+        'supplier' => [
+            'name' => 'Leverantör',
+            'searchString' => 'leverantör',
+            'extractor' => 'supplier',
+        ],
+        'payment_receiver' => [
+            'name' => 'Betalningsmottagare',
+            'searchString' => 'betalningsmottagare',
+            'extractor' => 'payment_receiver',
+        ],
+        'iban' => [
+            'name' => 'IBAN',
+            'searchString' => 'iban',
+            'extractor' => 'iban',
+        ],
+        'swift' => [
+            'name' => 'SWIFT',
+            'searchString' => 'swift',
+            'extractor' => 'swift',
+        ],
+        'ocr' => [
+            'name' => 'OCR',
+            'searchString' => 'ocr',
+            'extractor' => 'ocr',
+        ],
+    ];
+}
+
 function normalize_extraction_fields(mixed $input): array
 {
     if (!is_array($input)) {
@@ -661,6 +718,9 @@ function normalize_extraction_fields(mixed $input): array
         $searchString = is_string($row['searchString'] ?? null)
             ? trim((string) $row['searchString'])
             : (is_string($row['query'] ?? null) ? trim((string) $row['query']) : '');
+        $extractor = valid_extraction_field_extractor(
+            is_string($row['extractor'] ?? null) ? (string) $row['extractor'] : 'generic_label'
+        );
 
         if ($name === '' || $searchString === '') {
             continue;
@@ -674,18 +734,93 @@ function normalize_extraction_fields(mixed $input): array
             'key' => $key,
             'name' => $name,
             'searchString' => $searchString,
+            'extractor' => $extractor,
         ];
     }
 
     return $fields;
 }
 
+function normalize_predefined_extraction_field_with_defaults(string $key, mixed $input, array $defaults): array
+{
+    $field = is_array($input) ? $input : [];
+    $name = is_string($field['name'] ?? null) ? trim((string) $field['name']) : '';
+    if ($name === '') {
+        $name = is_string($defaults['name'] ?? null) ? trim((string) $defaults['name']) : '';
+    }
+
+    $searchString = is_string($field['searchString'] ?? null)
+        ? trim((string) $field['searchString'])
+        : (is_string($field['query'] ?? null) ? trim((string) $field['query']) : '');
+    if ($searchString === '') {
+        $searchString = is_string($defaults['searchString'] ?? null) ? trim((string) $defaults['searchString']) : '';
+    }
+
+    return [
+        'key' => $key,
+        'name' => $name,
+        'searchString' => $searchString,
+        'extractor' => valid_extraction_field_extractor(
+            is_string($field['extractor'] ?? null) ? (string) $field['extractor'] : (string) ($defaults['extractor'] ?? 'generic_label'),
+            valid_extraction_field_extractor((string) ($defaults['extractor'] ?? 'generic_label'))
+        ),
+        'predefinedFieldKey' => $key,
+        'isPredefinedField' => true,
+    ];
+}
+
+function predefined_extraction_fields_template(): array
+{
+    $definitions = predefined_extraction_field_definitions();
+    $fields = [];
+    foreach ($definitions as $key => $defaults) {
+        $fields[] = normalize_predefined_extraction_field_with_defaults($key, [], $defaults);
+    }
+    return $fields;
+}
+
+function normalize_predefined_extraction_fields(mixed $input): array
+{
+    $decoded = is_array($input) ? $input : [];
+    $byKey = [];
+    foreach ($decoded as $field) {
+        if (!is_array($field)) {
+            continue;
+        }
+        $predefinedKey = is_string($field['predefinedFieldKey'] ?? null) ? trim((string) $field['predefinedFieldKey']) : '';
+        $key = $predefinedKey !== ''
+            ? $predefinedKey
+            : (is_string($field['key'] ?? null) ? trim((string) $field['key']) : '');
+        if ($key !== '') {
+            $byKey[$key] = $field;
+        }
+    }
+
+    $definitions = predefined_extraction_field_definitions();
+    $fields = [];
+    foreach ($definitions as $key => $defaults) {
+        $fields[] = normalize_predefined_extraction_field_with_defaults($key, $byKey[$key] ?? [], $defaults);
+    }
+    return $fields;
+}
+
+function system_extraction_fields_template(): array
+{
+    return [];
+}
+
+function normalize_system_extraction_fields(mixed $input): array
+{
+    return normalize_extraction_fields($input);
+}
+
 function load_extraction_fields(): array
 {
     $data = load_extraction_fields_data();
     $fields = is_array($data['fields'] ?? null) ? $data['fields'] : [];
+    $predefinedFields = is_array($data['predefinedFields'] ?? null) ? $data['predefinedFields'] : [];
     $systemFields = is_array($data['systemFields'] ?? null) ? $data['systemFields'] : [];
-    return array_values(array_merge($systemFields, $fields));
+    return array_values(array_merge($predefinedFields, $systemFields, $fields));
 }
 
 function load_extraction_fields_data(): array
@@ -694,9 +829,20 @@ function load_extraction_fields_data(): array
     if (is_file($fieldsPath)) {
         $decoded = load_json_file($fieldsPath);
         $fields = normalize_extraction_fields(is_array($decoded) ? ($decoded['fields'] ?? $decoded) : []);
-        $systemFields = normalize_extraction_fields(is_array($decoded) ? ($decoded['systemFields'] ?? []) : []);
+        $hasExplicitPredefinedFields = is_array($decoded) && array_key_exists('predefinedFields', $decoded);
+        $predefinedFields = normalize_predefined_extraction_fields(
+            is_array($decoded)
+                ? ($hasExplicitPredefinedFields ? ($decoded['predefinedFields'] ?? []) : ($decoded['systemFields'] ?? []))
+                : []
+        );
+        $systemFields = normalize_system_extraction_fields(
+            is_array($decoded)
+                ? ($hasExplicitPredefinedFields ? ($decoded['systemFields'] ?? []) : [])
+                : []
+        );
         $normalized = [
             'fields' => $fields,
+            'predefinedFields' => $predefinedFields,
             'systemFields' => $systemFields,
         ];
         if ($decoded !== $normalized) {
@@ -715,6 +861,7 @@ function load_extraction_fields_data(): array
     );
     $normalized = [
         'fields' => $legacyFields,
+        'predefinedFields' => predefined_extraction_fields_template(),
         'systemFields' => [],
     ];
     try {
@@ -750,6 +897,18 @@ function normalize_system_label_with_defaults(string $key, mixed $input, array $
     }
     if (count($rules) === 0) {
         $rules = $defaultRules;
+    }
+    if ($key === 'invoice') {
+        $rules = array_values(array_filter($rules, static function ($rule): bool {
+            if (!is_array($rule)) {
+                return false;
+            }
+            if (($rule['type'] ?? 'text') !== 'text') {
+                return true;
+            }
+            $text = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
+            return $text === '' || lowercase_text($text) !== 'autogiro';
+        }));
     }
 
     return [
@@ -1129,35 +1288,10 @@ function normalize_archive_category(array $input, array &$usedCategoryIds = []):
     ];
 }
 
-function default_invoice_field_min_confidence(): float
-{
-    return 0.70;
-}
-
-function sanitize_invoice_field_min_confidence($value, ?float $fallback = null): float
-{
-    $base = is_float($fallback) ? $fallback : default_invoice_field_min_confidence();
-    if (!(is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)))) {
-        return $base;
-    }
-
-    $parsed = (float) $value;
-    if ($parsed < 0.0) {
-        return 0.0;
-    }
-    if ($parsed > 1.0) {
-        return 1.0;
-    }
-
-    return round($parsed, 3);
-}
-
 function load_matching_settings_payload(): array
 {
-    $defaultThreshold = default_invoice_field_min_confidence();
     $defaultPayload = [
         'replacements' => [],
-        'invoiceFieldMinConfidence' => $defaultThreshold,
     ];
 
     $path = DATA_DIR . '/matching.json';
@@ -1200,10 +1334,6 @@ function load_matching_settings_payload(): array
 
     return [
         'replacements' => $replacements,
-        'invoiceFieldMinConfidence' => sanitize_invoice_field_min_confidence(
-            $decoded['invoiceFieldMinConfidence'] ?? null,
-            $defaultThreshold
-        ),
     ];
 }
 
@@ -1212,12 +1342,6 @@ function load_matching_settings(): array
     $payload = load_matching_settings_payload();
     $rows = $payload['replacements'] ?? [];
     return is_array($rows) ? $rows : [];
-}
-
-function load_invoice_field_min_confidence(): float
-{
-    $payload = load_matching_settings_payload();
-    return sanitize_invoice_field_min_confidence($payload['invoiceFieldMinConfidence'] ?? null);
 }
 
 function ensure_directory(string $path): void
@@ -4087,7 +4211,6 @@ function find_category_signal_matches(string $ocrText, array $categories, array 
     $normalizedOcr = normalize_for_matching($ocrText, $replacementMap);
     $inverseMap = build_inverse_single_char_map($replacementMap);
     $matches = [];
-    $invoiceMatched = ($context['invoiceDetection']['matched'] ?? false) === true;
     $matchedLabelsById = is_array($context['matchedLabelsById'] ?? null) ? $context['matchedLabelsById'] : [];
 
     foreach ($categories as $categoryIndex => $category) {
@@ -4129,13 +4252,7 @@ function find_category_signal_matches(string $ocrText, array $categories, array 
             $sourceText = '';
             $displayText = $ruleText;
 
-            if ($ruleType === 'invoice') {
-                if (!$invoiceMatched) {
-                    continue;
-                }
-                $sourceText = 'invoiceDetection.matched';
-                $displayText = 'Är faktura';
-            } elseif ($ruleType === 'label') {
+            if ($ruleType === 'label') {
                 if ($ruleLabelId === '' || !is_array($matchedLabelsById[$ruleLabelId] ?? null)) {
                     continue;
                 }
@@ -4319,23 +4436,7 @@ function matched_labels_by_id(array $matches): array
     return $labelsById;
 }
 
-function empty_invoice_fields(): array
-{
-    return [
-        'amount' => null,
-        'dueDate' => null,
-        'bankgiro' => null,
-        'plusgiro' => null,
-        'supplier' => null,
-        'payee' => null,
-        'iban' => null,
-        'swift' => null,
-        'ocr' => null,
-        'autogiro' => false,
-    ];
-}
-
-function invoice_ocr_lines(string $ocrText): array
+function ocr_text_lines(string $ocrText): array
 {
     $lines = preg_split('/\R/u', $ocrText);
     return is_array($lines) ? $lines : [];
@@ -4343,7 +4444,7 @@ function invoice_ocr_lines(string $ocrText): array
 
 function split_lines_for_matching(string $text): array
 {
-    return invoice_ocr_lines($text);
+    return ocr_text_lines($text);
 }
 
 function build_tolerant_label_regex(string $label, array $replacementMap): ?string
@@ -4481,7 +4582,7 @@ function extract_label_tail_from_line(string $line, string $pattern): string
     return is_string($tail) ? trim($tail) : '';
 }
 
-function invoice_nearby_line_indexes(array $lines, int $index, int $distance = 1): array
+function nearby_line_indexes(array $lines, int $index, int $distance = 1): array
 {
     $indexes = [];
     for ($step = 1; $step <= $distance; $step++) {
@@ -4595,44 +4696,6 @@ function candidate_confidence_score(array $hit, string $candidateLine, int $cand
     return clamp_confidence($base);
 }
 
-function empty_invoice_field_confidence(): array
-{
-    return [
-        'amount' => 0.0,
-        'dueDate' => 0.0,
-        'bankgiro' => 0.0,
-        'plusgiro' => 0.0,
-        'supplier' => 0.0,
-        'payee' => 0.0,
-        'iban' => 0.0,
-        'swift' => 0.0,
-        'ocr' => 0.0,
-        'autogiro' => 0.0,
-    ];
-}
-
-function apply_invoice_field_confidence_threshold(array $fields, array $confidence, float $minConfidence): array
-{
-    $threshold = sanitize_invoice_field_min_confidence($minConfidence);
-    $filtered = $fields;
-    foreach ($filtered as $key => $value) {
-        if ($key === 'autogiro') {
-            continue;
-        }
-
-        if ($value === null) {
-            continue;
-        }
-
-        $score = clamp_confidence((float) ($confidence[$key] ?? 0.0));
-        if ($score < $threshold) {
-            $filtered[$key] = null;
-        }
-    }
-
-    return $filtered;
-}
-
 function select_best_labeled_candidate(array $lines, array $labels, array $replacementMap, callable $candidateExtractor, int $nearbyDistance = 1): array
 {
     $best = [
@@ -4709,7 +4772,7 @@ function select_best_labeled_candidate(array $lines, array $labels, array $repla
             }
         }
 
-        $nearIndexes = invoice_nearby_line_indexes($lines, $hitIndex, $nearbyDistance);
+        $nearIndexes = nearby_line_indexes($lines, $hitIndex, $nearbyDistance);
         foreach ($nearIndexes as $nearIndex) {
             $nearLine = is_string($lines[$nearIndex] ?? null) ? (string) $lines[$nearIndex] : '';
             if ($nearLine === '') {
@@ -4750,7 +4813,7 @@ function select_best_labeled_candidate(array $lines, array $labels, array $repla
     return $best;
 }
 
-function invoice_bankgiro_candidates_from_text(string $text, int $offsetBase = 0): array
+function bankgiro_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
     if (@preg_match_all('/\b(\d{2,4}\s*-\s*\d{4})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
@@ -4785,7 +4848,7 @@ function invoice_bankgiro_candidates_from_text(string $text, int $offsetBase = 0
     return $candidates;
 }
 
-function invoice_plusgiro_candidates_from_text(string $text, int $offsetBase = 0): array
+function plusgiro_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
     if (@preg_match_all('/\b(\d{1,8}\s*-\s*\d{1,5})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
@@ -4820,7 +4883,7 @@ function invoice_plusgiro_candidates_from_text(string $text, int $offsetBase = 0
     return $candidates;
 }
 
-function invoice_ocr_candidates_from_text(string $text, int $offsetBase = 0): array
+function ocr_number_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
     if (@preg_match_all('/\b(\d[\d\s]{7,40}\d)\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
@@ -4855,7 +4918,7 @@ function invoice_ocr_candidates_from_text(string $text, int $offsetBase = 0): ar
     return $candidates;
 }
 
-function invoice_date_candidates_from_text(string $text, int $offsetBase = 0): array
+function due_date_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $candidates = [];
 
@@ -4910,7 +4973,7 @@ function invoice_date_candidates_from_text(string $text, int $offsetBase = 0): a
     return $candidates;
 }
 
-function invoice_amount_candidates_from_text(string $text, int $offsetBase = 0): array
+function amount_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
     if (@preg_match_all('/\b(\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?)\b|\b(\d+(?:,\d{2}))\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
@@ -4948,7 +5011,7 @@ function invoice_amount_candidates_from_text(string $text, int $offsetBase = 0):
     return $candidates;
 }
 
-function invoice_iban_candidates_from_text(string $text, int $offsetBase = 0): array
+function iban_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
     if (@preg_match_all('/\b([A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7})\b/iu', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
@@ -4982,7 +5045,7 @@ function invoice_iban_candidates_from_text(string $text, int $offsetBase = 0): a
     return $candidates;
 }
 
-function invoice_swift_candidates_from_text(string $text, int $offsetBase = 0): array
+function swift_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
     if (@preg_match_all('/\b([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b/iu', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
@@ -5016,7 +5079,7 @@ function invoice_swift_candidates_from_text(string $text, int $offsetBase = 0): 
     return $candidates;
 }
 
-function invoice_payee_candidates_from_text(string $text, int $offsetBase = 0): array
+function payment_receiver_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
     if (@preg_match_all('/([^\s].*?)(?=\s{2,}|$)/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
@@ -5313,7 +5376,7 @@ function extract_payee_from_text(string $text): ?string
     return $normalized;
 }
 
-function empty_invoice_field_result(): array
+function empty_extraction_field_result(): array
 {
     return [
         'value' => null,
@@ -5324,11 +5387,11 @@ function empty_invoice_field_result(): array
     ];
 }
 
-function extract_invoice_ocr_result(array $lines, array $replacementMap): array
+function extract_ocr_number_field_result(array $lines, array $replacementMap): array
 {
-    $result = select_best_labeled_candidate($lines, ['ocr-nummer', 'ocr nummer', 'ocr'], $replacementMap, 'invoice_ocr_candidates_from_text', 1);
+    $result = select_best_labeled_candidate($lines, ['ocr-nummer', 'ocr nummer', 'ocr'], $replacementMap, 'ocr_number_candidates_from_text', 1);
     if (($result['value'] ?? null) === null) {
-        return empty_invoice_field_result();
+        return empty_extraction_field_result();
     }
 
     $lineIndex = is_int($result['lineIndex'] ?? null) ? (int) $result['lineIndex'] : -1;
@@ -5341,70 +5404,70 @@ function extract_invoice_ocr_result(array $lines, array $replacementMap): array
     return $result;
 }
 
-function extract_invoice_bankgiro_result(array $lines, array $replacementMap): array
+function extract_bankgiro_field_result(array $lines, array $replacementMap): array
 {
-    $result = select_best_labeled_candidate($lines, ['bankgiro', 'bg'], $replacementMap, 'invoice_bankgiro_candidates_from_text', 2);
-    return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
+    $result = select_best_labeled_candidate($lines, ['bankgiro', 'bg'], $replacementMap, 'bankgiro_candidates_from_text', 2);
+    return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
-function extract_invoice_plusgiro_result(array $lines, array $replacementMap): array
+function extract_plusgiro_field_result(array $lines, array $replacementMap): array
 {
-    $result = select_best_labeled_candidate($lines, ['plusgiro', 'pg'], $replacementMap, 'invoice_plusgiro_candidates_from_text', 2);
-    return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
+    $result = select_best_labeled_candidate($lines, ['plusgiro', 'pg'], $replacementMap, 'plusgiro_candidates_from_text', 2);
+    return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
-function extract_invoice_due_date_result(array $lines, array $replacementMap): array
+function extract_due_date_field_result(array $lines, array $replacementMap): array
 {
     $result = select_best_labeled_candidate(
         $lines,
         ['förfallodatum', 'forfallodatum', 'förfaller', 'forfaller', 'att betala senast'],
         $replacementMap,
-        'invoice_date_candidates_from_text',
+        'due_date_candidates_from_text',
         2
     );
-    return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
+    return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
-function extract_invoice_amount_result(array $lines, array $replacementMap): array
+function extract_amount_field_result(array $lines, array $replacementMap): array
 {
     $result = select_best_labeled_candidate(
         $lines,
         ['fakturabelopp', 'att betala', 'summa att betala', 'belopp att betala', 'total att betala'],
         $replacementMap,
-        'invoice_amount_candidates_from_text',
+        'amount_candidates_from_text',
         2
     );
-    return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
+    return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
-function extract_invoice_payee_result(array $lines, array $replacementMap): array
+function extract_payment_receiver_field_result(array $lines, array $replacementMap): array
 {
-    $result = select_best_labeled_candidate($lines, ['betalningsmottagare', 'mottagare'], $replacementMap, 'invoice_payee_candidates_from_text', 1);
-    return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
+    $result = select_best_labeled_candidate($lines, ['betalningsmottagare', 'mottagare'], $replacementMap, 'payment_receiver_candidates_from_text', 1);
+    return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
-function extract_invoice_supplier_result(array $lines, array $replacementMap): array
+function extract_supplier_field_result(array $lines, array $replacementMap): array
 {
     $result = select_best_labeled_candidate(
         $lines,
         ['leverantör', 'leverantor'],
         $replacementMap,
-        'invoice_payee_candidates_from_text',
+        'payment_receiver_candidates_from_text',
         1
     );
-    return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
+    return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
-function extract_invoice_iban_result(array $lines, array $replacementMap): array
+function extract_iban_field_result(array $lines, array $replacementMap): array
 {
-    $result = select_best_labeled_candidate($lines, ['iban'], $replacementMap, 'invoice_iban_candidates_from_text', 1);
-    return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
+    $result = select_best_labeled_candidate($lines, ['iban'], $replacementMap, 'iban_candidates_from_text', 1);
+    return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
-function extract_invoice_swift_result(array $lines, array $replacementMap): array
+function extract_swift_field_result(array $lines, array $replacementMap): array
 {
-    $result = select_best_labeled_candidate($lines, ['swift'], $replacementMap, 'invoice_swift_candidates_from_text', 1);
-    return ($result['value'] ?? null) !== null ? $result : empty_invoice_field_result();
+    $result = select_best_labeled_candidate($lines, ['swift'], $replacementMap, 'swift_candidates_from_text', 1);
+    return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
 function extract_configured_text_field_results(array $lines, array $replacementMap, array $fields): array
@@ -5419,27 +5482,56 @@ function extract_configured_text_field_results(array $lines, array $replacementM
         $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
         $name = is_string($field['name'] ?? null) ? trim((string) $field['name']) : '';
         $searchString = is_string($field['searchString'] ?? null) ? trim((string) $field['searchString']) : '';
-        if ($key === '' || $name === '' || $searchString === '') {
+        $extractor = valid_extraction_field_extractor(
+            is_string($field['extractor'] ?? null) ? (string) $field['extractor'] : 'generic_label'
+        );
+        if ($key === '' || $name === '' || ($searchString === '' && $extractor === 'generic_label')) {
             continue;
         }
 
-        $result = select_best_labeled_candidate(
-            $lines,
-            [$searchString],
-            $replacementMap,
-            'generic_text_segment_candidates_from_text',
-            1
-        );
+        if ($extractor === 'amount') {
+            $result = extract_amount_field_result($lines, $replacementMap);
+        } elseif ($extractor === 'due_date') {
+            $result = extract_due_date_field_result($lines, $replacementMap);
+        } elseif ($extractor === 'bankgiro') {
+            $result = extract_bankgiro_field_result($lines, $replacementMap);
+        } elseif ($extractor === 'plusgiro') {
+            $result = extract_plusgiro_field_result($lines, $replacementMap);
+        } elseif ($extractor === 'supplier') {
+            $result = extract_supplier_field_result($lines, $replacementMap);
+        } elseif ($extractor === 'payment_receiver') {
+            $result = extract_payment_receiver_field_result($lines, $replacementMap);
+        } elseif ($extractor === 'iban') {
+            $result = extract_iban_field_result($lines, $replacementMap);
+        } elseif ($extractor === 'swift') {
+            $result = extract_swift_field_result($lines, $replacementMap);
+        } elseif ($extractor === 'ocr') {
+            $result = extract_ocr_number_field_result($lines, $replacementMap);
+        } else {
+            $result = select_best_labeled_candidate(
+                $lines,
+                [$searchString],
+                $replacementMap,
+                'generic_text_segment_candidates_from_text',
+                1
+            );
+        }
 
         if (($result['value'] ?? null) === null) {
-            $result = empty_invoice_field_result();
+            $result = empty_extraction_field_result();
         }
 
         $results[$key] = [
             'key' => $key,
             'name' => $name,
             'searchString' => $searchString,
-            'value' => is_string($result['value'] ?? null) ? trim((string) $result['value']) : null,
+            'extractor' => $extractor,
+            'value' => match (true) {
+                is_string($result['value'] ?? null) => trim((string) $result['value']),
+                is_int($result['value'] ?? null), is_float($result['value'] ?? null) => $result['value'] + 0,
+                is_bool($result['value'] ?? null) => (bool) $result['value'],
+                default => null,
+            },
             'confidence' => isset($result['confidence']) ? clamp_confidence((float) $result['confidence']) : 0.0,
             'lineIndex' => is_int($result['lineIndex'] ?? null) ? (int) $result['lineIndex'] : null,
             'source' => is_string($result['source'] ?? null) ? (string) $result['source'] : 'none',
@@ -5448,169 +5540,6 @@ function extract_configured_text_field_results(array $lines, array $replacementM
     }
 
     return $results;
-}
-
-function extract_invoice_ocr(array $lines, array $replacementMap): ?string
-{
-    $result = extract_invoice_ocr_result($lines, $replacementMap);
-    return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
-}
-
-function extract_invoice_bankgiro(array $lines, array $replacementMap): ?string
-{
-    $result = extract_invoice_bankgiro_result($lines, $replacementMap);
-    return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
-}
-
-function extract_invoice_plusgiro(array $lines, array $replacementMap): ?string
-{
-    $result = extract_invoice_plusgiro_result($lines, $replacementMap);
-    return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
-}
-
-function extract_invoice_due_date(array $lines, array $replacementMap): ?string
-{
-    $result = extract_invoice_due_date_result($lines, $replacementMap);
-    return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
-}
-
-function extract_invoice_amount(array $lines, array $replacementMap): ?float
-{
-    $result = extract_invoice_amount_result($lines, $replacementMap);
-    $value = $result['value'] ?? null;
-    return is_float($value) ? $value : null;
-}
-
-function extract_invoice_payee(array $lines, array $replacementMap): ?string
-{
-    $result = extract_invoice_payee_result($lines, $replacementMap);
-    return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
-}
-
-function extract_invoice_supplier(array $lines, array $replacementMap): ?string
-{
-    $result = extract_invoice_supplier_result($lines, $replacementMap);
-    return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
-}
-
-function extract_invoice_iban(array $lines, array $replacementMap): ?string
-{
-    $result = extract_invoice_iban_result($lines, $replacementMap);
-    return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
-}
-
-function extract_invoice_swift(array $lines, array $replacementMap): ?string
-{
-    $result = extract_invoice_swift_result($lines, $replacementMap);
-    return is_string($result['value'] ?? null) ? (string) $result['value'] : null;
-}
-
-function extract_invoice_data_with_confidence(string $ocrText, array $replacementMap, ?float $minConfidence = null): array
-{
-    $lines = invoice_ocr_lines($ocrText);
-    $fieldMinConfidence = sanitize_invoice_field_min_confidence($minConfidence, default_invoice_field_min_confidence());
-    if (count($lines) === 0) {
-        return [
-            'fields' => empty_invoice_fields(),
-            'confidence' => empty_invoice_field_confidence(),
-            'fieldMinConfidence' => $fieldMinConfidence,
-        ];
-    }
-
-    $amount = extract_invoice_amount_result($lines, $replacementMap);
-    $dueDate = extract_invoice_due_date_result($lines, $replacementMap);
-    $bankgiro = extract_invoice_bankgiro_result($lines, $replacementMap);
-    $plusgiro = extract_invoice_plusgiro_result($lines, $replacementMap);
-    $supplier = extract_invoice_supplier_result($lines, $replacementMap);
-    $payee = extract_invoice_payee_result($lines, $replacementMap);
-    $iban = extract_invoice_iban_result($lines, $replacementMap);
-    $swift = extract_invoice_swift_result($lines, $replacementMap);
-    $ocr = extract_invoice_ocr_result($lines, $replacementMap);
-
-    $normalizedOcr = normalize_for_matching($ocrText, $replacementMap);
-    $hasAutogiro = str_contains($normalizedOcr, normalize_for_matching('autogiro', $replacementMap));
-
-    $fields = [
-        'amount' => is_float($amount['value'] ?? null) ? (float) $amount['value'] : null,
-        'dueDate' => is_string($dueDate['value'] ?? null) ? (string) $dueDate['value'] : null,
-        'bankgiro' => is_string($bankgiro['value'] ?? null) ? (string) $bankgiro['value'] : null,
-        'plusgiro' => is_string($plusgiro['value'] ?? null) ? (string) $plusgiro['value'] : null,
-        'supplier' => is_string($supplier['value'] ?? null) ? (string) $supplier['value'] : null,
-        'payee' => is_string($payee['value'] ?? null) ? (string) $payee['value'] : null,
-        'iban' => is_string($iban['value'] ?? null) ? (string) $iban['value'] : null,
-        'swift' => is_string($swift['value'] ?? null) ? (string) $swift['value'] : null,
-        'ocr' => is_string($ocr['value'] ?? null) ? (string) $ocr['value'] : null,
-        'autogiro' => $hasAutogiro,
-    ];
-    $confidence = [
-        'amount' => clamp_confidence((float) ($amount['confidence'] ?? 0.0)),
-        'dueDate' => clamp_confidence((float) ($dueDate['confidence'] ?? 0.0)),
-        'bankgiro' => clamp_confidence((float) ($bankgiro['confidence'] ?? 0.0)),
-        'plusgiro' => clamp_confidence((float) ($plusgiro['confidence'] ?? 0.0)),
-        'supplier' => clamp_confidence((float) ($supplier['confidence'] ?? 0.0)),
-        'payee' => clamp_confidence((float) ($payee['confidence'] ?? 0.0)),
-        'iban' => clamp_confidence((float) ($iban['confidence'] ?? 0.0)),
-        'swift' => clamp_confidence((float) ($swift['confidence'] ?? 0.0)),
-        'ocr' => clamp_confidence((float) ($ocr['confidence'] ?? 0.0)),
-        'autogiro' => $hasAutogiro ? 1.0 : 0.0,
-    ];
-
-    return [
-        'fields' => apply_invoice_field_confidence_threshold($fields, $confidence, $fieldMinConfidence),
-        'confidence' => $confidence,
-        'fieldMinConfidence' => $fieldMinConfidence,
-    ];
-}
-
-function extract_invoice_data(string $ocrText, array $replacementMap, ?float $minConfidence = null): array
-{
-    $result = extract_invoice_data_with_confidence($ocrText, $replacementMap, $minConfidence);
-    $fields = $result['fields'] ?? [];
-    return is_array($fields) ? $fields : empty_invoice_fields();
-}
-
-function build_invoice_detection(array $invoiceMatches, array $replacementMap): array
-{
-    $detection = [
-        'matched' => false,
-        'score' => 0,
-        'minScore' => 0,
-        'matchedSignals' => [],
-    ];
-
-    $bestMatch = (count($invoiceMatches) > 0 && is_array($invoiceMatches[0])) ? $invoiceMatches[0] : null;
-    if (!is_array($bestMatch)) {
-        return $detection;
-    }
-
-    $score = $bestMatch['score'] ?? 0;
-    if (is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))) {
-        $detection['score'] = max(0, (int) round((float) $score));
-    }
-
-    $minScore = $bestMatch['minScore'] ?? 0;
-    if (is_int($minScore) || is_float($minScore) || (is_string($minScore) && is_numeric($minScore))) {
-        $detection['minScore'] = max(0, (int) round((float) $minScore));
-    }
-
-    $matchedSignals = [];
-    $matchedRules = is_array($bestMatch['matchedRules'] ?? null) ? $bestMatch['matchedRules'] : [];
-    foreach ($matchedRules as $rule) {
-        if (!is_array($rule)) {
-            continue;
-        }
-
-        $ruleText = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
-        if ($ruleText === '') {
-            continue;
-        }
-
-        $matchedSignals[] = 'label:' . normalize_for_matching($ruleText, $replacementMap);
-    }
-
-    $detection['matchedSignals'] = array_values(array_unique($matchedSignals));
-    $detection['matched'] = $detection['score'] >= $detection['minScore'] && count($detection['matchedSignals']) > 0;
-    return $detection;
 }
 
 function initial_job_data(string $jobId, string $originalFilename, ?string $fallbackTxtPath = null): array
@@ -5624,14 +5553,6 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
         'createdAt' => $now,
         'updatedAt' => $now,
         'analysis' => [
-            'invoiceDetection' => [
-                'matched' => false,
-                'score' => 0,
-                'minScore' => 0,
-                'matchedSignals' => [],
-            ],
-            'invoice' => null,
-            'invoiceConfidence' => empty_invoice_field_confidence(),
             'preselectedClient' => null,
             'preselectedSender' => null,
             'senderLookup' => [
@@ -5645,6 +5566,8 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
                 'matchedValue' => null,
                 'sender' => null,
             ],
+            'extractionFields' => [],
+            'labels' => [],
         ],
         'files' => [
             'sourcePdf' => 'source.pdf',
@@ -5676,7 +5599,6 @@ function process_claimed_job(
     array $labels,
     array $systemLabels,
     array $replacementMap,
-    float $invoiceFieldMinConfidence,
     bool $ocrSkipExistingText,
     int $ocrOptimizeLevel,
     string $ocrTextExtractionMethod,
@@ -5822,29 +5744,26 @@ function process_claimed_job(
     }
 
     $systemLabelMatches = find_incremental_label_matches($ocrText, $systemLabels, $replacementMap);
-    $invoiceLabelMatches = array_values(array_filter($systemLabelMatches, static function ($match): bool {
-        return is_array($match) && (($match['systemLabelKey'] ?? null) === 'invoice');
-    }));
-    $invoiceDetection = build_invoice_detection($invoiceLabelMatches, $replacementMap);
-    $invoiceExtraction = extract_invoice_data_with_confidence($ocrText, $replacementMap, $invoiceFieldMinConfidence);
-    $invoiceData = is_array($invoiceExtraction['fields'] ?? null) ? $invoiceExtraction['fields'] : empty_invoice_fields();
-    $invoiceConfidence = is_array($invoiceExtraction['confidence'] ?? null)
-        ? $invoiceExtraction['confidence']
-        : empty_invoice_field_confidence();
-    $orgNumber = detect_org_number_from_ocr_text($ocrText);
-    $senderLookup = sender_lookup_result(
-        $orgNumber,
-        is_string($invoiceData['bankgiro'] ?? null) ? (string) $invoiceData['bankgiro'] : null,
-        is_string($invoiceData['plusgiro'] ?? null) ? (string) $invoiceData['plusgiro'] : null
-    );
-
-    $matched = match_client_dir_name($ocrText, $clients);
     $configuredExtractionFields = load_extraction_fields();
     $configuredFieldResults = extract_configured_text_field_results(
         split_lines_for_matching($ocrText),
         $replacementMap,
         $configuredExtractionFields
     );
+    $orgNumber = detect_org_number_from_ocr_text($ocrText);
+    $bankgiroValue = is_string($configuredFieldResults['bankgiro']['value'] ?? null)
+        ? trim((string) $configuredFieldResults['bankgiro']['value'])
+        : null;
+    $plusgiroValue = is_string($configuredFieldResults['plusgiro']['value'] ?? null)
+        ? trim((string) $configuredFieldResults['plusgiro']['value'])
+        : null;
+    $senderLookup = sender_lookup_result(
+        $orgNumber,
+        $bankgiroValue !== '' ? $bankgiroValue : null,
+        $plusgiroValue !== '' ? $plusgiroValue : null
+    );
+
+    $matched = match_client_dir_name($ocrText, $clients);
     $preselectedClient = null;
     if (is_string($matched) && trim($matched) !== '') {
         $preselectedClient = [
@@ -5867,11 +5786,9 @@ function process_claimed_job(
     }
 
     $labelMatches = find_incremental_label_matches($ocrText, $labels, $replacementMap, [
-        'invoiceDetection' => $invoiceDetection,
         'matchedLabelsById' => matched_labels_by_id($systemLabelMatches),
     ]);
     $categoryMatches = find_category_matches($ocrText, $categories, $replacementMap, [
-        'invoiceDetection' => $invoiceDetection,
         'matchedLabelsById' => matched_labels_by_id(array_merge($systemLabelMatches, $labelMatches)),
     ]);
     $resolvedLabels = resolved_label_ids_from_matches($systemLabelMatches, $labelMatches);
@@ -5881,10 +5798,6 @@ function process_claimed_job(
         'systemLabelMatches' => $systemLabelMatches,
         'labelMatches' => $labelMatches,
         'labels' => $resolvedLabels,
-        'invoice' => $invoiceData,
-        'invoiceConfidence' => $invoiceConfidence,
-        'invoiceFieldMinConfidence' => $invoiceFieldMinConfidence,
-        'invoiceDetection' => $invoiceDetection,
         'extractionFields' => $configuredFieldResults,
         'preselectedClient' => $preselectedClient,
         'preselectedSender' => $preselectedSender,
@@ -5896,10 +5809,6 @@ function process_claimed_job(
     return [
         'extractedData' => $extractedData,
         'analysis' => [
-            'invoiceDetection' => $invoiceDetection,
-            'invoice' => $invoiceData,
-            'invoiceConfidence' => $invoiceConfidence,
-            'invoiceFieldMinConfidence' => $invoiceFieldMinConfidence,
             'preselectedClient' => $preselectedClient,
             'preselectedSender' => $preselectedSender,
             'senderLookup' => $senderLookup,
@@ -6050,7 +5959,6 @@ function process_job_by_id(
     array $labels,
     array $systemLabels,
     array $matchingSettings,
-    float $invoiceFieldMinConfidence,
     string $jobId
 ): void
 {
@@ -6098,7 +6006,6 @@ function process_job_by_id(
             $labels,
             $systemLabels,
             $replacementMap,
-            $invoiceFieldMinConfidence,
             $forceOcr ? false : (bool) ($config['ocrSkipExistingText'] ?? true),
             (int) ($config['ocrOptimizeLevel'] ?? 1),
             (string) ($config['ocrTextExtractionMethod'] ?? 'layout'),
@@ -6159,9 +6066,6 @@ function run_processing_worker(array $config): void
         $systemLabels = load_system_labels();
         $matchingPayload = load_matching_settings_payload();
         $matchingSettings = is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : [];
-        $invoiceFieldMinConfidence = sanitize_invoice_field_min_confidence(
-            $matchingPayload['invoiceFieldMinConfidence'] ?? null
-        );
 
         while (true) {
             $jobId = next_processing_job_id($config);
@@ -6176,7 +6080,6 @@ function run_processing_worker(array $config): void
                 $labels,
                 $systemLabels,
                 $matchingSettings,
-                $invoiceFieldMinConfidence,
                 $jobId
             );
         }
