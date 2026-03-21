@@ -2205,7 +2205,7 @@ body {
 .filename-template-dom-token {
   display: inline-flex;
   vertical-align: middle;
-  padding: 2px 3px;
+  padding: 2px 0;
   box-sizing: border-box;
   background: transparent;
 }

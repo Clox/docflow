@@ -7295,32 +7295,6 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		return false;
 	}
 
-	const ownerAdjacentToken = (() => {
-		const siblings = Array.from(ownerEditable.childNodes);
-		const index = siblings.indexOf(currentToken);
-		if (index < 0) {
-		return null;
-		}
-
-		const candidate = direction === 'back'
-		? siblings[index - 1] || null
-		: siblings[index + 1] || null;
-
-		return isTokenNode(candidate) ? candidate : null;
-	})();
-
-	if (ownerAdjacentToken) {
-		debugFilenameTemplateNav('owner-adjacent-token', {
-			direction,
-			editable: describeEditable(editable),
-			ownerEditable: describeEditable(ownerEditable),
-			token: ownerAdjacentToken.querySelector('.filename-template-inline-token-label')?.textContent?.trim()
-			  || ownerAdjacentToken.querySelector('.filename-template-inline-token')?.textContent?.trim()
-			  || 'token',
-		});
-		return focusTokenBoundaryEditable(ownerAdjacentToken, direction);
-	}
-
 	debugFilenameTemplateNav('owner-adjacent-node', {
 		direction,
 		editable: describeEditable(editable),
