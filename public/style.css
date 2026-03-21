@@ -2345,7 +2345,7 @@ body {
 }
 
 .panel-actions button,
-.settings-close-row button {
+.settings-footer-row button {
   font: inherit;
   padding: 6px 12px;
   border: 1px solid #ccc;
@@ -2355,7 +2355,7 @@ body {
 }
 
 .panel-actions button:hover,
-.settings-close-row button:hover {
+.settings-footer-row button:hover {
   background: #ebebeb;
 }
 
@@ -2384,9 +2384,26 @@ body {
   }
 }
 
-.settings-close-row {
+.settings-footer-row {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding-top: 10px;
   border-top: 1px solid #eee;
+}
+
+.settings-panel-actions-host {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings-panel-actions-host > .panel-actions {
+  margin-top: 0;
+}
+
+.settings-panel-actions-placeholder {
+  display: none;
 }

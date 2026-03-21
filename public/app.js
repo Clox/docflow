@@ -36,6 +36,7 @@ const archiveActionEl = document.getElementById('archive-action');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
 const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]'));
+const settingsPanelActionsHostEl = document.getElementById('settings-panel-actions-host');
 const settingsCloseEl = document.getElementById('settings-close');
 const selectedJobPanelEl = document.getElementById('selected-job-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
@@ -214,6 +215,7 @@ let ocrPdfSubstitutionsDraft = [];
 let ocrPdfSubstitutionsBaselineJson = JSON.stringify([]);
 let rapidocrInstallPollTimer = null;
 let activeSettingsTabId = 'clients';
+let activeSettingsFooterPanelId = '';
 let activeLabelsTabId = 'labels';
 let clientsDraft = [];
 let clientsBaselineJson = '[]';
@@ -3462,6 +3464,61 @@ function settingsPanelEl(tabId) {
   return document.getElementById('settings-panel-' + tabId);
 }
 
+function restoreSettingsFooterActions(panelId) {
+  if (!panelId) {
+    return;
+  }
+  const panel = settingsPanelEl(panelId);
+  if (!(panel instanceof HTMLElement)) {
+    return;
+  }
+  const actionRow = panel._settingsFooterActionRow;
+  const placeholder = panel._settingsFooterActionPlaceholder;
+  if (!(actionRow instanceof HTMLElement) || !(placeholder instanceof HTMLElement) || placeholder.parentNode !== panel) {
+    return;
+  }
+  placeholder.replaceWith(actionRow);
+  panel._settingsFooterActionRow = null;
+  panel._settingsFooterActionPlaceholder = null;
+}
+
+function syncSettingsFooterActions(tabId) {
+  if (!(settingsPanelActionsHostEl instanceof HTMLElement)) {
+    return;
+  }
+  if (activeSettingsFooterPanelId === tabId) {
+    const activePanel = settingsPanelEl(tabId);
+    const activeRow = activePanel instanceof HTMLElement ? activePanel._settingsFooterActionRow : null;
+    settingsPanelActionsHostEl.replaceChildren();
+    if (activeRow instanceof HTMLElement) {
+      settingsPanelActionsHostEl.appendChild(activeRow);
+      return;
+    }
+    activeSettingsFooterPanelId = '';
+  }
+  if (activeSettingsFooterPanelId && activeSettingsFooterPanelId !== tabId) {
+    restoreSettingsFooterActions(activeSettingsFooterPanelId);
+  }
+  settingsPanelActionsHostEl.replaceChildren();
+  activeSettingsFooterPanelId = '';
+
+  const panel = settingsPanelEl(tabId);
+  if (!(panel instanceof HTMLElement)) {
+    return;
+  }
+  const actionRow = Array.from(panel.children).find((child) => child instanceof HTMLElement && child.classList.contains('panel-actions'));
+  if (!(actionRow instanceof HTMLElement)) {
+    return;
+  }
+  const placeholder = document.createElement('div');
+  placeholder.className = 'settings-panel-actions-placeholder';
+  panel.replaceChild(placeholder, actionRow);
+  panel._settingsFooterActionRow = actionRow;
+  panel._settingsFooterActionPlaceholder = placeholder;
+  settingsPanelActionsHostEl.appendChild(actionRow);
+  activeSettingsFooterPanelId = tabId;
+}
+
 function mountSettingsPanel(tabId) {
   if (mountedSettingsPanels.has(tabId)) {
     return;
@@ -4045,6 +4102,11 @@ function closeSettingsModal(force = false) {
     return false;
   }
 
+  restoreSettingsFooterActions(activeSettingsFooterPanelId);
+  if (settingsPanelActionsHostEl instanceof HTMLElement) {
+    settingsPanelActionsHostEl.replaceChildren();
+  }
+  activeSettingsFooterPanelId = '';
   closeSenderMergeOverlay();
   stopRapidocrInstallPolling();
   settingsModalEl.classList.add('hidden');
@@ -4076,6 +4138,8 @@ function setSettingsTab(tabId) {
     panel.classList.toggle('hidden', id !== tabId);
     panel.classList.toggle('active', id === tabId);
   });
+
+  syncSettingsFooterActions(tabId);
 }
 
 function isEditableSettingsTab(tabId) {
@@ -7306,7 +7370,7 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 
   const createPartObject = (part) => sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
 
-  let activeEditable = null;
+let activeEditable = null;
 
   const setActiveEditable = (editable) => {
     if (!(editable instanceof HTMLElement)) {

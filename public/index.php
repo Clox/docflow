@@ -180,7 +180,8 @@
         <div id="settings-panel-paths" class="settings-panel hidden"></div>
         <div id="settings-panel-system" class="settings-panel hidden"></div>
 
-        <div class="settings-close-row">
+        <div class="settings-footer-row">
+          <div id="settings-panel-actions-host" class="settings-panel-actions-host"></div>
           <button id="settings-close" type="button">Stäng</button>
         </div>
       </section>
