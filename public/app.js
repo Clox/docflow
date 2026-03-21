@@ -4237,6 +4237,7 @@ function updateSettingsActionButtons() {
   const matchingDirty = isMatchingDirty();
   const ocrProcessingDirty = isOcrProcessingDirty();
   const categoriesDirty = isCategoriesDirty();
+  const categoriesError = categoriesValidationError();
   const labelsDirty = isLabelsDirty();
   const labelsError = labelsValidationError();
   const extractionFieldsDirty = isExtractionFieldsDirty();
@@ -4264,7 +4265,8 @@ function updateSettingsActionButtons() {
 
   if (categoriesCancelEl && categoriesApplyEl) {
     categoriesCancelEl.disabled = !categoriesDirty;
-    categoriesApplyEl.disabled = !categoriesDirty;
+    categoriesApplyEl.disabled = !categoriesDirty || categoriesError !== '';
+    categoriesApplyEl.title = categoriesError || '';
   }
 
   if (labelsCancelEl && labelsApplyEl) {
@@ -4977,10 +4979,12 @@ function sanitizeRule(rule) {
 
 function sanitizeCategory(category) {
   const input = category && typeof category === 'object' ? category : {};
+  const name = typeof input.name === 'string' ? input.name : '';
   const rawRules = Array.isArray(input.rules) ? input.rules : [];
   const rules = rawRules.map(sanitizeRule);
   return {
-    name: typeof input.name === 'string' ? input.name : '',
+    id: slugifyText(name, '-', ''),
+    name,
     minScore: sanitizePositiveInt(input.minScore, 1),
     rules: rules.length > 0 ? rules : [defaultRule()],
   };
@@ -5016,6 +5020,36 @@ function sanitizeLabel(label) {
 
 function normalizedLabelsJson(labels) {
   return JSON.stringify(labels.map(sanitizeLabel));
+}
+
+function duplicateCategoryIds(folders) {
+  const counts = new Map();
+  (Array.isArray(folders) ? folders : []).forEach((folder) => {
+    const categories = Array.isArray(folder && folder.categories) ? folder.categories : [];
+    categories.map(sanitizeCategory).forEach((category) => {
+      const id = typeof category.id === 'string' ? category.id.trim() : '';
+      if (!id) {
+        return;
+      }
+      counts.set(id, (counts.get(id) || 0) + 1);
+    });
+  });
+  return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([id]) => id));
+}
+
+function categoriesValidationError() {
+  const duplicates = duplicateCategoryIds(categoriesDraft);
+  if (duplicates.size > 0) {
+    return `Kategori-id krockar: ${Array.from(duplicates).join(', ')}`;
+  }
+  for (const folder of categoriesDraft) {
+    const categories = Array.isArray(folder && folder.categories) ? folder.categories : [];
+    const blankCategory = categories.map(sanitizeCategory).find((category) => !category.name.trim() || !category.id.trim());
+    if (blankCategory) {
+      return 'Alla kategorier måste ha ett namn.';
+    }
+  }
+  return '';
 }
 
 function duplicateLabelIds(labels) {
@@ -7114,6 +7148,32 @@ const isCaretAtEditableBoundary = (editable, direction) => {
   return wrapper;
 }
 
+function syncCategoriesEditorValidation() {
+  if (!categoriesListEl) {
+    return;
+  }
+
+  const duplicateIds = duplicateCategoryIds(categoriesDraft);
+  Array.from(categoriesListEl.querySelectorAll('[data-category-folder-index][data-category-index]')).forEach((input) => {
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    const folderIndex = parseInt(input.dataset.categoryFolderIndex || '', 10);
+    const categoryIndex = parseInt(input.dataset.categoryIndex || '', 10);
+    const folder = Number.isInteger(folderIndex) ? categoriesDraft[folderIndex] : null;
+    const category = folder && Array.isArray(folder.categories) ? sanitizeCategory(folder.categories[categoryIndex]) : null;
+    const id = category && typeof category.id === 'string' ? category.id.trim() : '';
+    const name = category && typeof category.name === 'string' ? category.name.trim() : '';
+    const message = !name || !id
+      ? 'Kategorin måste ha ett namn.'
+      : duplicateIds.has(id)
+        ? `Kategori-id krockar: ${id}`
+        : '';
+    input.classList.toggle('settings-field-invalid', message !== '');
+    input.title = message;
+  });
+}
+
 function renderCategoriesEditor() {
   if (!categoriesListEl) {
     return;
@@ -7233,8 +7293,11 @@ function renderCategoriesEditor() {
       categoryNameInput.type = 'text';
       categoryNameInput.placeholder = 'Ex: "Fakturor"';
       categoryNameInput.value = category.name;
+      categoryNameInput.dataset.categoryFolderIndex = String(archiveFolderIndex);
+      categoryNameInput.dataset.categoryIndex = String(categoryIndex);
       categoryNameInput.addEventListener('input', () => {
         categoriesDraft[archiveFolderIndex].categories[categoryIndex].name = categoryNameInput.value;
+        syncCategoriesEditorValidation();
         updateSettingsActionButtons();
       });
 
@@ -7363,6 +7426,8 @@ function renderCategoriesEditor() {
       categoryNode.appendChild(categoryRow);
       archiveFolderCategories.appendChild(categoryNode);
     });
+
+    syncCategoriesEditorValidation();
 
     archiveFolderBody.appendChild(archiveFolderCategories);
 
@@ -8212,6 +8277,11 @@ async function saveMatchingSettings() {
 }
 
 async function saveCategories() {
+  const validationError = categoriesValidationError();
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
   const normalized = categoriesDraft.map(sanitizeArchiveFolder);
   const normalizedSystemCategories = sanitizeSystemCategories(systemCategoriesDraft);
   const response = await fetch('/api/save-categories.php', {

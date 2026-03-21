@@ -883,7 +883,7 @@ function load_categories(): array
             }
 
             $categories[] = [
-                'id' => 'f' . $archiveFolderIndex . '_c' . $categoryIndex,
+                'id' => is_string($category['id'] ?? null) ? trim((string) $category['id']) : '',
                 'name' => is_string($category['name'] ?? null) ? trim((string) $category['name']) : '',
                 'path' => $archiveFolderPath,
                 'archiveFolderName' => $archiveFolderName,
@@ -933,6 +933,7 @@ function load_categories(): array
 function normalize_archive_structure(array $input): array
 {
     $archiveFolders = [];
+    $usedCategoryIds = [];
     foreach ($input as $row) {
         if (!is_array($row)) {
             continue;
@@ -959,7 +960,7 @@ function normalize_archive_structure(array $input): array
             'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
             'path' => is_string($row['path'] ?? null) ? trim((string) $row['path']) : '',
             'filenameTemplate' => $filenameTemplate,
-            'categories' => normalize_archive_categories($row['categories'] ?? []),
+            'categories' => normalize_archive_categories($row['categories'] ?? [], $usedCategoryIds),
         ];
     }
 
@@ -1043,7 +1044,7 @@ function load_system_archive_categories(): array
         : system_archive_categories_template();
 }
 
-function normalize_archive_categories(mixed $input): array
+function normalize_archive_categories(mixed $input, array &$usedCategoryIds = []): array
 {
     if (!is_array($input)) {
         return [];
@@ -1054,14 +1055,24 @@ function normalize_archive_categories(mixed $input): array
         if (!is_array($row)) {
             continue;
         }
-        $categories[] = normalize_archive_category($row);
+        $categories[] = normalize_archive_category($row, $usedCategoryIds);
     }
 
     return $categories;
 }
 
-function normalize_archive_category(array $input): array
+function normalize_archive_category(array $input, array &$usedCategoryIds = []): array
 {
+    $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
+    $id = slugify_text($name, '-', '');
+    if ($id === '') {
+        throw new RuntimeException('Kategori saknar giltigt namn');
+    }
+    if (isset($usedCategoryIds[$id])) {
+        throw new RuntimeException('Kategori-id krockar: ' . $id);
+    }
+    $usedCategoryIds[$id] = true;
+
     $rulesIn = $input['rules'] ?? [];
     $rules = [];
     if (is_array($rulesIn)) {
@@ -1075,7 +1086,8 @@ function normalize_archive_category(array $input): array
     }
 
     return [
-        'name' => is_string($input['name'] ?? null) ? trim((string) $input['name']) : '',
+        'id' => $id,
+        'name' => $name,
         'minScore' => positive_int($input['minScore'] ?? 1, 1),
         'rules' => $rules,
     ];
@@ -1289,6 +1301,26 @@ function find_loaded_category_by_id(array $categories, string $categoryId): ?arr
     }
 
     return null;
+}
+
+function normalize_job_selected_category_id(array &$job, array $categories): ?string
+{
+    $selectedCategoryId = is_string($job['selectedCategoryId'] ?? null)
+        ? trim((string) $job['selectedCategoryId'])
+        : '';
+    if ($selectedCategoryId === '') {
+        unset($job['selectedCategoryId']);
+        return null;
+    }
+
+    $category = find_loaded_category_by_id($categories, $selectedCategoryId);
+    if (!is_array($category) || ($category['isSystemCategory'] ?? false) === true) {
+        unset($job['selectedCategoryId']);
+        return null;
+    }
+
+    $job['selectedCategoryId'] = $selectedCategoryId;
+    return $selectedCategoryId;
 }
 
 function sender_exists_by_id(array $senders, int $senderId): bool
@@ -6226,6 +6258,16 @@ function build_job_state_entry(
     $selectedCategoryId = is_string($job['selectedCategoryId'] ?? null)
         ? trim((string) $job['selectedCategoryId'])
         : null;
+    if (
+        $selectedCategoryId !== null
+        && (
+            $selectedCategoryId === ''
+            || str_starts_with($selectedCategoryId, 'system_')
+            || !array_key_exists($selectedCategoryId, $categoryNameById)
+        )
+    ) {
+        $selectedCategoryId = null;
+    }
     $filename = is_string($job['filename'] ?? null)
         ? trim((string) $job['filename'])
         : null;
@@ -6833,6 +6875,8 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
     if (!is_array($job)) {
         throw new RuntimeException('Job metadata missing');
     }
+    $categories = load_categories();
+    normalize_job_selected_category_id($job, $categories);
 
     $sourcePath = $jobDir . '/source.pdf';
     if (!is_file($sourcePath)) {
