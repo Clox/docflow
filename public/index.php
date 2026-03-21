@@ -87,10 +87,21 @@
       <div class="viewer-wrap">
         <div id="ocr-toolbar" class="ocr-toolbar">
           <div id="ocr-source-tabs" class="ocr-source-tabs hidden" role="tablist" aria-label="OCR-källa">
-            <button id="ocr-source-tesseract" class="ocr-source-tab" type="button" data-ocr-source="tesseract" role="tab" aria-selected="false">Tesseract-objekt</button>
-            <button id="ocr-source-rapidocr" class="ocr-source-tab" type="button" data-ocr-source="rapidocr" role="tab" aria-selected="false">RapidOCR-objekt</button>
-            <button id="ocr-source-merged-objects" class="ocr-source-tab" type="button" data-ocr-source="merged-objects" role="tab" aria-selected="false">Sammanfogade objekt</button>
-            <button id="ocr-source-merged" class="ocr-source-tab active" type="button" data-ocr-source="merged" role="tab" aria-selected="true">Sammanfogad text</button>
+            <div class="ocr-source-group ocr-source-group--objects">
+              <div class="ocr-source-group-label">Objekt</div>
+              <div class="ocr-source-group-tabs">
+                <button id="ocr-source-tesseract" class="ocr-source-tab" type="button" data-ocr-source="tesseract" role="tab" aria-selected="false">Tesseract</button>
+                <button id="ocr-source-rapidocr" class="ocr-source-tab" type="button" data-ocr-source="rapidocr" role="tab" aria-selected="false">RapidOCR</button>
+                <button id="ocr-source-merged-objects" class="ocr-source-tab" type="button" data-ocr-source="merged-objects" role="tab" aria-selected="false">Sammanfogade</button>
+              </div>
+            </div>
+            <span class="ocr-source-group-divider" aria-hidden="true"></span>
+            <div class="ocr-source-group ocr-source-group--text">
+              <div class="ocr-source-group-label">Text</div>
+              <div class="ocr-source-group-tabs">
+                <button id="ocr-source-merged" class="ocr-source-tab active" type="button" data-ocr-source="merged" role="tab" aria-selected="true">Sammanfogad</button>
+              </div>
+            </div>
           </div>
           <div id="ocr-page-controls" class="ocr-page-controls hidden" aria-label="OCR-sidkontroller">
             <div class="ocr-page-nav">

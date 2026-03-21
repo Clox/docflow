@@ -328,7 +328,7 @@ body {
 
 .ocr-source-tabs {
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
   gap: 6px;
   max-width: 100%;
   padding: 6px;
@@ -336,6 +336,37 @@ body {
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.ocr-source-group {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.ocr-source-group-label {
+  align-self: flex-start;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.ocr-source-group-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ocr-source-group-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px 0;
+  background: #d8dee8;
+  border-radius: 999px;
 }
 
 .ocr-toolbar {
@@ -437,7 +468,7 @@ body {
 .ocr-source-tab {
   font: inherit;
   font-size: 13px;
-  padding: 6px 10px;
+  padding: 2px 10px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
