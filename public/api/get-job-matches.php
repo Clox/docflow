@@ -32,9 +32,9 @@ try {
         $categories = [];
     }
 
-    $systemCategories = $extracted['systemCategoryMatches'] ?? [];
-    if (!is_array($systemCategories)) {
-        $systemCategories = [];
+    $systemLabels = $extracted['systemLabelMatches'] ?? [];
+    if (!is_array($systemLabels)) {
+        $systemLabels = [];
     }
 
     $labels = $extracted['labelMatches'] ?? [];
@@ -44,13 +44,13 @@ try {
 
     json_response([
         'categories' => $categories,
-        'systemCategories' => $systemCategories,
+        'systemLabels' => $systemLabels,
         'labels' => $labels,
     ]);
 } catch (Throwable $e) {
     json_response([
         'categories' => [],
-        'systemCategories' => [],
+        'systemLabels' => [],
         'labels' => [],
     ], 500);
 }

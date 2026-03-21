@@ -19,8 +19,6 @@ if (
     !is_array($payload)
     || !array_key_exists('archiveFolders', $payload)
     || !is_array($payload['archiveFolders'])
-    || !array_key_exists('systemCategories', $payload)
-    || !is_array($payload['systemCategories'])
 ) {
     json_response(['error' => 'Invalid JSON payload'], 400);
     exit;
@@ -28,7 +26,6 @@ if (
 
 $normalized = [
     'archiveFolders' => normalize_archive_structure($payload['archiveFolders']),
-    'systemCategories' => normalize_system_archive_categories($payload['systemCategories']),
 ];
 
 try {
@@ -36,7 +33,6 @@ try {
     json_response([
         'ok' => true,
         'archiveFolders' => $normalized['archiveFolders'],
-        'systemCategories' => $normalized['systemCategories'],
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

@@ -402,12 +402,12 @@ function positive_int(mixed $value, int $fallback = 1): int
     return $fallback;
 }
 
-function system_archive_categories_definitions(): array
+function system_label_definitions(): array
 {
     return [
         'invoice' => [
             'name' => 'Faktura',
-            'minScore' => 2,
+            'minScore' => 15,
             'rules' => [
                 ['type' => 'text', 'text' => 'faktura', 'score' => 4],
                 ['type' => 'text', 'text' => 'förfallodatum', 'score' => 3],
@@ -439,6 +439,13 @@ function normalize_archive_rule(mixed $input): array
         'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
         'score' => positive_int($rule['score'] ?? 1, 1),
     ];
+}
+
+function normalize_system_label_rule(mixed $input): array
+{
+    $rule = normalize_archive_rule($input);
+    $rule['type'] = 'text';
+    return $rule;
 }
 
 function slugify_text(string $value, string $separator = '-', string $fallback = ''): string
@@ -673,10 +680,10 @@ function load_extraction_fields_data(): array
     return $normalized;
 }
 
-function normalize_system_archive_category_with_defaults(mixed $input, array $defaults): array
+function normalize_system_label_with_defaults(string $key, mixed $input, array $defaults): array
 {
-    $category = is_array($input) ? $input : [];
-    $name = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
+    $label = is_array($input) ? $input : [];
+    $name = is_string($label['name'] ?? null) ? trim((string) $label['name']) : '';
     if ($name === '') {
         $name = is_string($defaults['name'] ?? null) ? trim((string) $defaults['name']) : '';
     }
@@ -685,15 +692,15 @@ function normalize_system_archive_category_with_defaults(mixed $input, array $de
     $defaultRules = [];
     if (is_array($defaults['rules'] ?? null)) {
         foreach ($defaults['rules'] as $rule) {
-            $defaultRules[] = normalize_archive_rule($rule);
+            $defaultRules[] = normalize_system_label_rule($rule);
         }
     }
 
-    $rawRules = $category['rules'] ?? [];
+    $rawRules = $label['rules'] ?? [];
     $rules = [];
     if (is_array($rawRules)) {
         foreach ($rawRules as $rule) {
-            $rules[] = normalize_archive_rule($rule);
+            $rules[] = normalize_system_label_rule($rule);
         }
     }
     if (count($rules) === 0) {
@@ -701,32 +708,34 @@ function normalize_system_archive_category_with_defaults(mixed $input, array $de
     }
 
     return [
+        'id' => slugify_text($name, '-', 'label'),
+        'systemLabelKey' => $key,
         'name' => $name,
-        'isSystemCategory' => true,
-        'minScore' => positive_int($category['minScore'] ?? $defaultMinScore, $defaultMinScore),
+        'isSystemLabel' => true,
+        'minScore' => positive_int($label['minScore'] ?? $defaultMinScore, $defaultMinScore),
         'rules' => $rules,
     ];
 }
 
-function system_archive_categories_template(): array
+function system_labels_template(): array
 {
-    $definitions = system_archive_categories_definitions();
-    $categories = [];
+    $definitions = system_label_definitions();
+    $labels = [];
     foreach ($definitions as $key => $defaults) {
-        $categories[$key] = normalize_system_archive_category_with_defaults([], $defaults);
+        $labels[$key] = normalize_system_label_with_defaults($key, [], $defaults);
     }
-    return $categories;
+    return $labels;
 }
 
-function normalize_system_archive_categories(mixed $input): array
+function normalize_system_labels(mixed $input): array
 {
     $decoded = is_array($input) ? $input : [];
-    $definitions = system_archive_categories_definitions();
-    $categories = [];
+    $definitions = system_label_definitions();
+    $labels = [];
     foreach ($definitions as $key => $defaults) {
-        $categories[$key] = normalize_system_archive_category_with_defaults($decoded[$key] ?? [], $defaults);
+        $labels[$key] = normalize_system_label_with_defaults($key, $decoded[$key] ?? [], $defaults);
     }
-    return $categories;
+    return $labels;
 }
 
 function normalize_label_definition(array $input): ?array
@@ -788,7 +797,10 @@ function normalize_labels(mixed $input): array
 function load_labels_data(): array
 {
     $labelsPath = DATA_DIR . '/labels.json';
-    $initial = ['labels' => []];
+    $initial = [
+        'labels' => [],
+        'systemLabels' => system_labels_template(),
+    ];
 
     if (!is_file($labelsPath)) {
         try {
@@ -819,8 +831,33 @@ function load_labels_data(): array
         return $initial;
     }
 
+    $systemLabels = array_key_exists('systemLabels', $decoded)
+        ? normalize_system_labels($decoded['systemLabels'] ?? [])
+        : system_labels_template();
+
+    $systemLabelIds = [];
+    foreach ($systemLabels as $systemLabel) {
+        if (!is_array($systemLabel)) {
+            continue;
+        }
+        $id = is_string($systemLabel['id'] ?? null) ? trim((string) $systemLabel['id']) : '';
+        if ($id !== '') {
+            $systemLabelIds[$id] = true;
+        }
+    }
+
+    $labels = [];
+    foreach (normalize_labels($decoded['labels'] ?? []) as $label) {
+        $id = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+        if ($id !== '' && isset($systemLabelIds[$id])) {
+            continue;
+        }
+        $labels[] = $label;
+    }
+
     $normalized = [
-        'labels' => normalize_labels($decoded['labels'] ?? []),
+        'labels' => $labels,
+        'systemLabels' => $systemLabels,
     ];
     if (json_encode($decoded) !== json_encode($normalized)) {
         try {
@@ -839,13 +876,16 @@ function load_labels(): array
     return is_array($data['labels'] ?? null) ? $data['labels'] : [];
 }
 
+function load_system_labels(): array
+{
+    $data = load_labels_data();
+    return is_array($data['systemLabels'] ?? null) ? $data['systemLabels'] : system_labels_template();
+}
+
 function load_categories(): array
 {
     $structure = load_archive_structure_data();
     $archiveFolders = $structure['archiveFolders'];
-    $systemCategories = is_array($structure['systemCategories'] ?? null)
-        ? $structure['systemCategories']
-        : system_archive_categories_template();
     $categories = [];
 
     foreach ($archiveFolders as $archiveFolderIndex => $archiveFolder) {
@@ -887,44 +927,11 @@ function load_categories(): array
                 'name' => is_string($category['name'] ?? null) ? trim((string) $category['name']) : '',
                 'path' => $archiveFolderPath,
                 'archiveFolderName' => $archiveFolderName,
-                'isSystemCategory' => false,
                 'minScore' => positive_int($category['minScore'] ?? 1, 1),
                 'rules' => $rules,
                 'filenameTemplate' => $archiveFolderFilenameTemplate,
             ];
         }
-    }
-
-    foreach ($systemCategories as $systemKey => $systemCategory) {
-        if (!is_array($systemCategory)) {
-            continue;
-        }
-
-        $systemRules = [];
-        $rawSystemRules = $systemCategory['rules'] ?? [];
-        if (is_array($rawSystemRules)) {
-            foreach ($rawSystemRules as $rule) {
-                if (!is_array($rule)) {
-                    continue;
-                }
-                $systemRules[] = [
-                    'type' => is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text',
-                    'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
-                    'score' => positive_int($rule['score'] ?? 1, 1),
-                ];
-            }
-        }
-
-        $categories[] = [
-            'id' => 'system_' . $systemKey,
-            'name' => is_string($systemCategory['name'] ?? null) ? trim((string) $systemCategory['name']) : '',
-            'path' => '',
-            'archiveFolderName' => 'Systemkategorier',
-            'isSystemCategory' => true,
-            'systemCategoryKey' => (string) $systemKey,
-            'minScore' => positive_int($systemCategory['minScore'] ?? 1, 1),
-            'rules' => $systemRules,
-        ];
     }
 
     return $categories;
@@ -972,14 +979,10 @@ function normalize_archive_structure_data(mixed $input): array
     $decoded = is_array($input) ? $input : [];
 
     $rawArchiveFolders = is_array($decoded['archiveFolders'] ?? null) ? $decoded['archiveFolders'] : [];
-    $rawSystemCategories = is_array($decoded['systemCategories'] ?? null) ? $decoded['systemCategories'] : [];
-
     $archiveFolders = normalize_archive_structure($rawArchiveFolders);
-    $systemCategories = normalize_system_archive_categories($rawSystemCategories);
 
     return [
         'archiveFolders' => $archiveFolders,
-        'systemCategories' => $systemCategories,
     ];
 }
 
@@ -1034,14 +1037,6 @@ function load_archive_structure(): array
 {
     $structure = load_archive_structure_data();
     return is_array($structure['archiveFolders'] ?? null) ? $structure['archiveFolders'] : [];
-}
-
-function load_system_archive_categories(): array
-{
-    $structure = load_archive_structure_data();
-    return is_array($structure['systemCategories'] ?? null)
-        ? $structure['systemCategories']
-        : system_archive_categories_template();
 }
 
 function normalize_archive_categories(mixed $input, array &$usedCategoryIds = []): array
@@ -1377,7 +1372,7 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
         } else {
             $categoryId = is_string($value) ? trim($value) : '';
             $category = find_loaded_category_by_id($categories, $categoryId);
-            if ($categoryId === '' || !is_array($category) || ($category['isSystemCategory'] ?? false) === true) {
+            if ($categoryId === '' || !is_array($category)) {
                 throw new RuntimeException('Ogiltig kategori');
             }
             $job['selectedCategoryId'] = $categoryId;
@@ -1482,7 +1477,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     }
 
     $category = find_loaded_category_by_id($categories, $selectedCategoryId);
-    if (!is_array($category) || ($category['isSystemCategory'] ?? false) === true) {
+    if (!is_array($category)) {
         throw new RuntimeException('Ogiltig kategori');
     }
 
@@ -4068,6 +4063,8 @@ function find_category_signal_matches(string $ocrText, array $categories, array 
         $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
         $categoryPath = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
         $archiveFolderName = is_string($category['archiveFolderName'] ?? null) ? trim((string) $category['archiveFolderName']) : '';
+        $systemLabelKey = is_string($category['systemLabelKey'] ?? null) ? trim((string) $category['systemLabelKey']) : '';
+        $isSystemLabel = ($category['isSystemLabel'] ?? false) === true;
         if ($categoryId === '') {
             continue;
         }
@@ -4123,6 +4120,8 @@ function find_category_signal_matches(string $ocrText, array $categories, array 
             'name' => $categoryName,
             'path' => $categoryPath,
             'archiveFolderName' => $archiveFolderName,
+            'systemLabelKey' => $systemLabelKey,
+            'isSystemLabel' => $isSystemLabel,
             'minScore' => $minScore,
             'score' => $score,
             'matchedRules' => $matchedRules,
@@ -4175,35 +4174,50 @@ function find_category_matches(string $ocrText, array $categories, array $replac
     return filter_category_matches_by_threshold($signalMatches);
 }
 
-function split_categories_for_processing(array $categories): array
+function resolved_label_ids_from_matches(array ...$matchGroups): array
 {
-    $normalCategories = [];
-    $invoiceSystemCategories = [];
-
-    foreach ($categories as $category) {
-        if (!is_array($category)) {
+    $merged = [];
+    $order = 0;
+    foreach ($matchGroups as $matches) {
+        if (!is_array($matches)) {
             continue;
         }
-
-        $isSystemCategory = ($category['isSystemCategory'] ?? false) === true;
-        $systemKey = is_string($category['systemCategoryKey'] ?? null)
-            ? trim((string) $category['systemCategoryKey'])
-            : '';
-
-        if ($isSystemCategory) {
-            if ($systemKey === 'invoice') {
-                $invoiceSystemCategories[] = $category;
+        foreach ($matches as $match) {
+            if (!is_array($match)) {
+                continue;
             }
-            continue;
+            $labelId = is_string($match['id'] ?? null) ? trim((string) $match['id']) : '';
+            if ($labelId === '') {
+                continue;
+            }
+            $score = $match['score'] ?? 0;
+            $numericScore = is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))
+                ? (float) $score
+                : 0.0;
+            if (!isset($merged[$labelId]) || $numericScore > $merged[$labelId]['score']) {
+                $merged[$labelId] = [
+                    'id' => $labelId,
+                    'score' => $numericScore,
+                    'order' => $order,
+                ];
+            }
+            $order++;
         }
-
-        $normalCategories[] = $category;
     }
 
-    return [
-        'normalCategories' => $normalCategories,
-        'invoiceSystemCategories' => $invoiceSystemCategories,
-    ];
+    $items = array_values($merged);
+    usort($items, static function (array $a, array $b): int {
+        $scoreCompare = ($b['score'] ?? 0) <=> ($a['score'] ?? 0);
+        if ($scoreCompare !== 0) {
+            return $scoreCompare;
+        }
+        return ($a['order'] ?? 0) <=> ($b['order'] ?? 0);
+    });
+
+    return array_values(array_map(
+        static fn (array $item): string => (string) ($item['id'] ?? ''),
+        array_filter($items, static fn (array $item): bool => is_string($item['id'] ?? null) && (string) $item['id'] !== '')
+    ));
 }
 
 function empty_invoice_fields(): array
@@ -5561,6 +5575,7 @@ function process_claimed_job(
     array $clients,
     array $categories,
     array $labels,
+    array $systemLabels,
     array $replacementMap,
     float $invoiceFieldMinConfidence,
     bool $ocrSkipExistingText,
@@ -5707,9 +5722,11 @@ function process_claimed_job(
         throw new RuntimeException('Could not write ocr.txt');
     }
 
-    $categoryGroups = split_categories_for_processing($categories);
-    $invoiceSignalMatches = find_category_signal_matches($ocrText, $categoryGroups['invoiceSystemCategories'], $replacementMap);
-    $invoiceDetection = build_invoice_detection($invoiceSignalMatches, $replacementMap);
+    $systemLabelMatches = find_category_matches($ocrText, $systemLabels, $replacementMap);
+    $invoiceLabelMatches = array_values(array_filter($systemLabelMatches, static function ($match): bool {
+        return is_array($match) && (($match['systemLabelKey'] ?? null) === 'invoice');
+    }));
+    $invoiceDetection = build_invoice_detection($invoiceLabelMatches, $replacementMap);
     $invoiceExtraction = extract_invoice_data_with_confidence($ocrText, $replacementMap, $invoiceFieldMinConfidence);
     $invoiceData = is_array($invoiceExtraction['fields'] ?? null) ? $invoiceExtraction['fields'] : empty_invoice_fields();
     $invoiceConfidence = is_array($invoiceExtraction['confidence'] ?? null)
@@ -5750,26 +5767,17 @@ function process_claimed_job(
         }
     }
 
-    $categoryMatches = find_category_matches($ocrText, $categoryGroups['normalCategories'], $replacementMap, [
+    $categoryMatches = find_category_matches($ocrText, $categories, $replacementMap, [
         'invoiceDetection' => $invoiceDetection,
     ]);
     $labelMatches = find_category_matches($ocrText, $labels, $replacementMap, [
         'invoiceDetection' => $invoiceDetection,
     ]);
-    $resolvedLabels = [];
-    foreach ($labelMatches as $labelMatch) {
-        if (!is_array($labelMatch)) {
-            continue;
-        }
-        $labelId = is_string($labelMatch['id'] ?? null) ? trim((string) $labelMatch['id']) : '';
-        if ($labelId !== '') {
-            $resolvedLabels[] = $labelId;
-        }
-    }
+    $resolvedLabels = resolved_label_ids_from_matches($systemLabelMatches, $labelMatches);
     $extractedData = [
         'matchedClientDirName' => $matched,
         'categoryMatches' => $categoryMatches,
-        'systemCategoryMatches' => $invoiceSignalMatches,
+        'systemLabelMatches' => $systemLabelMatches,
         'labelMatches' => $labelMatches,
         'labels' => $resolvedLabels,
         'invoice' => $invoiceData,
@@ -5939,6 +5947,7 @@ function process_job_by_id(
     array $clients,
     array $categories,
     array $labels,
+    array $systemLabels,
     array $matchingSettings,
     float $invoiceFieldMinConfidence,
     string $jobId
@@ -5986,6 +5995,7 @@ function process_job_by_id(
             $clients,
             $categories,
             $labels,
+            $systemLabels,
             $replacementMap,
             $invoiceFieldMinConfidence,
             $forceOcr ? false : (bool) ($config['ocrSkipExistingText'] ?? true),
@@ -6045,6 +6055,7 @@ function run_processing_worker(array $config): void
         $clients = load_clients();
         $categories = load_categories();
         $labels = load_labels();
+        $systemLabels = load_system_labels();
         $matchingPayload = load_matching_settings_payload();
         $matchingSettings = is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : [];
         $invoiceFieldMinConfidence = sanitize_invoice_field_min_confidence(
@@ -6062,6 +6073,7 @@ function run_processing_worker(array $config): void
                 $clients,
                 $categories,
                 $labels,
+                $systemLabels,
                 $matchingSettings,
                 $invoiceFieldMinConfidence,
                 $jobId

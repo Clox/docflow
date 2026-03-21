@@ -385,20 +385,9 @@
   <template id="settings-template-categories">
     <h3>Arkivstruktur</h3>
     <p>Bygg upp mappar med kategorier och regler (Mapp → Kategori → Regel).</p>
-    <div class="archive-subtabs">
-      <button id="archive-tab-categories" class="archive-subtab active" type="button" data-archive-tab="categories">Kategorier</button>
-      <button id="archive-tab-system" class="archive-subtab" type="button" data-archive-tab="system">Systemkategorier</button>
-    </div>
-
-    <div id="archive-view-categories" class="archive-view">
-      <div id="categories-list" class="categories-list"></div>
-      <div class="categories-actions">
-        <button id="categories-add-category" type="button">Lägg till mapp</button>
-      </div>
-    </div>
-
-    <div id="archive-view-system" class="archive-view hidden">
-      <div id="system-category-editor" class="categories-list"></div>
+    <div id="categories-list" class="categories-list"></div>
+    <div class="categories-actions">
+      <button id="categories-add-category" type="button">Lägg till mapp</button>
     </div>
 
     <div class="panel-actions">
@@ -418,9 +407,18 @@
   <template id="settings-template-labels">
     <h3>Etiketter</h3>
     <p>Globala etiketter som matchas mot OCR-texten med samma regelmodell som kategorier.</p>
-    <div id="labels-list" class="categories-list"></div>
-    <div class="categories-actions">
-      <button id="labels-add-row" type="button">Lägg till etikett</button>
+    <div class="archive-subtabs">
+      <button id="labels-tab-custom" class="archive-subtab active" type="button" data-labels-tab="labels">Etiketter</button>
+      <button id="labels-tab-system" class="archive-subtab" type="button" data-labels-tab="system">Systemetiketter</button>
+    </div>
+    <div id="labels-view-custom" class="archive-view">
+      <div id="labels-list" class="categories-list"></div>
+      <div class="categories-actions">
+        <button id="labels-add-row" type="button">Lägg till etikett</button>
+      </div>
+    </div>
+    <div id="labels-view-system" class="archive-view hidden">
+      <div id="system-label-editor" class="categories-list"></div>
     </div>
     <div class="panel-actions">
       <button id="labels-cancel" type="button">Avbryt</button>

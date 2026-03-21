@@ -103,11 +103,11 @@ let rapidocrLocalInstallButtonEl = null;
 let ocrProcessingCancelEl = null;
 let ocrProcessingApplyEl = null;
 let categoriesListEl = null;
-let systemCategoryEditorEl = null;
 let categoriesAddCategoryEl = null;
 let categoriesCancelEl = null;
 let categoriesApplyEl = null;
 let labelsListEl = null;
+let systemLabelEditorEl = null;
 let labelsAddRowEl = null;
 let labelsCancelEl = null;
 let labelsApplyEl = null;
@@ -115,9 +115,9 @@ let extractionFieldsEditorEl = null;
 let extractionFieldsAddRowEl = null;
 let extractionFieldsCancelEl = null;
 let extractionFieldsApplyEl = null;
-let archiveTabEls = [];
-let archiveViewCategoriesEl = null;
-let archiveViewSystemEl = null;
+let labelsTabEls = [];
+let labelsViewCustomEl = null;
+let labelsViewSystemEl = null;
 let settingsResetJobsEl = null;
 let systemStateTransportEl = null;
 let outputBasePathEl = null;
@@ -134,10 +134,10 @@ let state = {
   categories: []
 };
 
-const SYSTEM_CATEGORIES = {
+const SYSTEM_LABELS = {
   invoice: {
     name: 'Faktura',
-    minScore: 2,
+    minScore: 15,
     rules: [
       { text: 'faktura', score: 4 },
       { text: 'förfallodatum', score: 3 },
@@ -193,7 +193,7 @@ let metaRequestSeq = 0;
 let preferredJobIdFromHash = '';
 let categoriesDraft = [];
 let labelsDraft = [];
-let systemCategoriesDraft = createDefaultSystemCategories();
+let systemLabelsDraft = createDefaultSystemLabels();
 let sendersDraft = [];
 let matchingDraft = [];
 let matchingInvoiceFieldMinConfidenceDraft = 0.7;
@@ -204,7 +204,7 @@ let ocrPdfSubstitutionsDraft = [];
 let ocrPdfSubstitutionsBaselineJson = JSON.stringify([]);
 let rapidocrInstallPollTimer = null;
 let activeSettingsTabId = 'clients';
-let activeArchiveTabId = 'categories';
+let activeLabelsTabId = 'labels';
 let clientsDraft = [];
 let clientsBaselineJson = '[]';
 let clientDraftUiKeySeq = 1;
@@ -216,11 +216,11 @@ let matchingBaselineJson = JSON.stringify({
   invoiceFieldMinConfidence: 0.7
 });
 let pathsBaselineValue = '';
-let categoriesBaselineJson = JSON.stringify({
-  archiveFolders: [],
-  systemCategories: systemCategoriesDraft,
+let categoriesBaselineJson = JSON.stringify([]);
+let labelsBaselineJson = JSON.stringify({
+  labels: [],
+  systemLabels: systemLabelsDraft,
 });
-let labelsBaselineJson = JSON.stringify([]);
 let extractionFieldsBaselineJson = JSON.stringify([]);
 let clientOptionsSignature = '';
 let senderOptionsSignature = '';
@@ -423,7 +423,6 @@ function categoryDisplayName(category) {
 
 function renderCategorySelect(categories) {
   const options = categories
-    .filter((category) => !Boolean(category && category.isSystemCategory))
     .map((category) => ({
       value: category && typeof category.id === 'string' ? category.id.trim() : '',
       label: categoryDisplayName(category)
@@ -962,12 +961,12 @@ function renderMatchesContent(payload) {
   matchesViewEl.innerHTML = '';
 
   const categories = payload && Array.isArray(payload.categories) ? payload.categories : [];
-  const systemCategories = payload && Array.isArray(payload.systemCategories) ? payload.systemCategories : [];
+  const systemLabels = payload && Array.isArray(payload.systemLabels) ? payload.systemLabels : [];
   const labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
 
   appendMatchesSection(matchesViewEl, 'Kategorier', categories, 'Inga kategorimatchningar hittades.');
-  appendMatchesSection(matchesViewEl, 'Systemkategorier', systemCategories, 'Inga systemkategorimatchningar hittades.');
   appendMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
+  appendMatchesSection(matchesViewEl, 'Systemetiketter', systemLabels, 'Inga systemetikettmatchningar hittades.', 'Etikett');
 }
 
 async function setViewerMatches(jobId) {
@@ -1538,7 +1537,6 @@ function effectiveCategoryId(job) {
     }
     return Array.isArray(state.categories) && state.categories.some((category) => {
       return category
-        && category.isSystemCategory !== true
         && typeof category.id === 'string'
         && category.id.trim() === normalized;
     });
@@ -3739,22 +3737,9 @@ function bindSettingsPanelRefs(tabId) {
     renderOcrProcessingCommand();
   } else if (tabId === 'categories') {
     categoriesListEl = document.getElementById('categories-list');
-    systemCategoryEditorEl = document.getElementById('system-category-editor');
     categoriesAddCategoryEl = document.getElementById('categories-add-category');
     categoriesCancelEl = document.getElementById('categories-cancel');
     categoriesApplyEl = document.getElementById('categories-apply');
-    archiveTabEls = Array.from(document.querySelectorAll('[data-archive-tab]'));
-    archiveViewCategoriesEl = document.getElementById('archive-view-categories');
-    archiveViewSystemEl = document.getElementById('archive-view-system');
-    archiveTabEls.forEach((tabButton) => {
-      tabButton.addEventListener('click', () => {
-        const nextTabId = tabButton.dataset.archiveTab;
-        if (!nextTabId || nextTabId === activeArchiveTabId) {
-          return;
-        }
-        setArchiveTab(nextTabId);
-      });
-    });
     categoriesAddCategoryEl.addEventListener('click', () => {
       categoriesDraft.push(defaultArchiveFolder());
       renderCategoriesEditor();
@@ -3767,10 +3752,8 @@ function bindSettingsPanelRefs(tabId) {
       } catch (error) {
         parsed = {};
       }
-      categoriesDraft = Array.isArray(parsed.archiveFolders) ? parsed.archiveFolders.map(sanitizeArchiveFolder) : [];
-      systemCategoriesDraft = sanitizeSystemCategories(parsed.systemCategories);
+      categoriesDraft = Array.isArray(parsed) ? parsed.map(sanitizeArchiveFolder) : [];
       renderCategoriesEditor();
-      renderSystemCategoryEditor();
       updateSettingsActionButtons();
     });
     categoriesApplyEl.addEventListener('click', async () => {
@@ -3782,9 +3765,22 @@ function bindSettingsPanelRefs(tabId) {
     });
   } else if (tabId === 'labels') {
     labelsListEl = document.getElementById('labels-list');
+    systemLabelEditorEl = document.getElementById('system-label-editor');
     labelsAddRowEl = document.getElementById('labels-add-row');
     labelsCancelEl = document.getElementById('labels-cancel');
     labelsApplyEl = document.getElementById('labels-apply');
+    labelsTabEls = Array.from(document.querySelectorAll('[data-labels-tab]'));
+    labelsViewCustomEl = document.getElementById('labels-view-custom');
+    labelsViewSystemEl = document.getElementById('labels-view-system');
+    labelsTabEls.forEach((tabButton) => {
+      tabButton.addEventListener('click', () => {
+        const nextTabId = tabButton.dataset.labelsTab;
+        if (!nextTabId || nextTabId === activeLabelsTabId) {
+          return;
+        }
+        setLabelsTab(nextTabId);
+      });
+    });
     labelsAddRowEl.addEventListener('click', () => {
       labelsDraft.push(defaultLabel());
       renderLabelsEditor();
@@ -3795,10 +3791,12 @@ function bindSettingsPanelRefs(tabId) {
       try {
         parsed = JSON.parse(labelsBaselineJson);
       } catch (error) {
-        parsed = [];
+        parsed = {};
       }
-      labelsDraft = Array.isArray(parsed) ? parsed.map(sanitizeLabel) : [];
+      labelsDraft = Array.isArray(parsed.labels) ? parsed.labels.map(sanitizeLabel) : [];
+      systemLabelsDraft = sanitizeSystemLabels(parsed.systemLabels);
       renderLabelsEditor();
+      renderSystemLabelEditor();
       updateSettingsActionButtons();
     });
     labelsApplyEl.addEventListener('click', async () => {
@@ -3924,9 +3922,9 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
   } else if (tabId === 'categories') {
     await Promise.all([loadCategories(), loadExtractionFields()]);
     renderCategoriesEditor();
-    setArchiveTab('categories');
   } else if (tabId === 'labels') {
     await loadLabels();
+    setLabelsTab('labels');
   } else if (tabId === 'data-fields') {
     await loadExtractionFields();
   } else if (tabId === 'paths') {
@@ -4000,15 +3998,12 @@ async function openCategoriesSettingsDirect() {
   } catch (error) {
     alert('Kunde inte ladda arkivstruktur.');
     categoriesDraft = [];
-    systemCategoriesDraft = createDefaultSystemCategories();
-    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+    categoriesBaselineJson = JSON.stringify(categoriesDraft.map(sanitizeArchiveFolder));
     renderCategoriesEditor();
-    renderSystemCategoryEditor();
     updateSettingsActionButtons();
     return false;
   }
 
-  setArchiveTab('categories');
   categoriesAddCategoryEl.focus();
   updateSettingsActionButtons();
   return true;
@@ -4115,10 +4110,14 @@ function normalizedSendersJson(senders) {
   return JSON.stringify(senders.map(sanitizeSenderDraft));
 }
 
-function normalizedCategoriesJson(categories, systemCategories) {
+function normalizedCategoriesJson(categories) {
+  return JSON.stringify(categories.map(sanitizeArchiveFolder));
+}
+
+function normalizedLabelsJson(labels, systemLabels = systemLabelsDraft) {
   return JSON.stringify({
-    archiveFolders: categories.map(sanitizeArchiveFolder),
-    systemCategories: sanitizeSystemCategories(systemCategories),
+    labels: labels.map(sanitizeLabel),
+    systemLabels: sanitizeSystemLabels(systemLabels),
   });
 }
 
@@ -4143,11 +4142,11 @@ function isSendersDirty() {
 }
 
 function isCategoriesDirty() {
-  return normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft) !== categoriesBaselineJson;
+  return normalizedCategoriesJson(categoriesDraft) !== categoriesBaselineJson;
 }
 
 function isLabelsDirty() {
-  return normalizedLabelsJson(labelsDraft) !== labelsBaselineJson;
+  return normalizedLabelsJson(labelsDraft, systemLabelsDraft) !== labelsBaselineJson;
 }
 
 function isExtractionFieldsDirty() {
@@ -4977,6 +4976,12 @@ function sanitizeRule(rule) {
   };
 }
 
+function sanitizeSystemLabelRule(rule) {
+  const normalized = sanitizeRule(rule);
+  normalized.type = 'text';
+  return normalized;
+}
+
 function sanitizeCategory(category) {
   const input = category && typeof category === 'object' ? category : {};
   const name = typeof input.name === 'string' ? input.name : '';
@@ -5018,8 +5023,39 @@ function sanitizeLabel(label) {
   };
 }
 
-function normalizedLabelsJson(labels) {
-  return JSON.stringify(labels.map(sanitizeLabel));
+function sanitizeSystemLabelByKey(key, label) {
+  const defaults = SYSTEM_LABELS[key];
+  const input = label && typeof label === 'object' ? label : {};
+  const rawRules = Array.isArray(input.rules) ? input.rules : [];
+  const rules = rawRules.map(sanitizeSystemLabelRule);
+  const name = typeof input.name === 'string' && input.name.trim() !== ''
+    ? input.name
+    : defaults.name;
+  return {
+    id: slugifyText(name, '-', 'label'),
+    systemLabelKey: key,
+    isSystemLabel: true,
+    name,
+    minScore: sanitizePositiveInt(input.minScore, sanitizePositiveInt(defaults.minScore, 1)),
+    rules: rules.length > 0 ? rules : defaults.rules.map(sanitizeSystemLabelRule),
+  };
+}
+
+function createDefaultSystemLabels() {
+  const labels = {};
+  Object.keys(SYSTEM_LABELS).forEach((key) => {
+    labels[key] = sanitizeSystemLabelByKey(key, SYSTEM_LABELS[key]);
+  });
+  return labels;
+}
+
+function sanitizeSystemLabels(systemLabels) {
+  const input = systemLabels && typeof systemLabels === 'object' ? systemLabels : {};
+  const labels = {};
+  Object.keys(SYSTEM_LABELS).forEach((key) => {
+    labels[key] = sanitizeSystemLabelByKey(key, input[key]);
+  });
+  return labels;
 }
 
 function duplicateCategoryIds(folders) {
@@ -5052,8 +5088,15 @@ function categoriesValidationError() {
   return '';
 }
 
-function duplicateLabelIds(labels) {
+function duplicateLabelIds(labels, systemLabels = systemLabelsDraft) {
   const counts = new Map();
+  Object.values(sanitizeSystemLabels(systemLabels)).forEach((label) => {
+    const id = typeof label.id === 'string' ? label.id.trim() : '';
+    if (!id) {
+      return;
+    }
+    counts.set(id, (counts.get(id) || 0) + 1);
+  });
   labels.map(sanitizeLabel).forEach((label) => {
     const id = typeof label.id === 'string' ? label.id.trim() : '';
     if (!id) {
@@ -5065,7 +5108,7 @@ function duplicateLabelIds(labels) {
 }
 
 function labelsValidationError() {
-  const duplicates = duplicateLabelIds(labelsDraft);
+  const duplicates = duplicateLabelIds(labelsDraft, systemLabelsDraft);
   if (duplicates.size > 0) {
     return `Etikett-id krockar: ${Array.from(duplicates).join(', ')}`;
   }
@@ -5214,38 +5257,6 @@ function slugifyText(value, separator = '-', fallback = '') {
 
 function normalizeConfigKey(value) {
   return slugifyText(value, '_', 'field');
-}
-
-function sanitizeSystemCategoryByKey(key, category) {
-  const defaults = SYSTEM_CATEGORIES[key];
-  const input = category && typeof category === 'object' ? category : {};
-  const rawRules = Array.isArray(input.rules) ? input.rules : [];
-  const rules = rawRules.map(sanitizeRule);
-  return {
-    name: typeof input.name === 'string' && input.name.trim() !== ''
-      ? input.name
-      : defaults.name,
-    isSystemCategory: true,
-    minScore: sanitizePositiveInt(input.minScore, sanitizePositiveInt(defaults.minScore, 1)),
-    rules: rules.length > 0 ? rules : defaults.rules.map(sanitizeRule)
-  };
-}
-
-function createDefaultSystemCategories() {
-  const categories = {};
-  Object.keys(SYSTEM_CATEGORIES).forEach((key) => {
-    categories[key] = sanitizeSystemCategoryByKey(key, SYSTEM_CATEGORIES[key]);
-  });
-  return categories;
-}
-
-function sanitizeSystemCategories(systemCategories) {
-  const input = systemCategories && typeof systemCategories === 'object' ? systemCategories : {};
-  const categories = {};
-  Object.keys(SYSTEM_CATEGORIES).forEach((key) => {
-    categories[key] = sanitizeSystemCategoryByKey(key, input[key]);
-  });
-  return categories;
 }
 
 function createFloatingField(labelText, inputEl, extraClass = '') {
@@ -7452,63 +7463,65 @@ function renderCategoriesEditor() {
   updateSettingsActionButtons();
 }
 
-function renderSystemCategoryEditor() {
-  if (!systemCategoryEditorEl) {
+function renderSystemLabelEditor() {
+  if (!systemLabelEditorEl) {
     return;
   }
-  systemCategoryEditorEl.innerHTML = '';
+  systemLabelEditorEl.innerHTML = '';
 
-  const categoryKey = 'invoice';
-  const defaultCategory = SYSTEM_CATEGORIES[categoryKey];
-  const systemCategories = sanitizeSystemCategories(systemCategoriesDraft);
-  systemCategoriesDraft = systemCategories;
-  const category = systemCategories[categoryKey];
+  const labelKey = 'invoice';
+  const defaultLabel = SYSTEM_LABELS[labelKey];
+  const systemLabels = sanitizeSystemLabels(systemLabelsDraft);
+  systemLabelsDraft = systemLabels;
+  const label = systemLabels[labelKey];
 
-  const label = document.createElement('div');
-  label.className = 'archive-folders-label';
-  label.textContent = 'Systemkategorier';
-  systemCategoryEditorEl.appendChild(label);
+  const header = document.createElement('div');
+  header.className = 'archive-folders-label';
+  header.textContent = 'Systemetiketter';
+  systemLabelEditorEl.appendChild(header);
 
-  const categoryNode = document.createElement('div');
-  categoryNode.className = 'tree-node tree-category';
-  categoryNode.dataset.system = 'true';
-  categoryNode.dataset.systemCategory = 'true';
+  const labelNode = document.createElement('div');
+  labelNode.className = 'tree-node tree-category';
+  labelNode.dataset.system = 'true';
+  labelNode.dataset.systemLabel = 'true';
 
-  const categoryRow = createTreeRow({ markerless: true });
+  const labelRow = createTreeRow({ markerless: true });
 
-  const categoryBody = document.createElement('div');
-  categoryBody.className = 'tree-body category-body';
-  appendTreeBodyIcon(categoryBody, 'tree-body-icon tree-body-icon-category');
+  const labelBody = document.createElement('div');
+  labelBody.className = 'tree-body category-body';
+  appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-category');
 
   const fields = document.createElement('div');
   fields.className = 'category-fields';
 
-  const categoryNameInput = document.createElement('input');
-  categoryNameInput.type = 'text';
-  categoryNameInput.placeholder = 'Ex: "Faktura"';
-  categoryNameInput.value = category.name;
-  categoryNameInput.addEventListener('input', () => {
-    systemCategoriesDraft[categoryKey].name = categoryNameInput.value;
+  const labelNameInput = document.createElement('input');
+  labelNameInput.type = 'text';
+  labelNameInput.placeholder = 'Ex: "Faktura"';
+  labelNameInput.value = label.name;
+  labelNameInput.addEventListener('input', () => {
+    systemLabelsDraft[labelKey].name = labelNameInput.value;
     updateSettingsActionButtons();
   });
+
+  const idInput = document.createElement('input');
+  idInput.type = 'text';
+  idInput.value = sanitizeSystemLabelByKey(labelKey, systemLabelsDraft[labelKey]).id;
+  idInput.disabled = true;
 
   const minScoreInput = document.createElement('input');
   minScoreInput.type = 'number';
   minScoreInput.step = '1';
   minScoreInput.min = '1';
-  minScoreInput.value = String(category.minScore);
+  minScoreInput.value = String(label.minScore);
   minScoreInput.addEventListener('input', () => {
-    systemCategoriesDraft[categoryKey].minScore = sanitizePositiveInt(minScoreInput.value, 1);
+    systemLabelsDraft[labelKey].minScore = sanitizePositiveInt(minScoreInput.value, 1);
     updateSettingsActionButtons();
   });
 
-  const spacer = document.createElement('div');
-  spacer.className = 'rule-remove-placeholder';
-
-  fields.appendChild(createFloatingField('Namn', categoryNameInput));
+  fields.appendChild(createFloatingField('Namn', labelNameInput));
+  fields.appendChild(createFloatingField('ID', idInput));
   fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
-  fields.appendChild(spacer);
-  categoryBody.appendChild(fields);
+  labelBody.appendChild(fields);
 
   const ruleList = createTreeChildren({ markerless: true });
 
@@ -7517,7 +7530,7 @@ function renderSystemCategoryEditor() {
   rulesLabel.textContent = 'Regler';
   ruleList.appendChild(rulesLabel);
 
-  category.rules.forEach((rule, ruleIndex) => {
+  label.rules.forEach((rule, ruleIndex) => {
     const ruleNode = document.createElement('div');
     ruleNode.className = 'tree-node tree-rule has-parent';
 
@@ -7533,20 +7546,15 @@ function renderSystemCategoryEditor() {
     const typeSelect = document.createElement('select');
     [
       ['text', 'Text'],
-      ['invoice', 'Är faktura'],
     ].forEach(([value, label]) => {
       const option = document.createElement('option');
       option.value = value;
       option.textContent = label;
       typeSelect.appendChild(option);
     });
-    typeSelect.value = rule.type === 'invoice' ? 'invoice' : 'text';
+    typeSelect.value = 'text';
     typeSelect.addEventListener('change', () => {
-      systemCategoriesDraft[categoryKey].rules[ruleIndex].type = typeSelect.value === 'invoice' ? 'invoice' : 'text';
-      if (typeSelect.value === 'invoice') {
-        systemCategoriesDraft[categoryKey].rules[ruleIndex].text = '';
-      }
-      renderSystemCategoryEditor();
+      systemLabelsDraft[labelKey].rules[ruleIndex].type = 'text';
       updateSettingsActionButtons();
     });
 
@@ -7555,7 +7563,7 @@ function renderSystemCategoryEditor() {
     textInput.placeholder = 'Ex: "Förfallodatum"';
     textInput.value = rule.text;
     textInput.addEventListener('input', () => {
-      systemCategoriesDraft[categoryKey].rules[ruleIndex].text = textInput.value;
+      systemLabelsDraft[labelKey].rules[ruleIndex].text = textInput.value;
       updateSettingsActionButtons();
     });
 
@@ -7565,14 +7573,12 @@ function renderSystemCategoryEditor() {
     scoreInput.min = '1';
     scoreInput.value = String(rule.score);
     scoreInput.addEventListener('input', () => {
-      systemCategoriesDraft[categoryKey].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+      systemLabelsDraft[labelKey].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
       updateSettingsActionButtons();
     });
 
     ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
-    if (rule.type !== 'invoice') {
-      ruleFields.appendChild(createFloatingField('Regeltext', textInput));
-    }
+    ruleFields.appendChild(createFloatingField('Regeltext', textInput));
     ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
 
     if (ruleIndex > 0) {
@@ -7581,11 +7587,11 @@ function renderSystemCategoryEditor() {
       removeRuleButton.className = 'rule-remove';
       removeRuleButton.textContent = 'Ta bort';
       removeRuleButton.addEventListener('click', () => {
-        systemCategoriesDraft[categoryKey].rules.splice(ruleIndex, 1);
-        if (systemCategoriesDraft[categoryKey].rules.length === 0) {
-          systemCategoriesDraft[categoryKey].rules.push(defaultRule());
+        systemLabelsDraft[labelKey].rules.splice(ruleIndex, 1);
+        if (systemLabelsDraft[labelKey].rules.length === 0) {
+          systemLabelsDraft[labelKey].rules.push(defaultRule());
         }
-        renderSystemCategoryEditor();
+        renderSystemLabelEditor();
         updateSettingsActionButtons();
       });
       ruleFields.appendChild(removeRuleButton);
@@ -7601,7 +7607,7 @@ function renderSystemCategoryEditor() {
     ruleList.appendChild(ruleNode);
   });
 
-  categoryBody.appendChild(ruleList);
+  labelBody.appendChild(ruleList);
 
   const ruleActions = document.createElement('div');
   ruleActions.className = 'category-rule-actions';
@@ -7610,8 +7616,8 @@ function renderSystemCategoryEditor() {
   addRuleButton.type = 'button';
   addRuleButton.textContent = 'Lägg till regel';
   addRuleButton.addEventListener('click', () => {
-    systemCategoriesDraft[categoryKey].rules.push(defaultRule());
-    renderSystemCategoryEditor();
+    systemLabelsDraft[labelKey].rules.push(defaultRule());
+    renderSystemLabelEditor();
     updateSettingsActionButtons();
   });
 
@@ -7619,32 +7625,33 @@ function renderSystemCategoryEditor() {
   restoreButton.type = 'button';
   restoreButton.textContent = 'Återställ';
   restoreButton.addEventListener('click', () => {
-    systemCategoriesDraft[categoryKey].rules = defaultCategory.rules.map(sanitizeRule);
-    renderSystemCategoryEditor();
+    systemLabelsDraft[labelKey].name = defaultLabel.name;
+    systemLabelsDraft[labelKey].minScore = sanitizePositiveInt(defaultLabel.minScore, 1);
+    systemLabelsDraft[labelKey].rules = defaultLabel.rules.map(sanitizeRule);
+    renderSystemLabelEditor();
     updateSettingsActionButtons();
   });
 
   ruleActions.appendChild(addRuleButton);
   ruleActions.appendChild(restoreButton);
-  categoryBody.appendChild(ruleActions);
+  labelBody.appendChild(ruleActions);
 
-  categoryRow.appendChild(categoryBody);
-  categoryNode.appendChild(categoryRow);
-  systemCategoryEditorEl.appendChild(categoryNode);
+  labelRow.appendChild(labelBody);
+  labelNode.appendChild(labelRow);
+  systemLabelEditorEl.appendChild(labelNode);
 }
 
-function setArchiveTab(tabId) {
-  if (!archiveViewCategoriesEl || !archiveViewSystemEl || !Array.isArray(archiveTabEls)) {
+function setLabelsTab(tabId) {
+  if (!labelsViewCustomEl || !labelsViewSystemEl || !Array.isArray(labelsTabEls)) {
     return;
   }
-  activeArchiveTabId = tabId === 'system' ? 'system' : 'categories';
-  archiveTabEls.forEach((button) => {
-    const isActive = button.dataset.archiveTab === activeArchiveTabId;
+  activeLabelsTabId = tabId === 'system' ? 'system' : 'labels';
+  labelsTabEls.forEach((button) => {
+    const isActive = button.dataset.labelsTab === activeLabelsTabId;
     button.classList.toggle('active', isActive);
   });
-
-  archiveViewCategoriesEl.classList.toggle('hidden', activeArchiveTabId !== 'categories');
-  archiveViewSystemEl.classList.toggle('hidden', activeArchiveTabId !== 'system');
+  labelsViewCustomEl.classList.toggle('hidden', activeLabelsTabId !== 'labels');
+  labelsViewSystemEl.classList.toggle('hidden', activeLabelsTabId !== 'system');
 }
 
 function renderOcrProcessingCommand() {
@@ -8140,20 +8147,13 @@ async function loadCategories() {
   }
 
   const payload = await response.json();
-  if (
-    !payload
-    || !Array.isArray(payload.archiveFolders)
-    || !payload.systemCategories
-    || typeof payload.systemCategories !== 'object'
-  ) {
+  if (!payload || !Array.isArray(payload.archiveFolders)) {
     throw new Error('Ogiltigt svar för arkivstruktur');
   }
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
-  systemCategoriesDraft = sanitizeSystemCategories(payload.systemCategories);
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
   renderCategoriesEditor();
-  renderSystemCategoryEditor();
   updateSettingsActionButtons();
 }
 
@@ -8164,13 +8164,15 @@ async function loadLabels() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.labels)) {
+  if (!payload || !Array.isArray(payload.labels) || !payload.systemLabels || typeof payload.systemLabels !== 'object') {
     throw new Error('Ogiltigt svar för etiketter');
   }
 
   labelsDraft = payload.labels.map(sanitizeLabel);
-  labelsBaselineJson = normalizedLabelsJson(labelsDraft);
+  systemLabelsDraft = sanitizeSystemLabels(payload.systemLabels);
+  labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
   renderLabelsEditor();
+  renderSystemLabelEditor();
   updateSettingsActionButtons();
 }
 
@@ -8188,9 +8190,8 @@ async function loadExtractionFields() {
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
   extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft);
   renderExtractionFieldsEditor();
-  if (categoriesListEl || systemCategoryEditorEl) {
+  if (categoriesListEl) {
     renderCategoriesEditor();
-    renderSystemCategoryEditor();
   }
   updateSettingsActionButtons();
 }
@@ -8283,7 +8284,6 @@ async function saveCategories() {
   }
 
   const normalized = categoriesDraft.map(sanitizeArchiveFolder);
-  const normalizedSystemCategories = sanitizeSystemCategories(systemCategoriesDraft);
   const response = await fetch('/api/save-categories.php', {
     method: 'POST',
     headers: {
@@ -8291,19 +8291,11 @@ async function saveCategories() {
     },
     body: JSON.stringify({
       archiveFolders: normalized,
-      systemCategories: normalizedSystemCategories,
     })
   });
 
   const payload = await response.json().catch(() => null);
-  if (
-    !response.ok
-    || !payload
-    || payload.ok !== true
-    || !Array.isArray(payload.archiveFolders)
-    || !payload.systemCategories
-    || typeof payload.systemCategories !== 'object'
-  ) {
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.archiveFolders)) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara arkivstruktur';
@@ -8311,10 +8303,8 @@ async function saveCategories() {
   }
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
-  systemCategoriesDraft = sanitizeSystemCategories(payload.systemCategories);
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
   renderCategoriesEditor();
-  renderSystemCategoryEditor();
   updateSettingsActionButtons();
   await fetchState({ refreshCategories: true });
 }
@@ -8326,6 +8316,7 @@ async function saveLabels() {
   }
 
   const normalizedLabels = labelsDraft.map(sanitizeLabel);
+  const normalizedSystemLabels = sanitizeSystemLabels(systemLabelsDraft);
   const response = await fetch('/api/save-labels.php', {
     method: 'POST',
     headers: {
@@ -8333,11 +8324,12 @@ async function saveLabels() {
     },
     body: JSON.stringify({
       labels: normalizedLabels,
+      systemLabels: normalizedSystemLabels,
     })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.labels)) {
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.labels) || !payload.systemLabels || typeof payload.systemLabels !== 'object') {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara etiketter';
@@ -8345,8 +8337,10 @@ async function saveLabels() {
   }
 
   labelsDraft = payload.labels.map(sanitizeLabel);
-  labelsBaselineJson = normalizedLabelsJson(labelsDraft);
+  systemLabelsDraft = sanitizeSystemLabels(payload.systemLabels);
+  labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
   renderLabelsEditor();
+  renderSystemLabelEditor();
   updateSettingsActionButtons();
 }
 
@@ -8373,9 +8367,8 @@ async function saveExtractionFields() {
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
   extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft);
   renderExtractionFieldsEditor();
-  if (categoriesListEl || systemCategoryEditorEl) {
+  if (categoriesListEl) {
     renderCategoriesEditor();
-    renderSystemCategoryEditor();
   }
   updateSettingsActionButtons();
 }
@@ -8794,10 +8787,15 @@ settingsTabEls.forEach((tabButton) => {
       } else if (tabId === 'categories') {
         alert('Kunde inte ladda arkivstruktur.');
         categoriesDraft = [];
-        systemCategoriesDraft = createDefaultSystemCategories();
-        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft, systemCategoriesDraft);
+        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
         renderCategoriesEditor();
-        renderSystemCategoryEditor();
+      } else if (tabId === 'labels') {
+        alert('Kunde inte ladda etiketter.');
+        labelsDraft = [];
+        systemLabelsDraft = createDefaultSystemLabels();
+        labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
+        renderLabelsEditor();
+        renderSystemLabelEditor();
       } else if (tabId === 'data-fields') {
         alert('Kunde inte ladda datafält.');
         extractionFieldsDraft = [];
