@@ -407,9 +407,9 @@
   <template id="settings-template-labels">
     <h3>Etiketter</h3>
     <p>Globala etiketter som matchas mot OCR-texten med samma regelmodell som kategorier.</p>
-    <div class="archive-subtabs">
+    <div class="archive-subtabs hidden">
       <button id="labels-tab-custom" class="archive-subtab active" type="button" data-labels-tab="labels">Etiketter</button>
-      <button id="labels-tab-system" class="archive-subtab" type="button" data-labels-tab="system">Systemetiketter</button>
+      <button id="labels-tab-system" class="archive-subtab" type="button" data-labels-tab="system" hidden>Systemetiketter</button>
     </div>
     <div id="labels-view-custom" class="archive-view">
       <div id="labels-list" class="categories-list"></div>

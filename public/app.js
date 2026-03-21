@@ -194,6 +194,8 @@ let preferredJobIdFromHash = '';
 let categoriesDraft = [];
 let labelsDraft = [];
 let systemLabelsDraft = createDefaultSystemLabels();
+let labelsBuiltInCollapsed = true;
+let labelsCustomCollapsed = false;
 let sendersDraft = [];
 let matchingDraft = [];
 let matchingInvoiceFieldMinConfidenceDraft = 0.7;
@@ -962,12 +964,10 @@ function renderMatchesContent(payload) {
   matchesViewEl.innerHTML = '';
 
   const categories = payload && Array.isArray(payload.categories) ? payload.categories : [];
-  const systemLabels = payload && Array.isArray(payload.systemLabels) ? payload.systemLabels : [];
   const labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
 
   appendMatchesSection(matchesViewEl, 'Kategorier', categories, 'Inga kategorimatchningar hittades.');
   appendMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
-  appendMatchesSection(matchesViewEl, 'Systemetiketter', systemLabels, 'Inga systemetikettmatchningar hittades.', 'Etikett');
 }
 
 async function setViewerMatches(jobId) {
@@ -3770,18 +3770,6 @@ function bindSettingsPanelRefs(tabId) {
     labelsAddRowEl = document.getElementById('labels-add-row');
     labelsCancelEl = document.getElementById('labels-cancel');
     labelsApplyEl = document.getElementById('labels-apply');
-    labelsTabEls = Array.from(document.querySelectorAll('[data-labels-tab]'));
-    labelsViewCustomEl = document.getElementById('labels-view-custom');
-    labelsViewSystemEl = document.getElementById('labels-view-system');
-    labelsTabEls.forEach((tabButton) => {
-      tabButton.addEventListener('click', () => {
-        const nextTabId = tabButton.dataset.labelsTab;
-        if (!nextTabId || nextTabId === activeLabelsTabId) {
-          return;
-        }
-        setLabelsTab(nextTabId);
-      });
-    });
     labelsAddRowEl.addEventListener('click', () => {
       labelsDraft.push(defaultLabel());
       renderLabelsEditor();
@@ -3797,7 +3785,6 @@ function bindSettingsPanelRefs(tabId) {
       labelsDraft = Array.isArray(parsed.labels) ? parsed.labels.map(sanitizeLabel) : [];
       systemLabelsDraft = sanitizeSystemLabels(parsed.systemLabels);
       renderLabelsEditor();
-      renderSystemLabelEditor();
       updateSettingsActionButtons();
     });
     labelsApplyEl.addEventListener('click', async () => {
@@ -3925,7 +3912,6 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
     renderCategoriesEditor();
   } else if (tabId === 'labels') {
     await loadLabels();
-    setLabelsTab('labels');
   } else if (tabId === 'data-fields') {
     await loadExtractionFields();
   } else if (tabId === 'paths') {
@@ -4983,23 +4969,27 @@ function sanitizeRule(rule) {
 }
 
 function sanitizeSystemLabelRule(rule) {
-  const normalized = sanitizeRule(rule);
-  normalized.type = 'text';
-  normalized.labelId = '';
-  return normalized;
+  return sanitizeLabelRule(rule);
 }
 
 function sanitizeLabelRule(rule) {
   const normalized = sanitizeRule(rule);
-  if (normalized.type === 'label') {
-    normalized.type = 'text';
-    normalized.labelId = '';
+  if (normalized.type === 'invoice') {
+    normalized.type = 'label';
+    normalized.labelId = 'faktura';
+    normalized.text = '';
   }
   return normalized;
 }
 
 function sanitizeCategoryRule(rule) {
-  return sanitizeRule(rule);
+  const normalized = sanitizeRule(rule);
+  if (normalized.type === 'invoice') {
+    normalized.type = 'label';
+    normalized.labelId = 'faktura';
+    normalized.text = '';
+  }
+  return normalized;
 }
 
 function sanitizeCategory(category) {
@@ -5082,13 +5072,30 @@ function sanitizeSystemLabels(systemLabels) {
   return labels;
 }
 
-function categoryRuleLabelOptions() {
-  return sanitizeLabels(labelsDraft)
+function systemLabelOptions() {
+  return Object.values(sanitizeSystemLabels(systemLabelsDraft))
     .map((label) => ({
       value: typeof label.id === 'string' ? label.id.trim() : '',
       label: typeof label.name === 'string' ? label.name.trim() : '',
     }))
     .filter((label) => label.value !== '' && label.label !== '');
+}
+
+function categoryRuleLabelOptions() {
+  const options = [...systemLabelOptions(), ...sanitizeLabels(labelsDraft)
+    .map((label) => ({
+      value: typeof label.id === 'string' ? label.id.trim() : '',
+      label: typeof label.name === 'string' ? label.name.trim() : '',
+    }))
+    .filter((label) => label.value !== '' && label.label !== '')];
+
+  const deduped = new Map();
+  options.forEach((option) => {
+    if (!deduped.has(option.value)) {
+      deduped.set(option.value, option);
+    }
+  });
+  return Array.from(deduped.values());
 }
 
 function duplicateCategoryIds(folders) {
@@ -5329,6 +5336,16 @@ function appendTreeBodyIcon(bodyEl, className) {
   icon.setAttribute('aria-hidden', 'true');
   bodyEl.appendChild(icon);
   return icon;
+}
+
+function appendTreeBodyLock(bodyEl, title = 'Låst etikett') {
+  const lock = document.createElement('span');
+  lock.className = 'tree-body-icon-lock';
+  lock.setAttribute('aria-hidden', 'true');
+  lock.title = title;
+  bodyEl.classList.add('has-top-lock');
+  bodyEl.appendChild(lock);
+  return lock;
 }
 
 function renderClientsEditor() {
@@ -6191,184 +6208,372 @@ function syncLabelsEditorValidation() {
   });
 }
 
+function createLabelsEditorGroup(title, collapsed, onToggle) {
+  const section = document.createElement('section');
+  section.className = 'labels-editor-group';
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = collapsed
+    ? 'archive-folders-label settings-group-toggle is-collapsed'
+    : 'archive-folders-label settings-group-toggle';
+  toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  toggle.textContent = title;
+  toggle.addEventListener('click', () => {
+    onToggle();
+    renderLabelsEditor();
+  });
+
+  const content = document.createElement('div');
+  content.className = 'labels-editor-group-content';
+  content.classList.toggle('hidden', collapsed);
+
+  section.appendChild(toggle);
+  section.appendChild(content);
+  return { section, content };
+}
+
+function labelRuleOptions(currentLabelId = '') {
+  const normalizedCurrentId = typeof currentLabelId === 'string' ? currentLabelId.trim() : '';
+  return categoryRuleLabelOptions().filter((option) => option.value !== normalizedCurrentId);
+}
+
+function currentLabelDraftForEditor(options = {}) {
+  if (options && options.builtIn === true) {
+    const labelKey = typeof options.labelKey === 'string' ? options.labelKey.trim() : '';
+    return labelKey !== '' ? systemLabelsDraft[labelKey] : null;
+  }
+  const labelIndex = Number.isInteger(options?.labelIndex) ? options.labelIndex : -1;
+  return labelIndex >= 0 ? labelsDraft[labelIndex] : null;
+}
+
+function sanitizedLabelDraftForEditor(options = {}) {
+  const draft = currentLabelDraftForEditor(options);
+  if (!draft) {
+    return null;
+  }
+  if (options && options.builtIn === true) {
+    const labelKey = typeof options.labelKey === 'string' ? options.labelKey.trim() : '';
+    return labelKey !== '' ? sanitizeSystemLabelByKey(labelKey, draft) : null;
+  }
+  return sanitizeLabel(draft);
+}
+
+function renderSingleLabelEditor(container, options = {}) {
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  const currentLabel = sanitizedLabelDraftForEditor(options);
+  if (!currentLabel) {
+    return;
+  }
+
+  const builtIn = options && options.builtIn === true;
+  const labelNode = document.createElement('div');
+  labelNode.className = 'tree-node tree-category';
+  if (builtIn) {
+    labelNode.dataset.systemLabel = 'true';
+  }
+
+  const labelRow = createTreeRow({ markerless: true });
+  const labelBody = document.createElement('div');
+  labelBody.className = 'tree-body category-body';
+  appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-category');
+  if (builtIn) {
+    appendTreeBodyLock(labelBody);
+  }
+
+  const fields = document.createElement('div');
+  fields.className = 'category-fields category-fields--wide';
+
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'Ex: "Bostadstillägg"';
+  nameInput.value = currentLabel.name;
+  if (!builtIn && Number.isInteger(options.labelIndex)) {
+    nameInput.dataset.labelIndex = String(options.labelIndex);
+  }
+  nameInput.addEventListener('input', () => {
+    const draft = currentLabelDraftForEditor(options);
+    if (!draft) {
+      return;
+    }
+    draft.name = nameInput.value;
+    const sanitized = sanitizedLabelDraftForEditor(options);
+    idInput.value = sanitized && typeof sanitized.id === 'string' ? sanitized.id : '';
+    syncLabelsEditorValidation();
+    updateSettingsActionButtons();
+  });
+
+  const idInput = document.createElement('input');
+  idInput.type = 'text';
+  idInput.value = typeof currentLabel.id === 'string' ? currentLabel.id : '';
+  idInput.disabled = true;
+  if (!builtIn && Number.isInteger(options.labelIndex)) {
+    idInput.dataset.labelIndex = String(options.labelIndex);
+  }
+
+  const minScoreInput = document.createElement('input');
+  minScoreInput.type = 'number';
+  minScoreInput.step = '1';
+  minScoreInput.min = '1';
+  minScoreInput.value = String(currentLabel.minScore);
+  minScoreInput.addEventListener('input', () => {
+    const draft = currentLabelDraftForEditor(options);
+    if (!draft) {
+      return;
+    }
+    draft.minScore = sanitizePositiveInt(minScoreInput.value, 1);
+    updateSettingsActionButtons();
+  });
+
+  fields.appendChild(createFloatingField('Namn', nameInput));
+  fields.appendChild(createFloatingField('ID', idInput));
+  fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
+
+  if (!builtIn) {
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'category-remove';
+    removeButton.textContent = 'Ta bort etikett';
+    removeButton.addEventListener('click', () => {
+      const labelIndex = Number.isInteger(options.labelIndex) ? options.labelIndex : -1;
+      if (labelIndex < 0) {
+        return;
+      }
+      labelsDraft.splice(labelIndex, 1);
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+    fields.appendChild(removeButton);
+  }
+
+  labelBody.appendChild(fields);
+
+  const ruleList = createTreeChildren({ markerless: true });
+  const rulesLabel = document.createElement('div');
+  rulesLabel.className = 'archive-level-label';
+  rulesLabel.textContent = 'Regler';
+  ruleList.appendChild(rulesLabel);
+
+  currentLabel.rules.forEach((rule, ruleIndex) => {
+    const ruleNode = document.createElement('div');
+    ruleNode.className = 'tree-node tree-rule has-parent';
+
+    const ruleRow = createTreeRow({ markerless: true });
+    const ruleBody = document.createElement('div');
+    ruleBody.className = 'tree-body rule-body';
+    appendTreeBodyIcon(ruleBody, 'tree-body-icon tree-body-icon-rule');
+
+    const ruleFields = document.createElement('div');
+    ruleFields.className = 'rule-fields';
+
+    const typeSelect = document.createElement('select');
+    [
+      ['text', 'Innehåller text...'],
+      ['label', 'Har etikett...']
+    ].forEach(([value, optionLabel]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = optionLabel;
+      typeSelect.appendChild(option);
+    });
+    typeSelect.value = rule.type === 'label' ? 'label' : 'text';
+    typeSelect.addEventListener('change', () => {
+      const draft = currentLabelDraftForEditor(options);
+      const sanitizedCurrent = sanitizedLabelDraftForEditor(options);
+      if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
+        return;
+      }
+      const nextType = typeSelect.value === 'label' ? 'label' : 'text';
+      draft.rules[ruleIndex].type = nextType;
+      if (nextType === 'label') {
+        const availableOptions = labelRuleOptions(sanitizedCurrent && sanitizedCurrent.id ? sanitizedCurrent.id : '');
+        const fallbackLabelId = availableOptions[0] && typeof availableOptions[0].value === 'string'
+          ? availableOptions[0].value
+          : '';
+        draft.rules[ruleIndex].labelId = availableOptions.some((option) => option.value === draft.rules[ruleIndex].labelId)
+          ? draft.rules[ruleIndex].labelId
+          : fallbackLabelId;
+        draft.rules[ruleIndex].text = '';
+      } else {
+        draft.rules[ruleIndex].labelId = '';
+      }
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+
+    const textInput = document.createElement('input');
+    textInput.type = 'text';
+    textInput.placeholder = 'Ex: "förfallodatum"';
+    textInput.value = rule.text;
+    textInput.addEventListener('input', () => {
+      const draft = currentLabelDraftForEditor(options);
+      if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
+        return;
+      }
+      draft.rules[ruleIndex].text = textInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const labelSelect = document.createElement('select');
+    const availableOptions = labelRuleOptions(currentLabel.id);
+    if (availableOptions.length === 0) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'Inga etiketter';
+      labelSelect.appendChild(option);
+      labelSelect.disabled = true;
+    } else {
+      availableOptions.forEach((optionData) => {
+        const option = document.createElement('option');
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        labelSelect.appendChild(option);
+      });
+      const currentLabelId = typeof rule.labelId === 'string' ? rule.labelId.trim() : '';
+      const resolvedLabelId = availableOptions.some((option) => option.value === currentLabelId)
+        ? currentLabelId
+        : availableOptions[0].value;
+      labelSelect.value = resolvedLabelId;
+      const draft = currentLabelDraftForEditor(options);
+      if (draft && Array.isArray(draft.rules) && draft.rules[ruleIndex]) {
+        draft.rules[ruleIndex].labelId = resolvedLabelId;
+      }
+    }
+    labelSelect.addEventListener('change', () => {
+      const draft = currentLabelDraftForEditor(options);
+      if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
+        return;
+      }
+      draft.rules[ruleIndex].labelId = labelSelect.value;
+      updateSettingsActionButtons();
+    });
+
+    const scoreInput = document.createElement('input');
+    scoreInput.type = 'number';
+    scoreInput.step = '1';
+    scoreInput.min = '1';
+    scoreInput.value = String(rule.score);
+    scoreInput.addEventListener('input', () => {
+      const draft = currentLabelDraftForEditor(options);
+      if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
+        return;
+      }
+      draft.rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+      updateSettingsActionButtons();
+    });
+
+    const removeRuleButton = document.createElement('button');
+    removeRuleButton.type = 'button';
+    removeRuleButton.className = 'rule-remove';
+    removeRuleButton.textContent = 'Ta bort';
+    removeRuleButton.addEventListener('click', () => {
+      const draft = currentLabelDraftForEditor(options);
+      if (!draft || !Array.isArray(draft.rules)) {
+        return;
+      }
+      draft.rules.splice(ruleIndex, 1);
+      if (draft.rules.length === 0) {
+        draft.rules.push(defaultRule());
+      }
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+
+    ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
+    if (rule.type === 'label') {
+      ruleFields.appendChild(createFloatingField('Etikett', labelSelect));
+    } else {
+      ruleFields.appendChild(createFloatingField('Regeltext', textInput));
+    }
+    ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
+    ruleFields.appendChild(removeRuleButton);
+    ruleBody.appendChild(ruleFields);
+    ruleRow.appendChild(ruleBody);
+    ruleNode.appendChild(ruleRow);
+    ruleList.appendChild(ruleNode);
+  });
+
+  const ruleActions = document.createElement('div');
+  ruleActions.className = 'category-rule-actions';
+  const addRuleButton = document.createElement('button');
+  addRuleButton.type = 'button';
+  addRuleButton.textContent = 'Lägg till regel';
+  addRuleButton.addEventListener('click', () => {
+    const draft = currentLabelDraftForEditor(options);
+    if (!draft || !Array.isArray(draft.rules)) {
+      return;
+    }
+    draft.rules.push(defaultRule());
+    renderLabelsEditor();
+    updateSettingsActionButtons();
+  });
+  ruleActions.appendChild(addRuleButton);
+
+  if (builtIn && typeof options.labelKey === 'string' && SYSTEM_LABELS[options.labelKey]) {
+    const restoreButton = document.createElement('button');
+    restoreButton.type = 'button';
+    restoreButton.textContent = 'Återställ';
+    restoreButton.addEventListener('click', () => {
+      const labelKey = options.labelKey;
+      const defaults = SYSTEM_LABELS[labelKey];
+      if (!defaults || !systemLabelsDraft[labelKey]) {
+        return;
+      }
+      systemLabelsDraft[labelKey].name = defaults.name;
+      systemLabelsDraft[labelKey].minScore = sanitizePositiveInt(defaults.minScore, 1);
+      systemLabelsDraft[labelKey].rules = defaults.rules.map(sanitizeLabelRule);
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+    ruleActions.appendChild(restoreButton);
+  }
+
+  labelBody.appendChild(ruleList);
+  labelBody.appendChild(ruleActions);
+  labelRow.appendChild(labelBody);
+  labelNode.appendChild(labelRow);
+  container.appendChild(labelNode);
+}
+
 function renderLabelsEditor() {
   if (!labelsListEl) {
     return;
   }
 
   labelsListEl.innerHTML = '';
+  const builtInGroup = createLabelsEditorGroup('Fördefinerade', labelsBuiltInCollapsed, () => {
+    labelsBuiltInCollapsed = !labelsBuiltInCollapsed;
+  });
+  const ownGroup = createLabelsEditorGroup('Egna', labelsCustomCollapsed, () => {
+    labelsCustomCollapsed = !labelsCustomCollapsed;
+  });
+  ownGroup.section.classList.add('labels-editor-group--spaced');
 
-  const label = document.createElement('div');
-  label.className = 'archive-folders-label';
-  label.textContent = 'Etiketter';
-  labelsListEl.appendChild(label);
+  labelsListEl.appendChild(builtInGroup.section);
+  labelsListEl.appendChild(ownGroup.section);
 
   if (labelsDraft.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
     empty.textContent = 'Inga etiketter ännu.';
-    labelsListEl.appendChild(empty);
-    return;
+    ownGroup.content.appendChild(empty);
   }
 
   labelsDraft.forEach((labelDraft, labelIndex) => {
-    const labelNode = document.createElement('div');
-    labelNode.className = 'tree-node tree-category';
-
-    const labelRow = createTreeRow({ markerless: true });
-    const labelBody = document.createElement('div');
-    labelBody.className = 'tree-body category-body';
-    appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-category');
-
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'category-remove';
-    removeButton.textContent = 'Ta bort etikett';
-    removeButton.addEventListener('click', () => {
-      labelsDraft.splice(labelIndex, 1);
-      renderLabelsEditor();
-      updateSettingsActionButtons();
+    renderSingleLabelEditor(ownGroup.content, {
+      builtIn: false,
+      labelIndex,
     });
+  });
 
-    const fields = document.createElement('div');
-    fields.className = 'category-fields category-fields--wide';
-
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.placeholder = 'Ex: "Bostadstillägg"';
-    nameInput.value = labelDraft.name;
-    nameInput.dataset.labelIndex = String(labelIndex);
-    nameInput.addEventListener('input', () => {
-      labelsDraft[labelIndex].name = nameInput.value;
-      const nextId = slugifyText(nameInput.value, '-', '');
-      labelsDraft[labelIndex].id = nextId;
-      idInput.value = nextId;
-      syncLabelsEditorValidation();
-      updateSettingsActionButtons();
+  Object.keys(sanitizeSystemLabels(systemLabelsDraft)).forEach((labelKey) => {
+    renderSingleLabelEditor(builtInGroup.content, {
+      builtIn: true,
+      labelKey,
     });
-
-    const idInput = document.createElement('input');
-    idInput.type = 'text';
-    idInput.value = sanitizeLabel(labelDraft).id;
-    idInput.disabled = true;
-    idInput.dataset.labelIndex = String(labelIndex);
-
-    const minScoreInput = document.createElement('input');
-    minScoreInput.type = 'number';
-    minScoreInput.step = '1';
-    minScoreInput.min = '1';
-    minScoreInput.value = String(labelDraft.minScore);
-    minScoreInput.addEventListener('input', () => {
-      labelsDraft[labelIndex].minScore = sanitizePositiveInt(minScoreInput.value, 1);
-      updateSettingsActionButtons();
-    });
-
-    fields.appendChild(createFloatingField('Namn', nameInput));
-    fields.appendChild(createFloatingField('ID', idInput));
-    fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
-    fields.appendChild(removeButton);
-    labelBody.appendChild(fields);
-
-    const ruleList = createTreeChildren({ markerless: true });
-
-    const rulesLabel = document.createElement('div');
-    rulesLabel.className = 'archive-level-label';
-    rulesLabel.textContent = 'Regler';
-    ruleList.appendChild(rulesLabel);
-
-    labelDraft.rules.forEach((rule, ruleIndex) => {
-      const ruleNode = document.createElement('div');
-      ruleNode.className = 'tree-node tree-rule has-parent';
-
-      const ruleRow = createTreeRow({ markerless: true });
-
-      const ruleBody = document.createElement('div');
-      ruleBody.className = 'tree-body rule-body';
-      appendTreeBodyIcon(ruleBody, 'tree-body-icon tree-body-icon-rule');
-
-      const ruleFields = document.createElement('div');
-      ruleFields.className = 'rule-fields';
-
-      const typeSelect = document.createElement('select');
-      [
-        ['text', 'Innehåller text...'],
-        ['invoice', 'Är faktura']
-      ].forEach(([value, optionLabel]) => {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = optionLabel;
-        typeSelect.appendChild(option);
-      });
-      typeSelect.value = rule.type === 'invoice' ? 'invoice' : 'text';
-      typeSelect.addEventListener('change', () => {
-        labelsDraft[labelIndex].rules[ruleIndex].type = typeSelect.value === 'invoice' ? 'invoice' : 'text';
-        if (labelsDraft[labelIndex].rules[ruleIndex].type === 'invoice') {
-          labelsDraft[labelIndex].rules[ruleIndex].text = '';
-        }
-        renderLabelsEditor();
-        updateSettingsActionButtons();
-      });
-
-      const textInput = document.createElement('input');
-      textInput.type = 'text';
-      textInput.placeholder = 'Ex: "förfallodatum"';
-      textInput.value = rule.text;
-      textInput.addEventListener('input', () => {
-        labelsDraft[labelIndex].rules[ruleIndex].text = textInput.value;
-        updateSettingsActionButtons();
-      });
-
-      const scoreInput = document.createElement('input');
-      scoreInput.type = 'number';
-      scoreInput.step = '1';
-      scoreInput.min = '1';
-      scoreInput.value = String(rule.score);
-      scoreInput.addEventListener('input', () => {
-        labelsDraft[labelIndex].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
-        updateSettingsActionButtons();
-      });
-
-      const removeRuleButton = document.createElement('button');
-      removeRuleButton.type = 'button';
-      removeRuleButton.className = 'rule-remove';
-      removeRuleButton.textContent = 'Ta bort';
-      removeRuleButton.addEventListener('click', () => {
-        labelsDraft[labelIndex].rules.splice(ruleIndex, 1);
-        if (labelsDraft[labelIndex].rules.length === 0) {
-          labelsDraft[labelIndex].rules.push(defaultRule());
-        }
-        renderLabelsEditor();
-        updateSettingsActionButtons();
-      });
-
-      ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
-      if (rule.type !== 'invoice') {
-        ruleFields.appendChild(createFloatingField('Regeltext', textInput));
-      }
-      ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
-      ruleFields.appendChild(removeRuleButton);
-      ruleBody.appendChild(ruleFields);
-      ruleRow.appendChild(ruleBody);
-      ruleNode.appendChild(ruleRow);
-      ruleList.appendChild(ruleNode);
-    });
-
-    const ruleActions = document.createElement('div');
-    ruleActions.className = 'category-rule-actions';
-    const addRuleButton = document.createElement('button');
-    addRuleButton.type = 'button';
-    addRuleButton.textContent = 'Lägg till regel';
-    addRuleButton.addEventListener('click', () => {
-      labelsDraft[labelIndex].rules.push(defaultRule());
-      renderLabelsEditor();
-      updateSettingsActionButtons();
-    });
-    ruleActions.appendChild(addRuleButton);
-    labelBody.appendChild(ruleList);
-    labelBody.appendChild(ruleActions);
-    labelRow.appendChild(labelBody);
-    labelNode.appendChild(labelRow);
-    labelsListEl.appendChild(labelNode);
   });
 
   syncLabelsEditorValidation();
@@ -7384,7 +7589,6 @@ function renderCategoriesEditor() {
         const typeSelect = document.createElement('select');
         [
           ['text', 'Innehåller text...'],
-          ['invoice', 'Är faktura'],
           ['label', 'Har etikett...'],
         ].forEach(([value, label]) => {
           const option = document.createElement('option');
@@ -7394,17 +7598,13 @@ function renderCategoriesEditor() {
         });
         typeSelect.value = rule.type === 'label'
           ? 'label'
-          : (rule.type === 'invoice' ? 'invoice' : 'text');
+          : 'text';
         typeSelect.addEventListener('change', () => {
-          const nextType = typeSelect.value === 'label'
-            ? 'label'
-            : (typeSelect.value === 'invoice' ? 'invoice' : 'text');
+          const nextType = typeSelect.value === 'label' ? 'label' : 'text';
           const nextRule = categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex];
           nextRule.type = nextType;
-          if (nextType !== 'text') {
-            nextRule.text = '';
-          }
           if (nextType === 'label') {
+            nextRule.text = '';
             const fallbackLabelId = labelOptions[0] && typeof labelOptions[0].value === 'string'
               ? labelOptions[0].value
               : '';
@@ -7540,197 +7740,6 @@ function renderCategoriesEditor() {
   });
 
   updateSettingsActionButtons();
-}
-
-function renderSystemLabelEditor() {
-  if (!systemLabelEditorEl) {
-    return;
-  }
-  systemLabelEditorEl.innerHTML = '';
-
-  const labelKey = 'invoice';
-  const defaultLabel = SYSTEM_LABELS[labelKey];
-  const systemLabels = sanitizeSystemLabels(systemLabelsDraft);
-  systemLabelsDraft = systemLabels;
-  const label = systemLabels[labelKey];
-
-  const header = document.createElement('div');
-  header.className = 'archive-folders-label';
-  header.textContent = 'Systemetiketter';
-  systemLabelEditorEl.appendChild(header);
-
-  const labelNode = document.createElement('div');
-  labelNode.className = 'tree-node tree-category';
-  labelNode.dataset.system = 'true';
-  labelNode.dataset.systemLabel = 'true';
-
-  const labelRow = createTreeRow({ markerless: true });
-
-  const labelBody = document.createElement('div');
-  labelBody.className = 'tree-body category-body';
-  appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-category');
-
-  const fields = document.createElement('div');
-  fields.className = 'category-fields';
-
-  const labelNameInput = document.createElement('input');
-  labelNameInput.type = 'text';
-  labelNameInput.placeholder = 'Ex: "Faktura"';
-  labelNameInput.value = label.name;
-  labelNameInput.addEventListener('input', () => {
-    systemLabelsDraft[labelKey].name = labelNameInput.value;
-    updateSettingsActionButtons();
-  });
-
-  const idInput = document.createElement('input');
-  idInput.type = 'text';
-  idInput.value = sanitizeSystemLabelByKey(labelKey, systemLabelsDraft[labelKey]).id;
-  idInput.disabled = true;
-
-  const minScoreInput = document.createElement('input');
-  minScoreInput.type = 'number';
-  minScoreInput.step = '1';
-  minScoreInput.min = '1';
-  minScoreInput.value = String(label.minScore);
-  minScoreInput.addEventListener('input', () => {
-    systemLabelsDraft[labelKey].minScore = sanitizePositiveInt(minScoreInput.value, 1);
-    updateSettingsActionButtons();
-  });
-
-  fields.appendChild(createFloatingField('Namn', labelNameInput));
-  fields.appendChild(createFloatingField('ID', idInput));
-  fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
-  labelBody.appendChild(fields);
-
-  const ruleList = createTreeChildren({ markerless: true });
-
-  const rulesLabel = document.createElement('div');
-  rulesLabel.className = 'archive-level-label';
-  rulesLabel.textContent = 'Regler';
-  ruleList.appendChild(rulesLabel);
-
-  label.rules.forEach((rule, ruleIndex) => {
-    const ruleNode = document.createElement('div');
-    ruleNode.className = 'tree-node tree-rule has-parent';
-
-    const ruleRow = createTreeRow({ markerless: true });
-
-    const ruleBody = document.createElement('div');
-    ruleBody.className = 'tree-body rule-body';
-    appendTreeBodyIcon(ruleBody, 'tree-body-icon tree-body-icon-rule');
-
-    const ruleFields = document.createElement('div');
-    ruleFields.className = 'rule-fields';
-
-    const typeSelect = document.createElement('select');
-    [
-      ['text', 'Innehåller text...'],
-    ].forEach(([value, label]) => {
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      typeSelect.appendChild(option);
-    });
-    typeSelect.value = 'text';
-    typeSelect.addEventListener('change', () => {
-      systemLabelsDraft[labelKey].rules[ruleIndex].type = 'text';
-      updateSettingsActionButtons();
-    });
-
-    const textInput = document.createElement('input');
-    textInput.type = 'text';
-    textInput.placeholder = 'Ex: "Förfallodatum"';
-    textInput.value = rule.text;
-    textInput.addEventListener('input', () => {
-      systemLabelsDraft[labelKey].rules[ruleIndex].text = textInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const scoreInput = document.createElement('input');
-    scoreInput.type = 'number';
-    scoreInput.step = '1';
-    scoreInput.min = '1';
-    scoreInput.value = String(rule.score);
-    scoreInput.addEventListener('input', () => {
-      systemLabelsDraft[labelKey].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
-      updateSettingsActionButtons();
-    });
-
-    ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
-    ruleFields.appendChild(createFloatingField('Regeltext', textInput));
-    ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
-
-    if (ruleIndex > 0) {
-      const removeRuleButton = document.createElement('button');
-      removeRuleButton.type = 'button';
-      removeRuleButton.className = 'rule-remove';
-      removeRuleButton.textContent = 'Ta bort';
-      removeRuleButton.addEventListener('click', () => {
-        systemLabelsDraft[labelKey].rules.splice(ruleIndex, 1);
-        if (systemLabelsDraft[labelKey].rules.length === 0) {
-          systemLabelsDraft[labelKey].rules.push(defaultRule());
-        }
-        renderSystemLabelEditor();
-        updateSettingsActionButtons();
-      });
-      ruleFields.appendChild(removeRuleButton);
-    } else {
-      const placeholder = document.createElement('div');
-      placeholder.className = 'rule-remove-placeholder';
-      ruleFields.appendChild(placeholder);
-    }
-
-    ruleBody.appendChild(ruleFields);
-    ruleRow.appendChild(ruleBody);
-    ruleNode.appendChild(ruleRow);
-    ruleList.appendChild(ruleNode);
-  });
-
-  labelBody.appendChild(ruleList);
-
-  const ruleActions = document.createElement('div');
-  ruleActions.className = 'category-rule-actions';
-
-  const addRuleButton = document.createElement('button');
-  addRuleButton.type = 'button';
-  addRuleButton.textContent = 'Lägg till regel';
-  addRuleButton.addEventListener('click', () => {
-    systemLabelsDraft[labelKey].rules.push(defaultRule());
-    renderSystemLabelEditor();
-    updateSettingsActionButtons();
-  });
-
-  const restoreButton = document.createElement('button');
-  restoreButton.type = 'button';
-  restoreButton.textContent = 'Återställ';
-  restoreButton.addEventListener('click', () => {
-    systemLabelsDraft[labelKey].name = defaultLabel.name;
-    systemLabelsDraft[labelKey].minScore = sanitizePositiveInt(defaultLabel.minScore, 1);
-    systemLabelsDraft[labelKey].rules = defaultLabel.rules.map(sanitizeRule);
-    renderSystemLabelEditor();
-    updateSettingsActionButtons();
-  });
-
-  ruleActions.appendChild(addRuleButton);
-  ruleActions.appendChild(restoreButton);
-  labelBody.appendChild(ruleActions);
-
-  labelRow.appendChild(labelBody);
-  labelNode.appendChild(labelRow);
-  systemLabelEditorEl.appendChild(labelNode);
-}
-
-function setLabelsTab(tabId) {
-  if (!labelsViewCustomEl || !labelsViewSystemEl || !Array.isArray(labelsTabEls)) {
-    return;
-  }
-  activeLabelsTabId = tabId === 'system' ? 'system' : 'labels';
-  labelsTabEls.forEach((button) => {
-    const isActive = button.dataset.labelsTab === activeLabelsTabId;
-    button.classList.toggle('active', isActive);
-  });
-  labelsViewCustomEl.classList.toggle('hidden', activeLabelsTabId !== 'labels');
-  labelsViewSystemEl.classList.toggle('hidden', activeLabelsTabId !== 'system');
 }
 
 function renderOcrProcessingCommand() {
@@ -8239,6 +8248,10 @@ async function loadCategories() {
 async function loadLabels(options = {}) {
   const reload = options.reload === true;
   if (hasLoadedLabels && !reload) {
+    if (labelsListEl) {
+      renderLabelsEditor();
+    }
+    updateSettingsActionButtons();
     return;
   }
 
@@ -8257,7 +8270,6 @@ async function loadLabels(options = {}) {
   labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
   hasLoadedLabels = true;
   renderLabelsEditor();
-  renderSystemLabelEditor();
   if (categoriesListEl) {
     renderCategoriesEditor();
   }
@@ -8428,7 +8440,6 @@ async function saveLabels() {
   systemLabelsDraft = sanitizeSystemLabels(payload.systemLabels);
   labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
   renderLabelsEditor();
-  renderSystemLabelEditor();
   if (categoriesListEl) {
     renderCategoriesEditor();
   }
@@ -8886,7 +8897,6 @@ settingsTabEls.forEach((tabButton) => {
         systemLabelsDraft = createDefaultSystemLabels();
         labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
         renderLabelsEditor();
-        renderSystemLabelEditor();
       } else if (tabId === 'data-fields') {
         alert('Kunde inte ladda datafält.');
         extractionFieldsDraft = [];

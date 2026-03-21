@@ -450,13 +450,38 @@ function normalize_archive_rule(mixed $input, array $options = []): array
 
 function normalize_system_label_rule(mixed $input): array
 {
-    $rule = normalize_archive_rule($input, [
-        'allowInvoice' => false,
-        'allowLabel' => false,
-    ]);
-    $rule['type'] = 'text';
-    $rule['labelId'] = '';
+    return normalize_invoice_reference_rule(normalize_archive_rule($input, [
+        'allowInvoice' => true,
+        'allowLabel' => true,
+    ]));
+}
+
+function normalize_invoice_reference_rule(array $rule, string $labelId = 'faktura'): array
+{
+    if (($rule['type'] ?? 'text') !== 'invoice') {
+        return $rule;
+    }
+
+    $rule['type'] = 'label';
+    $rule['labelId'] = $labelId;
+    $rule['text'] = '';
     return $rule;
+}
+
+function normalize_editable_label_rule(mixed $input): array
+{
+    return normalize_invoice_reference_rule(normalize_archive_rule($input, [
+        'allowInvoice' => true,
+        'allowLabel' => true,
+    ]));
+}
+
+function normalize_category_rule(mixed $input): array
+{
+    return normalize_invoice_reference_rule(normalize_archive_rule($input, [
+        'allowInvoice' => true,
+        'allowLabel' => true,
+    ]));
 }
 
 function slugify_text(string $value, string $separator = '-', string $fallback = ''): string
@@ -760,12 +785,12 @@ function normalize_label_definition(array $input): ?array
     $rules = [];
     if (is_array($rulesIn)) {
         foreach ($rulesIn as $ruleIn) {
-            $rules[] = normalize_archive_rule($ruleIn);
+            $rules[] = normalize_editable_label_rule($ruleIn);
         }
     }
 
     if (count($rules) === 0) {
-        $rules[] = normalize_archive_rule([]);
+        $rules[] = normalize_editable_label_rule([]);
     }
 
     return [
@@ -925,10 +950,7 @@ function load_categories(): array
                         continue;
                     }
 
-                    $rules[] = normalize_archive_rule($ruleIn, [
-                        'allowInvoice' => true,
-                        'allowLabel' => true,
-                    ]);
+                    $rules[] = normalize_category_rule($ruleIn);
                 }
             }
 
@@ -1082,18 +1104,12 @@ function normalize_archive_category(array $input, array &$usedCategoryIds = []):
     $rules = [];
     if (is_array($rulesIn)) {
         foreach ($rulesIn as $ruleIn) {
-            $rules[] = normalize_archive_rule($ruleIn, [
-                'allowInvoice' => true,
-                'allowLabel' => true,
-            ]);
+            $rules[] = normalize_category_rule($ruleIn);
         }
     }
 
     if (count($rules) === 0) {
-        $rules[] = normalize_archive_rule([], [
-            'allowInvoice' => true,
-            'allowLabel' => true,
-        ]);
+        $rules[] = normalize_category_rule([]);
     }
 
     return [
@@ -4203,6 +4219,35 @@ function find_category_matches(string $ocrText, array $categories, array $replac
     return filter_category_matches_by_threshold($signalMatches);
 }
 
+function find_incremental_label_matches(string $ocrText, array $labels, array $replacementMap, array $context = []): array
+{
+    $matches = [];
+    $matchedLabelsById = is_array($context['matchedLabelsById'] ?? null) ? $context['matchedLabelsById'] : [];
+    $baseContext = $context;
+
+    foreach ($labels as $label) {
+        if (!is_array($label)) {
+            continue;
+        }
+
+        $currentContext = $baseContext;
+        $currentContext['matchedLabelsById'] = $matchedLabelsById;
+        $labelMatches = find_category_matches($ocrText, [$label], $replacementMap, $currentContext);
+        foreach ($labelMatches as $match) {
+            if (!is_array($match)) {
+                continue;
+            }
+            $matches[] = $match;
+            $labelId = is_string($match['id'] ?? null) ? trim((string) $match['id']) : '';
+            if ($labelId !== '') {
+                $matchedLabelsById[$labelId] = $match;
+            }
+        }
+    }
+
+    return $matches;
+}
+
 function resolved_label_ids_from_matches(array ...$matchGroups): array
 {
     $merged = [];
@@ -5767,7 +5812,7 @@ function process_claimed_job(
         throw new RuntimeException('Could not write ocr.txt');
     }
 
-    $systemLabelMatches = find_category_matches($ocrText, $systemLabels, $replacementMap);
+    $systemLabelMatches = find_incremental_label_matches($ocrText, $systemLabels, $replacementMap);
     $invoiceLabelMatches = array_values(array_filter($systemLabelMatches, static function ($match): bool {
         return is_array($match) && (($match['systemLabelKey'] ?? null) === 'invoice');
     }));
@@ -5812,12 +5857,13 @@ function process_claimed_job(
         }
     }
 
-    $labelMatches = find_category_matches($ocrText, $labels, $replacementMap, [
+    $labelMatches = find_incremental_label_matches($ocrText, $labels, $replacementMap, [
         'invoiceDetection' => $invoiceDetection,
+        'matchedLabelsById' => matched_labels_by_id($systemLabelMatches),
     ]);
     $categoryMatches = find_category_matches($ocrText, $categories, $replacementMap, [
         'invoiceDetection' => $invoiceDetection,
-        'matchedLabelsById' => matched_labels_by_id($labelMatches),
+        'matchedLabelsById' => matched_labels_by_id(array_merge($systemLabelMatches, $labelMatches)),
     ]);
     $resolvedLabels = resolved_label_ids_from_matches($systemLabelMatches, $labelMatches);
     $extractedData = [

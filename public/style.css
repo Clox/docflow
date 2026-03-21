@@ -1763,6 +1763,20 @@ body {
   background-image: url('/assets/icons/rule.svg');
 }
 
+.tree-body-icon-lock {
+  position: static;
+  width: 20px;
+  height: 20px;
+  display: block;
+  background: url('/assets/icons/lock.svg') center/contain no-repeat;
+  pointer-events: none;
+  margin: 0 0 6px -5px;
+}
+
+.tree-body.has-top-lock > .tree-body-icon {
+  top: 36px;
+}
+
 .sender-card-icon {
   width: 22px;
   height: 22px;
@@ -1846,6 +1860,35 @@ body {
   font-weight: 700;
   color: #374151;
   letter-spacing: 0.02em;
+}
+
+.settings-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-group-toggle::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid #374151;
+  border-bottom: 2px solid #374151;
+  transform: rotate(45deg) translateY(-1px);
+  transform-origin: center;
+  flex: 0 0 auto;
+}
+
+.settings-group-toggle.is-collapsed::before {
+  transform: rotate(-45deg);
+}
+
+.labels-editor-group--spaced {
+  margin-top: 14px;
 }
 
 .tree-node {
