@@ -1,7 +1,7 @@
 Runtime data lives in `data/` and is intentionally local.
 
 What belongs in `data/`:
-- user-edited JSON such as `config.json`, `clients.json`, `archive-structure.json`, `labels.json`, `extraction-fields.json`
+- user-edited JSON such as `config.json`, `clients.json`, `archiving-rules.json`
 - SQLite databases
 - job event queues, install status files, locks, logs, and generated helper scripts
 

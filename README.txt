@@ -29,7 +29,7 @@ Processing model:
 SQLite sender lookup:
 - SQLite file: data/docflow.sqlite
 - Used for sender lookup data (senders + bankgiro/plusgiro metadata).
-- Archive structure still stays in data/archive-structure.json.
+- Archiving rules now live in data/archiving-rules.json.
 - Requires PHP extension: pdo_sqlite
 - Run DB migrations:
   ./scripts/migrate.php

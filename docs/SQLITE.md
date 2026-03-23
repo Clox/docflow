@@ -7,7 +7,7 @@ Why SQLite
 - Requires PHP with `pdo_sqlite` enabled.
 
 What stays in JSON
-- `data/archive-structure.json` remains the source of truth for archive folders, categories, and rules.
+- `data/archiving-rules.json` remains the source of truth for archive folders, categories, labels, data fields, and archiving-rule state.
 - SQLite is not used for archive structure in this version.
 
 What is stored in SQLite

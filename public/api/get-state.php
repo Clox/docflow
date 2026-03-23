@@ -6,6 +6,7 @@ require_once __DIR__ . '/_bootstrap.php';
 try {
     $config = load_config();
     ensure_job_dispatcher_running($config);
+    $publishedReviewSession = maybe_advance_published_archiving_review_session($config, 10);
     $includeClients = array_key_exists('includeClients', $_GET);
     $includeSenders = array_key_exists('includeSenders', $_GET);
     $includeCategories = array_key_exists('includeCategories', $_GET);
@@ -48,6 +49,19 @@ try {
         'readyJobs' => $jobsPayload['readyJobs'],
         'archivedJobs' => $jobsPayload['archivedJobs'],
         'failedJobs' => $jobsPayload['failedJobs'],
+        'archivingRules' => [
+            'activeVersion' => active_archiving_rules_version(),
+            'hasUnpublishedChanges' => archiving_rules_have_unpublished_changes(),
+            'needsRuleReviewCount' => count(array_filter(
+                is_array($jobsPayload['archivedJobs'] ?? null) ? $jobsPayload['archivedJobs'] : [],
+                static fn (array $job): bool => ($job['needsRuleReview'] ?? false) === true
+            )),
+            'publishedReview' => [
+                'status' => is_string($publishedReviewSession['status'] ?? null) ? (string) $publishedReviewSession['status'] : 'idle',
+                'analyzedCount' => (int) ($publishedReviewSession['analyzedCount'] ?? 0),
+                'totalCount' => (int) ($publishedReviewSession['totalCount'] ?? 0),
+            ],
+        ],
         'lastEventId' => latest_job_event_id(),
         'stateUpdateTransport' => (string) $config['stateUpdateTransport'],
     ];
@@ -68,6 +82,16 @@ try {
         'readyJobs' => [],
         'archivedJobs' => [],
         'failedJobs' => [],
+        'archivingRules' => [
+            'activeVersion' => 1,
+            'hasUnpublishedChanges' => false,
+            'needsRuleReviewCount' => 0,
+            'publishedReview' => [
+                'status' => 'idle',
+                'analyzedCount' => 0,
+                'totalCount' => 0,
+            ],
+        ],
         'lastEventId' => 0,
         'stateUpdateTransport' => 'polling',
         'error' => $e->getMessage(),

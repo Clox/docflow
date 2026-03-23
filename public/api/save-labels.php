@@ -47,16 +47,16 @@ try {
         }
     }
 
-    $normalized = [
-        'labels' => $normalizedLabels,
-        'systemLabels' => $normalizedSystemLabels,
-    ];
-
-    write_json_file(DATA_DIR . '/labels.json', $normalized);
+    $state = load_archiving_rules_state();
+    $state['draftArchivingRules']['labels'] = $normalizedLabels;
+    $state['draftArchivingRules']['systemLabels'] = $normalizedSystemLabels;
+    $stored = save_archiving_rules_state($state);
     json_response([
         'ok' => true,
-        'labels' => $normalized['labels'],
-        'systemLabels' => $normalized['systemLabels'],
+        'labels' => is_array($stored['draftArchivingRules']['labels'] ?? null) ? $stored['draftArchivingRules']['labels'] : [],
+        'systemLabels' => is_array($stored['draftArchivingRules']['systemLabels'] ?? null) ? $stored['draftArchivingRules']['systemLabels'] : system_labels_template(),
+        'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
+        'hasUnpublishedChanges' => json_encode($stored['activeArchivingRules'] ?? null) !== json_encode($stored['draftArchivingRules'] ?? null),
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 400);

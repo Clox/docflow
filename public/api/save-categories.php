@@ -24,15 +24,17 @@ if (
     exit;
 }
 
-$normalized = [
-    'archiveFolders' => normalize_archive_structure($payload['archiveFolders']),
-];
-
 try {
-    write_json_file(DATA_DIR . '/archive-structure.json', $normalized);
+    $state = load_archiving_rules_state();
+    $state['draftArchivingRules']['archiveFolders'] = normalize_archive_structure($payload['archiveFolders']);
+    $stored = save_archiving_rules_state($state);
     json_response([
         'ok' => true,
-        'archiveFolders' => $normalized['archiveFolders'],
+        'archiveFolders' => is_array($stored['draftArchivingRules']['archiveFolders'] ?? null)
+            ? $stored['draftArchivingRules']['archiveFolders']
+            : [],
+        'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
+        'hasUnpublishedChanges' => json_encode($stored['activeArchivingRules'] ?? null) !== json_encode($stored['draftArchivingRules'] ?? null),
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

@@ -28,21 +28,19 @@ if (
     exit;
 }
 
-$normalized = [
-    'fields' => normalize_extraction_fields($payload['fields']),
-    'predefinedFields' => normalize_predefined_extraction_fields($payload['predefinedFields']),
-    'systemFields' => normalize_system_extraction_fields($payload['systemFields']),
-];
-
 try {
-    write_json_file(DATA_DIR . '/extraction-fields.json', $normalized);
-    $stored = load_extraction_fields_data();
-    write_json_file(DATA_DIR . '/extraction-fields.json', $stored);
+    $state = load_archiving_rules_state();
+    $state['draftArchivingRules']['fields'] = normalize_extraction_fields($payload['fields']);
+    $state['draftArchivingRules']['predefinedFields'] = normalize_predefined_extraction_fields($payload['predefinedFields']);
+    $state['draftArchivingRules']['systemFields'] = normalize_system_extraction_fields($payload['systemFields']);
+    $stored = save_archiving_rules_state($state);
     json_response([
         'ok' => true,
-        'fields' => is_array($stored['fields'] ?? null) ? $stored['fields'] : [],
-        'predefinedFields' => is_array($stored['predefinedFields'] ?? null) ? $stored['predefinedFields'] : [],
-        'systemFields' => is_array($stored['systemFields'] ?? null) ? $stored['systemFields'] : [],
+        'fields' => is_array($stored['draftArchivingRules']['fields'] ?? null) ? $stored['draftArchivingRules']['fields'] : [],
+        'predefinedFields' => is_array($stored['draftArchivingRules']['predefinedFields'] ?? null) ? $stored['draftArchivingRules']['predefinedFields'] : [],
+        'systemFields' => is_array($stored['draftArchivingRules']['systemFields'] ?? null) ? $stored['draftArchivingRules']['systemFields'] : [],
+        'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
+        'hasUnpublishedChanges' => json_encode($stored['activeArchivingRules'] ?? null) !== json_encode($stored['draftArchivingRules'] ?? null),
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

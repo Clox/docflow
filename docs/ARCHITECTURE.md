@@ -217,7 +217,7 @@ Sender lookup data is stored in SQLite (`data/docflow.sqlite`) using:
 - `senders` (organization-level sender rows)
 - `sender_payment_numbers` (bankgiro/plusgiro + metadata)
 
-Archive structure and rule configuration remain in JSON (`data/archive-structure.json`).
+Archiving rules and archive structure state remain in JSON (`data/archiving-rules.json`).
 
 The system should always extract organisation numbers, bankgiro numbers, and plusgiro numbers before attempting text matching.
 

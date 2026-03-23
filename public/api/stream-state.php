@@ -37,6 +37,7 @@ while (!connection_aborted()) {
     try {
         $config = load_config();
         ensure_job_dispatcher_running($config);
+        maybe_advance_published_archiving_review_session($config, 2);
         $events = read_job_events_since($lastEventId);
         if (count($events) > 0) {
             foreach ($events as $event) {

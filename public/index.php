@@ -19,6 +19,7 @@
             </span>
             <select id="job-list-mode" aria-label="Jobblista">
               <option value="ready">Att granska</option>
+              <option value="needs-review">Behöver ses över</option>
               <option value="processing">Bearbetas</option>
               <option value="archived">Arkiverade</option>
               <option value="all">Alla</option>
@@ -83,6 +84,8 @@
           </button>
         </div>
       </div>
+      <div id="app-notices" class="app-notices hidden"></div>
+      <section id="archived-review-panel" class="archived-review-panel hidden"></section>
 
       <div class="viewer-wrap">
         <div id="ocr-toolbar" class="ocr-toolbar">
@@ -175,6 +178,7 @@
         <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
         <button class="settings-tab" data-settings-tab="labels" type="button">Etiketter</button>
         <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
+        <button class="settings-tab" data-settings-tab="archiving-review" type="button">Granska regeländringar</button>
         <button class="settings-tab" data-settings-tab="jobs" type="button">Jobb</button>
         <button class="settings-tab" data-settings-tab="paths" type="button">Sökvägar</button>
         <button class="settings-tab" data-settings-tab="system" type="button">System</button>
@@ -187,6 +191,7 @@
         <div id="settings-panel-categories" class="settings-panel hidden"></div>
         <div id="settings-panel-labels" class="settings-panel hidden"></div>
         <div id="settings-panel-data-fields" class="settings-panel hidden"></div>
+        <div id="settings-panel-archiving-review" class="settings-panel hidden"></div>
         <div id="settings-panel-jobs" class="settings-panel hidden"></div>
         <div id="settings-panel-paths" class="settings-panel hidden"></div>
         <div id="settings-panel-system" class="settings-panel hidden"></div>
@@ -209,6 +214,19 @@
     <div class="panel-actions">
       <button id="clients-cancel" type="button">Avbryt</button>
       <button id="clients-apply" type="button">Spara</button>
+    </div>
+  </template>
+
+  <template id="settings-template-archiving-review">
+    <h3>Granska regeländringar</h3>
+    <p>Jämför utkastet mot aktiva arkiveringsregler på redan arkiverade jobb. Analysen kör successivt och kan fortsätta även efter publicering.</p>
+    <div id="archiving-review-status" class="settings-inline-notice hidden"></div>
+    <div id="archiving-review-summary" class="archiving-review-summary"></div>
+    <div id="archiving-review-jobs" class="archiving-review-jobs"></div>
+    <div class="panel-actions">
+      <button id="archiving-review-refresh" type="button">Uppdatera jämförelse</button>
+      <button id="archiving-review-reset-draft" type="button">Återställ utkast</button>
+      <button id="archiving-review-publish" type="button">Publicera regler</button>
     </div>
   </template>
 
