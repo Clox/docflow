@@ -51,6 +51,7 @@ try {
 
             claim_and_process_inbox($config, $clients);
             trigger_processing_worker();
+            advance_archiving_review_sessions_background($config, 5, 5);
         } catch (Throwable $e) {
             // Keep the dispatcher alive; the next loop may recover.
         }

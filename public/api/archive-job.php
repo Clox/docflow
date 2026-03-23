@@ -40,10 +40,12 @@ try {
         'selectedCategoryId' => $payload['selectedCategoryId'] ?? null,
         'filename' => $payload['filename'] ?? null,
     ]);
+    $entry = load_job_state_entry_by_id($config, $jobId);
 
     json_response([
         'ok' => true,
         'job' => $job,
+        'entry' => $entry,
     ]);
 } catch (Throwable $e) {
     json_response([

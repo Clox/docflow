@@ -19,7 +19,6 @@
             </span>
             <select id="job-list-mode" aria-label="Jobblista">
               <option value="ready">Att granska</option>
-              <option value="needs-review">Behöver ses över</option>
               <option value="processing">Bearbetas</option>
               <option value="archived">Arkiverade</option>
               <option value="all">Alla</option>
@@ -73,6 +72,7 @@
               <option value="ocr">OCR</option>
               <option value="matches">Matchningar</option>
               <option value="meta">Meta</option>
+              <option value="review" hidden disabled>Granskning</option>
             </select>
           </div>
           <button id="settings-button" type="button" aria-label="Inställningar" title="Inställningar">
@@ -85,7 +85,6 @@
         </div>
       </div>
       <div id="app-notices" class="app-notices hidden"></div>
-      <section id="archived-review-panel" class="archived-review-panel hidden"></section>
 
       <div class="viewer-wrap">
         <div id="ocr-toolbar" class="ocr-toolbar">
@@ -163,6 +162,7 @@
         ></textarea>
         <div id="matches-view" class="matches-view hidden"></div>
         <pre id="meta-view" class="meta-view hidden"></pre>
+        <section id="archived-review-panel" class="archived-review-panel hidden"></section>
       </div>
     </main>
   </div>
@@ -178,7 +178,7 @@
         <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
         <button class="settings-tab" data-settings-tab="labels" type="button">Etiketter</button>
         <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
-        <button class="settings-tab" data-settings-tab="archiving-review" type="button">Granska regeländringar</button>
+        <button class="settings-tab" data-settings-tab="archiving-review" type="button">Granska regeländringar <span class="settings-tab-indicator" aria-hidden="true">●</span></button>
         <button class="settings-tab" data-settings-tab="jobs" type="button">Jobb</button>
         <button class="settings-tab" data-settings-tab="paths" type="button">Sökvägar</button>
         <button class="settings-tab" data-settings-tab="system" type="button">System</button>
@@ -219,14 +219,13 @@
 
   <template id="settings-template-archiving-review">
     <h3>Granska regeländringar</h3>
-    <p>Jämför utkastet mot aktiva arkiveringsregler på redan arkiverade jobb. Analysen kör successivt och kan fortsätta även efter publicering.</p>
+    <p>Jämför utkastet mot aktiva arkiveringsregler på redan arkiverade jobb. Analysen kör successivt och kan fortsätta även efter att reglerna aktiverats.</p>
     <div id="archiving-review-status" class="settings-inline-notice hidden"></div>
     <div id="archiving-review-summary" class="archiving-review-summary"></div>
     <div id="archiving-review-jobs" class="archiving-review-jobs"></div>
     <div class="panel-actions">
-      <button id="archiving-review-refresh" type="button">Uppdatera jämförelse</button>
-      <button id="archiving-review-reset-draft" type="button">Återställ utkast</button>
-      <button id="archiving-review-publish" type="button">Publicera regler</button>
+      <button id="archiving-review-reset-draft" type="button">Kassera utkast</button>
+      <button id="archiving-review-publish" type="button">Aktivera regler</button>
     </div>
   </template>
 

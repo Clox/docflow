@@ -1255,6 +1255,164 @@ function archiving_rules_have_unpublished_changes(): bool
     return json_encode($state['activeArchivingRules'] ?? null) !== json_encode($state['draftArchivingRules'] ?? null);
 }
 
+function archiving_rules_changed_sections(array $active, array $draft): array
+{
+    $changedSections = [];
+    foreach ([
+        'archiveFolders' => 'Arkivstruktur',
+        'labels' => 'Etiketter',
+        'systemLabels' => 'Fördefinerade etiketter',
+        'fields' => 'Egna datafält',
+        'predefinedFields' => 'Fördefinerade datafält',
+        'systemFields' => 'Systemdatafält',
+    ] as $key => $label) {
+        if (json_encode($active[$key] ?? null) !== json_encode($draft[$key] ?? null)) {
+            $changedSections[] = $label;
+        }
+    }
+
+    return $changedSections;
+}
+
+function draft_archiving_review_response_from_session(
+    array $activeRules,
+    array $draftRules,
+    int $activeVersion,
+    array $session,
+    bool $hasUnpublishedChanges
+): array {
+    $changedSections = archiving_rules_changed_sections($activeRules, $draftRules);
+    if (!$hasUnpublishedChanges) {
+        $payload = [
+            'activeArchivingRulesVersion' => $activeVersion,
+            'hasUnpublishedChanges' => false,
+            'changedSections' => [],
+            'summary' => empty_archiving_review_summary(),
+            'jobs' => [],
+            'session' => [
+                'status' => 'idle',
+                'analyzedCount' => 0,
+                'totalCount' => 0,
+                'foundCount' => 0,
+                'remainingCount' => 0,
+            ],
+        ];
+        $payload['signature'] = archiving_rules_state_payload_hash($payload);
+        return $payload;
+    }
+
+    $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
+    $changedItems = [];
+    foreach ($processedJobs as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $type = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
+        if ($type !== 'unchanged') {
+            $changedItems[] = $item;
+        }
+    }
+
+    $payload = [
+        'activeArchivingRulesVersion' => $activeVersion,
+        'hasUnpublishedChanges' => true,
+        'changedSections' => $changedSections,
+        'summary' => is_array($session['summary'] ?? null) ? $session['summary'] : empty_archiving_review_summary(),
+        'jobs' => sort_archiving_review_items($changedItems),
+        'session' => [
+            'status' => is_string($session['status'] ?? null) ? (string) $session['status'] : 'idle',
+            'analyzedCount' => (int) ($session['analyzedCount'] ?? 0),
+            'totalCount' => (int) ($session['totalCount'] ?? 0),
+            'foundCount' => count($changedItems),
+            'remainingCount' => max(
+                0,
+                ((int) ($session['totalCount'] ?? 0))
+                - ((int) ($session['analyzedCount'] ?? 0))
+                + count(is_array($session['pendingJobIds'] ?? null) ? $session['pendingJobIds'] : [])
+            ),
+        ],
+    ];
+    $payload['signature'] = archiving_rules_state_payload_hash($payload);
+
+    return $payload;
+}
+
+function build_archiving_rules_state_payload(array $config, ?int $needsRuleReviewCount = null): array
+{
+    $rulesState = load_archiving_rules_state();
+    $reviewState = load_archiving_rules_review_state();
+    $activeRules = normalize_archiving_rules_set($rulesState['activeArchivingRules'] ?? []);
+    $draftRules = normalize_archiving_rules_set($rulesState['draftArchivingRules'] ?? []);
+    $activeVersion = (int) ($rulesState['activeArchivingRulesVersion'] ?? 1);
+    $hasUnpublishedChanges = json_encode($activeRules) !== json_encode($draftRules);
+    $draftSession = is_array($reviewState['draftSession'] ?? null) ? $reviewState['draftSession'] : empty_draft_archiving_review_session();
+    $publishedSession = is_array($reviewState['publishedSession'] ?? null) ? $reviewState['publishedSession'] : empty_published_archiving_review_session();
+    $draftReview = draft_archiving_review_response_from_session(
+        $activeRules,
+        $draftRules,
+        $activeVersion,
+        $draftSession,
+        $hasUnpublishedChanges
+    );
+
+    return [
+        'activeVersion' => $activeVersion,
+        'hasUnpublishedChanges' => $hasUnpublishedChanges,
+        'needsRuleReviewCount' => $needsRuleReviewCount ?? count(is_array($publishedSession['affectedJobIds'] ?? null) ? $publishedSession['affectedJobIds'] : []),
+        'publishedReview' => [
+            'status' => is_string($publishedSession['status'] ?? null) ? (string) $publishedSession['status'] : 'idle',
+            'analyzedCount' => (int) ($publishedSession['analyzedCount'] ?? 0),
+            'totalCount' => (int) ($publishedSession['totalCount'] ?? 0),
+        ],
+        'draftReview' => $draftReview,
+        'signature' => archiving_rules_state_payload_hash([
+            'activeVersion' => $activeVersion,
+            'hasUnpublishedChanges' => $hasUnpublishedChanges,
+            'needsRuleReviewCount' => $needsRuleReviewCount ?? count(is_array($publishedSession['affectedJobIds'] ?? null) ? $publishedSession['affectedJobIds'] : []),
+            'publishedReview' => [
+                'status' => is_string($publishedSession['status'] ?? null) ? (string) $publishedSession['status'] : 'idle',
+                'analyzedCount' => (int) ($publishedSession['analyzedCount'] ?? 0),
+                'totalCount' => (int) ($publishedSession['totalCount'] ?? 0),
+            ],
+            'draftReview' => $draftReview,
+        ]),
+    ];
+}
+
+function archiving_rules_state_payload_hash(array $payload): string
+{
+    $encoded = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return sha1(is_string($encoded) ? $encoded : '');
+}
+
+function maybe_queue_archiving_rules_update_event(array $config, ?array $payload = null): bool
+{
+    $resolvedPayload = is_array($payload) ? $payload : build_archiving_rules_state_payload($config);
+    $payloadHash = archiving_rules_state_payload_hash($resolvedPayload);
+
+    $shouldQueue = with_archiving_rules_review_lock(static function () use ($payloadHash): bool {
+        $state = load_archiving_rules_review_state();
+        $lastHash = is_string($state['lastStateEventHash'] ?? null) ? (string) $state['lastStateEventHash'] : '';
+        if ($lastHash === $payloadHash) {
+            return false;
+        }
+        $state['lastStateEventHash'] = $payloadHash;
+        save_archiving_rules_review_state($state);
+        return true;
+    });
+
+    if (!$shouldQueue) {
+        return false;
+    }
+
+    append_job_event([
+        'type' => 'archivingRules.update',
+        'archivingRules' => $resolvedPayload,
+    ]);
+
+    return true;
+}
+
 function normalize_archiving_snapshot(mixed $input): ?array
 {
     if (!is_array($input)) {
@@ -1625,7 +1783,16 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
 
     $job['updatedAt'] = now_iso();
     write_json_file($jobPath, $job);
+    if (($job['archived'] ?? false) === true && (
+        array_key_exists('selectedClientDirName', $payload)
+        || array_key_exists('selectedSenderId', $payload)
+        || array_key_exists('selectedCategoryId', $payload)
+        || array_key_exists('filename', $payload)
+    )) {
+        invalidate_archiving_review_job($config, $jobId, true);
+    }
     queue_job_upsert_event($config, $jobId);
+    maybe_queue_archiving_rules_update_event($config);
     return $job;
 }
 
@@ -1664,7 +1831,9 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
         $job['updatedAt'] = now_iso();
         unset($job['archivedAt'], $job['archivedPdfPath']);
         write_json_file($jobPath, $job);
+        invalidate_archiving_review_job($config, $jobId, false);
         queue_job_upsert_event($config, $jobId);
+        maybe_queue_archiving_rules_update_event($config);
         return $job;
     }
 
@@ -1765,7 +1934,9 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $job['archivedPdfPath'] = $targetPath;
     $job['updatedAt'] = now_iso();
     write_json_file($jobPath, $job);
+    invalidate_archiving_review_job($config, $jobId, true);
     queue_job_upsert_event($config, $jobId);
+    maybe_queue_archiving_rules_update_event($config);
 
     return $job;
 }
@@ -6756,19 +6927,21 @@ function normalize_auto_archiving_result(array $result): array
     $fields = [];
     foreach (is_array($result['fields'] ?? null) ? $result['fields'] : [] as $key => $value) {
         $resolvedKey = is_string($key) ? trim($key) : '';
-        if ($resolvedKey === '' || $value === null) {
+        $normalizedValue = normalize_auto_archiving_field_value($value);
+        if ($resolvedKey === '' || $normalizedValue === null) {
             continue;
         }
-        $fields[$resolvedKey] = $value;
+        $fields[$resolvedKey] = $normalizedValue;
     }
 
     $systemFields = [];
     foreach (is_array($result['systemFields'] ?? null) ? $result['systemFields'] : [] as $key => $value) {
         $resolvedKey = is_string($key) ? trim($key) : '';
-        if ($resolvedKey === '' || $value === null) {
+        $normalizedValue = normalize_auto_archiving_field_value($value);
+        if ($resolvedKey === '' || $normalizedValue === null) {
             continue;
         }
-        $systemFields[$resolvedKey] = $value;
+        $systemFields[$resolvedKey] = $normalizedValue;
     }
 
     ksort($fields, SORT_NATURAL);
@@ -6785,6 +6958,33 @@ function normalize_auto_archiving_result(array $result): array
         'archiveFolderId' => is_string($result['archiveFolderId'] ?? null) ? trim((string) $result['archiveFolderId']) : null,
         'archiveFolderPath' => is_string($result['archiveFolderPath'] ?? null) ? trim((string) $result['archiveFolderPath']) : null,
     ];
+}
+
+function normalize_auto_archiving_field_value(mixed $value): mixed
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (is_string($value)) {
+        $trimmed = trim($value);
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    if (is_int($value) || is_float($value)) {
+        return trim((string) $value);
+    }
+
+    if (is_bool($value)) {
+        return $value;
+    }
+
+    if (is_scalar($value)) {
+        $trimmed = trim((string) $value);
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    return $value;
 }
 
 function calculate_auto_archiving_result_from_text(
@@ -7056,75 +7256,348 @@ function archiving_result_diff(array $baseline, array $candidate): array
     ];
 }
 
-function archiving_result_difference_score(array $baseline, array $candidate): int
+function archiving_review_value_is_empty(mixed $value): bool
 {
-    $diff = archiving_result_diff($baseline, $candidate);
-    if (($diff['changed'] ?? false) !== true) {
-        return 0;
+    if ($value === null) {
+        return true;
     }
+    if (is_string($value)) {
+        return trim($value) === '';
+    }
+    if (is_array($value)) {
+        return count($value) === 0;
+    }
+    return false;
+}
 
-    $changes = is_array($diff['changes'] ?? null) ? $diff['changes'] : [];
-    $score = 0;
-    foreach (['principalId', 'senderId', 'categoryId', 'archiveFolderId', 'archiveFolderPath'] as $key) {
-        if (isset($changes[$key])) {
-            $score += 5;
+function archiving_review_change_type(mixed $approved, mixed $active, mixed $draft): string
+{
+    if ($draft === $active) {
+        return 'unchanged';
+    }
+    if ($draft === $approved && $active !== $approved) {
+        return 'improvement';
+    }
+    if ($active === $approved && $draft !== $approved) {
+        return archiving_review_value_is_empty($approved) ? 'info' : 'risk';
+    }
+    return 'info';
+}
+
+function archiving_review_display_maps(array $activeRules, array $draftRules): array
+{
+    $categoryNames = [];
+    $archiveFolderNames = [];
+    foreach (array_merge(
+        build_categories_from_archive_folders(is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : []),
+        build_categories_from_archive_folders(is_array($draftRules['archiveFolders'] ?? null) ? $draftRules['archiveFolders'] : [])
+    ) as $category) {
+        if (!is_array($category)) {
+            continue;
+        }
+        $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
+        $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
+        if ($categoryId !== '' && $categoryName !== '' && !isset($categoryNames[$categoryId])) {
+            $categoryNames[$categoryId] = $categoryName;
+        }
+        $archiveFolderId = is_string($category['archiveFolderId'] ?? null) ? trim((string) $category['archiveFolderId']) : '';
+        $archiveFolderName = is_string($category['archiveFolderName'] ?? null) ? trim((string) $category['archiveFolderName']) : '';
+        if ($archiveFolderId !== '' && $archiveFolderName !== '' && !isset($archiveFolderNames[$archiveFolderId])) {
+            $archiveFolderNames[$archiveFolderId] = $archiveFolderName;
         }
     }
-    if (isset($changes['filename'])) {
-        $score += 3;
+
+    $labelNames = [];
+    foreach (array_merge(
+        array_values(is_array($activeRules['systemLabels'] ?? null) ? $activeRules['systemLabels'] : []),
+        is_array($activeRules['labels'] ?? null) ? $activeRules['labels'] : [],
+        array_values(is_array($draftRules['systemLabels'] ?? null) ? $draftRules['systemLabels'] : []),
+        is_array($draftRules['labels'] ?? null) ? $draftRules['labels'] : []
+    ) as $label) {
+        if (!is_array($label)) {
+            continue;
+        }
+        $id = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+        $name = is_string($label['name'] ?? null) ? trim((string) $label['name']) : '';
+        if ($id !== '' && $name !== '' && !isset($labelNames[$id])) {
+            $labelNames[$id] = $name;
+        }
     }
+
+    $fieldNames = [];
+    foreach (array_merge(
+        is_array($activeRules['fields'] ?? null) ? $activeRules['fields'] : [],
+        is_array($activeRules['predefinedFields'] ?? null) ? $activeRules['predefinedFields'] : [],
+        is_array($activeRules['systemFields'] ?? null) ? $activeRules['systemFields'] : [],
+        is_array($draftRules['fields'] ?? null) ? $draftRules['fields'] : [],
+        is_array($draftRules['predefinedFields'] ?? null) ? $draftRules['predefinedFields'] : [],
+        is_array($draftRules['systemFields'] ?? null) ? $draftRules['systemFields'] : []
+    ) as $field) {
+        if (!is_array($field)) {
+            continue;
+        }
+        $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+        $name = is_string($field['name'] ?? null) ? trim((string) $field['name']) : '';
+        if ($key !== '' && $name !== '' && !isset($fieldNames[$key])) {
+            $fieldNames[$key] = $name;
+        }
+    }
+
+    $clientNames = [];
+    foreach (load_clients() as $client) {
+        if (!is_array($client)) {
+            continue;
+        }
+        $dirName = is_string($client['dirName'] ?? null) ? trim((string) $client['dirName']) : '';
+        if ($dirName !== '') {
+            $clientNames[$dirName] = $dirName;
+        }
+    }
+
+    $senderNames = [];
+    foreach (load_senders() as $sender) {
+        if (!is_array($sender)) {
+            continue;
+        }
+        $id = isset($sender['id']) ? (int) $sender['id'] : 0;
+        $name = is_string($sender['name'] ?? null) ? trim((string) $sender['name']) : '';
+        if ($id > 0) {
+            $senderNames[(string) $id] = $name !== '' ? $name : (string) $id;
+        }
+    }
+
+    return [
+        'categories' => $categoryNames,
+        'archiveFolders' => $archiveFolderNames,
+        'labels' => $labelNames,
+        'fields' => $fieldNames,
+        'clients' => $clientNames,
+        'senders' => $senderNames,
+    ];
+}
+
+function archiving_review_display_value(string $key, mixed $value, array $displayMaps): string
+{
+    if (archiving_review_value_is_empty($value)) {
+        return '—';
+    }
+
+    if ($key === 'principalId') {
+        $resolved = (string) $value;
+        return $displayMaps['clients'][$resolved] ?? $resolved;
+    }
+    if ($key === 'senderId') {
+        $resolved = (string) ((int) $value);
+        return $displayMaps['senders'][$resolved] ?? $resolved;
+    }
+    if ($key === 'categoryId') {
+        $resolved = (string) $value;
+        return $displayMaps['categories'][$resolved] ?? $resolved;
+    }
+    if ($key === 'archiveFolderId') {
+        $resolved = (string) $value;
+        return $displayMaps['archiveFolders'][$resolved] ?? $resolved;
+    }
+
+    return is_scalar($value) ? (string) $value : json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function archiving_review_change_detail(string $type, mixed $approved, mixed $active, mixed $draft): string
+{
+    if ($type === 'improvement') {
+        return 'Matchar nu tidigare godkänt värde.';
+    }
+    if ($type === 'risk') {
+        return 'Det tidigare automatiska värdet matchade tidigare godkänt värde bättre.';
+    }
+    if (archiving_review_value_is_empty($approved) && !archiving_review_value_is_empty($draft)) {
+        return 'Ny information som inte fanns i tidigare godkänt värde.';
+    }
+    if (!archiving_review_value_is_empty($approved) && archiving_review_value_is_empty($draft)) {
+        return 'Tidigare godkänd information skulle försvinna.';
+    }
+    return 'Det automatiska resultatet ändras.';
+}
+
+function archiving_review_scalar_change_item(
+    string $key,
+    string $label,
+    mixed $approved,
+    mixed $active,
+    mixed $draft,
+    array $displayMaps
+): array {
+    $type = archiving_review_change_type($approved, $active, $draft);
+    return [
+        'type' => $type,
+        'field' => $key,
+        'message' => $label . ' ändrad: '
+            . archiving_review_display_value($key, $active, $displayMaps)
+            . ' -> '
+            . archiving_review_display_value($key, $draft, $displayMaps),
+        'detail' => archiving_review_change_detail($type, $approved, $active, $draft),
+    ];
+}
+
+function archiving_review_label_change_item(string $labelName, bool $approvedHasLabel, bool $activeHasLabel, bool $draftHasLabel): ?array
+{
+    if ($draftHasLabel === $activeHasLabel) {
+        return null;
+    }
+
+    if ($draftHasLabel && !$activeHasLabel) {
+        return [
+            'type' => $approvedHasLabel ? 'improvement' : 'info',
+            'field' => 'labels',
+            'message' => 'Etikett tillagd: ' . $labelName,
+            'detail' => $approvedHasLabel
+                ? 'Matchar nu användarens tidigare manuella val.'
+                : 'Etiketten fanns inte tidigare.',
+        ];
+    }
+
+    if (!$draftHasLabel && $activeHasLabel) {
+        return [
+            'type' => $approvedHasLabel ? 'risk' : 'improvement',
+            'field' => 'labels',
+            'message' => 'Etikett borttagen: ' . $labelName,
+            'detail' => $approvedHasLabel
+                ? 'Etiketten fanns tidigare och var godkänd.'
+                : 'Etiketten fanns inte i tidigare godkänt värde.',
+        ];
+    }
+
+    return null;
+}
+
+function archiving_review_change_items(array $approved, array $activeResult, array $draftResult, array $displayMaps): array
+{
+    $draftVsActive = archiving_result_diff($activeResult, $draftResult);
+    if (($draftVsActive['changed'] ?? false) !== true) {
+        return [];
+    }
+
+    $changes = is_array($draftVsActive['changes'] ?? null) ? $draftVsActive['changes'] : [];
+    $items = [];
+
+    foreach ([
+        'principalId' => 'Huvudman',
+        'senderId' => 'Avsändare',
+        'categoryId' => 'Kategori',
+        'filename' => 'Filnamn',
+        'archiveFolderId' => 'Arkivmapp',
+    ] as $key => $label) {
+        if (!isset($changes[$key]) || !is_array($changes[$key])) {
+            continue;
+        }
+        $items[] = archiving_review_scalar_change_item(
+            $key,
+            $label,
+            $approved[$key] ?? null,
+            $changes[$key]['before'] ?? null,
+            $changes[$key]['after'] ?? null,
+            $displayMaps
+        );
+    }
+
     if (isset($changes['labels']) && is_array($changes['labels'])) {
-        $score += count($changes['labels']['added'] ?? []);
-        $score += count($changes['labels']['removed'] ?? []) * 2;
+        $approvedLabels = array_values(array_unique(is_array($approved['labels'] ?? null) ? $approved['labels'] : []));
+        $activeLabels = array_values(array_unique(is_array($changes['labels']['before'] ?? null) ? $changes['labels']['before'] : []));
+        foreach (is_array($changes['labels']['added'] ?? null) ? $changes['labels']['added'] : [] as $labelId) {
+            $item = archiving_review_label_change_item(
+                $displayMaps['labels'][$labelId] ?? $labelId,
+                in_array($labelId, $approvedLabels, true),
+                in_array($labelId, $activeLabels, true),
+                true
+            );
+            if (is_array($item)) {
+                $items[] = $item;
+            }
+        }
+        foreach (is_array($changes['labels']['removed'] ?? null) ? $changes['labels']['removed'] : [] as $labelId) {
+            $item = archiving_review_label_change_item(
+                $displayMaps['labels'][$labelId] ?? $labelId,
+                in_array($labelId, $approvedLabels, true),
+                true,
+                false
+            );
+            if (is_array($item)) {
+                $items[] = $item;
+            }
+        }
     }
-    foreach (['fields', 'systemFields'] as $groupKey) {
+
+    foreach ([
+        'fields' => 'Datafält',
+        'systemFields' => 'Systemdatafält',
+    ] as $groupKey => $groupLabel) {
         if (!is_array($changes[$groupKey] ?? null)) {
             continue;
         }
-        foreach ($changes[$groupKey] as $fieldChange) {
+        foreach ($changes[$groupKey] as $fieldKey => $fieldChange) {
             if (!is_array($fieldChange)) {
                 continue;
             }
-            $score += ($fieldChange['before'] ?? null) === null || ($fieldChange['after'] ?? null) === null ? 2 : 1;
+            $approvedValue = is_array($approved[$groupKey] ?? null) && array_key_exists($fieldKey, $approved[$groupKey])
+                ? $approved[$groupKey][$fieldKey]
+                : null;
+            $before = $fieldChange['before'] ?? null;
+            $after = $fieldChange['after'] ?? null;
+            $type = archiving_review_change_type($approvedValue, $before, $after);
+            $fieldName = $displayMaps['fields'][$fieldKey] ?? $fieldKey;
+            if (archiving_review_value_is_empty($before) && !archiving_review_value_is_empty($after)) {
+                $message = $groupLabel . ' tillagt: ' . $fieldName . ' = ' . archiving_review_display_value($fieldKey, $after, $displayMaps);
+            } elseif (!archiving_review_value_is_empty($before) && archiving_review_value_is_empty($after)) {
+                $message = $groupLabel . ' borttaget: ' . $fieldName . ' (var ' . archiving_review_display_value($fieldKey, $before, $displayMaps) . ')';
+            } else {
+                $message = $groupLabel . ' ändrat: ' . $fieldName . ' '
+                    . archiving_review_display_value($fieldKey, $before, $displayMaps)
+                    . ' -> '
+                    . archiving_review_display_value($fieldKey, $after, $displayMaps);
+            }
+            $items[] = [
+                'type' => $type,
+                'field' => $groupKey . '.' . $fieldKey,
+                'message' => $message,
+                'detail' => archiving_review_change_detail($type, $approvedValue, $before, $after),
+            ];
         }
     }
 
-    return $score;
+    return $items;
 }
 
-function classify_archiving_rule_change(array $approved, array $activeResult, array $draftResult): array
+function classify_archiving_rule_change(array $approved, array $activeResult, array $draftResult, array $displayMaps = []): array
 {
     $activeDiff = archiving_result_diff($approved, $activeResult);
     $draftDiff = archiving_result_diff($approved, $draftResult);
     $draftVsActive = archiving_result_diff($activeResult, $draftResult);
+    $changeItems = archiving_review_change_items($approved, $activeResult, $draftResult, $displayMaps);
 
-    if (($draftVsActive['changed'] ?? false) !== true) {
-        return [
-            'type' => 'unchanged',
-            'activeDiff' => $activeDiff,
-            'draftDiff' => $draftDiff,
-            'draftVsActiveDiff' => $draftVsActive,
-        ];
-    }
-
-    $activeScore = archiving_result_difference_score($approved, $activeResult);
-    $draftScore = archiving_result_difference_score($approved, $draftResult);
-    $type = 'info';
-    if ($draftScore < $activeScore) {
-        $type = 'improvement';
-    } elseif ($draftScore > $activeScore) {
-        $type = 'risk';
-    } elseif (isset(($draftVsActive['changes'] ?? [])['categoryId'])
-        || isset(($draftVsActive['changes'] ?? [])['archiveFolderId'])
-        || isset(($draftVsActive['changes'] ?? [])['filename'])) {
-        $type = 'risk';
+    $type = 'unchanged';
+    foreach ($changeItems as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        if (($item['type'] ?? null) === 'risk') {
+            $type = 'risk';
+            break;
+        }
+        if (($item['type'] ?? null) === 'improvement') {
+            $type = 'improvement';
+            continue;
+        }
+        if ($type === 'unchanged' && ($item['type'] ?? null) === 'info') {
+            $type = 'info';
+        }
     }
 
     return [
-        'type' => $type,
+        'type' => (($draftVsActive['changed'] ?? false) === true) ? $type : 'unchanged',
         'activeDiff' => $activeDiff,
         'draftDiff' => $draftDiff,
         'draftVsActiveDiff' => $draftVsActive,
+        'changeItems' => $changeItems,
     ];
 }
 
@@ -7142,6 +7615,7 @@ function archived_job_review_payload(array $config, string $jobId, ?array $job =
     $snapshot = job_archiving_snapshot($loadedJob);
     $activeResult = archived_job_active_result($config, $jobId, $loadedJob, $resolvedActiveRules, $activeVersion);
     $draft = calculate_auto_archiving_result_for_job($config, $jobId, $resolvedDraftRules, $loadedJob);
+    $displayMaps = archiving_review_display_maps($resolvedActiveRules, $resolvedDraftRules);
     $archivedApproved = is_array($snapshot['userApproved'] ?? null)
         ? normalize_auto_archiving_result($snapshot['userApproved'])
         : current_approved_archiving_for_job($loadedJob);
@@ -7149,7 +7623,8 @@ function archived_job_review_payload(array $config, string $jobId, ?array $job =
     $classification = classify_archiving_rule_change(
         $archivedApproved,
         $activeResult,
-        is_array($draft['autoArchivingResult'] ?? null) ? $draft['autoArchivingResult'] : []
+        is_array($draft['autoArchivingResult'] ?? null) ? $draft['autoArchivingResult'] : [],
+        $displayMaps
     );
 
     return [
@@ -7238,6 +7713,7 @@ function empty_draft_archiving_review_session(): array
         'draftRulesHash' => '',
         'jobIdsHash' => '',
         'jobIds' => [],
+        'pendingJobIds' => [],
         'nextIndex' => 0,
         'analyzedCount' => 0,
         'totalCount' => 0,
@@ -7256,6 +7732,7 @@ function empty_published_archiving_review_session(): array
         'activeRulesHash' => '',
         'jobIdsHash' => '',
         'jobIds' => [],
+        'pendingJobIds' => [],
         'nextIndex' => 0,
         'analyzedCount' => 0,
         'totalCount' => 0,
@@ -7290,6 +7767,10 @@ function normalize_archiving_rules_review_state(mixed $input): array
         array_map(static fn ($value): string => is_string($value) ? trim($value) : '', is_array($draft['jobIds'] ?? null) ? $draft['jobIds'] : []),
         static fn (string $jobId): bool => $jobId !== '' && is_valid_job_id($jobId)
     ));
+    $draft['pendingJobIds'] = array_values(array_unique(array_filter(
+        array_map(static fn ($value): string => is_string($value) ? trim($value) : '', is_array($draft['pendingJobIds'] ?? null) ? $draft['pendingJobIds'] : []),
+        static fn (string $jobId): bool => $jobId !== '' && is_valid_job_id($jobId)
+    )));
     $draft['nextIndex'] = max(0, (int) ($draft['nextIndex'] ?? 0));
     $draft['analyzedCount'] = max(0, (int) ($draft['analyzedCount'] ?? 0));
     $draft['totalCount'] = max(0, (int) ($draft['totalCount'] ?? 0));
@@ -7307,6 +7788,10 @@ function normalize_archiving_rules_review_state(mixed $input): array
         array_map(static fn ($value): string => is_string($value) ? trim($value) : '', is_array($published['jobIds'] ?? null) ? $published['jobIds'] : []),
         static fn (string $jobId): bool => $jobId !== '' && is_valid_job_id($jobId)
     ));
+    $published['pendingJobIds'] = array_values(array_unique(array_filter(
+        array_map(static fn ($value): string => is_string($value) ? trim($value) : '', is_array($published['pendingJobIds'] ?? null) ? $published['pendingJobIds'] : []),
+        static fn (string $jobId): bool => $jobId !== '' && is_valid_job_id($jobId)
+    )));
     $published['nextIndex'] = max(0, (int) ($published['nextIndex'] ?? 0));
     $published['analyzedCount'] = max(0, (int) ($published['analyzedCount'] ?? 0));
     $published['totalCount'] = max(0, (int) ($published['totalCount'] ?? 0));
@@ -7316,10 +7801,12 @@ function normalize_archiving_rules_review_state(mixed $input): array
     )));
     $published['startedAt'] = is_string($published['startedAt'] ?? null) ? $published['startedAt'] : null;
     $published['updatedAt'] = is_string($published['updatedAt'] ?? null) ? $published['updatedAt'] : null;
+    $lastStateEventHash = is_string($decoded['lastStateEventHash'] ?? null) ? trim((string) $decoded['lastStateEventHash']) : '';
 
     return [
         'draftSession' => $draft,
         'publishedSession' => $published,
+        'lastStateEventHash' => $lastStateEventHash,
     ];
 }
 
@@ -7368,6 +7855,162 @@ function archived_job_ids(array $config): array
     return $jobIds;
 }
 
+function archiving_review_summary_from_processed_jobs(array $processedJobs): array
+{
+    $summary = empty_archiving_review_summary();
+    foreach ($processedJobs as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $type = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
+        update_draft_archiving_review_summary($summary, $type);
+    }
+    return $summary;
+}
+
+function archiving_review_session_sync_job_ids(array &$session, array $jobIds): void
+{
+    $jobIds = array_values(array_filter($jobIds, static fn ($jobId): bool => is_string($jobId) && $jobId !== ''));
+    sort($jobIds, SORT_NATURAL);
+    $knownIds = array_values(array_filter(
+        array_map(static fn ($value): string => is_string($value) ? trim($value) : '', is_array($session['jobIds'] ?? null) ? $session['jobIds'] : []),
+        static fn (string $jobId): bool => $jobId !== ''
+    ));
+    $pending = array_values(array_filter(
+        array_map(static fn ($value): string => is_string($value) ? trim($value) : '', is_array($session['pendingJobIds'] ?? null) ? $session['pendingJobIds'] : []),
+        static fn (string $jobId): bool => $jobId !== ''
+    ));
+    $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
+
+    $knownLookup = array_fill_keys($knownIds, true);
+    foreach ($jobIds as $jobId) {
+        if (!isset($knownLookup[$jobId])) {
+            $pending[] = $jobId;
+        }
+    }
+
+    $jobLookup = array_fill_keys($jobIds, true);
+    foreach (array_keys($processedJobs) as $processedJobId) {
+        if (!isset($jobLookup[$processedJobId])) {
+            unset($processedJobs[$processedJobId]);
+        }
+    }
+
+    $pending = array_values(array_unique(array_filter($pending, static fn (string $jobId): bool => isset($jobLookup[$jobId]))));
+    $session['jobIds'] = $jobIds;
+    $session['jobIdsHash'] = archiving_rules_review_job_ids_hash($jobIds);
+    $session['pendingJobIds'] = $pending;
+    $session['processedJobs'] = $processedJobs;
+    $session['totalCount'] = count($jobIds);
+    $session['analyzedCount'] = count($processedJobs);
+    if (count($jobIds) === 0) {
+        $session['nextIndex'] = 0;
+    } else {
+        $session['nextIndex'] = min(max(0, (int) ($session['nextIndex'] ?? 0)), count($jobIds));
+    }
+}
+
+function archiving_review_session_enqueue_job(array &$session, string $jobId): void
+{
+    if ($jobId === '') {
+        return;
+    }
+    $jobIds = is_array($session['jobIds'] ?? null) ? $session['jobIds'] : [];
+    if (!in_array($jobId, $jobIds, true)) {
+        $jobIds[] = $jobId;
+        sort($jobIds, SORT_NATURAL);
+        $session['jobIds'] = array_values($jobIds);
+        $session['jobIdsHash'] = archiving_rules_review_job_ids_hash($session['jobIds']);
+        $session['totalCount'] = count($session['jobIds']);
+    }
+    $pending = is_array($session['pendingJobIds'] ?? null) ? $session['pendingJobIds'] : [];
+    if (!in_array($jobId, $pending, true)) {
+        array_unshift($pending, $jobId);
+        $session['pendingJobIds'] = array_values(array_unique($pending));
+    }
+    $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
+    unset($processedJobs[$jobId]);
+    $session['processedJobs'] = $processedJobs;
+    $session['analyzedCount'] = count($processedJobs);
+    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs);
+    $session['status'] = 'running';
+    $session['updatedAt'] = now_iso();
+}
+
+function archiving_review_session_remove_job(array &$session, string $jobId): void
+{
+    $session['jobIds'] = array_values(array_filter(
+        is_array($session['jobIds'] ?? null) ? $session['jobIds'] : [],
+        static fn ($value): bool => is_string($value) && $value !== $jobId
+    ));
+    $session['pendingJobIds'] = array_values(array_filter(
+        is_array($session['pendingJobIds'] ?? null) ? $session['pendingJobIds'] : [],
+        static fn ($value): bool => is_string($value) && $value !== $jobId
+    ));
+    if (is_array($session['processedJobs'] ?? null)) {
+        unset($session['processedJobs'][$jobId]);
+    }
+    if (is_array($session['affectedJobIds'] ?? null)) {
+        $session['affectedJobIds'] = array_values(array_filter(
+            $session['affectedJobIds'],
+            static fn ($value): bool => is_string($value) && $value !== $jobId
+        ));
+    }
+    $session['jobIdsHash'] = archiving_rules_review_job_ids_hash(is_array($session['jobIds'] ?? null) ? $session['jobIds'] : []);
+    $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
+    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs);
+    $session['totalCount'] = count(is_array($session['jobIds'] ?? null) ? $session['jobIds'] : []);
+    $session['analyzedCount'] = count($processedJobs);
+    $session['nextIndex'] = min(max(0, (int) ($session['nextIndex'] ?? 0)), $session['totalCount']);
+    $session['updatedAt'] = now_iso();
+}
+
+function invalidate_archiving_review_job(array $config, string $jobId, ?bool $isArchived = null): void
+{
+    if (!is_valid_job_id($jobId)) {
+        return;
+    }
+
+    $resolvedArchived = $isArchived;
+    if ($resolvedArchived === null) {
+        $jobDir = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $jobId;
+        $job = load_json_file($jobDir . '/job.json');
+        $resolvedArchived = is_array($job) && (($job['archived'] ?? false) === true);
+    }
+
+    with_archiving_rules_review_lock(static function () use ($config, $jobId, $resolvedArchived): void {
+        $state = load_archiving_rules_review_state();
+
+        if (archiving_rules_have_unpublished_changes()) {
+            $draftSession = is_array($state['draftSession'] ?? null) ? $state['draftSession'] : empty_draft_archiving_review_session();
+            if ($resolvedArchived) {
+                archiving_review_session_enqueue_job($draftSession, $jobId);
+            } else {
+                archiving_review_session_remove_job($draftSession, $jobId);
+            }
+            if (($draftSession['status'] ?? 'idle') === 'complete' && archiving_rules_have_unpublished_changes()) {
+                $draftSession['status'] = !empty($draftSession['pendingJobIds']) ? 'running' : 'complete';
+            }
+            $state['draftSession'] = $draftSession;
+        } else {
+            $state['draftSession'] = empty_draft_archiving_review_session();
+        }
+
+        $publishedSession = is_array($state['publishedSession'] ?? null) ? $state['publishedSession'] : empty_published_archiving_review_session();
+        if ($resolvedArchived) {
+            archiving_review_session_enqueue_job($publishedSession, $jobId);
+            $publishedSession['affectedJobIds'] = array_values(array_filter(
+                is_array($publishedSession['affectedJobIds'] ?? null) ? $publishedSession['affectedJobIds'] : [],
+                static fn ($value): bool => is_string($value) && $value !== $jobId
+            ));
+        } else {
+            archiving_review_session_remove_job($publishedSession, $jobId);
+        }
+        $state['publishedSession'] = $publishedSession;
+        save_archiving_rules_review_state($state);
+    });
+}
+
 function sort_archiving_review_items(array $items): array
 {
     $priority = [
@@ -7399,7 +8042,8 @@ function draft_archiving_review_item(
     array $job,
     array $approved,
     array $activeResult,
-    array $draftResult
+    array $draftResult,
+    array $displayMaps
 ): array {
     return [
         'jobId' => $jobId,
@@ -7407,7 +8051,7 @@ function draft_archiving_review_item(
         'archivedApproved' => normalize_auto_archiving_result($approved),
         'activeAutoResult' => normalize_auto_archiving_result($activeResult),
         'draftAutoResult' => normalize_auto_archiving_result($draftResult),
-        'classification' => classify_archiving_rule_change($approved, $activeResult, $draftResult),
+        'classification' => classify_archiving_rule_change($approved, $activeResult, $draftResult, $displayMaps),
     ];
 }
 
@@ -7437,6 +8081,7 @@ function initialize_draft_archiving_review_session(array $config, array $activeR
         'draftRulesHash' => archiving_rules_hash($draftRules),
         'jobIdsHash' => archiving_rules_review_job_ids_hash($jobIds),
         'jobIds' => $jobIds,
+        'pendingJobIds' => [],
         'nextIndex' => 0,
         'analyzedCount' => 0,
         'totalCount' => count($jobIds),
@@ -7470,6 +8115,7 @@ function collect_archiving_rules_review(array $config, int $chunkSize = 20): arr
         $activeVersion = active_archiving_rules_version();
         $jobIds = archived_job_ids($config);
         $hasUnpublishedChanges = archiving_rules_have_unpublished_changes();
+        $displayMaps = archiving_review_display_maps($activeRules, $draftRules);
 
         if (!$hasUnpublishedChanges) {
             $state['draftSession'] = empty_draft_archiving_review_session();
@@ -7491,19 +8137,29 @@ function collect_archiving_rules_review(array $config, int $chunkSize = 20): arr
         if (!draft_archiving_review_session_is_current($session, $activeRules, $draftRules, $activeVersion, $jobIds)) {
             $session = initialize_draft_archiving_review_session($config, $activeRules, $draftRules, $activeVersion);
         }
+        archiving_review_session_sync_job_ids($session, $jobIds);
 
         $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
+        $pendingJobIds = array_values(array_filter(
+            is_array($session['pendingJobIds'] ?? null) ? $session['pendingJobIds'] : [],
+            static fn ($value): bool => is_string($value) && $value !== ''
+        ));
         $nextIndex = max(0, (int) ($session['nextIndex'] ?? 0));
         $totalCount = count($jobIds);
         $processed = 0;
-        while ($processed < $chunkSize && $nextIndex < $totalCount) {
-            $jobId = $jobIds[$nextIndex];
-            $nextIndex++;
+        while ($processed < $chunkSize && ($pendingJobIds !== [] || $nextIndex < $totalCount)) {
+            if ($pendingJobIds !== []) {
+                $jobId = array_shift($pendingJobIds);
+            } else {
+                $jobId = $jobIds[$nextIndex];
+                $nextIndex++;
+            }
             $processed++;
 
             $jobDir = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $jobId;
             $job = load_json_file($jobDir . '/job.json');
             if (!is_array($job) || ($job['archived'] ?? false) !== true) {
+                unset($processedJobs[$jobId]);
                 continue;
             }
 
@@ -7511,45 +8167,58 @@ function collect_archiving_rules_review(array $config, int $chunkSize = 20): arr
             $activeResult = archived_job_active_result($config, $jobId, $job, $activeRules, $activeVersion);
             $draftPayload = calculate_auto_archiving_result_for_job($config, $jobId, $draftRules, $job);
             $draftResult = normalize_auto_archiving_result($draftPayload['autoArchivingResult'] ?? []);
-            $item = draft_archiving_review_item($jobId, $job, $approved, $activeResult, $draftResult);
+            $item = draft_archiving_review_item($jobId, $job, $approved, $activeResult, $draftResult, $displayMaps);
             $processedJobs[$jobId] = $item;
-
-            $type = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
-            update_draft_archiving_review_summary($session['summary'], $type);
         }
 
         $session['processedJobs'] = $processedJobs;
+        $session['pendingJobIds'] = array_values(array_unique($pendingJobIds));
         $session['nextIndex'] = $nextIndex;
-        $session['analyzedCount'] = min($nextIndex, $totalCount);
+        $session['analyzedCount'] = count($processedJobs);
         $session['totalCount'] = $totalCount;
+        $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs);
         $session['updatedAt'] = now_iso();
-        $session['status'] = $nextIndex >= $totalCount ? 'complete' : 'running';
+        $session['status'] = ($nextIndex >= $totalCount && $session['pendingJobIds'] === []) ? 'complete' : 'running';
         $state['draftSession'] = $session;
         save_archiving_rules_review_state($state);
-
-        $changedItems = [];
-        foreach ($processedJobs as $item) {
-            if (!is_array($item)) {
-                continue;
-            }
-            $type = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
-            if ($type !== 'unchanged') {
-                $changedItems[] = $item;
-            }
-        }
+        $payload = draft_archiving_review_response_from_session(
+            $activeRules,
+            $draftRules,
+            $activeVersion,
+            $session,
+            true
+        );
 
         return [
-            'summary' => is_array($session['summary'] ?? null) ? $session['summary'] : empty_archiving_review_summary(),
-            'jobs' => sort_archiving_review_items($changedItems),
-            'session' => [
-                'status' => (string) ($session['status'] ?? 'idle'),
-                'analyzedCount' => (int) ($session['analyzedCount'] ?? 0),
-                'totalCount' => (int) ($session['totalCount'] ?? 0),
-                'foundCount' => count($changedItems),
-                'remainingCount' => max(0, ((int) ($session['totalCount'] ?? 0)) - ((int) ($session['analyzedCount'] ?? 0))),
+            'summary' => is_array($payload['summary'] ?? null) ? $payload['summary'] : empty_archiving_review_summary(),
+            'jobs' => is_array($payload['jobs'] ?? null) ? $payload['jobs'] : [],
+            'session' => is_array($payload['session'] ?? null) ? $payload['session'] : [
+                'status' => 'idle',
+                'analyzedCount' => 0,
+                'totalCount' => 0,
+                'foundCount' => 0,
+                'remainingCount' => 0,
             ],
         ];
     });
+}
+
+function maybe_advance_draft_archiving_review_session(array $config, int $chunkSize = 10): array
+{
+    if (!archiving_rules_have_unpublished_changes()) {
+        return [
+            'summary' => empty_archiving_review_summary(),
+            'jobs' => [],
+            'session' => [
+                'status' => 'idle',
+                'analyzedCount' => 0,
+                'totalCount' => 0,
+                'foundCount' => 0,
+                'remainingCount' => 0,
+            ],
+        ];
+    }
+    return collect_archiving_rules_review($config, $chunkSize);
 }
 
 function apply_archived_job_rule_review_state(
@@ -7561,18 +8230,30 @@ function apply_archived_job_rule_review_state(
     ?array $proposed = null,
     ?array $diff = null
 ): void {
-    $job['needsRuleReview'] = $needsRuleReview;
-    $job['ruleReviewTargetRulesVersion'] = $activeVersion;
+    $nextJob = $job;
+    $nextJob['needsRuleReview'] = $needsRuleReview;
+    $nextJob['ruleReviewTargetRulesVersion'] = $activeVersion;
     if ($needsRuleReview) {
-        $job['ruleReviewProposedValue'] = normalize_auto_archiving_result(is_array($proposed) ? $proposed : []);
-        $job['ruleReviewDiff'] = is_array($diff) ? $diff : archiving_result_diff(current_approved_archiving_for_job($job), normalize_auto_archiving_result(is_array($proposed) ? $proposed : []));
+        $nextJob['ruleReviewProposedValue'] = normalize_auto_archiving_result(is_array($proposed) ? $proposed : []);
+        $nextJob['ruleReviewDiff'] = is_array($diff) ? $diff : archiving_result_diff(current_approved_archiving_for_job($job), normalize_auto_archiving_result(is_array($proposed) ? $proposed : []));
     } else {
-        $job['lastResolvedArchivingRulesVersion'] = $activeVersion;
-        unset($job['ruleReviewProposedValue'], $job['ruleReviewDiff']);
+        $nextJob['lastResolvedArchivingRulesVersion'] = $activeVersion;
+        unset($nextJob['ruleReviewProposedValue'], $nextJob['ruleReviewDiff']);
     }
-    $job['updatedAt'] = now_iso();
+
+    if (
+        ($job['needsRuleReview'] ?? false) === ($nextJob['needsRuleReview'] ?? false)
+        && (int) ($job['ruleReviewTargetRulesVersion'] ?? 0) === (int) ($nextJob['ruleReviewTargetRulesVersion'] ?? 0)
+        && (int) ($job['lastResolvedArchivingRulesVersion'] ?? 0) === (int) ($nextJob['lastResolvedArchivingRulesVersion'] ?? 0)
+        && json_encode($job['ruleReviewProposedValue'] ?? null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) === json_encode($nextJob['ruleReviewProposedValue'] ?? null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        && json_encode($job['ruleReviewDiff'] ?? null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) === json_encode($nextJob['ruleReviewDiff'] ?? null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+    ) {
+        return;
+    }
+
+    $nextJob['updatedAt'] = now_iso();
     $jobDir = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $jobId;
-    write_json_file($jobDir . '/job.json', $job);
+    write_json_file($jobDir . '/job.json', $nextJob);
     queue_job_upsert_event($config, $jobId);
 }
 
@@ -7586,6 +8267,7 @@ function initialize_published_archiving_review_session(array $config, int $activ
         'activeRulesHash' => archiving_rules_hash($activeRules),
         'jobIdsHash' => archiving_rules_review_job_ids_hash($jobIds),
         'jobIds' => $jobIds,
+        'pendingJobIds' => [],
         'nextIndex' => 0,
         'analyzedCount' => 0,
         'totalCount' => count($jobIds),
@@ -7650,6 +8332,10 @@ function seed_published_archiving_review_session_from_draft(
         max(0, (int) ($draftSession['analyzedCount'] ?? 0))
     );
     $publishedSession['affectedJobIds'] = array_values(array_unique($affectedJobIds));
+    $publishedSession['pendingJobIds'] = array_values(array_unique(array_filter(
+        is_array($draftSession['pendingJobIds'] ?? null) ? $draftSession['pendingJobIds'] : [],
+        static fn ($value): bool => is_string($value) && $value !== ''
+    )));
 }
 
 function ensure_published_archiving_review_session(array $config): array
@@ -7662,6 +8348,7 @@ function ensure_published_archiving_review_session(array $config): array
 
         $session = is_array($state['publishedSession'] ?? null) ? $state['publishedSession'] : empty_published_archiving_review_session();
         if (published_archiving_review_session_is_current($session, $activeVersion, $activeRules, $jobIds)) {
+            archiving_review_session_sync_job_ids($session, $jobIds);
             return $session;
         }
 
@@ -7673,7 +8360,7 @@ function ensure_published_archiving_review_session(array $config): array
             && is_array($draftSession['processedJobs'] ?? null)
         ) {
             seed_published_archiving_review_session_from_draft($config, $session, $draftSession, $activeVersion);
-            if ((int) ($session['nextIndex'] ?? 0) >= (int) ($session['totalCount'] ?? 0)) {
+            if ((int) ($session['nextIndex'] ?? 0) >= (int) ($session['totalCount'] ?? 0) && empty($session['pendingJobIds'])) {
                 $session['status'] = 'complete';
             }
         }
@@ -7698,18 +8385,27 @@ function advance_published_archiving_review_session(array $config, int $chunkSiz
             $state['publishedSession'] = $session;
             save_archiving_rules_review_state($state);
         }
+        archiving_review_session_sync_job_ids($session, $jobIds);
 
-        if (($session['status'] ?? 'idle') === 'complete') {
+        if (($session['status'] ?? 'idle') === 'complete' && empty($session['pendingJobIds'])) {
             return $session;
         }
 
         $nextIndex = max(0, (int) ($session['nextIndex'] ?? 0));
         $totalCount = count($jobIds);
         $affectedJobIds = is_array($session['affectedJobIds'] ?? null) ? $session['affectedJobIds'] : [];
+        $pendingJobIds = array_values(array_filter(
+            is_array($session['pendingJobIds'] ?? null) ? $session['pendingJobIds'] : [],
+            static fn ($value): bool => is_string($value) && $value !== ''
+        ));
         $processed = 0;
-        while ($processed < $chunkSize && $nextIndex < $totalCount) {
-            $jobId = $jobIds[$nextIndex];
-            $nextIndex++;
+        while ($processed < $chunkSize && ($pendingJobIds !== [] || $nextIndex < $totalCount)) {
+            if ($pendingJobIds !== []) {
+                $jobId = array_shift($pendingJobIds);
+            } else {
+                $jobId = $jobIds[$nextIndex];
+                $nextIndex++;
+            }
             $processed++;
 
             $jobDir = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $jobId;
@@ -7739,12 +8435,13 @@ function advance_published_archiving_review_session(array $config, int $chunkSiz
 
         $session['jobIds'] = $jobIds;
         $session['jobIdsHash'] = archiving_rules_review_job_ids_hash($jobIds);
+        $session['pendingJobIds'] = array_values(array_unique($pendingJobIds));
         $session['nextIndex'] = $nextIndex;
         $session['analyzedCount'] = min($nextIndex, $totalCount);
         $session['totalCount'] = $totalCount;
         $session['affectedJobIds'] = array_values(array_unique($affectedJobIds));
         $session['updatedAt'] = now_iso();
-        $session['status'] = $nextIndex >= $totalCount ? 'complete' : 'running';
+        $session['status'] = ($nextIndex >= $totalCount && $session['pendingJobIds'] === []) ? 'complete' : 'running';
         $state['publishedSession'] = $session;
         save_archiving_rules_review_state($state);
         return $session;
@@ -7771,6 +8468,13 @@ function maybe_advance_published_archiving_review_session(array $config, int $ch
         return $session;
     }
     return advance_published_archiving_review_session($config, $chunkSize);
+}
+
+function advance_archiving_review_sessions_background(array $config, int $draftChunkSize = 5, int $publishedChunkSize = 5): void
+{
+    maybe_advance_draft_archiving_review_session($config, $draftChunkSize);
+    maybe_advance_published_archiving_review_session($config, $publishedChunkSize);
+    maybe_queue_archiving_rules_update_event($config);
 }
 
 function reprocess_unarchived_jobs_for_active_archiving_rules(array $config): array
@@ -7866,16 +8570,14 @@ function normalize_review_field_values(mixed $input, array $allowedKeys): array
     $decoded = is_array($input) ? $input : [];
     foreach ($decoded as $key => $value) {
         $resolvedKey = is_string($key) ? trim($key) : '';
-        if ($resolvedKey === '' || !isset($allowedKeys[$resolvedKey]) || $value === null) {
+        if ($resolvedKey === '' || !isset($allowedKeys[$resolvedKey])) {
             continue;
         }
-        if (is_string($value)) {
-            $value = trim($value);
-            if ($value === '') {
-                continue;
-            }
+        $normalizedValue = normalize_auto_archiving_field_value($value);
+        if ($normalizedValue === null) {
+            continue;
         }
-        $values[$resolvedKey] = $value;
+        $values[$resolvedKey] = $normalizedValue;
     }
     ksort($values, SORT_NATURAL);
     return $values;
@@ -8058,17 +8760,9 @@ function save_archived_job_review(array $config, string $jobId, string $action, 
     $job['updatedAt'] = now_iso();
     unset($job['ruleReviewProposedValue'], $job['ruleReviewDiff']);
     write_json_file($jobPath, $job);
-    with_archiving_rules_review_lock(static function () use ($jobId): void {
-        $reviewState = load_archiving_rules_review_state();
-        $publishedSession = is_array($reviewState['publishedSession'] ?? null) ? $reviewState['publishedSession'] : empty_published_archiving_review_session();
-        $publishedSession['affectedJobIds'] = array_values(array_diff(
-            is_array($publishedSession['affectedJobIds'] ?? null) ? $publishedSession['affectedJobIds'] : [],
-            [$jobId]
-        ));
-        $reviewState['publishedSession'] = $publishedSession;
-        save_archiving_rules_review_state($reviewState);
-    });
+    invalidate_archiving_review_job($config, $jobId, true);
     queue_job_upsert_event($config, $jobId);
+    maybe_queue_archiving_rules_update_event($config);
 
     return $job;
 }

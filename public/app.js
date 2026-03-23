@@ -19,6 +19,7 @@ const ocrPageImageOpacityEl = document.getElementById('ocr-page-image-opacity');
 const matchesViewEl = document.getElementById('matches-view');
 const metaViewEl = document.getElementById('meta-view');
 const viewModeEl = document.getElementById('view-mode');
+const reviewViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="review"]') : null;
 const ocrSearchBarEl = document.getElementById('ocr-search-bar');
 const ocrSearchInputEl = document.getElementById('ocr-search-input');
 const ocrSearchRegexEl = document.getElementById('ocr-search-regex');
@@ -38,6 +39,7 @@ const archivedReviewPanelEl = document.getElementById('archived-review-panel');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
 const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]'));
+const archivingReviewSettingsTabEl = document.querySelector('[data-settings-tab="archiving-review"]');
 const settingsPanelActionsHostEl = document.getElementById('settings-panel-actions-host');
 const settingsCloseEl = document.getElementById('settings-close');
 const selectedJobPanelEl = document.getElementById('selected-job-panel');
@@ -125,7 +127,6 @@ let extractionFieldsViewSystemEl = null;
 let archivingReviewStatusEl = null;
 let archivingReviewSummaryEl = null;
 let archivingReviewJobsEl = null;
-let archivingReviewRefreshEl = null;
 let archivingReviewResetDraftEl = null;
 let archivingReviewPublishEl = null;
 let labelsTabEls = [];
@@ -153,7 +154,29 @@ let state = {
       status: 'idle',
       analyzedCount: 0,
       totalCount: 0
-    }
+    },
+    draftReview: {
+      activeArchivingRulesVersion: 1,
+      hasUnpublishedChanges: false,
+      changedSections: [],
+      summary: {
+        testedJobs: 0,
+        unchanged: 0,
+        improvements: 0,
+        risks: 0,
+        info: 0
+      },
+      jobs: [],
+      session: {
+        status: 'idle',
+        analyzedCount: 0,
+        totalCount: 0,
+        foundCount: 0,
+        remainingCount: 0
+      },
+      signature: ''
+    },
+    signature: ''
   }
 };
 
@@ -210,7 +233,6 @@ let currentViewMode = 'pdf';
 let currentOcrSource = 'merged';
 let currentOcrZoom = 100;
 let currentOcrDocumentMode = 'text';
-let archivingReviewPollTimer = null;
 let ocrShowPageImage = false;
 let ocrPageImageBlend = 0.5;
 let ocrRequestSeq = 0;
@@ -300,14 +322,16 @@ const loadedSettingsPanels = new Set();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
-const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta']);
-const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'needs-review', 'processing', 'archived']);
+const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta', 'review']);
+const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'processing', 'archived']);
 
 let senderMergeState = null;
 let currentJobListMode = 'ready';
 let archivingRulesReviewPayload = null;
+let archivingRulesReviewPayloadSignature = '';
 let archivedJobReviewPayload = null;
 let archivedReviewRequestSeq = 0;
+let renderedArchivingReviewSignature = '';
 let extractionFieldsDraft = [];
 let predefinedExtractionFieldsDraft = [];
 let systemExtractionFieldsDraft = [];
@@ -616,15 +640,21 @@ function updatePdfFrameWindow(jobId) {
     return;
   }
 
-  const selectedIndex = state.readyJobs.findIndex((job) => job.id === jobId);
+  const visibleJobs = displayedJobsForCurrentListMode();
+  const selectedIndex = visibleJobs.findIndex((job) => job.id === jobId);
   if (selectedIndex < 0) {
-    clearPdfFrames();
+    setPdfFrameJob(0, jobId);
+    setPdfFrameJob(1, '');
+    setPdfFrameJob(2, '');
+    pdfFrameEls.forEach((frameEl, frameIndex) => {
+      frameEl.classList.toggle('active', frameIndex === 0);
+    });
     return;
   }
 
-  const prevId = selectedIndex > 0 ? state.readyJobs[selectedIndex - 1].id : '';
-  const currId = state.readyJobs[selectedIndex].id;
-  const nextId = selectedIndex < state.readyJobs.length - 1 ? state.readyJobs[selectedIndex + 1].id : '';
+  const prevId = selectedIndex > 0 ? visibleJobs[selectedIndex - 1].id : '';
+  const currId = visibleJobs[selectedIndex].id;
+  const nextId = selectedIndex < visibleJobs.length - 1 ? visibleJobs[selectedIndex + 1].id : '';
   const slotJobIds = [prevId, currId, nextId];
   const slotFrameIndexes = [-1, -1, -1];
   const freeFrameIndexes = pdfFrameEls.map((_, index) => index);
@@ -680,8 +710,76 @@ function updatePdfFrameWindow(jobId) {
   });
 }
 
+function draftAffectedArchivedJobIds() {
+  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.draftReview);
+  return new Set(
+    (Array.isArray(payload.jobs) ? payload.jobs : [])
+      .map((item) => item && typeof item.jobId === 'string' ? item.jobId : '')
+      .filter((jobId) => jobId !== '')
+  );
+}
+
+function jobHasDraftReviewChange(jobId) {
+  return typeof jobId === 'string' && jobId !== '' && draftAffectedArchivedJobIds().has(jobId);
+}
+
+function jobSupportsArchivedReview(job) {
+  return !!(job && job.archived === true && ((job.needsRuleReview === true) || jobHasDraftReviewChange(job.id)));
+}
+
+function jobsNeedingRuleReview() {
+  return (Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
+    .filter((job) => job && job.archived === true && job.needsRuleReview === true);
+}
+
+function displayedArchivedReviewJobsForReadyMode() {
+  const draftJobIds = draftAffectedArchivedJobIds();
+  const jobsById = new Map(
+    (Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
+      .filter((job) => job && typeof job.id === 'string' && job.id !== '')
+      .map((job) => [job.id, job])
+  );
+  const orderedIds = [];
+  jobsNeedingRuleReview().forEach((job) => {
+    if (job && typeof job.id === 'string' && job.id !== '') {
+      orderedIds.push(job.id);
+    }
+  });
+  Array.from(draftJobIds).forEach((jobId) => {
+    if (!orderedIds.includes(jobId)) {
+      orderedIds.push(jobId);
+    }
+  });
+  return orderedIds
+    .map((jobId) => jobsById.get(jobId) || null)
+    .filter((job) => !!job);
+}
+
+function syncReviewViewModeAvailability(job, options = {}) {
+  const allowFallback = options.allowFallback !== false;
+  const available = jobSupportsArchivedReview(job);
+
+  if (reviewViewOptionEl instanceof HTMLOptionElement) {
+    reviewViewOptionEl.hidden = !available;
+    reviewViewOptionEl.disabled = !available;
+  }
+
+  if (!available && currentViewMode === 'review' && allowFallback) {
+    setViewMode('pdf');
+    return false;
+  }
+
+  if (available && currentViewMode === 'review') {
+    viewModeEl.value = 'review';
+  }
+
+  return available;
+}
+
 function setViewerJob(jobId) {
-  if (currentViewMode === 'ocr') {
+  if (currentViewMode === 'review') {
+    setViewerReview(jobId);
+  } else if (currentViewMode === 'ocr') {
     setViewerOcr(jobId);
   } else if (currentViewMode === 'matches') {
     setViewerMatches(jobId);
@@ -759,6 +857,7 @@ function setViewerPdf(jobId) {
   setOcrSourceTabsVisible(false);
   setOcrControlsVisible(false);
   setOcrPageImageToggleVisible(false);
+  archivedReviewPanelEl.classList.add('hidden');
   ocrPagesViewEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
@@ -784,6 +883,7 @@ async function setViewerOcr(jobId) {
   setOcrSourceTabsVisible(true);
   setOcrControlsVisible(true);
   setOcrPageImageToggleVisible(true);
+  archivedReviewPanelEl.classList.add('hidden');
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
@@ -1017,6 +1117,7 @@ async function setViewerMatches(jobId) {
   setOcrSourceTabsVisible(false);
   setOcrControlsVisible(false);
   setOcrPageImageToggleVisible(false);
+  archivedReviewPanelEl.classList.add('hidden');
   ocrPagesViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
@@ -1071,6 +1172,7 @@ async function setViewerMeta(jobId) {
   setOcrSourceTabsVisible(false);
   setOcrControlsVisible(false);
   setOcrPageImageToggleVisible(false);
+  archivedReviewPanelEl.classList.add('hidden');
   ocrPagesViewEl.classList.add('hidden');
   pdfStackEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
@@ -1110,6 +1212,39 @@ async function setViewerMeta(jobId) {
       return;
     }
     metaViewEl.textContent = 'Kunde inte ladda metadata.';
+  }
+}
+
+async function setViewerReview(jobId) {
+  setOcrSearchVisible(false);
+  setOcrSourceTabsVisible(false);
+  setOcrControlsVisible(false);
+  setOcrPageImageToggleVisible(false);
+  ocrPagesViewEl.classList.add('hidden');
+  pdfStackEl.classList.add('hidden');
+  ocrHighlightViewEl.classList.add('hidden');
+  ocrViewEl.classList.add('hidden');
+  matchesViewEl.classList.add('hidden');
+  metaViewEl.classList.add('hidden');
+  archivedReviewPanelEl.classList.remove('hidden');
+
+  if (!jobId) {
+    archivedJobReviewPayload = null;
+    renderArchivedReviewPanel();
+    return;
+  }
+
+  const selectedJob = findJobById(jobId);
+  if (!jobSupportsArchivedReview(selectedJob)) {
+    archivedJobReviewPayload = null;
+    renderArchivedReviewPanel();
+    return;
+  }
+
+  try {
+    await loadArchivedReview(jobId);
+  } catch (error) {
+    renderArchivedReviewPanel();
   }
 }
 
@@ -1156,7 +1291,7 @@ function renderAppNotices() {
     const notice = document.createElement('div');
     notice.className = 'app-notice is-warning';
     const text = document.createElement('span');
-    text.textContent = 'Du har opublicerade ändringar i arkiveringsreglerna.';
+    text.textContent = 'Det finns ett utkast till arkiveringsregler som ännu inte är aktiverat.';
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = 'Granska ändringar';
@@ -1167,22 +1302,9 @@ function renderAppNotices() {
     notices.push(notice);
   }
 
-  const publishedReview = state.archivingRules && state.archivingRules.publishedReview && typeof state.archivingRules.publishedReview === 'object'
-    ? state.archivingRules.publishedReview
-    : {};
-  const publishedReviewStatus = typeof publishedReview.status === 'string' ? publishedReview.status : 'idle';
-  const publishedAnalyzedCount = Number.parseInt(String(publishedReview.analyzedCount || 0), 10) || 0;
-  const publishedTotalCount = Number.parseInt(String(publishedReview.totalCount || 0), 10) || 0;
-  if (publishedReviewStatus === 'running' && publishedTotalCount > 0) {
-    const notice = document.createElement('div');
-    notice.className = 'app-notice is-info';
-    const text = document.createElement('span');
-    text.textContent = `Analyserar gamla arkiverade jobb... ${publishedAnalyzedCount} / ${publishedTotalCount} analyserade. Fler jobb kan tillkomma medan analysen fortsätter.`;
-    notice.appendChild(text);
-    notices.push(notice);
-  }
-
-  const needsRuleReviewCount = Number.parseInt(String(state.archivingRules?.needsRuleReviewCount || 0), 10) || 0;
+  const needsRuleReviewCount = Array.isArray(state.archivedJobs)
+    ? state.archivedJobs.filter((job) => job && job.needsRuleReview === true).length
+    : (Number.parseInt(String(state.archivingRules?.needsRuleReviewCount || 0), 10) || 0);
   if (needsRuleReviewCount > 0) {
     const notice = document.createElement('div');
     notice.className = 'app-notice is-info';
@@ -1192,7 +1314,12 @@ function renderAppNotices() {
     button.type = 'button';
     button.textContent = 'Visa jobb';
     button.addEventListener('click', () => {
-      setJobListMode('needs-review');
+      const firstReviewJob = jobsNeedingRuleReview()[0] || null;
+      setJobListMode('ready');
+      if (firstReviewJob && typeof firstReviewJob.id === 'string') {
+        applySelectedJobId(firstReviewJob.id);
+        setViewMode('review');
+      }
     });
     notice.append(text, button);
     notices.push(notice);
@@ -1200,35 +1327,130 @@ function renderAppNotices() {
 
   if (notices.length === 0) {
     appNoticesEl.classList.add('hidden');
+    syncArchivingReviewTabIndicator();
     return;
   }
 
   appNoticesEl.classList.remove('hidden');
   appNoticesEl.replaceChildren(...notices);
+  syncArchivingReviewTabIndicator();
+}
+
+function syncArchivingReviewTabIndicator() {
+  if (!(archivingReviewSettingsTabEl instanceof HTMLElement)) {
+    return;
+  }
+  const hasChanges = state.archivingRules && state.archivingRules.hasUnpublishedChanges === true;
+  archivingReviewSettingsTabEl.classList.toggle('has-unpublished-changes', hasChanges);
+  archivingReviewSettingsTabEl.title = hasChanges
+    ? 'Det finns ett utkast till arkiveringsregler som ännu inte är aktiverat.'
+    : '';
 }
 
 function deepCloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function stopArchivingReviewPolling() {
-  if (archivingReviewPollTimer !== null) {
-    window.clearTimeout(archivingReviewPollTimer);
-    archivingReviewPollTimer = null;
+function emptyArchivingReviewPayload() {
+  return {
+    activeArchivingRulesVersion: 1,
+    hasUnpublishedChanges: false,
+    changedSections: [],
+    summary: {
+      testedJobs: 0,
+      unchanged: 0,
+      improvements: 0,
+      risks: 0,
+      info: 0,
+    },
+    jobs: [],
+    session: {
+      status: 'idle',
+      analyzedCount: 0,
+      totalCount: 0,
+      foundCount: 0,
+      remainingCount: 0,
+    },
+    signature: '',
+  };
+}
+
+function normalizeArchivingReviewPayload(payload) {
+  const next = payload && typeof payload === 'object' ? payload : {};
+  const summary = next.summary && typeof next.summary === 'object' ? next.summary : {};
+  const session = next.session && typeof next.session === 'object' ? next.session : {};
+  const normalized = {
+    activeArchivingRulesVersion: Number.parseInt(String(next.activeArchivingRulesVersion || 1), 10) || 1,
+    hasUnpublishedChanges: next.hasUnpublishedChanges === true,
+    changedSections: Array.isArray(next.changedSections) ? next.changedSections.filter((value) => typeof value === 'string' && value.trim()) : [],
+    summary: {
+      testedJobs: Number.parseInt(String(summary.testedJobs || 0), 10) || 0,
+      unchanged: Number.parseInt(String(summary.unchanged || 0), 10) || 0,
+      improvements: Number.parseInt(String(summary.improvements || 0), 10) || 0,
+      risks: Number.parseInt(String(summary.risks || 0), 10) || 0,
+      info: Number.parseInt(String(summary.info || 0), 10) || 0,
+    },
+    jobs: Array.isArray(next.jobs) ? next.jobs : [],
+    session: {
+      status: typeof session.status === 'string' ? session.status : 'idle',
+      analyzedCount: Number.parseInt(String(session.analyzedCount || 0), 10) || 0,
+      totalCount: Number.parseInt(String(session.totalCount || 0), 10) || 0,
+      foundCount: Number.parseInt(String(session.foundCount || 0), 10) || 0,
+      remainingCount: Number.parseInt(String(session.remainingCount || 0), 10) || 0,
+    },
+    signature: typeof next.signature === 'string' ? next.signature : '',
+  };
+
+  if (!normalized.signature) {
+    normalized.signature = JSON.stringify(normalized);
+  }
+
+  return normalized;
+}
+
+function normalizeArchivingRulesStatePayload(payload, fallback = state.archivingRules) {
+  const next = payload && typeof payload === 'object' ? payload : {};
+  return {
+    activeVersion: Number.parseInt(String(next.activeVersion || fallback.activeVersion || 1), 10) || 1,
+    hasUnpublishedChanges: next.hasUnpublishedChanges === true,
+    needsRuleReviewCount: Number.parseInt(String(next.needsRuleReviewCount || 0), 10) || 0,
+    publishedReview: next.publishedReview && typeof next.publishedReview === 'object'
+      ? {
+        status: typeof next.publishedReview.status === 'string' ? next.publishedReview.status : 'idle',
+        analyzedCount: Number.parseInt(String(next.publishedReview.analyzedCount || 0), 10) || 0,
+        totalCount: Number.parseInt(String(next.publishedReview.totalCount || 0), 10) || 0,
+      }
+      : fallback.publishedReview,
+    draftReview: normalizeArchivingReviewPayload(next.draftReview),
+    signature: typeof next.signature === 'string' ? next.signature : '',
+  };
+}
+
+function syncArchivingReviewPayloadFromState(force = false) {
+  const nextPayload = normalizeArchivingReviewPayload(state.archivingRules && state.archivingRules.draftReview);
+  if (!force && archivingRulesReviewPayloadSignature === nextPayload.signature) {
+    return;
+  }
+
+  archivingRulesReviewPayload = nextPayload;
+  archivingRulesReviewPayloadSignature = nextPayload.signature;
+  if (activeSettingsTabId === 'archiving-review' && !settingsModalEl.classList.contains('hidden')) {
+    renderArchivingRuleReview(force);
   }
 }
 
-function scheduleArchivingReviewPoll(delay = 1250) {
-  stopArchivingReviewPolling();
-  archivingReviewPollTimer = window.setTimeout(() => {
-    archivingReviewPollTimer = null;
-    if (activeSettingsTabId !== 'archiving-review' || settingsModalEl.classList.contains('hidden')) {
-      return;
-    }
-    loadArchivingRuleReview().catch(() => {
-      stopArchivingReviewPolling();
+function applyArchivingRulesStatePayload(payload, options = {}) {
+  state.archivingRules = normalizeArchivingRulesStatePayload(payload, state.archivingRules);
+  renderAppNotices();
+  syncArchivingReviewTabIndicator();
+  syncArchivingReviewPayloadFromState(options.forceRender === true);
+  renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
+  refreshSelection();
+  if (currentViewMode === 'review' && selectedJobId) {
+    loadArchivedReview(selectedJobId, true).catch(() => {
+      renderArchivedReviewPanel();
     });
-  }, delay);
+  }
 }
 
 function findReviewLabelName(payload, labelId) {
@@ -1250,7 +1472,10 @@ function reviewFieldDefinitions(payload, system = false) {
 
 function ensureArchivedReviewDraft(jobId, payload) {
   const existing = archivedReviewDraftByJobId.get(jobId);
-  if (existing && existing._signature === jobStateSignature(findJobById(jobId))) {
+  const draftSignature = typeof payload?._draftSignature === 'string'
+    ? payload._draftSignature
+    : jobStateSignature(findJobById(jobId));
+  if (existing && existing._signature === draftSignature) {
     return existing;
   }
 
@@ -1265,7 +1490,7 @@ function ensureArchivedReviewDraft(jobId, payload) {
     labels: Array.isArray(source.labels) ? [...source.labels] : [],
     fields: source.fields && typeof source.fields === 'object' ? deepCloneJson(source.fields) : {},
     systemFields: source.systemFields && typeof source.systemFields === 'object' ? deepCloneJson(source.systemFields) : {},
-    _signature: jobStateSignature(findJobById(jobId)),
+    _signature: draftSignature,
   };
   archivedReviewDraftByJobId.set(jobId, draft);
   return draft;
@@ -1370,7 +1595,8 @@ async function saveArchivedReviewAction(action) {
   loadedMetaJobId = '';
   loadedMatchesJobId = '';
   loadedOcrJobId = '';
-  await fetchState({ force: true });
+  applyStateEntry(result.entry);
+  renderArchivedReviewPanel();
 }
 
 async function loadArchivedReview(jobId, force = false) {
@@ -1381,15 +1607,20 @@ async function loadArchivedReview(jobId, force = false) {
   }
 
   const selectedJob = findJobById(jobId);
-  if (!selectedJob || selectedJob.archived !== true || selectedJob.needsRuleReview !== true) {
+  if (!selectedJob || !jobSupportsArchivedReview(selectedJob)) {
     archivedJobReviewPayload = null;
     renderArchivedReviewPanel();
     return;
   }
 
+  const reviewStateSignature = typeof state.archivingRules?.signature === 'string'
+    ? state.archivingRules.signature
+    : '';
   if (!force && archivedJobReviewPayload && archivedJobReviewPayload.jobId === jobId && archivedJobReviewPayload._jobSignature === jobStateSignature(selectedJob)) {
-    renderArchivedReviewPanel();
-    return;
+    if (archivedJobReviewPayload._reviewStateSignature === reviewStateSignature) {
+      renderArchivedReviewPanel();
+      return;
+    }
   }
 
   const requestSeq = ++archivedReviewRequestSeq;
@@ -1397,6 +1628,7 @@ async function loadArchivedReview(jobId, force = false) {
     jobId,
     loading: true,
     _jobSignature: jobStateSignature(selectedJob),
+    _reviewStateSignature: reviewStateSignature,
   };
   renderArchivedReviewPanel();
 
@@ -1411,6 +1643,13 @@ async function loadArchivedReview(jobId, force = false) {
   archivedJobReviewPayload = {
     ...payload,
     _jobSignature: jobStateSignature(selectedJob),
+    _reviewStateSignature: reviewStateSignature,
+    _draftSignature: JSON.stringify({
+      archivedValue: payload && payload.archivedValue ? payload.archivedValue : null,
+      activeAutoResult: payload && payload.activeAutoResult ? payload.activeAutoResult : null,
+      draftAutoResult: payload && payload.draftAutoResult ? payload.draftAutoResult : null,
+      reviewStateSignature,
+    }),
   };
   renderArchivedReviewPanel();
 }
@@ -1421,7 +1660,7 @@ function renderArchivedReviewPanel() {
   }
 
   const selectedJob = findJobById(selectedJobId);
-  if (!selectedJob || selectedJob.archived !== true || selectedJob.needsRuleReview !== true) {
+  if (!selectedJob || !jobSupportsArchivedReview(selectedJob)) {
     archivedReviewPanelEl.classList.add('hidden');
     archivedReviewPanelEl.replaceChildren();
     return;
@@ -1431,6 +1670,7 @@ function renderArchivedReviewPanel() {
   const payload = archivedJobReviewPayload && archivedJobReviewPayload.jobId === selectedJob.id
     ? archivedJobReviewPayload
     : null;
+  const reviewIsActionable = selectedJob.needsRuleReview === true;
 
   if (!payload || payload.loading === true) {
     archivedReviewPanelEl.textContent = 'Laddar jobbgranskning...';
@@ -1450,12 +1690,39 @@ function renderArchivedReviewPanel() {
   const classification = payload.classification && typeof payload.classification === 'object'
     ? String(payload.classification.type || 'info')
     : 'info';
-  summary.textContent = classification === 'risk'
-    ? 'Utkastet innebär en risk jämfört med nuvarande aktiva regler.'
-    : classification === 'improvement'
-    ? 'Utkastet ser ut att förbättra autoarkiveringen.'
-    : 'De nya reglerna ändrar autoresultatet och bör granskas.';
+  if (!reviewIsActionable) {
+    summary.textContent = 'Det här är en förhandsgranskning av hur utkastet skulle påverka jobbet.';
+  } else {
+    summary.textContent = classification === 'risk'
+      ? 'Det nya förslaget avviker på punkter som bör granskas.'
+      : classification === 'improvement'
+      ? 'Det nya förslaget ligger närmare tidigare godkänt värde.'
+      : 'Det nya förslaget ändrar autoresultatet.';
+  }
   header.append(title, summary);
+  const changeItems = Array.isArray(payload.classification && payload.classification.changeItems)
+    ? payload.classification.changeItems
+    : [];
+  if (changeItems.length > 0) {
+    const list = document.createElement('ul');
+    list.className = 'archiving-review-change-list archived-review-change-list';
+    changeItems.forEach((item) => {
+      const row = document.createElement('li');
+      row.className = `archiving-review-change is-${item && item.type ? item.type : 'info'}`;
+      const message = document.createElement('div');
+      message.className = 'archiving-review-change-message';
+      message.textContent = item && typeof item.message === 'string' ? item.message : '';
+      row.appendChild(message);
+      if (item && typeof item.detail === 'string' && item.detail) {
+        const detail = document.createElement('div');
+        detail.className = 'archiving-review-change-detail';
+        detail.textContent = item.detail;
+        row.appendChild(detail);
+      }
+      list.appendChild(row);
+    });
+    header.appendChild(list);
+  }
   wrapper.appendChild(header);
 
   const columns = document.createElement('div');
@@ -1496,7 +1763,10 @@ function renderArchivedReviewPanel() {
       proposedSelect.appendChild(node);
     });
     proposedSelect.value = currentValue || '';
-    proposedSelect.addEventListener('change', () => onChange(proposedSelect.value));
+    proposedSelect.disabled = !reviewIsActionable;
+    if (reviewIsActionable) {
+      proposedSelect.addEventListener('change', () => onChange(proposedSelect.value));
+    }
     proposedGroup.append(proposedLabel, proposedSelect);
     proposedColumn.appendChild(proposedGroup);
   };
@@ -1556,9 +1826,12 @@ function renderArchivedReviewPanel() {
   const proposedFilenameInput = document.createElement('input');
   proposedFilenameInput.type = 'text';
   proposedFilenameInput.value = draft.filename || '';
-  proposedFilenameInput.addEventListener('input', () => {
-    draft.filename = proposedFilenameInput.value;
-  });
+  proposedFilenameInput.disabled = !reviewIsActionable;
+  if (reviewIsActionable) {
+    proposedFilenameInput.addEventListener('input', () => {
+      draft.filename = proposedFilenameInput.value;
+    });
+  }
   proposedFilename.appendChild(proposedFilenameInput);
   proposedColumn.appendChild(proposedFilename);
 
@@ -1585,11 +1858,14 @@ function renderArchivedReviewPanel() {
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = draft.labels.includes(label.id);
-    input.addEventListener('change', () => {
-      draft.labels = input.checked
-        ? Array.from(new Set([...draft.labels, label.id]))
-        : draft.labels.filter((item) => item !== label.id);
-    });
+    input.disabled = !reviewIsActionable;
+    if (reviewIsActionable) {
+      input.addEventListener('change', () => {
+        draft.labels = input.checked
+          ? Array.from(new Set([...draft.labels, label.id]))
+          : draft.labels.filter((item) => item !== label.id);
+      });
+    }
     const text = document.createElement('span');
     text.textContent = typeof label.name === 'string' ? label.name : label.id;
     row.append(input, text);
@@ -1610,7 +1886,7 @@ function renderArchivedReviewPanel() {
   proposedFieldsSection.className = 'archived-review-section';
   proposedFieldsSection.innerHTML = '<h5>Nya datafält</h5>';
   const proposedFieldsWrap = document.createElement('div');
-  renderArchivedReviewFieldRows(proposedFieldsWrap, draft.fields || {}, reviewFieldDefinitions(payload, false), true, (key, value) => {
+  renderArchivedReviewFieldRows(proposedFieldsWrap, draft.fields || {}, reviewFieldDefinitions(payload, false), reviewIsActionable, (key, value) => {
     if (!value.trim()) {
       delete draft.fields[key];
     } else {
@@ -1632,7 +1908,7 @@ function renderArchivedReviewPanel() {
   proposedSystemFieldsSection.className = 'archived-review-section';
   proposedSystemFieldsSection.innerHTML = '<h5>Nya systemdatafält</h5>';
   const proposedSystemFieldsWrap = document.createElement('div');
-  renderArchivedReviewFieldRows(proposedSystemFieldsWrap, draft.systemFields || {}, reviewFieldDefinitions(payload, true), true, (key, value) => {
+  renderArchivedReviewFieldRows(proposedSystemFieldsWrap, draft.systemFields || {}, reviewFieldDefinitions(payload, true), reviewIsActionable, (key, value) => {
     if (!value.trim()) {
       delete draft.systemFields[key];
     } else {
@@ -1647,6 +1923,15 @@ function renderArchivedReviewPanel() {
 
   const actions = document.createElement('div');
   actions.className = 'archived-review-actions';
+  if (!reviewIsActionable) {
+    const previewNotice = document.createElement('div');
+    previewNotice.className = 'archived-review-empty';
+    previewNotice.textContent = 'Det här jobbet kan följas upp här efter att reglerna aktiverats.';
+    actions.appendChild(previewNotice);
+    wrapper.appendChild(actions);
+    archivedReviewPanelEl.replaceChildren(wrapper);
+    return;
+  }
   const keepButton = document.createElement('button');
   keepButton.type = 'button';
   keepButton.textContent = 'Behåll arkiveringen';
@@ -1684,22 +1969,19 @@ function renderArchivedReviewPanel() {
 }
 
 async function loadArchivingRuleReview() {
-  stopArchivingReviewPolling();
-  const response = await fetch('/api/get-archiving-rules-review.php', { cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error('Kunde inte ladda regelgranskningen');
-  }
-
-  archivingRulesReviewPayload = await response.json();
-  renderArchivingRuleReview();
+  syncArchivingReviewPayloadFromState(true);
 }
 
-function renderArchivingRuleReview() {
+function renderArchivingRuleReview(force = false) {
   if (!(archivingReviewSummaryEl instanceof HTMLElement) || !(archivingReviewJobsEl instanceof HTMLElement) || !(archivingReviewStatusEl instanceof HTMLElement)) {
     return;
   }
 
-  const payload = archivingRulesReviewPayload && typeof archivingRulesReviewPayload === 'object' ? archivingRulesReviewPayload : {};
+  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || emptyArchivingReviewPayload());
+  if (!force && payload.signature && payload.signature === renderedArchivingReviewSignature) {
+    return;
+  }
+  renderedArchivingReviewSignature = payload.signature;
   const summary = payload.summary && typeof payload.summary === 'object' ? payload.summary : {};
   const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
   const session = payload.session && typeof payload.session === 'object' ? payload.session : {};
@@ -1729,18 +2011,40 @@ function renderArchivingRuleReview() {
 
   if (payload.hasUnpublishedChanges === true) {
     archivingReviewStatusEl.classList.remove('hidden');
-    const sections = Array.isArray(payload.changedSections) && payload.changedSections.length > 0
-      ? ` Ändrade delar: ${payload.changedSections.join(', ')}.`
-      : '';
-    const progress = sessionStatus === 'running'
-      ? ` Analyserar gamla arkiverade jobb... ${analyzedCount} / ${totalCount} analyserade, ${foundCount} jobb hittade hittills. Fler jobb kan tillkomma medan analysen fortsätter.`
-      : sessionStatus === 'complete'
-      ? ` Analysen är klar.`
-      : '';
-    archivingReviewStatusEl.textContent = `Det finns opublicerade ändringar. Aktiva regler använder version ${payload.activeArchivingRulesVersion || 1}.${sections}${progress}`;
+    const lines = document.createElement('div');
+    lines.className = 'archiving-review-status-lines';
+
+    const intro = document.createElement('div');
+    intro.textContent = 'Det finns ett utkast till arkiveringsregler.';
+    lines.appendChild(intro);
+
+    if (Array.isArray(payload.changedSections) && payload.changedSections.length > 0) {
+      const changedWrap = document.createElement('div');
+      const changedLabel = document.createElement('div');
+      changedLabel.textContent = 'Ändringar har gjorts i:';
+      const changedList = document.createElement('ul');
+      changedList.className = 'archiving-review-status-list';
+      payload.changedSections.forEach((section) => {
+        const item = document.createElement('li');
+        item.textContent = section;
+        changedList.appendChild(item);
+      });
+      changedWrap.append(changedLabel, changedList);
+      lines.appendChild(changedWrap);
+    }
+
+    const statusLine = document.createElement('div');
+    if (sessionStatus === 'running') {
+      statusLine.textContent = `Analysen av arkiverade jobb pågår. ${analyzedCount} / ${totalCount} analyserade. ${foundCount} jobb hittade hittills. Fler jobb kan tillkomma medan analysen fortsätter.`;
+    } else {
+      statusLine.textContent = 'Analysen av arkiverade jobb är klar.';
+    }
+    lines.appendChild(statusLine);
+
+    archivingReviewStatusEl.replaceChildren(lines);
   } else {
     archivingReviewStatusEl.classList.add('hidden');
-    archivingReviewStatusEl.textContent = '';
+    archivingReviewStatusEl.replaceChildren();
   }
 
   archivingReviewJobsEl.innerHTML = '';
@@ -1749,46 +2053,57 @@ function renderArchivingRuleReview() {
     empty.className = 'matches-empty';
     empty.textContent = sessionStatus === 'running'
       ? 'Inga påverkade arkiverade jobb hittade ännu.'
+      : totalCount === 0
+      ? 'Det finns inga arkiverade jobb att jämföra mot utkastet ännu.'
       : 'Inga arkiverade jobb påverkas av utkastet just nu.';
     archivingReviewJobsEl.appendChild(empty);
-    if (sessionStatus === 'running') {
-      scheduleArchivingReviewPoll();
-    } else {
-      stopArchivingReviewPolling();
-    }
     return;
   }
 
   jobs.forEach((item) => {
     const row = document.createElement('div');
     row.className = `archiving-review-job is-${item.classification && item.classification.type ? item.classification.type : 'info'}`;
+    const body = document.createElement('div');
+    body.className = 'archiving-review-job-body';
     const title = document.createElement('div');
     title.className = 'archiving-review-job-title';
     title.textContent = item.originalFilename || item.jobId;
-    const subtitle = document.createElement('div');
-    subtitle.className = 'archiving-review-job-subtitle';
-    subtitle.textContent = item.classification && item.classification.type === 'risk'
-      ? 'Risk: utkastet driver jobbet längre från tidigare godkända värden.'
-      : item.classification && item.classification.type === 'improvement'
-      ? 'Förbättring: utkastet ligger närmare tidigare godkända värden.'
-      : 'Informationsändring: autoresultatet förändras.';
+    body.appendChild(title);
+    const changeItems = Array.isArray(item.classification && item.classification.changeItems)
+      ? item.classification.changeItems
+      : [];
+    if (changeItems.length > 0) {
+      const changeList = document.createElement('ul');
+      changeList.className = 'archiving-review-change-list';
+      changeItems.forEach((changeItem) => {
+        const changeRow = document.createElement('li');
+        changeRow.className = `archiving-review-change is-${changeItem && changeItem.type ? changeItem.type : 'info'}`;
+        const message = document.createElement('div');
+        message.className = 'archiving-review-change-message';
+        message.textContent = changeItem && typeof changeItem.message === 'string' ? changeItem.message : '';
+        changeRow.appendChild(message);
+        if (changeItem && typeof changeItem.detail === 'string' && changeItem.detail) {
+          const detail = document.createElement('div');
+          detail.className = 'archiving-review-change-detail';
+          detail.textContent = changeItem.detail;
+          changeRow.appendChild(detail);
+        }
+        changeList.appendChild(changeRow);
+      });
+      body.appendChild(changeList);
+    }
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = 'Öppna arkiverat jobb';
     button.addEventListener('click', () => {
       closeSettingsModal(true);
-      setJobListMode('archived');
+      setJobListMode('ready');
       applySelectedJobId(item.jobId);
+      setViewMode('review');
     });
-    row.append(title, subtitle, button);
+    row.append(body, button);
     archivingReviewJobsEl.appendChild(row);
   });
-
-  if (sessionStatus === 'running') {
-    scheduleArchivingReviewPoll();
-  } else {
-    stopArchivingReviewPolling();
-  }
 }
 
 async function resetArchivingRulesDraft() {
@@ -1801,10 +2116,9 @@ async function resetArchivingRulesDraft() {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte återställa utkastet.');
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte kassera utkastet.');
   }
   await Promise.all([loadCategories(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshCategories: true })]);
-  await loadArchivingRuleReview();
 }
 
 async function publishArchivingRules() {
@@ -1817,16 +2131,20 @@ async function publishArchivingRules() {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte publicera reglerna.');
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte aktivera reglerna.');
   }
 
   await Promise.all([loadCategories(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshCategories: true })]);
-  await loadArchivingRuleReview();
   const flaggedCount = payload.flaggedArchivedJobs && Number.isInteger(payload.flaggedArchivedJobs.flaggedCount)
     ? payload.flaggedArchivedJobs.flaggedCount
     : 0;
   if (flaggedCount > 0) {
-    setJobListMode('needs-review');
+    setJobListMode('ready');
+    const firstReviewJob = jobsNeedingRuleReview()[0] || null;
+    if (firstReviewJob && typeof firstReviewJob.id === 'string') {
+      applySelectedJobId(firstReviewJob.id);
+      setViewMode('review');
+    }
   }
 }
 
@@ -1964,6 +2282,8 @@ function updateArchivedJobListItem(li, job) {
 
   const archivedLabel = job.needsRuleReview === true
     ? `Behöver ses över${job.filename ? ' • ' + job.filename : ''}`
+    : jobHasDraftReviewChange(job.id)
+      ? `Påverkas av utkast${job.filename ? ' • ' + job.filename : ''}`
     : (job.filename
       ? job.filename
       : (typeof job.archivedAt === 'string' && job.archivedAt ? job.archivedAt : ''));
@@ -1997,23 +2317,25 @@ function updateFailedJobListItem(li, job) {
   removeJobListItemSpinnerNode(li);
 }
 
+function displayedReviewJobsForReadyMode() {
+  return displayedArchivedReviewJobsForReadyMode();
+}
+
 function renderJobList(processingJobs, readyJobs, failedJobs) {
   const displayedReadyJobs = buildDisplayedReadyJobs(processingJobs, readyJobs);
   const displayedArchivedJobs = Array.isArray(state.archivedJobs) ? state.archivedJobs : [];
-  const displayedNeedsReviewJobs = displayedArchivedJobs.filter((job) => job && job.needsRuleReview === true);
+  const displayedReviewJobs = displayedReviewJobsForReadyMode();
   const safeFailedJobs = Array.isArray(failedJobs) ? failedJobs : [];
   const desiredNodes = [];
   const activeKeys = new Set();
   const safeProcessingJobs = Array.isArray(processingJobs) ? processingJobs : [];
   const isReadyMode = currentJobListMode === 'ready';
-  const isNeedsReviewMode = currentJobListMode === 'needs-review';
   const isAllMode = currentJobListMode === 'all';
   const isProcessingMode = currentJobListMode === 'processing';
   const isArchivedMode = currentJobListMode === 'archived';
 
   if (
-    ((isReadyMode || isAllMode) && displayedReadyJobs.length === 0 && safeProcessingJobs.length === 0 && displayedArchivedJobs.length === 0 && safeFailedJobs.length === 0)
-    || (isNeedsReviewMode && displayedNeedsReviewJobs.length === 0)
+    ((isReadyMode || isAllMode) && displayedReadyJobs.length === 0 && displayedReviewJobs.length === 0 && safeProcessingJobs.length === 0 && displayedArchivedJobs.length === 0 && safeFailedJobs.length === 0)
     || (isProcessingMode && safeProcessingJobs.length === 0 && safeFailedJobs.length === 0)
     || (isArchivedMode && displayedArchivedJobs.length === 0)
   ) {
@@ -2022,8 +2344,6 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
       ? 'Inga jobb ännu.'
       : isProcessingMode
       ? 'Inga jobb bearbetas just nu.'
-      : isNeedsReviewMode
-      ? 'Inga arkiverade jobb behöver följas upp just nu.'
       : (isArchivedMode ? 'Inga arkiverade jobb ännu.' : 'Inga jobb att granska just nu.');
     desiredNodes.push(messageNode);
     activeKeys.add('message:empty');
@@ -2081,6 +2401,25 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
         });
       }
     } else if (isReadyMode) {
+      if (displayedReviewJobs.length > 0) {
+        const labelNode = ensureJobListSectionLabelNode('Arkiverade jobb att granska', 'label:ready:review');
+        desiredNodes.push(labelNode);
+        activeKeys.add('label:ready:review');
+        displayedReviewJobs.forEach((job) => {
+          const key = `ready:review:${job.id}`;
+          const li = ensureJobListItemNode(key);
+          updateArchivedJobListItem(li, job);
+          desiredNodes.push(li);
+          activeKeys.add(key);
+        });
+      }
+
+      if (displayedReadyJobs.length > 0 && displayedReviewJobs.length > 0) {
+        const labelNode = ensureJobListSectionLabelNode('Nya jobb', 'label:ready:jobs');
+        desiredNodes.push(labelNode);
+        activeKeys.add('label:ready:jobs');
+      }
+
       displayedReadyJobs.forEach((job) => {
         const key = `ready:${job.id}`;
         const li = ensureJobListItemNode(key);
@@ -2093,14 +2432,6 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
         const key = `processing:${job.id}`;
         const li = ensureJobListItemNode(key);
         updateReadyJobListItem(li, job);
-        desiredNodes.push(li);
-        activeKeys.add(key);
-      });
-    } else if (isNeedsReviewMode) {
-      displayedNeedsReviewJobs.forEach((job) => {
-        const key = `needs-review:${job.id}`;
-        const li = ensureJobListItemNode(key);
-        updateArchivedJobListItem(li, job);
         desiredNodes.push(li);
         activeKeys.add(key);
       });
@@ -2214,20 +2545,17 @@ function jobsForCurrentListMode() {
   if (currentJobListMode === 'processing') {
     return Array.isArray(state.processingJobs) ? state.processingJobs : [];
   }
-  if (currentJobListMode === 'needs-review') {
-    return Array.isArray(state.archivedJobs)
-      ? state.archivedJobs.filter((job) => job && job.needsRuleReview === true)
-      : [];
-  }
   if (currentJobListMode === 'archived') {
     return Array.isArray(state.archivedJobs) ? state.archivedJobs : [];
   }
-  return Array.isArray(state.readyJobs) ? state.readyJobs : [];
+  return displayedJobsForCurrentListMode();
 }
 
 function displayedJobsForCurrentListMode() {
   if (currentJobListMode === 'ready') {
-    return buildDisplayedReadyJobs(state.processingJobs, state.readyJobs);
+    return []
+      .concat(displayedReviewJobsForReadyMode())
+      .concat(buildDisplayedReadyJobs(state.processingJobs, state.readyJobs));
   }
   if (currentJobListMode === 'all') {
     return []
@@ -2322,6 +2650,21 @@ function effectiveSenderId(job) {
   const autoResult = autoArchivingResultForJob(job);
   if (autoResult && Number.isInteger(Number(autoResult.senderId)) && Number(autoResult.senderId) > 0 && isKnownSender(autoResult.senderId)) {
     return String(autoResult.senderId);
+  }
+  const preselectedSender = job.analysis && typeof job.analysis === 'object' && job.analysis.preselectedSender && typeof job.analysis.preselectedSender === 'object'
+    ? job.analysis.preselectedSender
+    : null;
+  if (preselectedSender && Number.isInteger(Number(preselectedSender.id)) && Number(preselectedSender.id) > 0 && isKnownSender(preselectedSender.id)) {
+    return String(preselectedSender.id);
+  }
+  const senderLookup = job.analysis && typeof job.analysis === 'object' && job.analysis.senderLookup && typeof job.analysis.senderLookup === 'object'
+    ? job.analysis.senderLookup
+    : null;
+  const lookupSender = senderLookup && senderLookup.sender && typeof senderLookup.sender === 'object'
+    ? senderLookup.sender
+    : null;
+  if (lookupSender && Number.isInteger(Number(lookupSender.id)) && Number(lookupSender.id) > 0 && isKnownSender(lookupSender.id)) {
+    return String(lookupSender.id);
   }
   if (Number.isInteger(job.matchedSenderId) && job.matchedSenderId > 0 && isKnownSender(job.matchedSenderId)) {
     return String(job.matchedSenderId);
@@ -2578,6 +2921,31 @@ function updateArchiveAction(job) {
 
 let saveSelectedJobFieldsSeq = 0;
 
+function applyStateEntry(entry, options = {}) {
+  if (!entry || typeof entry !== 'object' || !entry.job || typeof entry.job !== 'object') {
+    return;
+  }
+  const list = typeof entry.list === 'string' ? entry.list : '';
+  if (!list) {
+    return;
+  }
+  applyJobEvents([{
+    type: 'job.upsert',
+    list,
+    job: entry.job,
+    preserveListPosition: options.preserveListPosition === true,
+  }]);
+}
+
+function restoreSelectedJobEditorState() {
+  const currentJob = findJobById(selectedJobId);
+  setClientForJob(currentJob);
+  setSenderForJob(currentJob);
+  setCategoryForJob(currentJob);
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+}
+
 async function saveSelectedJobFields(jobId, payload) {
   const requestSeq = ++saveSelectedJobFieldsSeq;
   const response = await fetch('/api/save-job-fields.php', {
@@ -2601,7 +2969,7 @@ async function saveSelectedJobFields(jobId, payload) {
     return;
   }
 
-  await fetchState();
+  applyStateEntry(data.entry);
 }
 
 function scheduleFilenameSave(jobId, filename) {
@@ -2615,7 +2983,7 @@ function scheduleFilenameSave(jobId, filename) {
     try {
       await saveSelectedJobFields(jobId, { filename });
     } catch (error) {
-      await fetchState();
+      restoreSelectedJobEditorState();
       alert(error.message || 'Kunde inte spara filnamn.');
     }
   }, 350);
@@ -2626,16 +2994,17 @@ function scheduleFilenameSave(jobId, filename) {
 function renderSelectedJobPanel() {
   const selectedJob = findJobById(selectedJobId);
   if (!selectedJob) {
+    syncReviewViewModeAvailability(null, { allowFallback: false });
     selectedJobPanelEl.classList.add('is-empty');
     selectedJobNameEl.textContent = 'Inget jobb markerat';
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
     selectedJobReprocessEl.disabled = true;
     syncFilenameField(null);
     updateArchiveAction(null);
-    renderArchivedReviewPanel();
     return;
   }
 
+  syncReviewViewModeAvailability(selectedJob, { allowFallback: false });
   selectedJobPanelEl.classList.remove('is-empty');
   selectedJobNameEl.textContent = selectedJob.originalFilename || selectedJob.id;
 
@@ -2669,20 +3038,14 @@ function renderSelectedJobPanel() {
   }
   if (selectedJob.archived === true && selectedJob.needsRuleReview === true) {
     appendLine('Behöver ses över enligt aktuella regler.', 'is-warning');
+  } else if (selectedJob.archived === true && jobHasDraftReviewChange(selectedJob.id)) {
+    appendLine('Påverkas av utkast till arkiveringsregler.', 'is-warning');
   }
 
   selectedJobMetaEl.replaceChildren(...metaLines);
   selectedJobReprocessEl.disabled = selectedJob.status === 'processing' || selectedJob.archived === true || !selectedJob.hasReviewPdf;
   syncFilenameField(selectedJob);
   updateArchiveAction(selectedJob);
-
-  if (selectedJob.archived === true && selectedJob.needsRuleReview === true) {
-    loadArchivedReview(selectedJob.id).catch(() => {
-      renderArchivedReviewPanel();
-    });
-  } else {
-    renderArchivedReviewPanel();
-  }
 }
 
 function buildDisplayedReadyJobs(processingJobs, readyJobs) {
@@ -3884,6 +4247,7 @@ function applySelectedJobId(jobId, options = {}) {
   const syncHash = options.syncHash !== false;
   const selectedJob = findJobById(jobId);
   selectedJobId = selectedJob ? selectedJob.id : '';
+  syncReviewViewModeAvailability(selectedJob);
   renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
   setViewerJob(selectedJobId);
   selectedJobStateSig = jobStateSignature(selectedJob);
@@ -3948,6 +4312,7 @@ function refreshSelection() {
     const shouldRefreshViewer = currentSelection.status !== 'processing'
       && nextJobStateSig !== selectedJobStateSig;
     selectedJobId = currentSelection.id;
+    syncReviewViewModeAvailability(currentSelection);
     if (shouldRefreshViewer) {
       setViewerJob(currentSelection.id);
     }
@@ -3978,6 +4343,9 @@ function applyState(nextState) {
   const shouldUpdateSenders = Array.isArray(nextState.senders);
   const shouldUpdateCategories = Array.isArray(nextState.categories);
   const shouldUpdateArchivingRules = nextState.archivingRules && typeof nextState.archivingRules === 'object';
+  const nextArchivingRules = shouldUpdateArchivingRules
+    ? normalizeArchivingRulesStatePayload(nextState.archivingRules, state.archivingRules)
+    : state.archivingRules;
 
   state = {
     processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : state.processingJobs,
@@ -3987,28 +4355,7 @@ function applyState(nextState) {
     clients: shouldUpdateClients ? nextState.clients : state.clients,
     senders: shouldUpdateSenders ? nextState.senders : state.senders,
     categories: shouldUpdateCategories ? nextState.categories : state.categories,
-    archivingRules: shouldUpdateArchivingRules ? {
-      activeVersion: Number.isInteger(Number(nextState.archivingRules.activeVersion))
-        ? Number(nextState.archivingRules.activeVersion)
-        : state.archivingRules.activeVersion,
-      hasUnpublishedChanges: nextState.archivingRules.hasUnpublishedChanges === true,
-      needsRuleReviewCount: Number.isInteger(Number(nextState.archivingRules.needsRuleReviewCount))
-        ? Number(nextState.archivingRules.needsRuleReviewCount)
-        : state.archivingRules.needsRuleReviewCount,
-      publishedReview: nextState.archivingRules.publishedReview && typeof nextState.archivingRules.publishedReview === 'object'
-        ? {
-          status: typeof nextState.archivingRules.publishedReview.status === 'string'
-            ? nextState.archivingRules.publishedReview.status
-            : state.archivingRules.publishedReview.status,
-          analyzedCount: Number.isInteger(Number(nextState.archivingRules.publishedReview.analyzedCount))
-            ? Number(nextState.archivingRules.publishedReview.analyzedCount)
-            : state.archivingRules.publishedReview.analyzedCount,
-          totalCount: Number.isInteger(Number(nextState.archivingRules.publishedReview.totalCount))
-            ? Number(nextState.archivingRules.publishedReview.totalCount)
-            : state.archivingRules.publishedReview.totalCount
-        }
-        : state.archivingRules.publishedReview
-    } : state.archivingRules
+    archivingRules: nextArchivingRules
   };
 
   const validJobIds = new Set(
@@ -4071,6 +4418,8 @@ function applyState(nextState) {
   setProcessingInfo(state.processingJobs);
   notifyFailedJobs(state.failedJobs);
   renderAppNotices();
+  syncArchivingReviewTabIndicator();
+  syncArchivingReviewPayloadFromState();
   if (shouldUpdateClients) {
     renderClientSelect(state.clients);
   }
@@ -4080,6 +4429,7 @@ function applyState(nextState) {
   if (shouldUpdateCategories) {
     renderCategorySelect(state.categories);
   }
+  renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
   refreshSelection();
   if (!hasLoadedInitialJobsState) {
     hasLoadedInitialJobsState = true;
@@ -4159,8 +4509,10 @@ function applyJobEvents(events) {
     clients: state.clients,
     senders: state.senders,
     categories: state.categories,
+    archivingRules: state.archivingRules,
   };
   let mutated = false;
+  let archivingRulesMutated = false;
 
   events.forEach((eventPayload) => {
     if (!eventPayload || typeof eventPayload !== 'object') {
@@ -4170,6 +4522,17 @@ function applyJobEvents(events) {
     const eventId = Number.parseInt(String(eventPayload.id || ''), 10);
     if (Number.isInteger(eventId) && eventId > stateEventCursor) {
       stateEventCursor = eventId;
+    }
+
+    if (eventPayload.type === 'archivingRules.update') {
+      if (eventPayload.archivingRules && typeof eventPayload.archivingRules === 'object') {
+        const nextArchivingRules = normalizeArchivingRulesStatePayload(eventPayload.archivingRules, nextState.archivingRules);
+        if ((nextArchivingRules.signature || '') !== (nextState.archivingRules && nextState.archivingRules.signature || '')) {
+          nextState.archivingRules = nextArchivingRules;
+          archivingRulesMutated = true;
+        }
+      }
+      return;
     }
 
     if (eventPayload.type === 'job.remove') {
@@ -4196,6 +4559,18 @@ function applyJobEvents(events) {
     const job = eventPayload.job && typeof eventPayload.job === 'object' ? eventPayload.job : null;
     const jobId = job && typeof job.id === 'string' ? job.id.trim() : '';
     if (!validList || !job || !jobId) {
+      return;
+    }
+
+    const existingTargetJob = (Array.isArray(nextState[listKey]) ? nextState[listKey] : []).find((entry) => entry && entry.id === jobId) || null;
+    const existsInOtherList = ['processingJobs', 'readyJobs', 'archivedJobs', 'failedJobs']
+      .filter((key) => key !== listKey)
+      .some((key) => Array.isArray(nextState[key]) && nextState[key].some((entry) => entry && entry.id === jobId));
+    if (
+      !existsInOtherList
+      && existingTargetJob
+      && JSON.stringify(existingTargetJob) === JSON.stringify(job)
+    ) {
       return;
     }
 
@@ -4242,6 +4617,11 @@ function applyJobEvents(events) {
 
   if (mutated) {
     applyState(nextState);
+    return;
+  }
+
+  if (archivingRulesMutated) {
+    applyArchivingRulesStatePayload(nextState.archivingRules);
   }
 }
 
@@ -4754,28 +5134,20 @@ function bindSettingsPanelRefs(tabId) {
     archivingReviewStatusEl = document.getElementById('archiving-review-status');
     archivingReviewSummaryEl = document.getElementById('archiving-review-summary');
     archivingReviewJobsEl = document.getElementById('archiving-review-jobs');
-    archivingReviewRefreshEl = document.getElementById('archiving-review-refresh');
     archivingReviewResetDraftEl = document.getElementById('archiving-review-reset-draft');
     archivingReviewPublishEl = document.getElementById('archiving-review-publish');
-    archivingReviewRefreshEl.addEventListener('click', async () => {
-      try {
-        await loadArchivingRuleReview();
-      } catch (error) {
-        alert(error.message || 'Kunde inte ladda regelgranskningen.');
-      }
-    });
     archivingReviewResetDraftEl.addEventListener('click', async () => {
       try {
         await resetArchivingRulesDraft();
       } catch (error) {
-        alert(error.message || 'Kunde inte återställa utkastet.');
+        alert(error.message || 'Kunde inte kassera utkastet.');
       }
     });
     archivingReviewPublishEl.addEventListener('click', async () => {
       try {
         await publishArchivingRules();
       } catch (error) {
-        alert(error.message || 'Kunde inte publicera reglerna.');
+        alert(error.message || 'Kunde inte aktivera reglerna.');
       }
     });
   } else if (tabId === 'jobs') {
@@ -4957,7 +5329,6 @@ function closeSettingsModal(force = false) {
     return false;
   }
 
-  stopArchivingReviewPolling();
   restoreSettingsFooterActions(activeSettingsFooterPanelId);
   if (settingsPanelActionsHostEl instanceof HTMLElement) {
     settingsPanelActionsHostEl.replaceChildren();
@@ -4972,9 +5343,6 @@ function closeSettingsModal(force = false) {
 function setSettingsTab(tabId) {
   if (activeSettingsTabId === 'ocr-processing' && tabId !== 'ocr-processing') {
     stopRapidocrInstallPolling();
-  }
-  if (activeSettingsTabId === 'archiving-review' && tabId !== 'archiving-review') {
-    stopArchivingReviewPolling();
   }
   if (tabId !== 'senders') {
     closeSenderMergeOverlay();
@@ -7153,32 +7521,12 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   container.appendChild(fieldNode);
 }
 
-function appendArchivingRulesDraftNotice(containerEl) {
-  if (!(containerEl instanceof HTMLElement) || !state.archivingRules || state.archivingRules.hasUnpublishedChanges !== true) {
-    return;
-  }
-
-  const notice = document.createElement('div');
-  notice.className = 'settings-inline-notice';
-  const text = document.createElement('span');
-  text.textContent = 'Det finns opublicerade ändringar i arkiveringsreglerna.';
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.textContent = 'Granska ändringar';
-  button.addEventListener('click', () => {
-    openArchivingReviewSettingsDirect();
-  });
-  notice.append(text, button);
-  containerEl.appendChild(notice);
-}
-
 function renderExtractionFieldsEditor() {
   if (!extractionFieldsEditorEl) {
     return;
   }
 
   extractionFieldsEditorEl.innerHTML = '';
-  appendArchivingRulesDraftNotice(extractionFieldsEditorEl);
 
   const builtInGroup = createEditorGroup('Fördefinerade', extractionFieldsBuiltInCollapsed, () => {
     extractionFieldsBuiltInCollapsed = !extractionFieldsBuiltInCollapsed;
@@ -7629,7 +7977,6 @@ function renderLabelsEditor() {
   }
 
   labelsListEl.innerHTML = '';
-  appendArchivingRulesDraftNotice(labelsListEl);
   const builtInGroup = createEditorGroup('Fördefinerade', labelsBuiltInCollapsed, () => {
     labelsBuiltInCollapsed = !labelsBuiltInCollapsed;
   }, renderLabelsEditor);
@@ -8499,7 +8846,6 @@ function renderCategoriesEditor() {
     return;
   }
   categoriesListEl.innerHTML = '';
-  appendArchivingRulesDraftNotice(categoriesListEl);
 
   const foldersLabel = document.createElement('div');
   foldersLabel.className = 'archive-folders-label';
@@ -9752,8 +10098,8 @@ clientSelectEl.addEventListener('change', () => {
   const currentJob = findJobById(selectedJobId);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
-  saveSelectedJobFields(selectedJobId, { selectedClientDirName: value || null }).catch(async (error) => {
-    await fetchState();
+  saveSelectedJobFields(selectedJobId, { selectedClientDirName: value || null }).catch((error) => {
+    restoreSelectedJobEditorState();
     alert(error.message || 'Kunde inte spara huvudman.');
   });
 });
@@ -9786,8 +10132,8 @@ senderSelectEl.addEventListener('change', () => {
   const currentJob = findJobById(selectedJobId);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
-  saveSelectedJobFields(selectedJobId, { selectedSenderId: value || null }).catch(async (error) => {
-    await fetchState();
+  saveSelectedJobFields(selectedJobId, { selectedSenderId: value || null }).catch((error) => {
+    restoreSelectedJobEditorState();
     alert(error.message || 'Kunde inte spara avsändare.');
   });
 });
@@ -9820,8 +10166,8 @@ categorySelectEl.addEventListener('change', () => {
   const currentJob = findJobById(selectedJobId);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
-  saveSelectedJobFields(selectedJobId, { selectedCategoryId: value || null }).catch(async (error) => {
-    await fetchState();
+  saveSelectedJobFields(selectedJobId, { selectedCategoryId: value || null }).catch((error) => {
+    restoreSelectedJobEditorState();
     alert(error.message || 'Kunde inte spara kategori.');
   });
 });
@@ -9844,10 +10190,6 @@ filenameInputEl.addEventListener('input', () => {
   }
   updateArchiveAction(currentJob);
   scheduleFilenameSave(selectedJobId, value);
-});
-
-filenameInputEl.addEventListener('focus', () => {
-  filenameInputEl.select();
 });
 
 archiveActionEl.addEventListener('click', async () => {
@@ -9887,9 +10229,9 @@ archiveActionEl.addEventListener('click', async () => {
     }
 
     filenameByJobId.delete(selectedJob.id);
-    await fetchState();
+    applyStateEntry(payload.entry);
   } catch (error) {
-    await fetchState();
+    restoreSelectedJobEditorState();
     alert(error.message || 'Kunde inte uppdatera arkiveringen.');
   } finally {
     updateArchiveAction(findJobById(selectedJobId));
@@ -10216,12 +10558,16 @@ async function fetchState(options = {}) {
       hasLoadedCategories = true;
     }
   } catch (error) {
-    setProcessingInfo([]);
-    jobListEl.innerHTML = '';
-    const li = document.createElement('li');
-    li.className = 'job-message';
-    li.textContent = 'Kunde inte ladda status.';
-    jobListEl.appendChild(li);
+    if (!hasLoadedInitialJobsState) {
+      setProcessingInfo([]);
+      jobListEl.innerHTML = '';
+      const li = document.createElement('li');
+      li.className = 'job-message';
+      li.textContent = 'Kunde inte ladda status.';
+      jobListEl.appendChild(li);
+    } else {
+      console.error(error);
+    }
   } finally {
     pollInFlight = false;
     if (options.syncTransport !== false) {

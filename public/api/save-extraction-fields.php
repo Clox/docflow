@@ -29,11 +29,15 @@ if (
 }
 
 try {
+    $config = load_config();
+    ensure_job_dispatcher_running($config);
     $state = load_archiving_rules_state();
     $state['draftArchivingRules']['fields'] = normalize_extraction_fields($payload['fields']);
     $state['draftArchivingRules']['predefinedFields'] = normalize_predefined_extraction_fields($payload['predefinedFields']);
     $state['draftArchivingRules']['systemFields'] = normalize_system_extraction_fields($payload['systemFields']);
     $stored = save_archiving_rules_state($state);
+    maybe_advance_draft_archiving_review_session($config, 10);
+    maybe_queue_archiving_rules_update_event($config);
     json_response([
         'ok' => true,
         'fields' => is_array($stored['draftArchivingRules']['fields'] ?? null) ? $stored['draftArchivingRules']['fields'] : [],

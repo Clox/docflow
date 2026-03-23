@@ -28,16 +28,20 @@ if ($jobId === '' || !is_valid_job_id($jobId)) {
 
 try {
     $config = load_config();
-    $job = update_job_user_fields($config, $jobId, [
-        'selectedClientDirName' => $payload['selectedClientDirName'] ?? null,
-        'selectedSenderId' => $payload['selectedSenderId'] ?? null,
-        'selectedCategoryId' => $payload['selectedCategoryId'] ?? null,
-        'filename' => $payload['filename'] ?? null,
-    ]);
+    $updates = [];
+    foreach (['selectedClientDirName', 'selectedSenderId', 'selectedCategoryId', 'filename'] as $fieldKey) {
+        if (array_key_exists($fieldKey, $payload)) {
+            $updates[$fieldKey] = $payload[$fieldKey];
+        }
+    }
+
+    $job = update_job_user_fields($config, $jobId, $updates);
+    $entry = load_job_state_entry_by_id($config, $jobId);
 
     json_response([
         'ok' => true,
         'job' => $job,
+        'entry' => $entry,
     ]);
 } catch (Throwable $e) {
     json_response([

@@ -27,6 +27,8 @@ if (
 }
 
 try {
+    $config = load_config();
+    ensure_job_dispatcher_running($config);
     $normalizedSystemLabels = normalize_system_labels($payload['systemLabels']);
     $systemLabelIds = [];
     foreach ($normalizedSystemLabels as $systemLabel) {
@@ -51,6 +53,8 @@ try {
     $state['draftArchivingRules']['labels'] = $normalizedLabels;
     $state['draftArchivingRules']['systemLabels'] = $normalizedSystemLabels;
     $stored = save_archiving_rules_state($state);
+    maybe_advance_draft_archiving_review_session($config, 10);
+    maybe_queue_archiving_rules_update_event($config);
     json_response([
         'ok' => true,
         'labels' => is_array($stored['draftArchivingRules']['labels'] ?? null) ? $stored['draftArchivingRules']['labels'] : [],

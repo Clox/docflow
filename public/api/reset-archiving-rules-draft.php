@@ -9,7 +9,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 try {
+    $config = load_config();
+    ensure_job_dispatcher_running($config);
     $state = reset_draft_archiving_rules_to_active();
+    maybe_queue_archiving_rules_update_event($config);
     json_response([
         'ok' => true,
         'activeArchivingRulesVersion' => (int) ($state['activeArchivingRulesVersion'] ?? 1),

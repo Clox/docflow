@@ -30,9 +30,11 @@ if ($jobId === '' || !is_valid_job_id($jobId)) {
 try {
     $config = load_config();
     $job = save_archived_job_review($config, $jobId, $action, $payload);
+    $entry = load_job_state_entry_by_id($config, $jobId);
     json_response([
         'ok' => true,
         'job' => $job,
+        'entry' => $entry,
     ]);
 } catch (Throwable $e) {
     json_response([
