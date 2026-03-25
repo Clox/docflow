@@ -207,16 +207,60 @@ const SYSTEM_LABELS = {
   }
 };
 
-const FILENAME_TEMPLATE_BASE_FIELDS = [
-  { key: 'date', label: 'Datum', tone: 'special' },
-  { key: 'category', label: 'Kategori', tone: 'base' },
-  { key: 'supplier', label: 'Leverantör', tone: 'base' },
-  { key: 'payment_receiver', label: 'Betalningsmottagare', tone: 'base' },
-  { key: 'amount', label: 'Belopp', tone: 'base' },
-  { key: 'ocr', label: 'OCR', tone: 'base' },
-  { key: 'client', label: 'Huvudman', tone: 'base' },
-  { key: 'sender', label: 'Avsändare', tone: 'base' },
-];
+const DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR = ', ';
+
+const FILENAME_TEMPLATE_LEGACY_FIELDS = {
+  date: {
+    label: 'Datum',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält. Motsvarar tidigare datumfält i filnamnsmallen.',
+  },
+  category: {
+    label: 'Kategori',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält för kategori.',
+  },
+  supplier: {
+    label: 'Leverantör',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält för datafältet Leverantör.',
+  },
+  payment_receiver: {
+    label: 'Betalningsmottagare',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält för datafältet Betalningsmottagare.',
+  },
+  amount: {
+    label: 'Belopp',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält för datafältet Belopp.',
+  },
+  ocr: {
+    label: 'OCR',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält för datafältet OCR.',
+  },
+  client: {
+    label: 'Huvudman',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält för Huvudman.',
+  },
+  main_client: {
+    label: 'Huvudman',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält för Huvudman.',
+  },
+  sender: {
+    label: 'Avsändare',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält för Avsändare.',
+  },
+  payee: {
+    label: 'Betalningsmottagare',
+    tone: 'legacy',
+    title: 'Äldre filnamnsmall-fält för Betalningsmottagare.',
+  },
+};
 
 let selectedJobId = '';
 let loadedOcrJobId = '';
@@ -2724,6 +2768,7 @@ function buildFilenameFieldValues(job) {
   const extractionFields = job.analysis && typeof job.analysis === 'object' && job.analysis.extractionFields && typeof job.analysis.extractionFields === 'object'
     ? job.analysis.extractionFields
     : {};
+  const autoResult = autoArchivingResultForJob(job);
   const clientDirName = effectiveClientDirName(job);
   const sender = findSenderById(effectiveSenderId(job));
   const category = findCategoryById(effectiveCategoryId(job));
@@ -2778,6 +2823,16 @@ function buildFilenameFieldValues(job) {
     }
   });
 
+  const labelIds = Array.isArray(autoResult && autoResult.labels)
+    ? autoResult.labels
+    : (Array.isArray(job.analysis && job.analysis.labels) ? job.analysis.labels : []);
+  const labelNames = labelIds
+    .map((labelId) => filenameTemplateLabelNameById(labelId))
+    .filter((name) => typeof name === 'string' && name.trim() !== '');
+  if (labelNames.length > 0) {
+    values.set('__labels', labelNames);
+  }
+
   return values;
 }
 
@@ -2792,10 +2847,37 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
       return;
     }
 
-    if (part.type === 'field') {
+    if (part.type === 'field' || part.type === 'dataField' || part.type === 'systemField') {
       const key = typeof part.key === 'string' ? part.key.trim() : '';
-      const value = key ? (fieldValues.get(key) || '') : '';
-      if (!value) {
+      const rawValue = key ? fieldValues.get(key) : '';
+      const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+      if (value === '') {
+        return;
+      }
+      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
+      result += value;
+      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
+      return;
+    }
+
+    if (part.type === 'category') {
+      const value = String(fieldValues.get('category') || '').trim();
+      if (value === '') {
+        return;
+      }
+      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
+      result += value;
+      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
+      return;
+    }
+
+    if (part.type === 'labels') {
+      const labelNames = fieldValues.get('__labels');
+      const separator = typeof part.separator === 'string' ? part.separator : DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR;
+      const value = Array.isArray(labelNames)
+        ? labelNames.map((item) => String(item || '').trim()).filter((item) => item !== '').join(separator)
+        : '';
+      if (value === '') {
         return;
       }
       result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
@@ -6481,6 +6563,50 @@ function sanitizeFilenameTemplateParts(parts, depth = 0) {
     .filter((part) => part !== null);
 }
 
+function sanitizeFilenameTemplateCandidateParts(parts, depth = 0) {
+  return sanitizeFilenameTemplateParts(parts, depth)
+    .filter((part) => part && typeof part === 'object' && part.type !== 'text');
+}
+
+function migrateLegacyFilenameTemplateField(key) {
+  const normalizedKey = typeof key === 'string' ? key.trim() : '';
+  if (!normalizedKey) {
+    return null;
+  }
+
+  if (normalizedKey === 'category') {
+    return { type: 'category' };
+  }
+  if (normalizedKey === 'date') {
+    return {
+      type: 'dataField',
+      key: 'due_date',
+    };
+  }
+  if (normalizedKey === 'payee') {
+    return {
+      type: 'dataField',
+      key: 'payment_receiver',
+    };
+  }
+  if (filenameTemplateSystemFieldOptions().some((field) => field.key === normalizedKey)) {
+    return {
+      type: 'systemField',
+      key: normalizedKey,
+    };
+  }
+  if (normalizedKey === 'client' || normalizedKey === 'main_client' || normalizedKey === 'sender') {
+    return {
+      type: 'field',
+      key: normalizedKey,
+    };
+  }
+  return {
+    type: 'dataField',
+    key: normalizedKey,
+  };
+}
+
 function sanitizeFilenameTemplatePart(part, depth = 0) {
   const input = part && typeof part === 'object' ? part : null;
   if (!input || depth > 6) {
@@ -6488,28 +6614,52 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
   }
 
   const type = typeof input.type === 'string' ? input.type.trim() : 'text';
+  const prefixParts = sanitizeFilenameTemplateParts(input.prefixParts, depth + 1);
+  const suffixParts = sanitizeFilenameTemplateParts(input.suffixParts, depth + 1);
   if (type === 'field') {
+    const migrated = migrateLegacyFilenameTemplateField(input.key);
+    if (!migrated) {
+      return null;
+    }
+    return {
+      ...migrated,
+      prefixParts,
+      suffixParts,
+    };
+  }
+  if (type === 'dataField' || type === 'systemField') {
     const key = typeof input.key === 'string' ? input.key.trim() : '';
     if (!key) {
       return null;
     }
     return {
-      type: 'field',
+      type,
       key,
-      prefixParts: sanitizeFilenameTemplateParts(input.prefixParts, depth + 1),
-      suffixParts: sanitizeFilenameTemplateParts(input.suffixParts, depth + 1),
+      prefixParts,
+      suffixParts,
+    };
+  }
+  if (type === 'category') {
+    return {
+      type: 'category',
+      prefixParts,
+      suffixParts,
+    };
+  }
+  if (type === 'labels') {
+    return {
+      type: 'labels',
+      separator: typeof input.separator === 'string' ? input.separator : DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR,
+      prefixParts,
+      suffixParts,
     };
   }
   if (type === 'firstAvailable') {
-    const normalizedParts = sanitizeFilenameTemplateParts(input.parts, depth + 1);
-    if (normalizedParts.length === 0) {
-      return null;
-    }
     return {
       type: 'firstAvailable',
-      parts: normalizedParts,
-      prefixParts: sanitizeFilenameTemplateParts(input.prefixParts, depth + 1),
-      suffixParts: sanitizeFilenameTemplateParts(input.suffixParts, depth + 1),
+      parts: sanitizeFilenameTemplateCandidateParts(input.parts, depth + 1),
+      prefixParts,
+      suffixParts,
     };
   }
   return {
@@ -6529,7 +6679,38 @@ function defaultFilenameTemplatePart(type = 'text') {
   if (type === 'field') {
     return {
       type: 'field',
-      key: 'category',
+      key: 'sender',
+      prefixParts: [],
+      suffixParts: [],
+    };
+  }
+  if (type === 'category') {
+    return {
+      type: 'category',
+      prefixParts: [],
+      suffixParts: [],
+    };
+  }
+  if (type === 'dataField') {
+    return {
+      type: 'dataField',
+      key: filenameTemplateDataFieldOptions()[0]?.key || 'amount',
+      prefixParts: [],
+      suffixParts: [],
+    };
+  }
+  if (type === 'systemField') {
+    return {
+      type: 'systemField',
+      key: filenameTemplateSystemFieldOptions()[0]?.key || 'document_date',
+      prefixParts: [],
+      suffixParts: [],
+    };
+  }
+  if (type === 'labels') {
+    return {
+      type: 'labels',
+      separator: DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR,
       prefixParts: [],
       suffixParts: [],
     };
@@ -6537,7 +6718,7 @@ function defaultFilenameTemplatePart(type = 'text') {
   if (type === 'firstAvailable') {
     return {
       type: 'firstAvailable',
-      parts: [defaultFilenameTemplatePart('field')],
+      parts: [],
       prefixParts: [],
       suffixParts: [],
     };
@@ -6546,27 +6727,6 @@ function defaultFilenameTemplatePart(type = 'text') {
     type: 'text',
     value: '',
   };
-}
-
-function filenameTemplateFieldOptions() {
-  const options = [...FILENAME_TEMPLATE_BASE_FIELDS];
-  const seenKeys = new Set(options.map((field) => field.key));
-  [...predefinedExtractionFieldsDraft, ...systemExtractionFieldsDraft, ...extractionFieldsDraft].forEach((field, index) => {
-    const normalized = sanitizeExtractionField(field, index);
-    if (!normalized.key || !normalized.name) {
-      return;
-    }
-    if (seenKeys.has(normalized.key)) {
-      return;
-    }
-    seenKeys.add(normalized.key);
-    options.push({
-      key: normalized.key,
-      label: normalized.name,
-      tone: 'extraction',
-    });
-  });
-  return options;
 }
 
 function defaultExtractionField() {
@@ -6601,6 +6761,130 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
 
 function sanitizeExtractionFields(fields) {
   return Array.isArray(fields) ? fields.map((field, index) => sanitizeExtractionField(field, index)) : [];
+}
+
+function filenameTemplateLegacyFieldMeta(key) {
+  return typeof key === 'string' && key in FILENAME_TEMPLATE_LEGACY_FIELDS
+    ? FILENAME_TEMPLATE_LEGACY_FIELDS[key]
+    : null;
+}
+
+function filenameTemplateSystemFieldTitle(fieldKey, fieldName) {
+  const key = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  const name = typeof fieldName === 'string' ? fieldName.trim() : '';
+  if (key === 'document_date') {
+    return 'Dokumentdatum är systemets bästa gissning på dokumentets huvuddatum när inget tydligt datumfält finns.';
+  }
+  return name
+    ? `Lägger till värdet för systemdatafältet "${name}" i filnamnet.`
+    : 'Lägger till värdet för valt systemdatafält i filnamnet.';
+}
+
+function filenameTemplateSystemFieldOptions() {
+  const seenKeys = new Set();
+  return sanitizeExtractionFields(systemExtractionFieldsDraft)
+    .map((field, index) => sanitizeExtractionField(field, index))
+    .filter((field) => {
+      const key = typeof field.key === 'string' ? field.key.trim() : '';
+      const name = typeof field.name === 'string' ? field.name.trim() : '';
+      if (!key || !name || seenKeys.has(key)) {
+        return false;
+      }
+      seenKeys.add(key);
+      return true;
+    })
+    .map((field) => ({
+      key: field.key,
+      label: field.name,
+      tone: 'system',
+      title: filenameTemplateSystemFieldTitle(field.key, field.name),
+    }));
+}
+
+function filenameTemplateDataFieldOptions() {
+  const options = [];
+  const seenKeys = new Set();
+  [...predefinedExtractionFieldsDraft, ...extractionFieldsDraft].forEach((field, index) => {
+    const normalized = sanitizeExtractionField(field, index);
+    const key = typeof normalized.key === 'string' ? normalized.key.trim() : '';
+    const name = typeof normalized.name === 'string' ? normalized.name.trim() : '';
+    if (!key || !name || seenKeys.has(key)) {
+      return;
+    }
+    seenKeys.add(key);
+    options.push({
+      key,
+      label: name,
+      tone: 'data',
+      title: `Lägger till värdet för datafältet "${name}" i filnamnet.`,
+    });
+  });
+  return options;
+}
+
+function filenameTemplateLabelDefinitions() {
+  const definitions = [];
+  const seenIds = new Set();
+
+  [...Object.values(sanitizeSystemLabels(systemLabelsDraft)), ...sanitizeLabels(labelsDraft)].forEach((label) => {
+    const id = typeof label.id === 'string' ? label.id.trim() : '';
+    const name = typeof label.name === 'string' ? label.name.trim() : '';
+    if (!id || !name || seenIds.has(id)) {
+      return;
+    }
+    seenIds.add(id);
+    definitions.push({
+      id,
+      name,
+    });
+  });
+
+  return definitions;
+}
+
+function filenameTemplateLabelNameById(labelId) {
+  const normalizedId = typeof labelId === 'string' ? labelId.trim() : '';
+  if (!normalizedId) {
+    return '';
+  }
+  const match = filenameTemplateLabelDefinitions().find((label) => label.id === normalizedId);
+  return match ? match.name : normalizedId;
+}
+
+function filenameTemplateInsertOptions() {
+  return [
+    ...filenameTemplateSystemFieldOptions().map((field) => ({
+      type: 'systemField',
+      key: field.key,
+      label: field.label,
+      tone: field.tone,
+      title: field.title,
+    })),
+    {
+      type: 'category',
+      label: 'Kategori',
+      tone: 'category',
+      title: 'Lägger till dokumentets kategori i filnamnet.',
+    },
+    {
+      type: 'dataField',
+      label: 'Datafält',
+      tone: 'data',
+      title: 'Lägger till värdet från valt datafält i filnamnet.',
+    },
+    {
+      type: 'labels',
+      label: 'Etiketter',
+      tone: 'labels',
+      title: 'Lägger till dokumentets etiketter i filnamnet.',
+    },
+    {
+      type: 'firstAvailable',
+      label: 'Första tillgängliga',
+      tone: 'special',
+      title: 'Använder den första kandidaten som faktiskt har ett värde.',
+    },
+  ];
 }
 
 function slugifyText(value, separator = '-', fallback = '') {
@@ -8066,25 +8350,23 @@ function createFilenameTemplateToolbar(context) {
     });
   };
 
-  filenameTemplateFieldOptions().forEach((field) => {
+  filenameTemplateInsertOptions().forEach((definition) => {
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = `filename-template-chip filename-template-chip--${field.tone || 'base'}`;
-    chip.textContent = field.label;
+    chip.className = `filename-template-chip filename-template-chip--${definition.tone || 'data'}`;
+    chip.textContent = definition.label;
+    if (definition.title) {
+      chip.title = definition.title;
+    }
     bindInsertButton(chip, () => {
-      const part = defaultFilenameTemplatePart('field');
-      part.key = field.key;
+      const part = defaultFilenameTemplatePart(definition.type);
+      if (typeof definition.key === 'string' && definition.key.trim() !== '') {
+        part.key = definition.key.trim();
+      }
       return part;
     });
     toolbar.appendChild(chip);
   });
-
-  const firstAvailableButton = document.createElement('button');
-  firstAvailableButton.type = 'button';
-  firstAvailableButton.className = 'filename-template-chip filename-template-chip--special';
-  firstAvailableButton.textContent = 'Första tillgängliga';
-  bindInsertButton(firstAvailableButton, () => defaultFilenameTemplatePart('firstAvailable'));
-  toolbar.appendChild(firstAvailableButton);
 
   return toolbar;
 }
@@ -8107,6 +8389,62 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
   const sharedContext = context && typeof context === 'object'
     ? context
     : { insertPart: null };
+
+  const partDisplayMeta = (part) => {
+    if (!part || typeof part !== 'object') {
+      return {
+        label: '',
+        tone: 'legacy',
+        title: '',
+      };
+    }
+
+    if (part.type === 'category') {
+      return {
+        label: 'Kategori',
+        tone: 'category',
+        title: 'Lägger till dokumentets kategori i filnamnet.',
+      };
+    }
+    if (part.type === 'dataField') {
+      const field = filenameTemplateDataFieldOptions().find((candidate) => candidate.key === part.key) || null;
+      return {
+        label: 'Datafält',
+        tone: 'data',
+        title: field
+          ? `Lägger till värdet för datafältet "${field.label}" i filnamnet.`
+          : 'Lägger till värdet från valt datafält i filnamnet.',
+      };
+    }
+    if (part.type === 'systemField') {
+      const field = filenameTemplateSystemFieldOptions().find((candidate) => candidate.key === part.key) || null;
+      return {
+        label: field ? field.label : (part.key || 'Systemdatafält'),
+        tone: 'system',
+        title: filenameTemplateSystemFieldTitle(part.key, field ? field.label : part.key),
+      };
+    }
+    if (part.type === 'labels') {
+      return {
+        label: 'Etiketter',
+        tone: 'labels',
+        title: 'Lägger till dokumentets etiketter i filnamnet.',
+      };
+    }
+    if (part.type === 'firstAvailable') {
+      return {
+        label: 'Första tillgängliga',
+        tone: 'special',
+        title: 'Använder den första kandidaten som faktiskt har ett värde.',
+      };
+    }
+    const legacyField = filenameTemplateLegacyFieldMeta(part.key);
+    return {
+      label: legacyField ? legacyField.label : (part.key || 'Fält'),
+      tone: legacyField && legacyField.tone ? legacyField.tone : 'legacy',
+      title: legacyField && legacyField.title ? legacyField.title : 'Äldre filnamnsmall-fält.',
+    };
+  };
 
   if (!context && !isSlotEditor) {
     wrapper.appendChild(createFilenameTemplateToolbar(sharedContext));
@@ -8478,26 +8816,14 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		return [];
 	}
 
-	const shell = Array.from(token.children).find(
-		(child) => child instanceof HTMLElement && child.classList.contains('filename-template-inline-token-shell')
-	);
-	if (!(shell instanceof HTMLElement)) {
-		return [];
-	}
-
 	const slotSelectors = [
-		'filename-template-inline-token-slot--prefix',
-		'filename-template-inline-token-slot--candidates',
-		'filename-template-inline-token-slot--suffix',
+		'.filename-template-inline-token-slot--prefix.filename-template-editable',
+		'.filename-template-inline-token-slot--candidates.filename-template-editable',
+		'.filename-template-inline-token-slot--suffix.filename-template-editable',
 	];
 
 	return slotSelectors
-		.map((slotClassName) => Array.from(shell.children).find(
-			(child) => child instanceof HTMLElement && child.classList.contains(slotClassName)
-		))
-		.map((slot) => slot instanceof HTMLElement && slot.classList.contains('filename-template-editable')
-			? slot
-			: null)
+		.map((selector) => token.querySelector(selector))
 		.filter((editable) => editable instanceof HTMLElement);
 	};
 
@@ -8617,12 +8943,13 @@ let activeEditable = null;
     if (!(editable instanceof HTMLElement) || !Array.isArray(editable._filenameTemplateTargetParts)) {
       return;
     }
+    const chipsOnly = editable._filenameTemplateChipsOnly === true;
     Array.from(editable.childNodes).forEach((child) => {
       if (child.nodeType === Node.TEXT_NODE || isTokenNode(child)) {
         return;
       }
       const fallbackText = child.textContent || '';
-      if (fallbackText !== '') {
+      if (!chipsOnly && fallbackText !== '') {
         editable.insertBefore(document.createTextNode(fallbackText), child);
       }
       child.remove();
@@ -8643,7 +8970,9 @@ let activeEditable = null;
 
     Array.from(editable.childNodes).forEach((child) => {
       if (child.nodeType === Node.TEXT_NODE) {
-        appendText(child.nodeValue || '');
+        if (!chipsOnly) {
+          appendText(child.nodeValue || '');
+        }
         return;
       }
       if (!isTokenNode(child)) {
@@ -8687,6 +9016,25 @@ let activeEditable = null;
       }
       setActiveEditable(editable);
     });
+    editable.addEventListener('beforeinput', (event) => {
+      if (!editable._filenameTemplateChipsOnly || !isInnermostEditableEventTarget(event.target)) {
+        return;
+      }
+      const inputType = typeof event.inputType === 'string' ? event.inputType : '';
+      if (inputType.startsWith('insert')) {
+        event.preventDefault();
+      }
+    });
+    editable.addEventListener('paste', (event) => {
+      if (editable._filenameTemplateChipsOnly && isInnermostEditableEventTarget(event.target)) {
+        event.preventDefault();
+      }
+    });
+    editable.addEventListener('drop', (event) => {
+      if (editable._filenameTemplateChipsOnly && isInnermostEditableEventTarget(event.target)) {
+        event.preventDefault();
+      }
+    });
     editable.addEventListener('input', (event) => {
       if (!isInnermostEditableEventTarget(event.target)) {
         return;
@@ -8700,6 +9048,10 @@ let activeEditable = null;
       }
       setActiveEditable(editable);
       if (event.key === 'Enter') {
+        event.preventDefault();
+        return;
+      }
+      if (editable._filenameTemplateChipsOnly && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         return;
       }
@@ -8737,6 +9089,7 @@ let activeEditable = null;
       slotEditable.dataset.placeholder = placeholder;
     }
     slotEditable._filenameTemplateTargetParts = targetParts;
+    slotEditable._filenameTemplateChipsOnly = slotClassName.includes('filename-template-inline-token-slot--candidates');
     attachEditableHandlers(slotEditable);
     renderEditorParts(slotEditable, targetParts);
     return slotEditable;
@@ -8744,33 +9097,95 @@ let activeEditable = null;
 
   const createTokenNode = (part, ownerEditable) => {
     const normalizedPart = createPartObject(part);
+    const meta = partDisplayMeta(normalizedPart);
     const token = document.createElement('span');
     token.className = 'filename-template-dom-token';
     token.setAttribute('contenteditable', 'false');
     token._filenameTemplatePart = normalizedPart;
+    if (meta.title) {
+      token.title = meta.title;
+    }
 
     const shell = document.createElement('span');
     shell.className = 'filename-template-inline-token-shell';
     shell.appendChild(buildSlotEditor(normalizedPart.prefixParts, '', 'filename-template-inline-token-slot--prefix'));
 
+    const center = document.createElement('span');
+    center.className = `filename-template-inline-token-center filename-template-inline-token-center--${meta.tone || 'legacy'}`;
+
     const label = document.createElement('span');
-    label.className = 'filename-template-inline-token';
+    label.className = `filename-template-inline-token filename-template-inline-token--${meta.tone || 'legacy'}`;
+    if (meta.title) {
+      label.title = meta.title;
+    }
     const labelText = document.createElement('span');
     labelText.className = 'filename-template-inline-token-label';
-    if (normalizedPart.type === 'field') {
-      const fieldMeta = filenameTemplateFieldOptions().find((field) => field.key === normalizedPart.key) || null;
-      label.classList.add(`filename-template-inline-token--${fieldMeta && fieldMeta.tone ? fieldMeta.tone : 'base'}`);
-      labelText.textContent = fieldMeta ? fieldMeta.label : normalizedPart.key;
-    } else {
-      label.classList.add('filename-template-inline-token--special');
-      labelText.textContent = 'Första tillgängliga';
-    }
+    labelText.textContent = meta.label;
     label.appendChild(labelText);
-    shell.appendChild(label);
+    center.appendChild(label);
 
-    if (normalizedPart.type === 'firstAvailable') {
-      shell.appendChild(buildSlotEditor(normalizedPart.parts, 'Kandidater', 'filename-template-inline-token-slot--candidates'));
+    const syncPartControlChange = () => {
+      token._filenameTemplatePart = normalizedPart;
+      if (ownerEditable instanceof HTMLElement) {
+        syncEditableFromDom(ownerEditable);
+      } else {
+        onChange();
+      }
+    };
+
+    if (normalizedPart.type === 'dataField') {
+      const select = document.createElement('select');
+      select.className = 'filename-template-inline-token-select';
+      const options = filenameTemplateDataFieldOptions();
+      if (options.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Inga datafält';
+        select.appendChild(option);
+        select.disabled = true;
+      } else {
+        options.forEach((optionData) => {
+          const option = document.createElement('option');
+          option.value = optionData.key;
+          option.textContent = optionData.label;
+          select.appendChild(option);
+        });
+        const fallbackKey = options[0]?.key || '';
+        select.value = options.some((option) => option.key === normalizedPart.key)
+          ? normalizedPart.key
+          : fallbackKey;
+        normalizedPart.key = select.value;
+      }
+      select.title = meta.title || 'Välj vilket datafält som ska skrivas in i filnamnet.';
+      select.addEventListener('change', () => {
+        normalizedPart.key = select.value;
+        syncPartControlChange();
+      });
+      center.appendChild(select);
+    } else if (normalizedPart.type === 'labels') {
+      const separatorInput = document.createElement('input');
+      separatorInput.type = 'text';
+      separatorInput.className = 'filename-template-inline-token-input';
+      separatorInput.value = typeof normalizedPart.separator === 'string'
+        ? normalizedPart.separator
+        : DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR;
+      separatorInput.placeholder = ', ';
+      separatorInput.title = 'Separator mellan etiketter i filnamnet.';
+      separatorInput.setAttribute('aria-label', 'Separator mellan etiketter');
+      separatorInput.addEventListener('input', () => {
+        normalizedPart.separator = separatorInput.value;
+        syncPartControlChange();
+      });
+      center.appendChild(separatorInput);
+    } else if (normalizedPart.type === 'firstAvailable') {
+      center.appendChild(buildSlotEditor(
+        normalizedPart.parts,
+        'Kandidater',
+        'filename-template-inline-token-slot--candidates'
+      ));
     }
+
+    shell.appendChild(center);
 
     shell.appendChild(buildSlotEditor(normalizedPart.suffixParts, '', 'filename-template-inline-token-slot--suffix'));
     token.appendChild(shell);

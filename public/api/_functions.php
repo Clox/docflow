@@ -571,6 +571,59 @@ function normalize_filename_template_parts(mixed $input, int $depth = 0): array
     return $parts;
 }
 
+function normalize_filename_template_candidate_parts(mixed $input, int $depth = 0): array
+{
+    return array_values(array_filter(
+        normalize_filename_template_parts($input, $depth),
+        static fn (array $part): bool => ($part['type'] ?? 'text') !== 'text'
+    ));
+}
+
+function migrate_legacy_filename_template_field_part(string $key): ?array
+{
+    $normalizedKey = trim($key);
+    if ($normalizedKey === '') {
+        return null;
+    }
+
+    if ($normalizedKey === 'category') {
+        return ['type' => 'category'];
+    }
+
+    if ($normalizedKey === 'date') {
+        return [
+            'type' => 'dataField',
+            'key' => 'due_date',
+        ];
+    }
+
+    if ($normalizedKey === 'payee') {
+        return [
+            'type' => 'dataField',
+            'key' => 'payment_receiver',
+        ];
+    }
+
+    if (array_key_exists($normalizedKey, system_extraction_field_definitions())) {
+        return [
+            'type' => 'systemField',
+            'key' => $normalizedKey,
+        ];
+    }
+
+    if (in_array($normalizedKey, ['client', 'main_client', 'sender'], true)) {
+        return [
+            'type' => 'field',
+            'key' => $normalizedKey,
+        ];
+    }
+
+    return [
+        'type' => 'dataField',
+        'key' => $normalizedKey,
+    ];
+}
+
 function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
 {
     if (!is_array($input) || $depth > 6) {
@@ -578,31 +631,60 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
     }
 
     $type = is_string($input['type'] ?? null) ? trim((string) $input['type']) : 'text';
+    $prefixParts = normalize_filename_template_parts($input['prefixParts'] ?? [], $depth + 1);
+    $suffixParts = normalize_filename_template_parts($input['suffixParts'] ?? [], $depth + 1);
     if ($type === 'field') {
+        $migrated = migrate_legacy_filename_template_field_part(
+            is_string($input['key'] ?? null) ? (string) $input['key'] : ''
+        );
+        if ($migrated === null) {
+            return null;
+        }
+
+        return [
+            ...$migrated,
+            'prefixParts' => $prefixParts,
+            'suffixParts' => $suffixParts,
+        ];
+    }
+
+    if ($type === 'dataField' || $type === 'systemField') {
         $key = is_string($input['key'] ?? null) ? trim((string) $input['key']) : '';
         if ($key === '') {
             return null;
         }
 
         return [
-            'type' => 'field',
+            'type' => $type,
             'key' => $key,
-            'prefixParts' => normalize_filename_template_parts($input['prefixParts'] ?? [], $depth + 1),
-            'suffixParts' => normalize_filename_template_parts($input['suffixParts'] ?? [], $depth + 1),
+            'prefixParts' => $prefixParts,
+            'suffixParts' => $suffixParts,
+        ];
+    }
+
+    if ($type === 'category') {
+        return [
+            'type' => 'category',
+            'prefixParts' => $prefixParts,
+            'suffixParts' => $suffixParts,
+        ];
+    }
+
+    if ($type === 'labels') {
+        return [
+            'type' => 'labels',
+            'separator' => is_string($input['separator'] ?? null) ? (string) $input['separator'] : ', ',
+            'prefixParts' => $prefixParts,
+            'suffixParts' => $suffixParts,
         ];
     }
 
     if ($type === 'firstAvailable') {
-        $parts = normalize_filename_template_parts($input['parts'] ?? [], $depth + 1);
-        if ($parts === []) {
-            return null;
-        }
-
         return [
             'type' => 'firstAvailable',
-            'parts' => $parts,
-            'prefixParts' => normalize_filename_template_parts($input['prefixParts'] ?? [], $depth + 1),
-            'suffixParts' => normalize_filename_template_parts($input['suffixParts'] ?? [], $depth + 1),
+            'parts' => normalize_filename_template_candidate_parts($input['parts'] ?? [], $depth + 1),
+            'prefixParts' => $prefixParts,
+            'suffixParts' => $suffixParts,
         ];
     }
 
@@ -6769,11 +6851,55 @@ function evaluate_filename_template_parts_backend(array $parts, array $fieldValu
         }
 
         $type = is_string($part['type'] ?? null) ? trim((string) $part['type']) : 'text';
-        if ($type === 'field') {
+        if ($type === 'field' || $type === 'dataField' || $type === 'systemField') {
             $key = is_string($part['key'] ?? null) ? trim((string) $part['key']) : '';
-            $value = $key !== '' && array_key_exists($key, $fieldValues)
-                ? trim((string) $fieldValues[$key])
+            $rawValue = $key !== '' && array_key_exists($key, $fieldValues)
+                ? $fieldValues[$key]
+                : null;
+            $value = is_scalar($rawValue) || $rawValue === null
+                ? trim((string) $rawValue)
                 : '';
+            if ($value === '') {
+                continue;
+            }
+            $result .= evaluate_filename_template_parts_backend(
+                is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [],
+                $fieldValues
+            );
+            $result .= $value;
+            $result .= evaluate_filename_template_parts_backend(
+                is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [],
+                $fieldValues
+            );
+            continue;
+        }
+
+        if ($type === 'category') {
+            $value = array_key_exists('category', $fieldValues) ? trim((string) $fieldValues['category']) : '';
+            if ($value === '') {
+                continue;
+            }
+            $result .= evaluate_filename_template_parts_backend(
+                is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [],
+                $fieldValues
+            );
+            $result .= $value;
+            $result .= evaluate_filename_template_parts_backend(
+                is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [],
+                $fieldValues
+            );
+            continue;
+        }
+
+        if ($type === 'labels') {
+            $rawLabels = $fieldValues['__labels'] ?? null;
+            $labelNames = is_array($rawLabels)
+                ? array_values(array_filter(array_map(static function ($value): string {
+                    return is_scalar($value) ? trim((string) $value) : '';
+                }, $rawLabels), static fn (string $value): bool => $value !== ''))
+                : [];
+            $separator = is_string($part['separator'] ?? null) ? (string) $part['separator'] : ', ';
+            $value = $labelNames !== [] ? implode($separator, $labelNames) : '';
             if ($value === '') {
                 continue;
             }
@@ -6818,7 +6944,45 @@ function evaluate_filename_template_parts_backend(array $parts, array $fieldValu
     return $result;
 }
 
-function build_auto_archiving_filename_field_values(array $autoResult, array $senders, array $categoriesById): array
+function build_auto_archiving_filename_label_names(array $autoResult, array $rules): array
+{
+    $labelNameById = [];
+
+    foreach (is_array($rules['systemLabels'] ?? null) ? $rules['systemLabels'] : [] as $label) {
+        if (!is_array($label)) {
+            continue;
+        }
+        $id = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+        $name = is_string($label['name'] ?? null) ? trim((string) $label['name']) : '';
+        if ($id !== '' && $name !== '') {
+            $labelNameById[$id] = $name;
+        }
+    }
+
+    foreach (is_array($rules['labels'] ?? null) ? $rules['labels'] : [] as $label) {
+        if (!is_array($label)) {
+            continue;
+        }
+        $id = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+        $name = is_string($label['name'] ?? null) ? trim((string) $label['name']) : '';
+        if ($id !== '' && $name !== '') {
+            $labelNameById[$id] = $name;
+        }
+    }
+
+    $labelNames = [];
+    foreach (is_array($autoResult['labels'] ?? null) ? $autoResult['labels'] : [] as $labelId) {
+        $resolvedId = is_string($labelId) ? trim((string) $labelId) : '';
+        if ($resolvedId === '') {
+            continue;
+        }
+        $labelNames[] = $labelNameById[$resolvedId] ?? $resolvedId;
+    }
+
+    return array_values(array_filter($labelNames, static fn (string $value): bool => $value !== ''));
+}
+
+function build_auto_archiving_filename_field_values(array $autoResult, array $senders, array $categoriesById, array $rules): array
 {
     $values = [];
     $setValue = static function (array &$target, string $key, mixed $value): void {
@@ -6882,6 +7046,11 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
         $setValue($values, $resolvedKey, $fieldValue);
     }
 
+    $labelNames = build_auto_archiving_filename_label_names($autoResult, $rules);
+    if ($labelNames !== []) {
+        $values['__labels'] = $labelNames;
+    }
+
     return $values;
 }
 
@@ -6906,7 +7075,7 @@ function generate_auto_archiving_filename(array $job, array $autoResult, array $
         ' ',
         evaluate_filename_template_parts_backend(
             is_array($template['parts'] ?? null) ? $template['parts'] : [],
-            build_auto_archiving_filename_field_values($autoResult, $senders, $categoriesById)
+            build_auto_archiving_filename_field_values($autoResult, $senders, $categoriesById, $rules)
         )
     ) ?? '');
 
