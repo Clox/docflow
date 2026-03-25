@@ -55,7 +55,6 @@ const settingsPanelTemplateIds = {
   labels: 'settings-template-labels',
   'data-fields': 'settings-template-data-fields',
   'archiving-review': 'settings-template-archiving-review',
-  jobs: 'settings-template-jobs',
   paths: 'settings-template-paths',
   system: 'settings-template-system'
 };
@@ -5232,21 +5231,6 @@ function bindSettingsPanelRefs(tabId) {
         alert(error.message || 'Kunde inte aktivera reglerna.');
       }
     });
-  } else if (tabId === 'jobs') {
-    settingsResetJobsEl = document.getElementById('settings-reset-jobs');
-    settingsResetJobsEl.addEventListener('click', async () => {
-      const confirmed = window.confirm(
-        'Detta flyttar tillbaka alla source.pdf till inbox och tar bort alla jobbmappar. Fortsätta?'
-      );
-      if (!confirmed) {
-        return;
-      }
-      try {
-        await resetAllJobs();
-      } catch (error) {
-        alert('Kunde inte återställa jobb.');
-      }
-    });
   } else if (tabId === 'paths') {
     outputBasePathEl = document.getElementById('output-base-path');
     pathsCancelEl = document.getElementById('paths-cancel');
@@ -5267,6 +5251,7 @@ function bindSettingsPanelRefs(tabId) {
     });
   } else if (tabId === 'system') {
     systemStateTransportEl = document.getElementById('system-state-transport');
+    settingsResetJobsEl = document.getElementById('settings-reset-jobs');
     systemStateTransportEl.value = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
     systemStateTransportEl.addEventListener('change', async () => {
       const previousTransport = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
@@ -5289,6 +5274,19 @@ function bindSettingsPanelRefs(tabId) {
         alert(error.message || 'Kunde inte spara uppdateringsmetod.');
       } finally {
         systemStateTransportEl.disabled = false;
+      }
+    });
+    settingsResetJobsEl.addEventListener('click', async () => {
+      const confirmed = window.confirm(
+        'Detta flyttar tillbaka alla source.pdf till inbox och tar bort alla jobbmappar. Fortsätta?'
+      );
+      if (!confirmed) {
+        return;
+      }
+      try {
+        await resetAllJobs();
+      } catch (error) {
+        alert('Kunde inte återställa jobb.');
       }
     });
   }
@@ -5438,7 +5436,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'labels', 'data-fields', 'archiving-review', 'jobs', 'paths', 'system'];
+  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'labels', 'data-fields', 'archiving-review', 'paths', 'system'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {

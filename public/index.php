@@ -171,17 +171,31 @@
     <div class="settings-dialog">
       <aside class="settings-nav">
         <h2>Inställningar</h2>
-        <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
-        <button class="settings-tab" data-settings-tab="senders" type="button">Avsändare</button>
-        <button class="settings-tab" data-settings-tab="matching" type="button">OCR-matchning</button>
-        <button class="settings-tab" data-settings-tab="ocr-processing" type="button">Bild-OCR</button>
-        <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
-        <button class="settings-tab" data-settings-tab="labels" type="button">Etiketter</button>
-        <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
-        <button class="settings-tab" data-settings-tab="archiving-review" type="button">Granska regeländringar <span class="settings-tab-indicator" aria-hidden="true">●</span></button>
-        <button class="settings-tab" data-settings-tab="jobs" type="button">Jobb</button>
-        <button class="settings-tab" data-settings-tab="paths" type="button">Sökvägar</button>
-        <button class="settings-tab" data-settings-tab="system" type="button">System</button>
+        <div class="settings-nav-section">
+          <div class="settings-nav-group-title">Register</div>
+          <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
+          <button class="settings-tab" data-settings-tab="senders" type="button">Avsändare</button>
+        </div>
+        <div class="settings-nav-section">
+          <div class="settings-nav-group-title">Dokumenttolkning</div>
+          <button class="settings-tab" data-settings-tab="ocr-processing" type="button">Textigenkänning</button>
+          <button class="settings-tab" data-settings-tab="matching" type="button">Textmatchning</button>
+        </div>
+        <div class="settings-nav-section">
+          <div class="settings-nav-group-title">Arkivering</div>
+          <button class="settings-tab" data-settings-tab="archiving-review" type="button">Granska regeländringar <span class="settings-tab-indicator" aria-hidden="true">●</span></button>
+          <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
+          <button class="settings-tab" data-settings-tab="labels" type="button">Etiketter</button>
+          <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
+        </div>
+        <div class="settings-nav-section">
+          <div class="settings-nav-group-title">Lagring</div>
+          <button class="settings-tab" data-settings-tab="paths" type="button">Sökvägar</button>
+        </div>
+        <div class="settings-nav-section">
+          <div class="settings-nav-group-title">System</div>
+          <button class="settings-tab" data-settings-tab="system" type="button">System</button>
+        </div>
       </aside>
       <section class="settings-content">
         <div id="settings-panel-clients" class="settings-panel active"></div>
@@ -192,7 +206,6 @@
         <div id="settings-panel-labels" class="settings-panel hidden"></div>
         <div id="settings-panel-data-fields" class="settings-panel hidden"></div>
         <div id="settings-panel-archiving-review" class="settings-panel hidden"></div>
-        <div id="settings-panel-jobs" class="settings-panel hidden"></div>
         <div id="settings-panel-paths" class="settings-panel hidden"></div>
         <div id="settings-panel-system" class="settings-panel hidden"></div>
 
@@ -280,7 +293,7 @@
   </template>
 
   <template id="settings-template-matching">
-    <h3>OCR-matchning</h3>
+    <h3>Textmatchning</h3>
     <div class="matching-replacements-section">
       <p>Definiera teckenersättningar för OCR-text före matchning.</p>
       <p>Exempel: mappa <code>é</code> till <code>ö</code> så att <code>Férfallodatum</code> kan matcha <code>Förfallodatum</code>.</p>
@@ -297,7 +310,7 @@
   </template>
 
   <template id="settings-template-ocr-processing">
-    <h3>Bild-OCR</h3>
+    <h3>Textigenkänning</h3>
     <p>Kör <code>ocrmypdf</code> som ett steg i bearbetningen innan OCR-text läses ut för analys.</p>
     <div class="ocr-status-card">
       <div class="ocr-status-row">
@@ -415,14 +428,6 @@
     </div>
   </template>
 
-  <template id="settings-template-jobs">
-    <h3>Jobb</h3>
-    <p>Ogiltigförklara alla jobb och flytta tillbaka <code>source.pdf</code> till inbox.</p>
-    <div class="settings-danger">
-      <button id="settings-reset-jobs" type="button">Återställ alla jobb</button>
-    </div>
-  </template>
-
   <template id="settings-template-labels">
     <h3>Etiketter</h3>
     <p>Globala etiketter som matchas mot OCR-texten med samma regelmodell som kategorier.</p>
@@ -493,6 +498,10 @@
       <option value="polling">Polling</option>
       <option value="sse">Automatisk push (SSE)</option>
     </select>
+    <div class="settings-danger">
+      <p>Ogiltigförklara alla jobb och flytta tillbaka <code>source.pdf</code> till inbox.</p>
+      <button id="settings-reset-jobs" type="button">Återställ alla jobb</button>
+    </div>
   </template>
 
   <script src="/app.js"></script>
