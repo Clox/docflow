@@ -10,6 +10,9 @@ What is stored in SQLite
 1. `senders`
 - One row per sender organization/authority/company.
 - Supports exact lookup by normalized organization number.
+- Soft-merge support:
+  - `merged_into_sender_id` is `NULL` for active senders.
+  - merged/retired sender aliases point to the active sender row instead of being deleted.
 
 2. `sender_payment_numbers`
 - Stores sender bankgiro/plusgiro numbers and metadata.

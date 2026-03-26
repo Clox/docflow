@@ -5,6 +5,7 @@ require_once __DIR__ . '/_bootstrap.php';
 
 use Docflow\Database\Connection;
 use Docflow\Senders\IdentifierNormalizer;
+use Docflow\Senders\SenderRepository;
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(['error' => 'Method not allowed'], 405);
@@ -23,100 +24,11 @@ if (!is_array($payload) || !array_key_exists('senders', $payload) || !is_array($
     exit;
 }
 
-function format_payment_number_for_display(string $type, string $number): string
-{
-    $digits = preg_replace('/\D+/', '', $number);
-    if (!is_string($digits) || $digits === '') {
-        return '';
-    }
-
-    if ($type === 'bankgiro') {
-        $length = strlen($digits);
-        if ($length >= 5) {
-            return substr($digits, 0, $length - 4) . '-' . substr($digits, -4);
-        }
-    }
-
-    if ($type === 'plusgiro') {
-        $length = strlen($digits);
-        if ($length >= 2) {
-            return substr($digits, 0, $length - 1) . '-' . substr($digits, -1);
-        }
-    }
-
-    return $digits;
-}
-
-/**
- * @return array<int, array<string, mixed>>
- */
-function load_sender_editor_rows(PDO $pdo): array
-{
-    $statement = $pdo->query(
-        'SELECT
-            s.id AS sender_id,
-            s.name AS sender_name,
-            s.org_number AS sender_org_number,
-            s.domain AS sender_domain,
-            s.kind AS sender_kind,
-            s.notes AS sender_notes,
-            p.id AS payment_id,
-            p.type AS payment_type,
-            p.number AS payment_number
-        FROM senders s
-        LEFT JOIN sender_payment_numbers p ON p.sender_id = s.id
-        ORDER BY s.name ASC, s.id ASC, p.type ASC, p.number ASC, p.id ASC'
-    );
-
-    $rows = $statement->fetchAll();
-    if (!is_array($rows)) {
-        return [];
-    }
-
-    $sendersById = [];
-    foreach ($rows as $row) {
-        if (!is_array($row)) {
-            continue;
-        }
-
-        $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
-        if ($senderId < 1) {
-            continue;
-        }
-
-        if (!isset($sendersById[$senderId])) {
-            $sendersById[$senderId] = [
-                'id' => $senderId,
-                'name' => is_string($row['sender_name'] ?? null) ? trim((string) $row['sender_name']) : '',
-                'orgNumber' => is_string($row['sender_org_number'] ?? null) ? trim((string) $row['sender_org_number']) : '',
-                'domain' => is_string($row['sender_domain'] ?? null) ? trim((string) $row['sender_domain']) : '',
-                'kind' => is_string($row['sender_kind'] ?? null) ? trim((string) $row['sender_kind']) : '',
-                'notes' => is_string($row['sender_notes'] ?? null) ? (string) $row['sender_notes'] : '',
-                'paymentNumbers' => [],
-            ];
-        }
-
-        $paymentId = isset($row['payment_id']) ? (int) $row['payment_id'] : 0;
-        if ($paymentId < 1) {
-            continue;
-        }
-
-        $sendersById[$senderId]['paymentNumbers'][] = [
-            'id' => $paymentId,
-            'type' => is_string($row['payment_type'] ?? null) ? trim(strtolower((string) $row['payment_type'])) : 'bankgiro',
-            'number' => format_payment_number_for_display(
-                is_string($row['payment_type'] ?? null) ? trim(strtolower((string) $row['payment_type'])) : 'bankgiro',
-                is_string($row['payment_number'] ?? null) ? trim((string) $row['payment_number']) : ''
-            ),
-        ];
-    }
-
-    return array_values($sendersById);
-}
-
 $normalized = [];
 $seenOrgNumbers = [];
 $seenPaymentNumbers = [];
+$claimedMergedSourceIds = [];
+$submittedSenderIds = [];
 
 foreach ($payload['senders'] as $row) {
     if (!is_array($row)) {
@@ -137,6 +49,20 @@ foreach ($payload['senders'] as $row) {
         is_array($row['paymentNumbers'] ?? null) ? $row['paymentNumbers'] : [],
         static fn (mixed $payment): bool => is_array($payment)
     ));
+
+    $mergedSourceSenderIds = [];
+    foreach (is_array($row['mergedSourceSenderIds'] ?? null) ? $row['mergedSourceSenderIds'] : [] as $value) {
+        $sourceId = is_numeric($value) ? (int) $value : 0;
+        if ($sourceId < 1 || ($id !== null && $sourceId === $id)) {
+            continue;
+        }
+        if (isset($claimedMergedSourceIds[$sourceId])) {
+            json_response(['error' => 'Samma avsändare kan inte slås samman till flera mål samtidigt'], 400);
+            exit;
+        }
+        $claimedMergedSourceIds[$sourceId] = true;
+        $mergedSourceSenderIds[] = $sourceId;
+    }
 
     $isEffectivelyEmpty = $name === ''
         && $orgNumberRaw === ''
@@ -208,6 +134,10 @@ foreach ($payload['senders'] as $row) {
         ];
     }
 
+    if ($id !== null) {
+        $submittedSenderIds[$id] = true;
+    }
+
     $normalized[] = [
         'id' => $id,
         'name' => $name,
@@ -216,14 +146,29 @@ foreach ($payload['senders'] as $row) {
         'kind' => $kindRaw !== '' ? $kindRaw : null,
         'notes' => $notesRaw !== '' ? $notesRaw : null,
         'paymentNumbers' => $paymentNumbers,
+        'mergedSourceSenderIds' => $mergedSourceSenderIds,
     ];
+}
+
+foreach ($normalized as $row) {
+    foreach ($row['mergedSourceSenderIds'] as $sourceId) {
+        if (isset($submittedSenderIds[$sourceId])) {
+            json_response(['error' => 'En avsändare kan inte både vara aktiv och sammanslagen i samma sparning'], 400);
+            exit;
+        }
+    }
 }
 
 try {
     $pdo = Connection::make();
+    $repository = new SenderRepository($pdo);
     $pdo->beginTransaction();
 
-    $existingSenderRows = $pdo->query('SELECT id FROM senders')->fetchAll(PDO::FETCH_COLUMN);
+    $existingSenderRows = $pdo->query(
+        'SELECT id
+        FROM senders
+        WHERE merged_into_sender_id IS NULL'
+    )->fetchAll(PDO::FETCH_COLUMN);
     $existingSenderIds = [];
     foreach ($existingSenderRows as $value) {
         $senderId = (int) $value;
@@ -232,7 +177,18 @@ try {
         }
     }
 
-    $existingPaymentRows = $pdo->query('SELECT id, sender_id FROM sender_payment_numbers')->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($claimedMergedSourceIds as $sourceId => $_true) {
+        if (!isset($existingSenderIds[$sourceId])) {
+            throw new RuntimeException('En avsändare som skulle slås samman finns inte längre eller är redan sammanslagen.');
+        }
+    }
+
+    $existingPaymentRows = $pdo->query(
+        'SELECT p.id, p.sender_id
+        FROM sender_payment_numbers p
+        INNER JOIN senders s ON s.id = p.sender_id
+        WHERE s.merged_into_sender_id IS NULL'
+    )->fetchAll(PDO::FETCH_ASSOC);
     $existingPaymentIds = [];
     foreach ($existingPaymentRows as $paymentRow) {
         if (!is_array($paymentRow)) {
@@ -245,11 +201,27 @@ try {
         }
     }
 
-    $submittedSenderIds = [];
     $submittedPaymentIds = [];
+    foreach ($normalized as $row) {
+        foreach ($row['paymentNumbers'] as $paymentRow) {
+            if ($paymentRow['id'] !== null) {
+                $submittedPaymentIds[(int) $paymentRow['id']] = true;
+            }
+        }
+    }
 
     $deleteRemovedPayments = $pdo->prepare('DELETE FROM sender_payment_numbers WHERE id = :id');
     $deleteRemovedSender = $pdo->prepare('DELETE FROM senders WHERE id = :id');
+    $clearSourceSenderOrgNumber = $pdo->prepare(
+        'UPDATE senders
+        SET org_number = NULL, updated_at = :updated_at
+        WHERE id = :id AND merged_into_sender_id IS NULL'
+    );
+    $markSourceSenderMerged = $pdo->prepare(
+        'UPDATE senders
+        SET merged_into_sender_id = :target_sender_id, updated_at = :updated_at
+        WHERE id = :id AND merged_into_sender_id IS NULL'
+    );
 
     $insertSender = $pdo->prepare(
         'INSERT INTO senders (
@@ -260,7 +232,8 @@ try {
             notes,
             confidence,
             created_at,
-            updated_at
+            updated_at,
+            merged_into_sender_id
         ) VALUES (
             :name,
             :org_number,
@@ -269,7 +242,8 @@ try {
             :notes,
             1,
             :created_at,
-            :updated_at
+            :updated_at,
+            NULL
         )'
     );
 
@@ -281,8 +255,9 @@ try {
             domain = :domain,
             kind = :kind,
             notes = :notes,
+            merged_into_sender_id = NULL,
             updated_at = :updated_at
-        WHERE id = :id'
+        WHERE id = :id AND merged_into_sender_id IS NULL'
     );
 
     $insertPayment = $pdo->prepare(
@@ -323,17 +298,6 @@ try {
         WHERE id = :id'
     );
 
-    foreach ($normalized as $row) {
-        if ($row['id'] !== null) {
-            $submittedSenderIds[(int) $row['id']] = true;
-        }
-        foreach ($row['paymentNumbers'] as $paymentRow) {
-            if ($paymentRow['id'] !== null) {
-                $submittedPaymentIds[(int) $paymentRow['id']] = true;
-            }
-        }
-    }
-
     foreach ($existingPaymentIds as $paymentId => $_senderId) {
         if (!isset($submittedPaymentIds[$paymentId])) {
             $deleteRemovedPayments->execute([':id' => $paymentId]);
@@ -341,17 +305,21 @@ try {
     }
 
     foreach ($existingSenderIds as $senderId => $_unused) {
-        if (!isset($submittedSenderIds[$senderId])) {
+        if (!isset($submittedSenderIds[$senderId]) && !isset($claimedMergedSourceIds[$senderId])) {
             $deleteRemovedSender->execute([':id' => $senderId]);
         }
     }
 
-    $submittedSenderIds = [];
-    $submittedPaymentIds = [];
-
     foreach ($normalized as $row) {
         $timestamp = date(DATE_ATOM);
         $senderId = $row['id'];
+
+        foreach ($row['mergedSourceSenderIds'] as $sourceSenderId) {
+            $clearSourceSenderOrgNumber->execute([
+                ':id' => $sourceSenderId,
+                ':updated_at' => $timestamp,
+            ]);
+        }
 
         if ($senderId !== null && isset($existingSenderIds[$senderId])) {
             $updateSender->execute([
@@ -363,6 +331,9 @@ try {
                 ':notes' => $row['notes'],
                 ':updated_at' => $timestamp,
             ]);
+            if ($updateSender->rowCount() < 1) {
+                throw new RuntimeException('Avsändaren som skulle uppdateras finns inte längre.');
+            }
         } elseif ($senderId !== null) {
             throw new RuntimeException('Avsändaren som skulle uppdateras finns inte längre.');
         } else {
@@ -378,8 +349,6 @@ try {
             $senderId = (int) $pdo->lastInsertId();
         }
 
-        $submittedSenderIds[$senderId] = true;
-
         foreach ($row['paymentNumbers'] as $paymentRow) {
             $paymentId = $paymentRow['id'];
             $paymentTimestamp = date(DATE_ATOM);
@@ -393,7 +362,6 @@ try {
                     ':source' => 'docflow_editor',
                     ':updated_at' => $paymentTimestamp,
                 ]);
-                $submittedPaymentIds[$paymentId] = true;
                 continue;
             } elseif ($paymentId !== null) {
                 throw new RuntimeException('Betalnumret som skulle uppdateras finns inte längre.');
@@ -408,17 +376,22 @@ try {
                 ':created_at' => $paymentTimestamp,
                 ':updated_at' => $paymentTimestamp,
             ]);
-            $submittedPaymentIds[(int) $pdo->lastInsertId()] = true;
+        }
+
+        foreach ($row['mergedSourceSenderIds'] as $sourceSenderId) {
+            $markSourceSenderMerged->execute([
+                ':id' => $sourceSenderId,
+                ':target_sender_id' => $senderId,
+                ':updated_at' => date(DATE_ATOM),
+            ]);
         }
     }
 
     $pdo->commit();
 
-    $senders = load_sender_editor_rows($pdo);
-
     json_response([
         'ok' => true,
-        'senders' => $senders,
+        'senders' => $repository->listEditorRows(),
     ]);
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {

@@ -285,9 +285,12 @@ function job_sender_snapshot_ids(string $jobId): ?array
         return null;
     }
 
+    $senderId = isset($row['sender_id']) && (int) $row['sender_id'] > 0 ? (int) $row['sender_id'] : null;
+    $autoSenderId = isset($row['auto_sender_id']) && (int) $row['auto_sender_id'] > 0 ? (int) $row['auto_sender_id'] : null;
+
     return [
-        'senderId' => isset($row['sender_id']) && (int) $row['sender_id'] > 0 ? (int) $row['sender_id'] : null,
-        'autoSenderId' => isset($row['auto_sender_id']) && (int) $row['auto_sender_id'] > 0 ? (int) $row['auto_sender_id'] : null,
+        'senderId' => resolve_active_sender_id($senderId),
+        'autoSenderId' => resolve_active_sender_id($autoSenderId),
     ];
 }
 
@@ -435,6 +438,26 @@ function sender_lookup_result(?string $orgNumber, ?string $bankgiro, ?string $pl
         'matchedValue' => is_string($match['matchedValue'] ?? null) ? $match['matchedValue'] : null,
         'sender' => $sender,
     ];
+}
+
+function resolve_active_sender_id(?int $senderId): ?int
+{
+    $normalizedId = is_int($senderId) ? $senderId : (int) $senderId;
+    if ($normalizedId < 1) {
+        return null;
+    }
+
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        return $normalizedId;
+    }
+
+    try {
+        $resolvedId = $repository->resolveActiveSenderId($normalizedId);
+        return $resolvedId !== null && $resolvedId > 0 ? $resolvedId : null;
+    } catch (Throwable $e) {
+        return $normalizedId;
+    }
 }
 
 function load_senders(): array
@@ -7709,7 +7732,7 @@ function current_approved_archiving_for_job(array $job): array
     $normalized = normalize_auto_archiving_result($autoResult);
 
     $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null) ? trim((string) $job['selectedClientDirName']) : '';
-    $selectedSenderId = isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0;
+    $selectedSenderId = resolve_active_sender_id(isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
     $selectedCategoryId = is_string($job['selectedCategoryId'] ?? null) ? trim((string) $job['selectedCategoryId']) : '';
     $filename = is_string($job['filename'] ?? null) ? trim((string) $job['filename']) : '';
 
@@ -7738,6 +7761,7 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
     $selectedSenderId = array_key_exists('selectedSenderId', $payload)
         ? (int) ($payload['selectedSenderId'] ?? 0)
         : (isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
+    $selectedSenderId = resolve_active_sender_id($selectedSenderId) ?? 0;
     $selectedCategoryId = array_key_exists('selectedCategoryId', $payload)
         ? (is_string($payload['selectedCategoryId'] ?? null) ? trim((string) $payload['selectedCategoryId']) : '')
         : (is_string($job['selectedCategoryId'] ?? null) ? trim((string) $job['selectedCategoryId']) : '');
@@ -10042,7 +10066,7 @@ function build_job_state_entry(
     $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null)
         ? trim((string) $job['selectedClientDirName'])
         : null;
-    $selectedSenderId = isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : null;
+    $selectedSenderId = resolve_active_sender_id(isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
     if ($selectedSenderId !== null && $selectedSenderId < 1) {
         $selectedSenderId = null;
     }
@@ -10134,14 +10158,16 @@ function build_job_state_entry(
         ? $analysis['preselectedSender']
         : null;
     if (is_array($preselectedSender) && isset($preselectedSender['id'])) {
-        $senderId = (int) $preselectedSender['id'];
+        $senderId = resolve_active_sender_id((int) $preselectedSender['id']) ?? 0;
         if ($senderId > 0) {
             $matchedSenderId = $senderId;
         }
     } elseif (is_array($extracted) && is_array($extracted['senderLookup'] ?? null)) {
         $senderLookup = $extracted['senderLookup'];
         $sender = is_array($senderLookup['sender'] ?? null) ? $senderLookup['sender'] : null;
-        $senderId = is_array($sender) && isset($sender['id']) ? (int) $sender['id'] : 0;
+        $senderId = is_array($sender) && isset($sender['id'])
+            ? (resolve_active_sender_id((int) $sender['id']) ?? 0)
+            : 0;
         if ($senderId > 0) {
             $matchedSenderId = $senderId;
         }

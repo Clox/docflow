@@ -5988,7 +5988,8 @@ function defaultSenderDraft() {
     domain: '',
     kind: '',
     notes: '',
-    paymentNumbers: []
+    paymentNumbers: [],
+    mergedSourceSenderIds: []
   };
 }
 
@@ -6053,7 +6054,12 @@ function sanitizeSenderDraft(row) {
     domain: typeof input.domain === 'string' ? input.domain : '',
     kind: typeof input.kind === 'string' ? input.kind : '',
     notes: typeof input.notes === 'string' ? input.notes : '',
-    paymentNumbers: rawPaymentNumbers.map(sanitizeSenderPaymentDraft)
+    paymentNumbers: rawPaymentNumbers.map(sanitizeSenderPaymentDraft),
+    mergedSourceSenderIds: Array.isArray(input.mergedSourceSenderIds)
+      ? Array.from(new Set(input.mergedSourceSenderIds
+        .map((value) => Number.parseInt(String(value || ''), 10))
+        .filter((value) => Number.isInteger(value) && value > 0)))
+      : []
   };
 }
 
@@ -7652,6 +7658,21 @@ async function applySenderMerge() {
   const previousMergeState = JSON.parse(JSON.stringify(senderMergeState));
   const mergedDraft = sanitizeSenderDraft(senderMergeState.draft);
   const sourceUiKeys = new Set(senderMergeState.sourceUiKeys);
+  const mergedSourceSenderIds = new Set(Array.isArray(mergedDraft.mergedSourceSenderIds) ? mergedDraft.mergedSourceSenderIds : []);
+  sendersDraft.forEach((row) => {
+    const rowUiKey = senderUiKey(row);
+    if (!sourceUiKeys.has(rowUiKey)) {
+      return;
+    }
+    if (Number.isInteger(row.id) && row.id > 0 && row.id !== mergedDraft.id) {
+      mergedSourceSenderIds.add(row.id);
+    }
+    (Array.isArray(row.mergedSourceSenderIds) ? row.mergedSourceSenderIds : []).forEach((senderId) => {
+      if (Number.isInteger(senderId) && senderId > 0 && senderId !== mergedDraft.id) {
+        mergedSourceSenderIds.add(senderId);
+      }
+    });
+  });
   const nextSendersDraft = [];
   let insertedMergedRow = false;
 
@@ -7662,13 +7683,19 @@ async function applySenderMerge() {
       return;
     }
     if (!insertedMergedRow && rowUiKey === senderMergeState.baseUiKey) {
-      nextSendersDraft.push(mergedDraft);
+      nextSendersDraft.push({
+        ...mergedDraft,
+        mergedSourceSenderIds: Array.from(mergedSourceSenderIds),
+      });
       insertedMergedRow = true;
     }
   });
 
   if (!insertedMergedRow) {
-    nextSendersDraft.push(mergedDraft);
+    nextSendersDraft.push({
+      ...mergedDraft,
+      mergedSourceSenderIds: Array.from(mergedSourceSenderIds),
+    });
   }
 
   sendersDraft = nextSendersDraft.map(sanitizeSenderDraft);

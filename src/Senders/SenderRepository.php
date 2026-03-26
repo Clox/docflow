@@ -22,7 +22,13 @@ final class SenderRepository
             return null;
         }
 
-        $statement = $this->pdo->prepare('SELECT * FROM senders WHERE org_number = :org_number LIMIT 1');
+        $statement = $this->pdo->prepare(
+            'SELECT *
+            FROM senders
+            WHERE org_number = :org_number
+              AND merged_into_sender_id IS NULL
+            LIMIT 1'
+        );
         $statement->execute([':org_number' => $normalized]);
         $sender = $statement->fetch();
 
@@ -44,10 +50,121 @@ final class SenderRepository
         $statement = $this->pdo->query(
             'SELECT id, name, org_number, domain, kind, notes, confidence, created_at, updated_at
             FROM senders
+            WHERE merged_into_sender_id IS NULL
             ORDER BY name ASC, id ASC'
         );
         $rows = $statement->fetchAll();
         return is_array($rows) ? $rows : [];
+    }
+
+    public function listEditorRows(): array
+    {
+        $statement = $this->pdo->query(
+            'SELECT
+                s.id AS sender_id,
+                s.name AS sender_name,
+                s.org_number AS sender_org_number,
+                s.domain AS sender_domain,
+                s.kind AS sender_kind,
+                s.notes AS sender_notes,
+                p.id AS payment_id,
+                p.type AS payment_type,
+                p.number AS payment_number
+            FROM senders s
+            LEFT JOIN sender_payment_numbers p ON p.sender_id = s.id
+            WHERE s.merged_into_sender_id IS NULL
+            ORDER BY s.name ASC, s.id ASC, p.type ASC, p.number ASC, p.id ASC'
+        );
+
+        $rows = $statement->fetchAll();
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $sendersById = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
+            if ($senderId < 1) {
+                continue;
+            }
+
+            if (!isset($sendersById[$senderId])) {
+                $sendersById[$senderId] = [
+                    'id' => $senderId,
+                    'name' => is_string($row['sender_name'] ?? null) ? trim((string) $row['sender_name']) : '',
+                    'orgNumber' => is_string($row['sender_org_number'] ?? null) ? trim((string) $row['sender_org_number']) : '',
+                    'domain' => is_string($row['sender_domain'] ?? null) ? trim((string) $row['sender_domain']) : '',
+                    'kind' => is_string($row['sender_kind'] ?? null) ? trim((string) $row['sender_kind']) : '',
+                    'notes' => is_string($row['sender_notes'] ?? null) ? (string) $row['sender_notes'] : '',
+                    'paymentNumbers' => [],
+                ];
+            }
+
+            $paymentId = isset($row['payment_id']) ? (int) $row['payment_id'] : 0;
+            if ($paymentId < 1) {
+                continue;
+            }
+
+            $type = is_string($row['payment_type'] ?? null) ? trim(strtolower((string) $row['payment_type'])) : 'bankgiro';
+            $sendersById[$senderId]['paymentNumbers'][] = [
+                'id' => $paymentId,
+                'type' => $type,
+                'number' => $this->formatPaymentNumberForDisplay(
+                    $type,
+                    is_string($row['payment_number'] ?? null) ? trim((string) $row['payment_number']) : ''
+                ),
+            ];
+        }
+
+        return array_values($sendersById);
+    }
+
+    public function findById(int $id): ?array
+    {
+        if ($id < 1) {
+            return null;
+        }
+
+        $statement = $this->pdo->prepare('SELECT * FROM senders WHERE id = :id LIMIT 1');
+        $statement->execute([':id' => $id]);
+        $row = $statement->fetch();
+
+        return is_array($row) ? $row : null;
+    }
+
+    public function resolveActiveSenderId(int $senderId): ?int
+    {
+        if ($senderId < 1) {
+            return null;
+        }
+
+        $currentId = $senderId;
+        $visited = [];
+
+        while ($currentId > 0) {
+            if (isset($visited[$currentId])) {
+                throw new RuntimeException('Detected sender merge cycle for sender id ' . $senderId);
+            }
+            $visited[$currentId] = true;
+
+            $row = $this->findById($currentId);
+            if (!is_array($row)) {
+                return null;
+            }
+
+            $mergedIntoSenderId = isset($row['merged_into_sender_id']) ? (int) $row['merged_into_sender_id'] : 0;
+            if ($mergedIntoSenderId < 1) {
+                return $currentId;
+            }
+
+            $currentId = $mergedIntoSenderId;
+        }
+
+        return null;
     }
 
     public function findByDocumentIdentifiers(?string $orgNumber, ?string $bankgiro, ?string $plusgiro): ?array
@@ -259,7 +376,9 @@ final class SenderRepository
                 p.confidence AS payment_confidence
             FROM sender_payment_numbers p
             INNER JOIN senders s ON s.id = p.sender_id
-            WHERE p.type = :type AND p.number = :number
+            WHERE p.type = :type
+              AND p.number = :number
+              AND s.merged_into_sender_id IS NULL
             LIMIT 1'
         );
 
@@ -270,5 +389,29 @@ final class SenderRepository
 
         $sender = $statement->fetch();
         return is_array($sender) ? $sender : null;
+    }
+
+    private function formatPaymentNumberForDisplay(string $type, string $number): string
+    {
+        $digits = preg_replace('/\D+/', '', $number);
+        if (!is_string($digits) || $digits === '') {
+            return '';
+        }
+
+        if ($type === 'bankgiro') {
+            $length = strlen($digits);
+            if ($length >= 5) {
+                return substr($digits, 0, $length - 4) . '-' . substr($digits, -4);
+            }
+        }
+
+        if ($type === 'plusgiro') {
+            $length = strlen($digits);
+            if ($length >= 2) {
+                return substr($digits, 0, $length - 1) . '-' . substr($digits, -1);
+            }
+        }
+
+        return $digits;
     }
 }
