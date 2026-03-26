@@ -125,6 +125,7 @@ let extractionFieldsViewCustomEl = null;
 let extractionFieldsViewSystemEl = null;
 let archivingReviewStatusEl = null;
 let archivingReviewSummaryEl = null;
+let archivingReviewTemplateChangesEl = null;
 let archivingReviewJobsEl = null;
 let archivingReviewResetDraftEl = null;
 let archivingReviewPublishEl = null;
@@ -311,6 +312,7 @@ const selectedSenderUiKeys = new Set();
 const mountedSettingsPanels = new Set();
 const boundSettingsPanels = new Set();
 const loadedSettingsPanels = new Set();
+const loadingSettingsPanels = new Set();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
@@ -1349,6 +1351,7 @@ function emptyArchivingReviewPayload() {
     hasUnpublishedChanges: false,
     hasReviewRelevantChanges: false,
     changedSections: [],
+    templateChanges: [],
     summary: {
       testedJobs: 0,
       unchanged: 0,
@@ -1377,6 +1380,16 @@ function normalizeArchivingReviewPayload(payload) {
     hasUnpublishedChanges: next.hasUnpublishedChanges === true,
     hasReviewRelevantChanges: next.hasReviewRelevantChanges === true,
     changedSections: Array.isArray(next.changedSections) ? next.changedSections.filter((value) => typeof value === 'string' && value.trim()) : [],
+    templateChanges: Array.isArray(next.templateChanges)
+      ? next.templateChanges
+        .filter((item) => item && typeof item === 'object')
+        .map((item) => ({
+          archiveFolderId: typeof item.archiveFolderId === 'string' ? item.archiveFolderId : '',
+          archiveFolderName: typeof item.archiveFolderName === 'string' ? item.archiveFolderName : '',
+          before: typeof item.before === 'string' ? item.before : '',
+          after: typeof item.after === 'string' ? item.after : '',
+        }))
+      : [],
     summary: {
       testedJobs: Number.parseInt(String(summary.testedJobs || 0), 10) || 0,
       unchanged: Number.parseInt(String(summary.unchanged || 0), 10) || 0,
@@ -1969,7 +1982,7 @@ async function loadArchivingRuleReview() {
 }
 
 function renderArchivingRuleReview(force = false) {
-  if (!(archivingReviewSummaryEl instanceof HTMLElement) || !(archivingReviewJobsEl instanceof HTMLElement) || !(archivingReviewStatusEl instanceof HTMLElement)) {
+  if (!(archivingReviewSummaryEl instanceof HTMLElement) || !(archivingReviewTemplateChangesEl instanceof HTMLElement) || !(archivingReviewJobsEl instanceof HTMLElement) || !(archivingReviewStatusEl instanceof HTMLElement)) {
     return;
   }
 
@@ -1980,6 +1993,7 @@ function renderArchivingRuleReview(force = false) {
   renderedArchivingReviewSignature = payload.signature;
   const summary = payload.summary && typeof payload.summary === 'object' ? payload.summary : {};
   const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+  const templateChanges = Array.isArray(payload.templateChanges) ? payload.templateChanges : [];
   const session = payload.session && typeof payload.session === 'object' ? payload.session : {};
   const sessionStatus = typeof session.status === 'string' ? session.status : 'idle';
   const analyzedCount = Number.parseInt(String(session.analyzedCount || 0), 10) || 0;
@@ -1987,6 +2001,43 @@ function renderArchivingRuleReview(force = false) {
   const foundCount = Number.parseInt(String(session.foundCount || 0), 10) || jobs.length;
 
   archivingReviewSummaryEl.innerHTML = '';
+  archivingReviewTemplateChangesEl.innerHTML = '';
+  archivingReviewJobsEl.innerHTML = '';
+
+  if (payload.hasUnpublishedChanges !== true) {
+    archivingReviewSummaryEl.classList.add('hidden');
+    archivingReviewTemplateChangesEl.classList.add('hidden');
+    archivingReviewStatusEl.classList.add('hidden');
+    archivingReviewStatusEl.replaceChildren();
+
+    const empty = document.createElement('div');
+    empty.className = 'matches-empty';
+    empty.textContent = 'Det finns inga ändringar av arkiveringsregler att granska.';
+    archivingReviewJobsEl.appendChild(empty);
+    updateSettingsActionButtons();
+    return;
+  }
+
+  archivingReviewSummaryEl.classList.remove('hidden');
+  if (templateChanges.length > 0) {
+    archivingReviewTemplateChangesEl.classList.remove('hidden');
+    templateChanges.forEach((change) => {
+      const item = document.createElement('div');
+      item.className = 'archiving-review-template-change';
+      const folderName = change.archiveFolderName || change.archiveFolderId || 'okänd mapp';
+      const title = document.createElement('div');
+      title.className = 'archiving-review-template-change-title';
+      title.textContent = `Filnamnsmall för mapp ${folderName} har ändrats.`;
+      const detail = document.createElement('div');
+      detail.className = 'archiving-review-template-change-detail';
+      detail.textContent = `Från: ${change.before || 'Tom filnamnsmall'}  Till: ${change.after || 'Tom filnamnsmall'}`;
+      item.append(title, detail);
+      archivingReviewTemplateChangesEl.appendChild(item);
+    });
+  } else {
+    archivingReviewTemplateChangesEl.classList.add('hidden');
+  }
+
   const summaryItems = [
     ['Testade jobb', summary.testedJobs || 0],
     ['Oförändrade', summary.unchanged || 0],
@@ -2005,47 +2056,40 @@ function renderArchivingRuleReview(force = false) {
     archivingReviewSummaryEl.appendChild(card);
   });
 
-  if (payload.hasUnpublishedChanges === true) {
-    archivingReviewStatusEl.classList.remove('hidden');
-    const lines = document.createElement('div');
-    lines.className = 'archiving-review-status-lines';
+  archivingReviewStatusEl.classList.remove('hidden');
+  const lines = document.createElement('div');
+  lines.className = 'archiving-review-status-lines';
 
-    const intro = document.createElement('div');
-    intro.textContent = 'Det finns ett utkast till arkiveringsregler.';
-    lines.appendChild(intro);
+  const intro = document.createElement('div');
+  intro.textContent = 'Det finns ett utkast till arkiveringsregler.';
+  lines.appendChild(intro);
 
-    if (Array.isArray(payload.changedSections) && payload.changedSections.length > 0) {
-      const changedWrap = document.createElement('div');
-      const changedLabel = document.createElement('div');
-      changedLabel.textContent = 'Ändringar har gjorts i:';
-      const changedList = document.createElement('ul');
-      changedList.className = 'archiving-review-status-list';
-      payload.changedSections.forEach((section) => {
-        const item = document.createElement('li');
-        item.textContent = section;
-        changedList.appendChild(item);
-      });
-      changedWrap.append(changedLabel, changedList);
-      lines.appendChild(changedWrap);
-    }
-
-    const statusLine = document.createElement('div');
-    if (payload.hasReviewRelevantChanges !== true) {
-      statusLine.textContent = 'Det här utkastet innehåller inga ändringar som kräver granskning av gamla arkiverade jobb.';
-    } else if (sessionStatus === 'running') {
-      statusLine.textContent = `Analysen av arkiverade jobb pågår. ${analyzedCount} / ${totalCount} analyserade. ${foundCount} jobb hittade hittills. Fler jobb kan tillkomma medan analysen fortsätter.`;
-    } else {
-      statusLine.textContent = 'Analysen av arkiverade jobb är klar.';
-    }
-    lines.appendChild(statusLine);
-
-    archivingReviewStatusEl.replaceChildren(lines);
-  } else {
-    archivingReviewStatusEl.classList.add('hidden');
-    archivingReviewStatusEl.replaceChildren();
+  if (Array.isArray(payload.changedSections) && payload.changedSections.length > 0) {
+    const changedWrap = document.createElement('div');
+    const changedLabel = document.createElement('div');
+    changedLabel.textContent = 'Ändringar har gjorts i:';
+    const changedList = document.createElement('ul');
+    changedList.className = 'archiving-review-status-list';
+    payload.changedSections.forEach((section) => {
+      const item = document.createElement('li');
+      item.textContent = section;
+      changedList.appendChild(item);
+    });
+    changedWrap.append(changedLabel, changedList);
+    lines.appendChild(changedWrap);
   }
 
-  archivingReviewJobsEl.innerHTML = '';
+  const statusLine = document.createElement('div');
+  if (payload.hasReviewRelevantChanges !== true) {
+    statusLine.textContent = 'Det här utkastet innehåller inga ändringar som kräver granskning av gamla arkiverade jobb.';
+  } else if (sessionStatus === 'running') {
+    statusLine.textContent = `Analysen av arkiverade jobb pågår. ${analyzedCount} / ${totalCount} analyserade. ${foundCount} jobb hittade hittills. Fler jobb kan tillkomma medan analysen fortsätter.`;
+  } else {
+    statusLine.textContent = 'Analysen av arkiverade jobb är klar.';
+  }
+  lines.appendChild(statusLine);
+
+  archivingReviewStatusEl.replaceChildren(lines);
   if (jobs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
@@ -2057,6 +2101,7 @@ function renderArchivingRuleReview(force = false) {
       ? 'Det finns inga arkiverade jobb att jämföra mot utkastet ännu.'
       : 'Inga arkiverade jobb påverkas av utkastet just nu.';
     archivingReviewJobsEl.appendChild(empty);
+    updateSettingsActionButtons();
     return;
   }
 
@@ -2104,6 +2149,8 @@ function renderArchivingRuleReview(force = false) {
     row.append(body, button);
     archivingReviewJobsEl.appendChild(row);
   });
+
+  updateSettingsActionButtons();
 }
 
 async function resetArchivingRulesDraft() {
@@ -2601,7 +2648,7 @@ function findDraftCategoryById(categoryId) {
 }
 
 function findFilenameTemplateCategoryById(categoryId) {
-  return findDraftCategoryById(categoryId) || findCategoryById(categoryId);
+  return findCategoryById(categoryId);
 }
 
 function findSenderById(senderId) {
@@ -5264,6 +5311,7 @@ function bindSettingsPanelRefs(tabId) {
   } else if (tabId === 'archiving-review') {
     archivingReviewStatusEl = document.getElementById('archiving-review-status');
     archivingReviewSummaryEl = document.getElementById('archiving-review-summary');
+    archivingReviewTemplateChangesEl = document.getElementById('archiving-review-template-changes');
     archivingReviewJobsEl = document.getElementById('archiving-review-jobs');
     archivingReviewResetDraftEl = document.getElementById('archiving-review-reset-draft');
     archivingReviewPublishEl = document.getElementById('archiving-review-publish');
@@ -5355,31 +5403,39 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
     return true;
   }
 
-  if (tabId === 'clients') {
-    await loadClientsSettings();
-  } else if (tabId === 'senders') {
-    await loadSendersSettings();
-  } else if (tabId === 'matching') {
-    await loadMatchingSettings();
-  } else if (tabId === 'ocr-processing') {
-    await loadOcrProcessingSettings(options);
-  } else if (tabId === 'categories') {
-    await Promise.all([loadCategories(), loadExtractionFields(), loadLabels()]);
-    renderCategoriesEditor();
-  } else if (tabId === 'labels') {
-    await loadLabels();
-  } else if (tabId === 'data-fields') {
-    await loadExtractionFields();
-  } else if (tabId === 'archiving-review') {
-    await loadArchivingRuleReview();
-  } else if (tabId === 'paths') {
-    await loadPathSettings();
-  } else if (tabId === 'system') {
-    // State transport setting is hydrated from /api/get-state.php and saved via /api/save-config.php.
-  }
+  loadingSettingsPanels.add(tabId);
+  updateSettingsActionButtons();
 
-  loadedSettingsPanels.add(tabId);
-  return true;
+  try {
+    if (tabId === 'clients') {
+      await loadClientsSettings();
+    } else if (tabId === 'senders') {
+      await loadSendersSettings();
+    } else if (tabId === 'matching') {
+      await loadMatchingSettings();
+    } else if (tabId === 'ocr-processing') {
+      await loadOcrProcessingSettings(options);
+    } else if (tabId === 'categories') {
+      await Promise.all([loadCategories(), loadExtractionFields(), loadLabels()]);
+      renderCategoriesEditor();
+    } else if (tabId === 'labels') {
+      await loadLabels();
+    } else if (tabId === 'data-fields') {
+      await loadExtractionFields();
+    } else if (tabId === 'archiving-review') {
+      await loadArchivingRuleReview();
+    } else if (tabId === 'paths') {
+      await loadPathSettings();
+    } else if (tabId === 'system') {
+      // State transport setting is hydrated from /api/get-state.php and saved via /api/save-config.php.
+    }
+
+    loadedSettingsPanels.add(tabId);
+    return true;
+  } finally {
+    loadingSettingsPanels.delete(tabId);
+    updateSettingsActionButtons();
+  }
 }
 
 async function openClientsSettingsDirect() {
@@ -5497,6 +5553,7 @@ function setSettingsTab(tabId) {
   });
 
   syncSettingsFooterActions(tabId);
+  updateSettingsActionButtons();
 }
 
 function isEditableSettingsTab(tabId) {
@@ -5674,6 +5731,16 @@ function panelActionButtonsForTab(tabId) {
 }
 
 function updateSettingsActionButtons() {
+  const reviewPayload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.draftReview);
+  const clientsLoading = loadingSettingsPanels.has('clients');
+  const sendersLoading = loadingSettingsPanels.has('senders');
+  const matchingLoading = loadingSettingsPanels.has('matching');
+  const ocrProcessingLoading = loadingSettingsPanels.has('ocr-processing');
+  const categoriesLoading = loadingSettingsPanels.has('categories');
+  const labelsLoading = loadingSettingsPanels.has('labels');
+  const extractionFieldsLoading = loadingSettingsPanels.has('data-fields');
+  const archivingReviewLoading = loadingSettingsPanels.has('archiving-review');
+  const pathsLoading = loadingSettingsPanels.has('paths');
   const clientsDirty = isClientsDirty();
   const sendersDirty = isSendersDirty();
   const matchingDirty = isMatchingDirty();
@@ -5684,47 +5751,53 @@ function updateSettingsActionButtons() {
   const labelsError = labelsValidationError();
   const extractionFieldsDirty = isExtractionFieldsDirty();
   const pathsDirty = isPathsDirty();
+  const hasUnpublishedArchivingChanges = reviewPayload.hasUnpublishedChanges === true;
 
   if (clientsCancelEl && clientsApplyEl) {
-    clientsCancelEl.disabled = !clientsDirty;
-    clientsApplyEl.disabled = !clientsDirty;
+    clientsCancelEl.disabled = clientsLoading || !clientsDirty;
+    clientsApplyEl.disabled = clientsLoading || !clientsDirty;
   }
 
   if (sendersCancelEl && sendersApplyEl) {
-    sendersCancelEl.disabled = !sendersDirty;
-    sendersApplyEl.disabled = !sendersDirty;
+    sendersCancelEl.disabled = sendersLoading || !sendersDirty;
+    sendersApplyEl.disabled = sendersLoading || !sendersDirty;
   }
 
   if (matchingCancelEl && matchingApplyEl) {
-    matchingCancelEl.disabled = !matchingDirty;
-    matchingApplyEl.disabled = !matchingDirty;
+    matchingCancelEl.disabled = matchingLoading || !matchingDirty;
+    matchingApplyEl.disabled = matchingLoading || !matchingDirty;
   }
 
   if (ocrProcessingCancelEl && ocrProcessingApplyEl) {
-    ocrProcessingCancelEl.disabled = !ocrProcessingDirty;
-    ocrProcessingApplyEl.disabled = !ocrProcessingDirty;
+    ocrProcessingCancelEl.disabled = ocrProcessingLoading || !ocrProcessingDirty;
+    ocrProcessingApplyEl.disabled = ocrProcessingLoading || !ocrProcessingDirty;
   }
 
   if (categoriesCancelEl && categoriesApplyEl) {
-    categoriesCancelEl.disabled = !categoriesDirty;
-    categoriesApplyEl.disabled = !categoriesDirty || categoriesError !== '';
+    categoriesCancelEl.disabled = categoriesLoading || !categoriesDirty;
+    categoriesApplyEl.disabled = categoriesLoading || !categoriesDirty || categoriesError !== '';
     categoriesApplyEl.title = categoriesError || '';
   }
 
   if (labelsCancelEl && labelsApplyEl) {
-    labelsCancelEl.disabled = !labelsDirty;
-    labelsApplyEl.disabled = !labelsDirty || labelsError !== '';
+    labelsCancelEl.disabled = labelsLoading || !labelsDirty;
+    labelsApplyEl.disabled = labelsLoading || !labelsDirty || labelsError !== '';
     labelsApplyEl.title = labelsError || '';
   }
 
   if (extractionFieldsCancelEl && extractionFieldsApplyEl) {
-    extractionFieldsCancelEl.disabled = !extractionFieldsDirty;
-    extractionFieldsApplyEl.disabled = !extractionFieldsDirty;
+    extractionFieldsCancelEl.disabled = extractionFieldsLoading || !extractionFieldsDirty;
+    extractionFieldsApplyEl.disabled = extractionFieldsLoading || !extractionFieldsDirty;
+  }
+
+  if (archivingReviewResetDraftEl && archivingReviewPublishEl) {
+    archivingReviewResetDraftEl.disabled = archivingReviewLoading || !hasUnpublishedArchivingChanges;
+    archivingReviewPublishEl.disabled = archivingReviewLoading || !hasUnpublishedArchivingChanges;
   }
 
   if (pathsCancelEl && pathsApplyEl) {
-    pathsCancelEl.disabled = !pathsDirty;
-    pathsApplyEl.disabled = !pathsDirty;
+    pathsCancelEl.disabled = pathsLoading || !pathsDirty;
+    pathsApplyEl.disabled = pathsLoading || !pathsDirty;
   }
 }
 
@@ -10215,6 +10288,9 @@ async function loadCategories() {
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+  if (payload.archivingRules && typeof payload.archivingRules === 'object') {
+    applyArchivingRulesStatePayload(payload.archivingRules, { forceRender: true });
+  }
   const selectedJob = findJobById(selectedJobId);
   if (selectedJob) {
     syncFilenameField(selectedJob);

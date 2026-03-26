@@ -1252,7 +1252,7 @@ body {
 .settings-tab-indicator {
   display: none;
   margin-left: 4px;
-  color: #dc2626;
+  color: currentColor;
   font-size: 12px;
   vertical-align: middle;
 }
@@ -1357,6 +1357,32 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.archiving-review-template-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.archiving-review-template-change {
+  padding: 12px;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.archiving-review-template-change-title {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.archiving-review-template-change-detail {
+  margin-top: 4px;
+  color: #475569;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .archiving-review-summary-card {

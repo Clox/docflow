@@ -235,6 +235,7 @@
     <p>Jämför utkastet mot aktiva arkiveringsregler på redan arkiverade jobb. Analysen kör successivt och kan fortsätta även efter att reglerna aktiverats.</p>
     <div id="archiving-review-status" class="settings-inline-notice hidden"></div>
     <div id="archiving-review-summary" class="archiving-review-summary"></div>
+    <div id="archiving-review-template-changes" class="archiving-review-template-changes"></div>
     <div id="archiving-review-jobs" class="archiving-review-jobs"></div>
     <div class="panel-actions">
       <button id="archiving-review-reset-draft" class="button-danger" type="button">Kassera utkastet</button>

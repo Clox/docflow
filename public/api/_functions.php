@@ -1268,9 +1268,6 @@ function normalize_archiving_rules_state(mixed $input): array
     $draft = array_key_exists('draftArchivingRules', $decoded)
         ? normalize_archiving_rules_set($decoded['draftArchivingRules'])
         : $active;
-    $draft['archiveFolders'] = archive_structure_without_filename_templates(
-        is_array($draft['archiveFolders'] ?? null) ? $draft['archiveFolders'] : []
-    );
     $version = filter_var($decoded['activeArchivingRulesVersion'] ?? null, FILTER_VALIDATE_INT);
     if ($version === false || $version === null || $version < 1) {
         $version = 1;
@@ -1325,13 +1322,7 @@ function load_active_archiving_rules(): array
 function load_draft_archiving_rules(): array
 {
     $state = load_archiving_rules_state();
-    $draftRules = normalize_archiving_rules_set($state['draftArchivingRules'] ?? []);
-    $activeRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
-    $draftRules['archiveFolders'] = sync_active_filename_templates_from_archive_folders(
-        is_array($draftRules['archiveFolders'] ?? null) ? $draftRules['archiveFolders'] : [],
-        is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : []
-    );
-    return $draftRules;
+    return normalize_archiving_rules_set($state['draftArchivingRules'] ?? []);
 }
 
 function active_archiving_rules_version(): int
@@ -1340,11 +1331,20 @@ function active_archiving_rules_version(): int
     return (int) ($state['activeArchivingRulesVersion'] ?? 1);
 }
 
+function archiving_rules_unpublished_hash(array $rules): string
+{
+    $encoded = json_encode(
+        normalize_archiving_rules_set($rules),
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+    return sha1(is_string($encoded) ? $encoded : '');
+}
+
 function archiving_rules_have_unpublished_changes(?array $activeRules = null, ?array $draftRules = null): bool
 {
     $resolvedActiveRules = is_array($activeRules) ? $activeRules : load_active_archiving_rules();
     $resolvedDraftRules = is_array($draftRules) ? $draftRules : load_draft_archiving_rules();
-    return archiving_rules_review_relevant_hash($resolvedActiveRules) !== archiving_rules_review_relevant_hash($resolvedDraftRules);
+    return archiving_rules_unpublished_hash($resolvedActiveRules) !== archiving_rules_unpublished_hash($resolvedDraftRules);
 }
 
 function archiving_rules_review_relevant_set(array $rules): array
@@ -1399,18 +1399,181 @@ function archiving_rules_changed_sections(array $active, array $draft): array
         'predefinedFields' => 'Fördefinerade datafält',
         'systemFields' => 'Systemdatafält',
     ] as $key => $label) {
-        $leftValue = $key === 'archiveFolders'
-            ? archive_structure_without_filename_templates(is_array($active[$key] ?? null) ? $active[$key] : [])
-            : ($active[$key] ?? null);
-        $rightValue = $key === 'archiveFolders'
-            ? archive_structure_without_filename_templates(is_array($draft[$key] ?? null) ? $draft[$key] : [])
-            : ($draft[$key] ?? null);
+        $leftValue = $active[$key] ?? null;
+        $rightValue = $draft[$key] ?? null;
         if (json_encode($leftValue) !== json_encode($rightValue)) {
             $changedSections[] = $label;
         }
     }
 
     return $changedSections;
+}
+
+function filename_template_part_review_label(array $part, array $nameMaps): string
+{
+    $type = is_string($part['type'] ?? null) ? (string) $part['type'] : 'text';
+    if ($type === 'text') {
+        return is_string($part['value'] ?? null) ? (string) $part['value'] : '';
+    }
+
+    $prefix = filename_template_parts_review_label(is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [], $nameMaps);
+    $suffix = filename_template_parts_review_label(is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [], $nameMaps);
+    $label = '';
+
+    if ($type === 'systemField' || $type === 'dataField') {
+        $key = is_string($part['key'] ?? null) ? trim((string) $part['key']) : '';
+        $resolved = $nameMaps[$type][$key] ?? $key;
+        $label = $resolved !== '' ? $resolved : ($type === 'systemField' ? 'Systemdatafält' : 'Datafält');
+    } elseif ($type === 'category') {
+        $label = 'Kategori';
+    } elseif ($type === 'labels') {
+        $separator = is_string($part['separator'] ?? null) ? (string) $part['separator'] : ', ';
+        $label = $separator === ', '
+            ? 'Etiketter'
+            : sprintf('Etiketter (separator: %s)', $separator);
+    } elseif ($type === 'firstAvailable') {
+        $candidateLabels = [];
+        foreach (is_array($part['parts'] ?? null) ? $part['parts'] : [] as $candidate) {
+            if (!is_array($candidate)) {
+                continue;
+            }
+            $candidateLabel = trim(filename_template_part_review_label($candidate, $nameMaps));
+            if ($candidateLabel !== '') {
+                $candidateLabels[] = $candidateLabel;
+            }
+        }
+        $label = 'Första tillgängliga';
+        if ($candidateLabels !== []) {
+            $label .= ': ' . implode(' / ', $candidateLabels);
+        }
+    }
+
+    if ($label === '') {
+        return $prefix . $suffix;
+    }
+
+    return $prefix . '[' . $label . ']' . $suffix;
+}
+
+function filename_template_parts_review_label(array $parts, array $nameMaps): string
+{
+    $result = '';
+    foreach ($parts as $part) {
+        if (!is_array($part)) {
+            continue;
+        }
+        $result .= filename_template_part_review_label($part, $nameMaps);
+    }
+
+    return $result;
+}
+
+function filename_template_review_label(array $template, array $nameMaps): string
+{
+    $parts = is_array($template['parts'] ?? null) ? $template['parts'] : [];
+    $rendered = trim(preg_replace('/\s+/u', ' ', filename_template_parts_review_label($parts, $nameMaps)) ?? '');
+    return $rendered !== '' ? $rendered : 'Tom filnamnsmall';
+}
+
+function filename_template_review_name_maps(array $activeRules, array $draftRules): array
+{
+    $dataFieldNames = [];
+    $systemFieldNames = [];
+    foreach ([$activeRules, $draftRules] as $rules) {
+        foreach (['fields', 'predefinedFields'] as $groupKey) {
+            foreach (is_array($rules[$groupKey] ?? null) ? $rules[$groupKey] : [] as $field) {
+                if (!is_array($field)) {
+                    continue;
+                }
+                $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+                $name = is_string($field['name'] ?? null) ? trim((string) $field['name']) : '';
+                if ($key !== '' && $name !== '' && !isset($dataFieldNames[$key])) {
+                    $dataFieldNames[$key] = $name;
+                }
+            }
+        }
+        foreach (is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [] as $field) {
+            if (!is_array($field)) {
+                continue;
+            }
+            $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+            $name = is_string($field['name'] ?? null) ? trim((string) $field['name']) : '';
+            if ($key !== '' && $name !== '' && !isset($systemFieldNames[$key])) {
+                $systemFieldNames[$key] = $name;
+            }
+        }
+    }
+
+    return [
+        'dataField' => $dataFieldNames,
+        'systemField' => $systemFieldNames,
+    ];
+}
+
+function archiving_rules_filename_template_changes(array $activeRules, array $draftRules): array
+{
+    $activeFolders = normalize_archive_structure(is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : []);
+    $draftFolders = normalize_archive_structure(is_array($draftRules['archiveFolders'] ?? null) ? $draftRules['archiveFolders'] : []);
+    $nameMaps = filename_template_review_name_maps($activeRules, $draftRules);
+    $activeByKey = [];
+    $draftByKey = [];
+    $orderedKeys = [];
+
+    foreach ($activeFolders as $index => $archiveFolder) {
+        if (!is_array($archiveFolder)) {
+            continue;
+        }
+        $folderId = is_string($archiveFolder['id'] ?? null) ? trim((string) $archiveFolder['id']) : '';
+        $key = $folderId !== '' ? $folderId : ('#' . $index);
+        $activeByKey[$key] = $archiveFolder;
+        $orderedKeys[] = $key;
+    }
+
+    foreach ($draftFolders as $index => $archiveFolder) {
+        if (!is_array($archiveFolder)) {
+            continue;
+        }
+        $folderId = is_string($archiveFolder['id'] ?? null) ? trim((string) $archiveFolder['id']) : '';
+        $key = $folderId !== '' ? $folderId : ('#' . $index);
+        $draftByKey[$key] = $archiveFolder;
+        if (!in_array($key, $orderedKeys, true)) {
+            $orderedKeys[] = $key;
+        }
+    }
+
+    $changes = [];
+    foreach ($orderedKeys as $key) {
+        $activeFolder = is_array($activeByKey[$key] ?? null) ? $activeByKey[$key] : [];
+        $draftFolder = is_array($draftByKey[$key] ?? null) ? $draftByKey[$key] : [];
+        $before = normalize_filename_template($activeFolder['filenameTemplate'] ?? null);
+        $after = normalize_filename_template($draftFolder['filenameTemplate'] ?? null);
+        if (json_encode($before, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) === json_encode($after, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) {
+            continue;
+        }
+
+        $folderName = '';
+        foreach ([$draftFolder, $activeFolder] as $folder) {
+            if (!is_array($folder)) {
+                continue;
+            }
+            $candidateName = is_string($folder['name'] ?? null) ? trim((string) $folder['name']) : '';
+            $candidatePath = is_string($folder['path'] ?? null) ? trim((string) $folder['path']) : '';
+            $candidateId = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
+            $folderName = $candidateName !== '' ? $candidateName : ($candidatePath !== '' ? $candidatePath : $candidateId);
+            if ($folderName !== '') {
+                break;
+            }
+        }
+
+        $changes[] = [
+            'archiveFolderId' => is_string($draftFolder['id'] ?? $activeFolder['id'] ?? null) ? trim((string) ($draftFolder['id'] ?? $activeFolder['id'])) : '',
+            'archiveFolderName' => $folderName,
+            'before' => filename_template_review_label($before, $nameMaps),
+            'after' => filename_template_review_label($after, $nameMaps),
+        ];
+    }
+
+    return $changes;
 }
 
 function draft_archiving_review_response_from_session(
@@ -1422,12 +1585,14 @@ function draft_archiving_review_response_from_session(
     bool $hasReviewRelevantChanges
 ): array {
     $changedSections = archiving_rules_changed_sections($activeRules, $draftRules);
+    $templateChanges = archiving_rules_filename_template_changes($activeRules, $draftRules);
     if (!$hasUnpublishedChanges) {
         $payload = [
             'activeArchivingRulesVersion' => $activeVersion,
             'hasUnpublishedChanges' => false,
             'hasReviewRelevantChanges' => false,
             'changedSections' => [],
+            'templateChanges' => [],
             'summary' => empty_archiving_review_summary(),
             'jobs' => [],
             'session' => [
@@ -1448,6 +1613,7 @@ function draft_archiving_review_response_from_session(
             'hasUnpublishedChanges' => true,
             'hasReviewRelevantChanges' => false,
             'changedSections' => $changedSections,
+            'templateChanges' => $templateChanges,
             'summary' => empty_archiving_review_summary(),
             'jobs' => [],
             'session' => [
@@ -1479,6 +1645,7 @@ function draft_archiving_review_response_from_session(
         'hasUnpublishedChanges' => true,
         'hasReviewRelevantChanges' => true,
         'changedSections' => $changedSections,
+        'templateChanges' => $templateChanges,
         'summary' => is_array($session['summary'] ?? null) ? $session['summary'] : empty_archiving_review_summary(),
         'jobs' => sort_archiving_review_items($changedItems),
         'session' => [
@@ -8779,12 +8946,7 @@ function publish_draft_archiving_rules(array $config): array
 {
     $state = load_archiving_rules_state();
     $nextVersion = ((int) ($state['activeArchivingRulesVersion'] ?? 1)) + 1;
-    $activeRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
     $draftRules = normalize_archiving_rules_set($state['draftArchivingRules'] ?? []);
-    $draftRules['archiveFolders'] = sync_active_filename_templates_from_archive_folders(
-        is_array($draftRules['archiveFolders'] ?? null) ? $draftRules['archiveFolders'] : [],
-        is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : []
-    );
     $state['activeArchivingRules'] = $draftRules;
     $state['activeArchivingRulesVersion'] = $nextVersion;
     $stored = save_archiving_rules_state($state);
