@@ -1155,6 +1155,66 @@ function normalize_archive_structure(array $input): array
     return $archiveFolders;
 }
 
+function sync_active_filename_templates_from_archive_folders(array $activeArchiveFolders, array $savedArchiveFolders): array
+{
+    $normalizedActive = normalize_archive_structure($activeArchiveFolders);
+    $normalizedSaved = normalize_archive_structure($savedArchiveFolders);
+    $savedById = [];
+    foreach ($normalizedSaved as $index => $archiveFolder) {
+        if (!is_array($archiveFolder)) {
+            continue;
+        }
+        $folderId = is_string($archiveFolder['id'] ?? null) ? trim((string) $archiveFolder['id']) : '';
+        if ($folderId !== '') {
+            $savedById[$folderId] = $archiveFolder;
+        }
+        $normalizedSaved[$index] = $archiveFolder;
+    }
+
+    foreach ($normalizedActive as $index => $activeArchiveFolder) {
+        if (!is_array($activeArchiveFolder)) {
+            continue;
+        }
+        $activeId = is_string($activeArchiveFolder['id'] ?? null) ? trim((string) $activeArchiveFolder['id']) : '';
+        $sourceFolder = null;
+        if ($activeId !== '' && isset($savedById[$activeId]) && is_array($savedById[$activeId])) {
+            $sourceFolder = $savedById[$activeId];
+        } elseif (isset($normalizedSaved[$index]) && is_array($normalizedSaved[$index])) {
+            $sourceFolder = $normalizedSaved[$index];
+        }
+        if (!is_array($sourceFolder)) {
+            continue;
+        }
+        $activeArchiveFolder['filenameTemplate'] = normalize_filename_template($sourceFolder['filenameTemplate'] ?? null);
+        $normalizedActive[$index] = $activeArchiveFolder;
+    }
+
+    return $normalizedActive;
+}
+
+function archive_structure_without_filename_templates(array $archiveFolders): array
+{
+    $normalized = normalize_archive_structure($archiveFolders);
+    foreach ($normalized as $index => $archiveFolder) {
+        if (!is_array($archiveFolder)) {
+            continue;
+        }
+        unset($archiveFolder['filenameTemplate']);
+        $categories = is_array($archiveFolder['categories'] ?? null) ? $archiveFolder['categories'] : [];
+        foreach ($categories as $categoryIndex => $category) {
+            if (!is_array($category)) {
+                continue;
+            }
+            unset($category['filenameTemplate']);
+            $categories[$categoryIndex] = $category;
+        }
+        $archiveFolder['categories'] = $categories;
+        $normalized[$index] = $archiveFolder;
+    }
+
+    return $normalized;
+}
+
 function normalize_archive_structure_data(mixed $input): array
 {
     $decoded = is_array($input) ? $input : [];
@@ -1208,6 +1268,9 @@ function normalize_archiving_rules_state(mixed $input): array
     $draft = array_key_exists('draftArchivingRules', $decoded)
         ? normalize_archiving_rules_set($decoded['draftArchivingRules'])
         : $active;
+    $draft['archiveFolders'] = archive_structure_without_filename_templates(
+        is_array($draft['archiveFolders'] ?? null) ? $draft['archiveFolders'] : []
+    );
     $version = filter_var($decoded['activeArchivingRulesVersion'] ?? null, FILTER_VALIDATE_INT);
     if ($version === false || $version === null || $version < 1) {
         $version = 1;
@@ -1262,7 +1325,13 @@ function load_active_archiving_rules(): array
 function load_draft_archiving_rules(): array
 {
     $state = load_archiving_rules_state();
-    return normalize_archiving_rules_set($state['draftArchivingRules'] ?? []);
+    $draftRules = normalize_archiving_rules_set($state['draftArchivingRules'] ?? []);
+    $activeRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
+    $draftRules['archiveFolders'] = sync_active_filename_templates_from_archive_folders(
+        is_array($draftRules['archiveFolders'] ?? null) ? $draftRules['archiveFolders'] : [],
+        is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : []
+    );
+    return $draftRules;
 }
 
 function active_archiving_rules_version(): int
@@ -1271,10 +1340,52 @@ function active_archiving_rules_version(): int
     return (int) ($state['activeArchivingRulesVersion'] ?? 1);
 }
 
-function archiving_rules_have_unpublished_changes(): bool
+function archiving_rules_have_unpublished_changes(?array $activeRules = null, ?array $draftRules = null): bool
 {
-    $state = load_archiving_rules_state();
-    return json_encode($state['activeArchivingRules'] ?? null) !== json_encode($state['draftArchivingRules'] ?? null);
+    $resolvedActiveRules = is_array($activeRules) ? $activeRules : load_active_archiving_rules();
+    $resolvedDraftRules = is_array($draftRules) ? $draftRules : load_draft_archiving_rules();
+    return archiving_rules_review_relevant_hash($resolvedActiveRules) !== archiving_rules_review_relevant_hash($resolvedDraftRules);
+}
+
+function archiving_rules_review_relevant_set(array $rules): array
+{
+    $normalized = normalize_archiving_rules_set($rules);
+    $archiveFolders = is_array($normalized['archiveFolders'] ?? null) ? $normalized['archiveFolders'] : [];
+    foreach ($archiveFolders as $index => $archiveFolder) {
+        if (!is_array($archiveFolder)) {
+            continue;
+        }
+        unset($archiveFolder['filenameTemplate']);
+        $categories = is_array($archiveFolder['categories'] ?? null) ? $archiveFolder['categories'] : [];
+        foreach ($categories as $categoryIndex => $category) {
+            if (!is_array($category)) {
+                continue;
+            }
+            unset($category['filenameTemplate']);
+            $categories[$categoryIndex] = $category;
+        }
+        $archiveFolder['categories'] = $categories;
+        $archiveFolders[$index] = $archiveFolder;
+    }
+    $normalized['archiveFolders'] = $archiveFolders;
+
+    return $normalized;
+}
+
+function archiving_rules_review_relevant_hash(array $rules): string
+{
+    $encoded = json_encode(
+        archiving_rules_review_relevant_set($rules),
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+    return sha1(is_string($encoded) ? $encoded : '');
+}
+
+function archiving_rules_have_review_relevant_changes(?array $activeRules = null, ?array $draftRules = null): bool
+{
+    $resolvedActiveRules = is_array($activeRules) ? $activeRules : load_active_archiving_rules();
+    $resolvedDraftRules = is_array($draftRules) ? $draftRules : load_draft_archiving_rules();
+    return archiving_rules_review_relevant_hash($resolvedActiveRules) !== archiving_rules_review_relevant_hash($resolvedDraftRules);
 }
 
 function archiving_rules_changed_sections(array $active, array $draft): array
@@ -1288,7 +1399,13 @@ function archiving_rules_changed_sections(array $active, array $draft): array
         'predefinedFields' => 'Fördefinerade datafält',
         'systemFields' => 'Systemdatafält',
     ] as $key => $label) {
-        if (json_encode($active[$key] ?? null) !== json_encode($draft[$key] ?? null)) {
+        $leftValue = $key === 'archiveFolders'
+            ? archive_structure_without_filename_templates(is_array($active[$key] ?? null) ? $active[$key] : [])
+            : ($active[$key] ?? null);
+        $rightValue = $key === 'archiveFolders'
+            ? archive_structure_without_filename_templates(is_array($draft[$key] ?? null) ? $draft[$key] : [])
+            : ($draft[$key] ?? null);
+        if (json_encode($leftValue) !== json_encode($rightValue)) {
             $changedSections[] = $label;
         }
     }
@@ -1301,14 +1418,36 @@ function draft_archiving_review_response_from_session(
     array $draftRules,
     int $activeVersion,
     array $session,
-    bool $hasUnpublishedChanges
+    bool $hasUnpublishedChanges,
+    bool $hasReviewRelevantChanges
 ): array {
     $changedSections = archiving_rules_changed_sections($activeRules, $draftRules);
     if (!$hasUnpublishedChanges) {
         $payload = [
             'activeArchivingRulesVersion' => $activeVersion,
             'hasUnpublishedChanges' => false,
+            'hasReviewRelevantChanges' => false,
             'changedSections' => [],
+            'summary' => empty_archiving_review_summary(),
+            'jobs' => [],
+            'session' => [
+                'status' => 'idle',
+                'analyzedCount' => 0,
+                'totalCount' => 0,
+                'foundCount' => 0,
+                'remainingCount' => 0,
+            ],
+        ];
+        $payload['signature'] = archiving_rules_state_payload_hash($payload);
+        return $payload;
+    }
+
+    if (!$hasReviewRelevantChanges) {
+        $payload = [
+            'activeArchivingRulesVersion' => $activeVersion,
+            'hasUnpublishedChanges' => true,
+            'hasReviewRelevantChanges' => false,
+            'changedSections' => $changedSections,
             'summary' => empty_archiving_review_summary(),
             'jobs' => [],
             'session' => [
@@ -1338,6 +1477,7 @@ function draft_archiving_review_response_from_session(
     $payload = [
         'activeArchivingRulesVersion' => $activeVersion,
         'hasUnpublishedChanges' => true,
+        'hasReviewRelevantChanges' => true,
         'changedSections' => $changedSections,
         'summary' => is_array($session['summary'] ?? null) ? $session['summary'] : empty_archiving_review_summary(),
         'jobs' => sort_archiving_review_items($changedItems),
@@ -1366,7 +1506,8 @@ function build_archiving_rules_state_payload(array $config, ?int $needsRuleRevie
     $activeRules = normalize_archiving_rules_set($rulesState['activeArchivingRules'] ?? []);
     $draftRules = normalize_archiving_rules_set($rulesState['draftArchivingRules'] ?? []);
     $activeVersion = (int) ($rulesState['activeArchivingRulesVersion'] ?? 1);
-    $hasUnpublishedChanges = json_encode($activeRules) !== json_encode($draftRules);
+    $hasUnpublishedChanges = archiving_rules_have_unpublished_changes($activeRules, $draftRules);
+    $hasReviewRelevantChanges = archiving_rules_have_review_relevant_changes($activeRules, $draftRules);
     $draftSession = is_array($reviewState['draftSession'] ?? null) ? $reviewState['draftSession'] : empty_draft_archiving_review_session();
     $publishedSession = is_array($reviewState['publishedSession'] ?? null) ? $reviewState['publishedSession'] : empty_published_archiving_review_session();
     $draftReview = draft_archiving_review_response_from_session(
@@ -1374,12 +1515,14 @@ function build_archiving_rules_state_payload(array $config, ?int $needsRuleRevie
         $draftRules,
         $activeVersion,
         $draftSession,
-        $hasUnpublishedChanges
+        $hasUnpublishedChanges,
+        $hasReviewRelevantChanges
     );
 
     return [
         'activeVersion' => $activeVersion,
         'hasUnpublishedChanges' => $hasUnpublishedChanges,
+        'hasReviewRelevantChanges' => $hasReviewRelevantChanges,
         'needsRuleReviewCount' => $needsRuleReviewCount ?? count(is_array($publishedSession['affectedJobIds'] ?? null) ? $publishedSession['affectedJobIds'] : []),
         'publishedReview' => [
             'status' => is_string($publishedSession['status'] ?? null) ? (string) $publishedSession['status'] : 'idle',
@@ -1390,6 +1533,7 @@ function build_archiving_rules_state_payload(array $config, ?int $needsRuleRevie
         'signature' => archiving_rules_state_payload_hash([
             'activeVersion' => $activeVersion,
             'hasUnpublishedChanges' => $hasUnpublishedChanges,
+            'hasReviewRelevantChanges' => $hasReviewRelevantChanges,
             'needsRuleReviewCount' => $needsRuleReviewCount ?? count(is_array($publishedSession['affectedJobIds'] ?? null) ? $publishedSession['affectedJobIds'] : []),
             'publishedReview' => [
                 'status' => is_string($publishedSession['status'] ?? null) ? (string) $publishedSession['status'] : 'idle',
@@ -7309,60 +7453,12 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
 
 function archiving_result_diff(array $baseline, array $candidate): array
 {
-    $left = normalize_auto_archiving_result($baseline);
-    $right = normalize_auto_archiving_result($candidate);
+    return archiving_result_diff_with_options($baseline, $candidate);
+}
 
-    $changes = [];
-    foreach (['principalId', 'senderId', 'categoryId', 'filename', 'archiveFolderId', 'archiveFolderPath'] as $key) {
-        if (($left[$key] ?? null) !== ($right[$key] ?? null)) {
-            $changes[$key] = [
-                'before' => $left[$key] ?? null,
-                'after' => $right[$key] ?? null,
-            ];
-        }
-    }
-
-    $leftLabels = array_values(array_unique(is_array($left['labels'] ?? null) ? $left['labels'] : []));
-    $rightLabels = array_values(array_unique(is_array($right['labels'] ?? null) ? $right['labels'] : []));
-    sort($leftLabels, SORT_NATURAL);
-    sort($rightLabels, SORT_NATURAL);
-    $addedLabels = array_values(array_diff($rightLabels, $leftLabels));
-    $removedLabels = array_values(array_diff($leftLabels, $rightLabels));
-    if ($addedLabels !== [] || $removedLabels !== []) {
-        $changes['labels'] = [
-            'added' => $addedLabels,
-            'removed' => $removedLabels,
-            'before' => $leftLabels,
-            'after' => $rightLabels,
-        ];
-    }
-
-    foreach (['fields', 'systemFields'] as $groupKey) {
-        $leftFields = is_array($left[$groupKey] ?? null) ? $left[$groupKey] : [];
-        $rightFields = is_array($right[$groupKey] ?? null) ? $right[$groupKey] : [];
-        $fieldChanges = [];
-        $allKeys = array_values(array_unique(array_merge(array_keys($leftFields), array_keys($rightFields))));
-        sort($allKeys, SORT_NATURAL);
-        foreach ($allKeys as $fieldKey) {
-            $before = array_key_exists($fieldKey, $leftFields) ? $leftFields[$fieldKey] : null;
-            $after = array_key_exists($fieldKey, $rightFields) ? $rightFields[$fieldKey] : null;
-            if ($before === $after) {
-                continue;
-            }
-            $fieldChanges[$fieldKey] = [
-                'before' => $before,
-                'after' => $after,
-            ];
-        }
-        if ($fieldChanges !== []) {
-            $changes[$groupKey] = $fieldChanges;
-        }
-    }
-
-    return [
-        'changed' => $changes !== [],
-        'changes' => $changes,
-    ];
+function archiving_review_result_diff(array $baseline, array $candidate): array
+{
+    return archiving_result_diff_with_options($baseline, $candidate, ['includeFilename' => false]);
 }
 
 function archiving_review_value_is_empty(mixed $value): bool
@@ -7581,7 +7677,7 @@ function archiving_review_label_change_item(string $labelName, bool $approvedHas
 
 function archiving_review_change_items(array $approved, array $activeResult, array $draftResult, array $displayMaps): array
 {
-    $draftVsActive = archiving_result_diff($activeResult, $draftResult);
+    $draftVsActive = archiving_review_result_diff($activeResult, $draftResult);
     if (($draftVsActive['changed'] ?? false) !== true) {
         return [];
     }
@@ -7593,7 +7689,6 @@ function archiving_review_change_items(array $approved, array $activeResult, arr
         'principalId' => 'Huvudman',
         'senderId' => 'Avsändare',
         'categoryId' => 'Kategori',
-        'filename' => 'Filnamn',
         'archiveFolderId' => 'Arkivmapp',
     ] as $key => $label) {
         if (!isset($changes[$key]) || !is_array($changes[$key])) {
@@ -7678,9 +7773,9 @@ function archiving_review_change_items(array $approved, array $activeResult, arr
 
 function classify_archiving_rule_change(array $approved, array $activeResult, array $draftResult, array $displayMaps = []): array
 {
-    $activeDiff = archiving_result_diff($approved, $activeResult);
-    $draftDiff = archiving_result_diff($approved, $draftResult);
-    $draftVsActive = archiving_result_diff($activeResult, $draftResult);
+    $activeDiff = archiving_review_result_diff($approved, $activeResult);
+    $draftDiff = archiving_review_result_diff($approved, $draftResult);
+    $draftVsActive = archiving_review_result_diff($activeResult, $draftResult);
     $changeItems = archiving_review_change_items($approved, $activeResult, $draftResult, $displayMaps);
 
     $type = 'unchanged';
@@ -7787,13 +7882,68 @@ function with_archiving_rules_review_lock(callable $callback)
     }
 }
 
-function archiving_rules_hash(array $rules): string
+function archiving_result_diff_with_options(array $baseline, array $candidate, array $options = []): array
 {
-    $encoded = json_encode(
-        normalize_archiving_rules_set($rules),
-        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-    );
-    return sha1(is_string($encoded) ? $encoded : '');
+    $includeFilename = ($options['includeFilename'] ?? true) !== false;
+    $scalarKeys = ['principalId', 'senderId', 'categoryId', 'archiveFolderId', 'archiveFolderPath'];
+    if ($includeFilename) {
+        array_splice($scalarKeys, 3, 0, ['filename']);
+    }
+
+    $left = normalize_auto_archiving_result($baseline);
+    $right = normalize_auto_archiving_result($candidate);
+
+    $changes = [];
+    foreach ($scalarKeys as $key) {
+        if (($left[$key] ?? null) !== ($right[$key] ?? null)) {
+            $changes[$key] = [
+                'before' => $left[$key] ?? null,
+                'after' => $right[$key] ?? null,
+            ];
+        }
+    }
+
+    $leftLabels = array_values(array_unique(is_array($left['labels'] ?? null) ? $left['labels'] : []));
+    $rightLabels = array_values(array_unique(is_array($right['labels'] ?? null) ? $right['labels'] : []));
+    sort($leftLabels, SORT_NATURAL);
+    sort($rightLabels, SORT_NATURAL);
+    $addedLabels = array_values(array_diff($rightLabels, $leftLabels));
+    $removedLabels = array_values(array_diff($leftLabels, $rightLabels));
+    if ($addedLabels !== [] || $removedLabels !== []) {
+        $changes['labels'] = [
+            'added' => $addedLabels,
+            'removed' => $removedLabels,
+            'before' => $leftLabels,
+            'after' => $rightLabels,
+        ];
+    }
+
+    foreach (['fields', 'systemFields'] as $groupKey) {
+        $leftFields = is_array($left[$groupKey] ?? null) ? $left[$groupKey] : [];
+        $rightFields = is_array($right[$groupKey] ?? null) ? $right[$groupKey] : [];
+        $fieldChanges = [];
+        $allKeys = array_values(array_unique(array_merge(array_keys($leftFields), array_keys($rightFields))));
+        sort($allKeys, SORT_NATURAL);
+        foreach ($allKeys as $fieldKey) {
+            $before = array_key_exists($fieldKey, $leftFields) ? $leftFields[$fieldKey] : null;
+            $after = array_key_exists($fieldKey, $rightFields) ? $rightFields[$fieldKey] : null;
+            if ($before === $after) {
+                continue;
+            }
+            $fieldChanges[$fieldKey] = [
+                'before' => $before,
+                'after' => $after,
+            ];
+        }
+        if ($fieldChanges !== []) {
+            $changes[$groupKey] = $fieldChanges;
+        }
+    }
+
+    return [
+        'changed' => $changes !== [],
+        'changes' => $changes,
+    ];
 }
 
 function archiving_rules_review_job_ids_hash(array $jobIds): string
@@ -8091,13 +8241,16 @@ function invalidate_archiving_review_job(array $config, string $jobId, ?bool $is
         $state = load_archiving_rules_review_state();
 
         if (archiving_rules_have_unpublished_changes()) {
+            $hasReviewRelevantChanges = archiving_rules_have_review_relevant_changes();
             $draftSession = is_array($state['draftSession'] ?? null) ? $state['draftSession'] : empty_draft_archiving_review_session();
-            if ($resolvedArchived) {
+            if (!$hasReviewRelevantChanges) {
+                $draftSession = empty_draft_archiving_review_session();
+            } elseif ($resolvedArchived) {
                 archiving_review_session_enqueue_job($draftSession, $jobId);
             } else {
                 archiving_review_session_remove_job($draftSession, $jobId);
             }
-            if (($draftSession['status'] ?? 'idle') === 'complete' && archiving_rules_have_unpublished_changes()) {
+            if ($hasReviewRelevantChanges && ($draftSession['status'] ?? 'idle') === 'complete' && archiving_rules_have_unpublished_changes()) {
                 $draftSession['status'] = !empty($draftSession['pendingJobIds']) ? 'running' : 'complete';
             }
             $state['draftSession'] = $draftSession;
@@ -8186,8 +8339,8 @@ function initialize_draft_archiving_review_session(array $config, array $activeR
     return [
         'status' => count($jobIds) === 0 ? 'complete' : 'running',
         'activeVersion' => $activeVersion,
-        'activeRulesHash' => archiving_rules_hash($activeRules),
-        'draftRulesHash' => archiving_rules_hash($draftRules),
+        'activeRulesHash' => archiving_rules_review_relevant_hash($activeRules),
+        'draftRulesHash' => archiving_rules_review_relevant_hash($draftRules),
         'jobIdsHash' => archiving_rules_review_job_ids_hash($jobIds),
         'jobIds' => $jobIds,
         'pendingJobIds' => [],
@@ -8206,10 +8359,10 @@ function draft_archiving_review_session_is_current(array $session, array $active
     if ((int) ($session['activeVersion'] ?? 0) !== $activeVersion) {
         return false;
     }
-    if ((string) ($session['activeRulesHash'] ?? '') !== archiving_rules_hash($activeRules)) {
+    if ((string) ($session['activeRulesHash'] ?? '') !== archiving_rules_review_relevant_hash($activeRules)) {
         return false;
     }
-    if ((string) ($session['draftRulesHash'] ?? '') !== archiving_rules_hash($draftRules)) {
+    if ((string) ($session['draftRulesHash'] ?? '') !== archiving_rules_review_relevant_hash($draftRules)) {
         return false;
     }
     return (string) ($session['jobIdsHash'] ?? '') === archiving_rules_review_job_ids_hash($jobIds);
@@ -8224,9 +8377,10 @@ function collect_archiving_rules_review(array $config, int $chunkSize = 20): arr
         $activeVersion = active_archiving_rules_version();
         $jobIds = archived_job_ids($config);
         $hasUnpublishedChanges = archiving_rules_have_unpublished_changes();
+        $hasReviewRelevantChanges = archiving_rules_have_review_relevant_changes($activeRules, $draftRules);
         $displayMaps = archiving_review_display_maps($activeRules, $draftRules);
 
-        if (!$hasUnpublishedChanges) {
+        if (!$hasUnpublishedChanges || !$hasReviewRelevantChanges) {
             $state['draftSession'] = empty_draft_archiving_review_session();
             save_archiving_rules_review_state($state);
             return [
@@ -8295,6 +8449,7 @@ function collect_archiving_rules_review(array $config, int $chunkSize = 20): arr
             $draftRules,
             $activeVersion,
             $session,
+            true,
             true
         );
 
@@ -8314,7 +8469,7 @@ function collect_archiving_rules_review(array $config, int $chunkSize = 20): arr
 
 function maybe_advance_draft_archiving_review_session(array $config, int $chunkSize = 10): array
 {
-    if (!archiving_rules_have_unpublished_changes()) {
+    if (!archiving_rules_have_unpublished_changes() || !archiving_rules_have_review_relevant_changes()) {
         return [
             'summary' => empty_archiving_review_summary(),
             'jobs' => [],
@@ -8344,7 +8499,7 @@ function apply_archived_job_rule_review_state(
     $nextJob['ruleReviewTargetRulesVersion'] = $activeVersion;
     if ($needsRuleReview) {
         $nextJob['ruleReviewProposedValue'] = normalize_auto_archiving_result(is_array($proposed) ? $proposed : []);
-        $nextJob['ruleReviewDiff'] = is_array($diff) ? $diff : archiving_result_diff(current_approved_archiving_for_job($job), normalize_auto_archiving_result(is_array($proposed) ? $proposed : []));
+        $nextJob['ruleReviewDiff'] = is_array($diff) ? $diff : archiving_review_result_diff(current_approved_archiving_for_job($job), normalize_auto_archiving_result(is_array($proposed) ? $proposed : []));
     } else {
         $nextJob['lastResolvedArchivingRulesVersion'] = $activeVersion;
         unset($nextJob['ruleReviewProposedValue'], $nextJob['ruleReviewDiff']);
@@ -8373,7 +8528,7 @@ function initialize_published_archiving_review_session(array $config, int $activ
     return [
         'status' => count($jobIds) === 0 ? 'complete' : 'running',
         'activeVersion' => $activeVersion,
-        'activeRulesHash' => archiving_rules_hash($activeRules),
+        'activeRulesHash' => archiving_rules_review_relevant_hash($activeRules),
         'jobIdsHash' => archiving_rules_review_job_ids_hash($jobIds),
         'jobIds' => $jobIds,
         'pendingJobIds' => [],
@@ -8391,7 +8546,7 @@ function published_archiving_review_session_is_current(array $session, int $acti
     if ((int) ($session['activeVersion'] ?? 0) !== $activeVersion) {
         return false;
     }
-    if ((string) ($session['activeRulesHash'] ?? '') !== archiving_rules_hash($activeRules)) {
+    if ((string) ($session['activeRulesHash'] ?? '') !== archiving_rules_review_relevant_hash($activeRules)) {
         return false;
     }
     return (string) ($session['jobIdsHash'] ?? '') === archiving_rules_review_job_ids_hash($jobIds);
@@ -8424,7 +8579,7 @@ function seed_published_archiving_review_session_from_draft(
 
         $approved = current_approved_archiving_for_job($job);
         $proposed = normalize_auto_archiving_result($item['draftAutoResult'] ?? []);
-        $diff = archiving_result_diff($approved, $proposed);
+        $diff = archiving_review_result_diff($approved, $proposed);
         $needsRuleReview = ($diff['changed'] ?? false) === true;
         apply_archived_job_rule_review_state($config, $jobId, $job, $activeVersion, $needsRuleReview, $proposed, $diff);
         if ($needsRuleReview) {
@@ -8532,7 +8687,7 @@ function advance_published_archiving_review_session(array $config, int $chunkSiz
 
             $approved = current_approved_archiving_for_job($job);
             $proposed = archived_job_active_result($config, $jobId, $job, $activeRules, $activeVersion);
-            $diff = archiving_result_diff($approved, $proposed);
+            $diff = archiving_review_result_diff($approved, $proposed);
             $needsRuleReview = ($diff['changed'] ?? false) === true;
             apply_archived_job_rule_review_state($config, $jobId, $job, $activeVersion, $needsRuleReview, $proposed, $diff);
             if ($needsRuleReview) {

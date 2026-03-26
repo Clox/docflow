@@ -9,6 +9,7 @@ try {
     json_response(is_array($archivingRules['draftReview'] ?? null) ? $archivingRules['draftReview'] : [
         'activeArchivingRulesVersion' => 1,
         'hasUnpublishedChanges' => false,
+        'hasReviewRelevantChanges' => false,
         'changedSections' => [],
         'summary' => empty_archiving_review_summary(),
         'jobs' => [],
@@ -25,6 +26,7 @@ try {
     json_response([
         'activeArchivingRulesVersion' => 1,
         'hasUnpublishedChanges' => false,
+        'hasReviewRelevantChanges' => false,
         'changedSections' => [],
         'summary' => [],
         'jobs' => [],

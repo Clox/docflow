@@ -28,17 +28,28 @@ try {
     $config = load_config();
     ensure_job_dispatcher_running($config);
     $state = load_archiving_rules_state();
-    $state['draftArchivingRules']['archiveFolders'] = normalize_archive_structure($payload['archiveFolders']);
+    $normalizedArchiveFolders = normalize_archive_structure($payload['archiveFolders']);
+    $state['draftArchivingRules']['archiveFolders'] = archive_structure_without_filename_templates($normalizedArchiveFolders);
+    $activeRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
+    $activeRules['archiveFolders'] = sync_active_filename_templates_from_archive_folders(
+        is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : [],
+        $normalizedArchiveFolders
+    );
+    $state['activeArchivingRules'] = $activeRules;
     $stored = save_archiving_rules_state($state);
     maybe_advance_draft_archiving_review_session($config, 10);
     maybe_queue_archiving_rules_update_event($config);
+    $draftRules = load_draft_archiving_rules();
     json_response([
         'ok' => true,
-        'archiveFolders' => is_array($stored['draftArchivingRules']['archiveFolders'] ?? null)
-            ? $stored['draftArchivingRules']['archiveFolders']
+        'archiveFolders' => is_array($draftRules['archiveFolders'] ?? null)
+            ? $draftRules['archiveFolders']
             : [],
         'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
-        'hasUnpublishedChanges' => json_encode($stored['activeArchivingRules'] ?? null) !== json_encode($stored['draftArchivingRules'] ?? null),
+        'hasUnpublishedChanges' => archiving_rules_have_unpublished_changes(
+            is_array($stored['activeArchivingRules'] ?? null) ? $stored['activeArchivingRules'] : [],
+            is_array($draftRules ?? null) ? $draftRules : []
+        ),
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

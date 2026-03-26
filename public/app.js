@@ -148,6 +148,7 @@ let state = {
   archivingRules: {
     activeVersion: 1,
     hasUnpublishedChanges: false,
+    hasReviewRelevantChanges: false,
     needsRuleReviewCount: 0,
     publishedReview: {
       status: 'idle',
@@ -157,6 +158,7 @@ let state = {
     draftReview: {
       activeArchivingRulesVersion: 1,
       hasUnpublishedChanges: false,
+      hasReviewRelevantChanges: false,
       changedSections: [],
       summary: {
         testedJobs: 0,
@@ -1345,6 +1347,7 @@ function emptyArchivingReviewPayload() {
   return {
     activeArchivingRulesVersion: 1,
     hasUnpublishedChanges: false,
+    hasReviewRelevantChanges: false,
     changedSections: [],
     summary: {
       testedJobs: 0,
@@ -1372,6 +1375,7 @@ function normalizeArchivingReviewPayload(payload) {
   const normalized = {
     activeArchivingRulesVersion: Number.parseInt(String(next.activeArchivingRulesVersion || 1), 10) || 1,
     hasUnpublishedChanges: next.hasUnpublishedChanges === true,
+    hasReviewRelevantChanges: next.hasReviewRelevantChanges === true,
     changedSections: Array.isArray(next.changedSections) ? next.changedSections.filter((value) => typeof value === 'string' && value.trim()) : [],
     summary: {
       testedJobs: Number.parseInt(String(summary.testedJobs || 0), 10) || 0,
@@ -1403,6 +1407,7 @@ function normalizeArchivingRulesStatePayload(payload, fallback = state.archiving
   return {
     activeVersion: Number.parseInt(String(next.activeVersion || fallback.activeVersion || 1), 10) || 1,
     hasUnpublishedChanges: next.hasUnpublishedChanges === true,
+    hasReviewRelevantChanges: next.hasReviewRelevantChanges === true,
     needsRuleReviewCount: Number.parseInt(String(next.needsRuleReviewCount || 0), 10) || 0,
     publishedReview: next.publishedReview && typeof next.publishedReview === 'object'
       ? {
@@ -2024,7 +2029,9 @@ function renderArchivingRuleReview(force = false) {
     }
 
     const statusLine = document.createElement('div');
-    if (sessionStatus === 'running') {
+    if (payload.hasReviewRelevantChanges !== true) {
+      statusLine.textContent = 'Det här utkastet innehåller inga ändringar som kräver granskning av gamla arkiverade jobb.';
+    } else if (sessionStatus === 'running') {
       statusLine.textContent = `Analysen av arkiverade jobb pågår. ${analyzedCount} / ${totalCount} analyserade. ${foundCount} jobb hittade hittills. Fler jobb kan tillkomma medan analysen fortsätter.`;
     } else {
       statusLine.textContent = 'Analysen av arkiverade jobb är klar.';
@@ -2041,7 +2048,9 @@ function renderArchivingRuleReview(force = false) {
   if (jobs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
-    empty.textContent = sessionStatus === 'running'
+    empty.textContent = payload.hasReviewRelevantChanges !== true
+      ? 'Det här utkastet påverkar inte gamla arkiverade jobb som behöver granskas.'
+      : sessionStatus === 'running'
       ? 'Inga påverkade arkiverade jobb hittade ännu.'
       : totalCount === 0
       ? 'Det finns inga arkiverade jobb att jämföra mot utkastet ännu.'
