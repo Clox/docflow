@@ -20,6 +20,15 @@ What is stored in SQLite
 - Supports exact lookup by `(type, number)`.
 - `requires_ocr` stores payment-number behavior metadata (`0`/`1`).
 
+3. `jobs`
+- Stores relational job metadata that is being moved out of `job.json` incrementally.
+- First fields:
+  - `sender_id`
+  - `auto_sender_id`
+- These correspond to archived sender ids for:
+  - approved archiving state
+  - auto-detected state at approval
+
 Number semantics
 - `number`: canonical normalized value used for lookup and uniqueness.
 - `original_number`: optional raw input value for traceability/debugging.

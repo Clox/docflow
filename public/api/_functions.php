@@ -228,6 +228,77 @@ function sender_repository_instance(): ?\Docflow\Senders\SenderRepository
     return $repository;
 }
 
+function job_repository_instance(): ?\Docflow\Jobs\JobRepository
+{
+    static $initialized = false;
+    static $repository = null;
+
+    if ($initialized) {
+        return $repository;
+    }
+
+    $initialized = true;
+    try {
+        $pdo = \Docflow\Database\Connection::make();
+        $repository = new \Docflow\Jobs\JobRepository($pdo);
+    } catch (Throwable $e) {
+        $repository = null;
+    }
+
+    return $repository;
+}
+
+function job_sender_snapshot_ids(string $jobId): ?array
+{
+    $normalizedId = trim($jobId);
+    if ($normalizedId === '') {
+        return null;
+    }
+
+    $repository = job_repository_instance();
+    if ($repository === null) {
+        return null;
+    }
+
+    try {
+        $row = $repository->findById($normalizedId);
+    } catch (Throwable $e) {
+        return null;
+    }
+
+    if (!is_array($row)) {
+        return null;
+    }
+
+    return [
+        'senderId' => isset($row['sender_id']) && (int) $row['sender_id'] > 0 ? (int) $row['sender_id'] : null,
+        'autoSenderId' => isset($row['auto_sender_id']) && (int) $row['auto_sender_id'] > 0 ? (int) $row['auto_sender_id'] : null,
+    ];
+}
+
+function sync_job_sender_snapshot_ids(string $jobId, ?int $senderId, ?int $autoSenderId): void
+{
+    $normalizedId = trim($jobId);
+    if ($normalizedId === '') {
+        return;
+    }
+
+    $repository = job_repository_instance();
+    if ($repository === null) {
+        return;
+    }
+
+    try {
+        $repository->upsertSenderSnapshotIds(
+            $normalizedId,
+            $senderId !== null && $senderId > 0 ? $senderId : null,
+            $autoSenderId !== null && $autoSenderId > 0 ? $autoSenderId : null
+        );
+    } catch (Throwable $e) {
+        // Best effort for now. job.json remains the fallback while this migration lands.
+    }
+}
+
 function detect_org_number_from_ocr_text(string $ocrText): ?string
 {
     $pattern = '/\b(?:\d{6}[-\s]?\d{4}|(?:19|20)\d{2}[-\s]?\d{2}[-\s]?\d{2}[-\s]?\d{4})\b/u';
@@ -1770,19 +1841,55 @@ function normalize_archiving_snapshot(mixed $input): ?array
 
 function set_job_archiving_snapshot(array &$job, int $rulesVersion, array $autoDetectedAtApproval, array $userApproved): void
 {
+    $normalizedAutoDetected = normalize_auto_archiving_result($autoDetectedAtApproval);
     $normalizedApproved = normalize_auto_archiving_result($userApproved);
-    $job['archiveSnapshot'] = normalize_archiving_snapshot([
+    $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+    sync_job_sender_snapshot_ids(
+        $jobId,
+        isset($normalizedApproved['senderId']) ? (int) $normalizedApproved['senderId'] : null,
+        isset($normalizedAutoDetected['senderId']) ? (int) $normalizedAutoDetected['senderId'] : null
+    );
+
+    $snapshot = normalize_archiving_snapshot([
         'approvedWithRulesVersion' => max(1, $rulesVersion),
-        'autoDetectedAtApproval' => normalize_auto_archiving_result($autoDetectedAtApproval),
+        'autoDetectedAtApproval' => $normalizedAutoDetected,
         'userApproved' => $normalizedApproved,
     ]);
+    if (is_array($snapshot['autoDetectedAtApproval'] ?? null)) {
+        unset($snapshot['autoDetectedAtApproval']['senderId']);
+    }
+    if (is_array($snapshot['userApproved'] ?? null)) {
+        unset($snapshot['userApproved']['senderId']);
+    }
+    $job['archiveSnapshot'] = $snapshot;
     $job['approvedArchiving'] = $normalizedApproved;
 }
 
 function job_archiving_snapshot(array $job): ?array
 {
     $snapshot = normalize_archiving_snapshot($job['archiveSnapshot'] ?? null);
-    return is_array($snapshot) ? $snapshot : null;
+    if (!is_array($snapshot)) {
+        return null;
+    }
+
+    if (is_array($snapshot['autoDetectedAtApproval'] ?? null)) {
+        $snapshot['autoDetectedAtApproval']['senderId'] = null;
+    }
+    if (is_array($snapshot['userApproved'] ?? null)) {
+        $snapshot['userApproved']['senderId'] = null;
+    }
+
+    $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+    $storedSenderIds = job_sender_snapshot_ids($jobId);
+    if (is_array($storedSenderIds)) {
+        if (is_array($snapshot['autoDetectedAtApproval'] ?? null)) {
+            $snapshot['autoDetectedAtApproval']['senderId'] = $storedSenderIds['autoSenderId'] ?? null;
+        }
+        if (is_array($snapshot['userApproved'] ?? null)) {
+            $snapshot['userApproved']['senderId'] = $storedSenderIds['senderId'] ?? null;
+        }
+    }
+    return $snapshot;
 }
 
 function archived_job_active_result(array $config, string $jobId, array $job, array $activeRules, int $activeVersion): array

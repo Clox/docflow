@@ -28,7 +28,7 @@ Processing model:
 
 SQLite sender lookup:
 - SQLite file: data/docflow.sqlite
-- Used for sender lookup data (senders + bankgiro/plusgiro metadata).
+- Used for sender lookup data (senders + bankgiro/plusgiro metadata) and incremental job metadata.
 - Archiving rules now live in data/archiving-rules.json.
 - Requires PHP extension: pdo_sqlite
 - Run DB migrations:
