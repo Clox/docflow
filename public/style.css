@@ -2660,19 +2660,14 @@ body {
   box-shadow: inset 1px 0 0 rgba(148, 163, 184, .45), inset -1px 0 0 rgba(148, 163, 184, .45);
 }
 
-.filename-template-inline-token-center--legacy {
-  background: #f8fafc;
-  box-shadow: inset 1px 0 0 #d6dee8, inset -1px 0 0 #d6dee8;
-}
-
 .filename-template-inline-token-center--system {
-  background: #eaf8f4;
-  box-shadow: inset 1px 0 0 #9fd5c7, inset -1px 0 0 #9fd5c7;
+  background: #f1f5f9;
+  box-shadow: inset 1px 0 0 #cbd5e1, inset -1px 0 0 #cbd5e1;
 }
 
 .filename-template-inline-token-center--category {
-  background: #eef4ff;
-  box-shadow: inset 1px 0 0 #bfd3ff, inset -1px 0 0 #bfd3ff;
+  background: #e9f7ff;
+  box-shadow: inset 1px 0 0 #9ccfe8, inset -1px 0 0 #9ccfe8;
 }
 
 .filename-template-inline-token-center--data {
@@ -2739,19 +2734,14 @@ body {
   border-color: #bfd3ff;
 }
 
-.filename-template-chip--legacy {
-  background: #f8fafc;
-  border-color: #d6dee8;
-}
-
 .filename-template-chip--system {
-  background: #eaf8f4;
-  border-color: #9fd5c7;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
 }
 
 .filename-template-chip--category {
-  background: #eef4ff;
-  border-color: #bfd3ff;
+  background: #e9f7ff;
+  border-color: #9ccfe8;
 }
 
 .filename-template-chip--data {

@@ -579,51 +579,6 @@ function normalize_filename_template_candidate_parts(mixed $input, int $depth = 
     ));
 }
 
-function migrate_legacy_filename_template_field_part(string $key): ?array
-{
-    $normalizedKey = trim($key);
-    if ($normalizedKey === '') {
-        return null;
-    }
-
-    if ($normalizedKey === 'category') {
-        return ['type' => 'category'];
-    }
-
-    if ($normalizedKey === 'date') {
-        return [
-            'type' => 'dataField',
-            'key' => 'due_date',
-        ];
-    }
-
-    if ($normalizedKey === 'payee') {
-        return [
-            'type' => 'dataField',
-            'key' => 'payment_receiver',
-        ];
-    }
-
-    if (array_key_exists($normalizedKey, system_extraction_field_definitions())) {
-        return [
-            'type' => 'systemField',
-            'key' => $normalizedKey,
-        ];
-    }
-
-    if (in_array($normalizedKey, ['client', 'main_client', 'sender'], true)) {
-        return [
-            'type' => 'field',
-            'key' => $normalizedKey,
-        ];
-    }
-
-    return [
-        'type' => 'dataField',
-        'key' => $normalizedKey,
-    ];
-}
-
 function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
 {
     if (!is_array($input) || $depth > 6) {
@@ -633,21 +588,6 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
     $type = is_string($input['type'] ?? null) ? trim((string) $input['type']) : 'text';
     $prefixParts = normalize_filename_template_parts($input['prefixParts'] ?? [], $depth + 1);
     $suffixParts = normalize_filename_template_parts($input['suffixParts'] ?? [], $depth + 1);
-    if ($type === 'field') {
-        $migrated = migrate_legacy_filename_template_field_part(
-            is_string($input['key'] ?? null) ? (string) $input['key'] : ''
-        );
-        if ($migrated === null) {
-            return null;
-        }
-
-        return [
-            ...$migrated,
-            'prefixParts' => $prefixParts,
-            'suffixParts' => $suffixParts,
-        ];
-    }
-
     if ($type === 'dataField' || $type === 'systemField') {
         $key = is_string($input['key'] ?? null) ? trim((string) $input['key']) : '';
         if ($key === '') {
@@ -6851,7 +6791,7 @@ function evaluate_filename_template_parts_backend(array $parts, array $fieldValu
         }
 
         $type = is_string($part['type'] ?? null) ? trim((string) $part['type']) : 'text';
-        if ($type === 'field' || $type === 'dataField' || $type === 'systemField') {
+        if ($type === 'dataField' || $type === 'systemField') {
             $key = is_string($part['key'] ?? null) ? trim((string) $part['key']) : '';
             $rawValue = $key !== '' && array_key_exists($key, $fieldValues)
                 ? $fieldValues[$key]

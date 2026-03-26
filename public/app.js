@@ -208,59 +208,6 @@ const SYSTEM_LABELS = {
 
 const DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR = ', ';
 
-const FILENAME_TEMPLATE_LEGACY_FIELDS = {
-  date: {
-    label: 'Datum',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält. Motsvarar tidigare datumfält i filnamnsmallen.',
-  },
-  category: {
-    label: 'Kategori',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält för kategori.',
-  },
-  supplier: {
-    label: 'Leverantör',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält för datafältet Leverantör.',
-  },
-  payment_receiver: {
-    label: 'Betalningsmottagare',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält för datafältet Betalningsmottagare.',
-  },
-  amount: {
-    label: 'Belopp',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält för datafältet Belopp.',
-  },
-  ocr: {
-    label: 'OCR',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält för datafältet OCR.',
-  },
-  client: {
-    label: 'Huvudman',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält för Huvudman.',
-  },
-  main_client: {
-    label: 'Huvudman',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält för Huvudman.',
-  },
-  sender: {
-    label: 'Avsändare',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält för Avsändare.',
-  },
-  payee: {
-    label: 'Betalningsmottagare',
-    tone: 'legacy',
-    title: 'Äldre filnamnsmall-fält för Betalningsmottagare.',
-  },
-};
-
 let selectedJobId = '';
 let loadedOcrJobId = '';
 let loadedOcrSource = '';
@@ -2621,6 +2568,32 @@ function findCategoryById(categoryId) {
   return (Array.isArray(state.categories) ? state.categories : []).find((category) => category && category.id === categoryId) || null;
 }
 
+function findDraftCategoryById(categoryId) {
+  const normalizedId = typeof categoryId === 'string' ? categoryId.trim() : '';
+  if (!normalizedId) {
+    return null;
+  }
+
+  for (const folder of Array.isArray(categoriesDraft) ? categoriesDraft : []) {
+    if (!folder || typeof folder !== 'object' || !Array.isArray(folder.categories)) {
+      continue;
+    }
+    const match = folder.categories.find((category) => category && category.id === normalizedId);
+    if (match) {
+      return {
+        ...match,
+        filenameTemplate: sanitizeFilenameTemplate(folder.filenameTemplate),
+      };
+    }
+  }
+
+  return null;
+}
+
+function findFilenameTemplateCategoryById(categoryId) {
+  return findDraftCategoryById(categoryId) || findCategoryById(categoryId);
+}
+
 function findSenderById(senderId) {
   const normalizedId = Number.parseInt(String(senderId || ''), 10);
   if (!Number.isInteger(normalizedId) || normalizedId < 1) {
@@ -2770,7 +2743,7 @@ function buildFilenameFieldValues(job) {
   const autoResult = autoArchivingResultForJob(job);
   const clientDirName = effectiveClientDirName(job);
   const sender = findSenderById(effectiveSenderId(job));
-  const category = findCategoryById(effectiveCategoryId(job));
+  const category = findFilenameTemplateCategoryById(effectiveCategoryId(job));
 
   const values = new Map();
   const setValue = (key, value) => {
@@ -2846,7 +2819,7 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
       return;
     }
 
-    if (part.type === 'field' || part.type === 'dataField' || part.type === 'systemField') {
+    if (part.type === 'dataField' || part.type === 'systemField') {
       const key = typeof part.key === 'string' ? part.key.trim() : '';
       const rawValue = key ? fieldValues.get(key) : '';
       const value = typeof rawValue === 'string' ? rawValue.trim() : '';
@@ -2914,7 +2887,7 @@ function generateFilenameForJob(job) {
     return '';
   }
 
-  const category = findCategoryById(effectiveCategoryId(job));
+  const category = findFilenameTemplateCategoryById(effectiveCategoryId(job));
   const template = category && category.filenameTemplate && typeof category.filenameTemplate === 'object'
     ? sanitizeFilenameTemplate(category.filenameTemplate)
     : { parts: [] };
@@ -2938,8 +2911,45 @@ function displayedFilenameForJob(job) {
   if (localValue) {
     return localValue;
   }
-  if (typeof job.filename === 'string' && job.filename.trim() !== '') {
-    return job.filename.trim();
+  const category = findFilenameTemplateCategoryById(effectiveCategoryId(job));
+  const template = category && category.filenameTemplate && typeof category.filenameTemplate === 'object'
+    ? sanitizeFilenameTemplate(category.filenameTemplate)
+    : { parts: [] };
+  const hasMeaningfulTemplate = Array.isArray(template.parts) && template.parts.some((part) => {
+    if (!part || typeof part !== 'object') {
+      return false;
+    }
+    if (part.type === 'text') {
+      return typeof part.value === 'string' && part.value.trim() !== '';
+    }
+    return true;
+  });
+  const generatedFromTemplate = hasMeaningfulTemplate ? generateFilenameForJob(job) : '';
+  const savedFilename = typeof job.filename === 'string' ? job.filename.trim() : '';
+  if (hasMeaningfulTemplate) {
+    const autoResult = autoArchivingResultForJob(job);
+    const autoFilename = autoResult && typeof autoResult.filename === 'string'
+      ? autoResult.filename.trim()
+      : '';
+    const originalFilename = typeof job.originalFilename === 'string'
+      ? job.originalFilename.trim()
+      : '';
+    if (!savedFilename) {
+      return generatedFromTemplate;
+    }
+    if (savedFilename === generatedFromTemplate) {
+      return generatedFromTemplate;
+    }
+    if (
+      (autoFilename && savedFilename === autoFilename)
+      || (originalFilename && savedFilename === originalFilename)
+    ) {
+      return generatedFromTemplate;
+    }
+    return savedFilename;
+  }
+  if (savedFilename !== '') {
+    return savedFilename;
   }
   const autoResult = autoArchivingResultForJob(job);
   if (autoResult && typeof autoResult.filename === 'string' && autoResult.filename.trim() !== '') {
@@ -6566,45 +6576,6 @@ function sanitizeFilenameTemplateCandidateParts(parts, depth = 0) {
     .filter((part) => part && typeof part === 'object' && part.type !== 'text');
 }
 
-function migrateLegacyFilenameTemplateField(key) {
-  const normalizedKey = typeof key === 'string' ? key.trim() : '';
-  if (!normalizedKey) {
-    return null;
-  }
-
-  if (normalizedKey === 'category') {
-    return { type: 'category' };
-  }
-  if (normalizedKey === 'date') {
-    return {
-      type: 'dataField',
-      key: 'due_date',
-    };
-  }
-  if (normalizedKey === 'payee') {
-    return {
-      type: 'dataField',
-      key: 'payment_receiver',
-    };
-  }
-  if (filenameTemplateSystemFieldOptions().some((field) => field.key === normalizedKey)) {
-    return {
-      type: 'systemField',
-      key: normalizedKey,
-    };
-  }
-  if (normalizedKey === 'client' || normalizedKey === 'main_client' || normalizedKey === 'sender') {
-    return {
-      type: 'field',
-      key: normalizedKey,
-    };
-  }
-  return {
-    type: 'dataField',
-    key: normalizedKey,
-  };
-}
-
 function sanitizeFilenameTemplatePart(part, depth = 0) {
   const input = part && typeof part === 'object' ? part : null;
   if (!input || depth > 6) {
@@ -6614,17 +6585,6 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
   const type = typeof input.type === 'string' ? input.type.trim() : 'text';
   const prefixParts = sanitizeFilenameTemplateParts(input.prefixParts, depth + 1);
   const suffixParts = sanitizeFilenameTemplateParts(input.suffixParts, depth + 1);
-  if (type === 'field') {
-    const migrated = migrateLegacyFilenameTemplateField(input.key);
-    if (!migrated) {
-      return null;
-    }
-    return {
-      ...migrated,
-      prefixParts,
-      suffixParts,
-    };
-  }
   if (type === 'dataField' || type === 'systemField') {
     const key = typeof input.key === 'string' ? input.key.trim() : '';
     if (!key) {
@@ -6674,14 +6634,6 @@ function sanitizeFilenameTemplate(template) {
 }
 
 function defaultFilenameTemplatePart(type = 'text') {
-  if (type === 'field') {
-    return {
-      type: 'field',
-      key: 'sender',
-      prefixParts: [],
-      suffixParts: [],
-    };
-  }
   if (type === 'category') {
     return {
       type: 'category',
@@ -6759,12 +6711,6 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
 
 function sanitizeExtractionFields(fields) {
   return Array.isArray(fields) ? fields.map((field, index) => sanitizeExtractionField(field, index)) : [];
-}
-
-function filenameTemplateLegacyFieldMeta(key) {
-  return typeof key === 'string' && key in FILENAME_TEMPLATE_LEGACY_FIELDS
-    ? FILENAME_TEMPLATE_LEGACY_FIELDS[key]
-    : null;
 }
 
 function filenameTemplateSystemFieldTitle(fieldKey, fieldName) {
@@ -8373,7 +8319,14 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
   if (!Array.isArray(parts)) {
     parts = [];
   }
-  parts.splice(0, parts.length, ...sanitizeFilenameTemplateParts(parts));
+  const chipsOnlyEditor = options && options.chipsOnly === true;
+  parts.splice(
+    0,
+    parts.length,
+    ...(chipsOnlyEditor
+      ? sanitizeFilenameTemplateCandidateParts(parts)
+      : normalizeEditableFilenameTemplateParts(parts))
+  );
 
   const isSlotEditor = options && options.variant === 'slot';
   const inlinePlaceholder = options && typeof options.placeholder === 'string'
@@ -8392,7 +8345,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     if (!part || typeof part !== 'object') {
       return {
         label: '',
-        tone: 'legacy',
+        tone: 'data',
         title: '',
       };
     }
@@ -8436,11 +8389,10 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
         title: 'Använder den första kandidaten som faktiskt har ett värde.',
       };
     }
-    const legacyField = filenameTemplateLegacyFieldMeta(part.key);
     return {
-      label: legacyField ? legacyField.label : (part.key || 'Fält'),
-      tone: legacyField && legacyField.tone ? legacyField.tone : 'legacy',
-      title: legacyField && legacyField.title ? legacyField.title : 'Äldre filnamnsmall-fält.',
+      label: part.key || 'Fält',
+      tone: 'data',
+      title: 'Lägger till värdet från valt datafält i filnamnet.',
     };
   };
 
@@ -8482,8 +8434,14 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     return collapsed;
   };
 
-  const replaceParts = (targetParts, nextParts) => {
-    targetParts.splice(0, targetParts.length, ...collapseTextParts(nextParts));
+  const replaceParts = (targetParts, nextParts, chipsOnly = false) => {
+    targetParts.splice(
+      0,
+      targetParts.length,
+      ...(chipsOnly
+        ? sanitizeFilenameTemplateCandidateParts(nextParts)
+        : normalizeEditableFilenameTemplateParts(collapseTextParts(nextParts)))
+    );
   };
 
   const setCaretToEnd = (editable) => {
@@ -8921,6 +8879,40 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 
   const createPartObject = (part) => sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
 
+  const writeTokenPartState = (token, part) => {
+    if (!(token instanceof HTMLElement)) {
+      return;
+    }
+    const normalized = sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
+    token._filenameTemplatePart = normalized;
+    try {
+      token.dataset.filenameTemplatePart = JSON.stringify(normalized);
+    } catch (error) {
+      token.dataset.filenameTemplatePart = '';
+    }
+  };
+
+  const readTokenPartState = (token) => {
+    if (!(token instanceof HTMLElement)) {
+      return null;
+    }
+    const direct = sanitizeFilenameTemplatePart(token._filenameTemplatePart);
+    if (direct) {
+      return direct;
+    }
+    const serialized = typeof token.dataset.filenameTemplatePart === 'string'
+      ? token.dataset.filenameTemplatePart
+      : '';
+    if (!serialized) {
+      return null;
+    }
+    try {
+      return sanitizeFilenameTemplatePart(JSON.parse(serialized));
+    } catch (error) {
+      return null;
+    }
+  };
+
 let activeEditable = null;
 
   const setActiveEditable = (editable) => {
@@ -8976,14 +8968,27 @@ let activeEditable = null;
       if (!isTokenNode(child)) {
         return;
       }
-      const partObject = child._filenameTemplatePart;
-      const normalized = sanitizeFilenameTemplatePart(partObject);
+      const normalized = readTokenPartState(child);
       if (normalized) {
         nextParts.push(normalized);
       }
     });
 
-    replaceParts(editable._filenameTemplateTargetParts, nextParts);
+    replaceParts(editable._filenameTemplateTargetParts, nextParts, chipsOnly);
+    const ownerToken = editable.closest('.filename-template-dom-token');
+    if (ownerToken instanceof HTMLElement) {
+      const ownerPart = readTokenPartState(ownerToken);
+      if (ownerPart) {
+        writeTokenPartState(ownerToken, ownerPart);
+      }
+      const ownerEditable = ownerToken.parentElement instanceof HTMLElement
+        ? ownerToken.parentElement.closest('.filename-template-editable')
+        : null;
+      if (ownerEditable instanceof HTMLElement && ownerEditable !== editable) {
+        syncEditableFromDom(ownerEditable);
+        return;
+      }
+    }
     onChange();
   };
 
@@ -9081,13 +9086,21 @@ let activeEditable = null;
   };
 
   const buildSlotEditor = (targetParts, placeholder, slotClassName = '') => {
+    const chipsOnly = slotClassName.includes('filename-template-inline-token-slot--candidates');
+    targetParts.splice(
+      0,
+      targetParts.length,
+      ...(chipsOnly
+        ? sanitizeFilenameTemplateCandidateParts(targetParts)
+        : normalizeEditableFilenameTemplateParts(targetParts))
+    );
     const slotEditable = document.createElement('span');
     slotEditable.className = `filename-template-inline-token-slot ${slotClassName} filename-template-inline-flow is-slot`.trim();
     if (placeholder) {
       slotEditable.dataset.placeholder = placeholder;
     }
     slotEditable._filenameTemplateTargetParts = targetParts;
-    slotEditable._filenameTemplateChipsOnly = slotClassName.includes('filename-template-inline-token-slot--candidates');
+    slotEditable._filenameTemplateChipsOnly = chipsOnly;
     attachEditableHandlers(slotEditable);
     renderEditorParts(slotEditable, targetParts);
     return slotEditable;
@@ -9095,24 +9108,26 @@ let activeEditable = null;
 
   const createTokenNode = (part, ownerEditable) => {
     const normalizedPart = createPartObject(part);
-    const meta = partDisplayMeta(normalizedPart);
     const token = document.createElement('span');
     token.className = 'filename-template-dom-token';
     token.setAttribute('contenteditable', 'false');
-    token._filenameTemplatePart = normalizedPart;
+    writeTokenPartState(token, normalizedPart);
+    const tokenPart = sanitizeFilenameTemplatePart(token._filenameTemplatePart) || normalizedPart;
+    writeTokenPartState(token, tokenPart);
+    const meta = partDisplayMeta(tokenPart);
     if (meta.title) {
       token.title = meta.title;
     }
 
     const shell = document.createElement('span');
     shell.className = 'filename-template-inline-token-shell';
-    shell.appendChild(buildSlotEditor(normalizedPart.prefixParts, '', 'filename-template-inline-token-slot--prefix'));
+    shell.appendChild(buildSlotEditor(tokenPart.prefixParts, '', 'filename-template-inline-token-slot--prefix'));
 
     const center = document.createElement('span');
-    center.className = `filename-template-inline-token-center filename-template-inline-token-center--${meta.tone || 'legacy'}`;
+    center.className = `filename-template-inline-token-center filename-template-inline-token-center--${meta.tone || 'data'}`;
 
     const label = document.createElement('span');
-    label.className = `filename-template-inline-token filename-template-inline-token--${meta.tone || 'legacy'}`;
+    label.className = `filename-template-inline-token filename-template-inline-token--${meta.tone || 'data'}`;
     if (meta.title) {
       label.title = meta.title;
     }
@@ -9123,7 +9138,7 @@ let activeEditable = null;
     center.appendChild(label);
 
     const syncPartControlChange = () => {
-      token._filenameTemplatePart = normalizedPart;
+      writeTokenPartState(token, tokenPart);
       if (ownerEditable instanceof HTMLElement) {
         syncEditableFromDom(ownerEditable);
       } else {
@@ -9131,7 +9146,7 @@ let activeEditable = null;
       }
     };
 
-    if (normalizedPart.type === 'dataField') {
+    if (tokenPart.type === 'dataField') {
       const select = document.createElement('select');
       select.className = 'filename-template-inline-token-select';
       const options = filenameTemplateDataFieldOptions();
@@ -9149,35 +9164,35 @@ let activeEditable = null;
           select.appendChild(option);
         });
         const fallbackKey = options[0]?.key || '';
-        select.value = options.some((option) => option.key === normalizedPart.key)
-          ? normalizedPart.key
+        select.value = options.some((option) => option.key === tokenPart.key)
+          ? tokenPart.key
           : fallbackKey;
-        normalizedPart.key = select.value;
+        tokenPart.key = select.value;
       }
       select.title = meta.title || 'Välj vilket datafält som ska skrivas in i filnamnet.';
       select.addEventListener('change', () => {
-        normalizedPart.key = select.value;
+        tokenPart.key = select.value;
         syncPartControlChange();
       });
       center.appendChild(select);
-    } else if (normalizedPart.type === 'labels') {
+    } else if (tokenPart.type === 'labels') {
       const separatorInput = document.createElement('input');
       separatorInput.type = 'text';
       separatorInput.className = 'filename-template-inline-token-input';
-      separatorInput.value = typeof normalizedPart.separator === 'string'
-        ? normalizedPart.separator
+      separatorInput.value = typeof tokenPart.separator === 'string'
+        ? tokenPart.separator
         : DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR;
       separatorInput.placeholder = ', ';
       separatorInput.title = 'Separator mellan etiketter i filnamnet.';
       separatorInput.setAttribute('aria-label', 'Separator mellan etiketter');
       separatorInput.addEventListener('input', () => {
-        normalizedPart.separator = separatorInput.value;
+        tokenPart.separator = separatorInput.value;
         syncPartControlChange();
       });
       center.appendChild(separatorInput);
-    } else if (normalizedPart.type === 'firstAvailable') {
+    } else if (tokenPart.type === 'firstAvailable') {
       center.appendChild(buildSlotEditor(
-        normalizedPart.parts,
+        tokenPart.parts,
         'Kandidater',
         'filename-template-inline-token-slot--candidates'
       ));
@@ -9185,26 +9200,116 @@ let activeEditable = null;
 
     shell.appendChild(center);
 
-    shell.appendChild(buildSlotEditor(normalizedPart.suffixParts, '', 'filename-template-inline-token-slot--suffix'));
+    shell.appendChild(buildSlotEditor(tokenPart.suffixParts, '', 'filename-template-inline-token-slot--suffix'));
     token.appendChild(shell);
     return token;
+  };
+
+  const buildInsertedPartsFromEditable = (editable, part) => {
+    if (!(editable instanceof HTMLElement) || !Array.isArray(editable._filenameTemplateTargetParts)) {
+      return null;
+    }
+
+    const chipsOnly = editable._filenameTemplateChipsOnly === true;
+    const range = ensureRangeInEditable(editable);
+    if (!range) {
+      return null;
+    }
+
+    const domChildren = Array.from(editable.childNodes);
+    const nextParts = [];
+    const appendText = (value) => {
+      if (chipsOnly) {
+        return;
+      }
+      const textValue = typeof value === 'string' ? value : '';
+      if (textValue === '') {
+        return;
+      }
+      const previous = nextParts[nextParts.length - 1] || null;
+      if (previous && previous.type === 'text') {
+        previous.value = String(previous.value || '') + textValue;
+        return;
+      }
+      nextParts.push({ type: 'text', value: textValue });
+    };
+    const appendInsertedPart = () => {
+      nextParts.push(createPartObject(part));
+    };
+
+    let inserted = false;
+    const insertAtEditableOffset = (offset) => {
+      if (inserted || range.startContainer !== editable) {
+        return false;
+      }
+      const safeOffset = Math.max(0, Math.min(offset, domChildren.length));
+      if (range.startOffset !== safeOffset) {
+        return false;
+      }
+      appendInsertedPart();
+      inserted = true;
+      return true;
+    };
+
+    domChildren.forEach((child, index) => {
+      insertAtEditableOffset(index);
+
+      if (child.nodeType === Node.TEXT_NODE) {
+        const textValue = child.nodeValue || '';
+        if (range.startContainer === child) {
+          const safeOffset = Math.max(0, Math.min(range.startOffset, textValue.length));
+          appendText(textValue.slice(0, safeOffset));
+          if (!inserted) {
+            appendInsertedPart();
+            inserted = true;
+          }
+          appendText(textValue.slice(safeOffset));
+        } else {
+          appendText(textValue);
+        }
+        return;
+      }
+
+      if (!isTokenNode(child)) {
+        if (!chipsOnly) {
+          appendText(child.textContent || '');
+        }
+        return;
+      }
+
+      const normalized = readTokenPartState(child);
+      if (normalized) {
+        nextParts.push(normalized);
+      }
+    });
+
+    if (!inserted) {
+      insertAtEditableOffset(domChildren.length);
+    }
+    if (!inserted) {
+      appendInsertedPart();
+    }
+
+    return nextParts;
   };
 
   const insertPartIntoEditable = (editable, part) => {
     if (!(editable instanceof HTMLElement)) {
       return;
     }
-    const normalizedPart = createPartObject(part);
-    const range = ensureRangeInEditable(editable);
-    if (!range) {
+    const nextParts = buildInsertedPartsFromEditable(editable, part);
+    if (!nextParts) {
       return;
     }
-    range.deleteContents();
-    const tokenNode = createTokenNode(normalizedPart, editable);
-    range.insertNode(tokenNode);
-    syncEditableFromDom(editable);
+    replaceParts(editable._filenameTemplateTargetParts, nextParts, editable._filenameTemplateChipsOnly === true);
+    renderEditorParts(editable, editable._filenameTemplateTargetParts);
+    onChange();
 
-    const firstSlot = tokenNode.querySelector('.filename-template-editable');
+    const tokenNodes = Array.from(editable.querySelectorAll(':scope > .filename-template-dom-token'));
+    const tokenNode = tokenNodes[tokenNodes.length - 1] || null;
+    const firstSlot = tokenNode instanceof HTMLElement
+      ? tokenNode.querySelector('.filename-template-editable')
+      : null;
     if (firstSlot instanceof HTMLElement) {
       setActiveEditable(firstSlot);
       setCaretToEnd(firstSlot);
@@ -9326,6 +9431,7 @@ function renderCategoriesEditor() {
     const filenameTemplate = sanitizeFilenameTemplate(
       categoriesDraft[archiveFolderIndex].filenameTemplate
     );
+    filenameTemplate.parts = normalizeEditableFilenameTemplateParts(filenameTemplate.parts);
     categoriesDraft[archiveFolderIndex].filenameTemplate = filenameTemplate;
     archiveFolderBody.appendChild(
       createFilenameTemplatePartsEditor(
@@ -10069,6 +10175,11 @@ async function loadCategories() {
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+  const selectedJob = findJobById(selectedJobId);
+  if (selectedJob) {
+    syncFilenameField(selectedJob);
+    updateArchiveAction(selectedJob);
+  }
   renderCategoriesEditor();
   updateSettingsActionButtons();
 }
@@ -10230,6 +10341,11 @@ async function saveCategories() {
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+  const selectedJob = findJobById(selectedJobId);
+  if (selectedJob) {
+    syncFilenameField(selectedJob);
+    updateArchiveAction(selectedJob);
+  }
   renderCategoriesEditor();
   updateSettingsActionButtons();
   await fetchState({ refreshCategories: true, force: true });
@@ -11086,6 +11202,11 @@ window.addEventListener('hashchange', () => {
 });
 Promise.all([
   fetchState(),
+  loadCategories().catch(() => {
+    categoriesDraft = [];
+    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+    console.error('Kunde inte ladda arkivstruktur vid app-start.');
+  }),
   loadLabels().catch(() => {
     labelsDraft = [];
     systemLabelsDraft = createDefaultSystemLabels();
