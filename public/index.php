@@ -225,8 +225,8 @@
       <button id="clients-add-row" type="button">Lägg till huvudman</button>
     </div>
     <div class="panel-actions">
-      <button id="clients-cancel" type="button">Avbryt</button>
-      <button id="clients-apply" type="button">Spara</button>
+      <button id="clients-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="clients-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 
@@ -237,8 +237,8 @@
     <div id="archiving-review-summary" class="archiving-review-summary"></div>
     <div id="archiving-review-jobs" class="archiving-review-jobs"></div>
     <div class="panel-actions">
-      <button id="archiving-review-reset-draft" type="button">Kassera utkast</button>
-      <button id="archiving-review-publish" type="button">Aktivera regler</button>
+      <button id="archiving-review-reset-draft" class="button-danger" type="button">Kassera utkastet</button>
+      <button id="archiving-review-publish" class="button-success" type="button">Använd utkastet</button>
     </div>
   </template>
 
@@ -279,16 +279,16 @@
             <p>Välj vilka värden som ska behållas och granska den sammanslagna avsändaren innan du sparar.</p>
             <div id="sender-merge-editor" class="categories-list"></div>
             <div class="panel-actions">
-              <button id="sender-merge-cancel" type="button">Avbryt</button>
-              <button id="sender-merge-apply" type="button">Spara sammanslagning</button>
+              <button id="sender-merge-cancel" class="button-danger" type="button">Avbryt</button>
+              <button id="sender-merge-apply" class="button-success" type="button">Spara sammanslagning</button>
             </div>
           </div>
         </section>
       </div>
     </div>
     <div class="panel-actions">
-      <button id="senders-cancel" type="button">Avbryt</button>
-      <button id="senders-apply" type="button">Spara</button>
+      <button id="senders-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="senders-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 
@@ -304,8 +304,8 @@
     </div>
 
     <div class="panel-actions">
-      <button id="matching-cancel" type="button">Avbryt</button>
-      <button id="matching-apply" type="button">Spara</button>
+      <button id="matching-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="matching-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 
@@ -409,8 +409,8 @@
       </div>
     </div>
     <div class="panel-actions">
-      <button id="ocr-processing-cancel" type="button">Avbryt</button>
-      <button id="ocr-processing-apply" type="button">Spara</button>
+      <button id="ocr-processing-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="ocr-processing-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 
@@ -423,8 +423,8 @@
     </div>
 
     <div class="panel-actions">
-      <button id="categories-cancel" type="button">Avbryt</button>
-      <button id="categories-apply" type="button">Spara</button>
+      <button id="categories-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="categories-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 
@@ -445,8 +445,8 @@
       <div id="system-label-editor" class="categories-list"></div>
     </div>
     <div class="panel-actions">
-      <button id="labels-cancel" type="button">Avbryt</button>
-      <button id="labels-apply" type="button">Spara</button>
+      <button id="labels-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="labels-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 
@@ -467,8 +467,8 @@
       <button id="extraction-fields-add-row" type="button">Lägg till datafält</button>
     </div>
     <div class="panel-actions">
-      <button id="extraction-fields-cancel" type="button">Avbryt</button>
-      <button id="extraction-fields-apply" type="button">Spara</button>
+      <button id="extraction-fields-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="extraction-fields-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 
@@ -486,8 +486,8 @@
       autocapitalize="off"
     >
     <div class="panel-actions">
-      <button id="paths-cancel" type="button">Avbryt</button>
-      <button id="paths-apply" type="button">Spara</button>
+      <button id="paths-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="paths-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 

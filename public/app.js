@@ -1949,6 +1949,7 @@ function renderArchivedReviewPanel() {
   });
   const saveManualButton = document.createElement('button');
   saveManualButton.type = 'button';
+  saveManualButton.className = 'button-success';
   saveManualButton.textContent = 'Spara manuellt';
   saveManualButton.addEventListener('click', async () => {
     try {
@@ -2130,7 +2131,7 @@ async function publishArchivingRules() {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte aktivera reglerna.');
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte använda utkastet.');
   }
 
   await Promise.all([loadCategories(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshCategories: true })]);
@@ -2967,6 +2968,35 @@ function displayedFilenameForJob(job) {
   return generateFilenameForJob(job);
 }
 
+function filenameTooltipForJob(job, explicitFilename = null) {
+  if (!job) {
+    return '';
+  }
+
+  if (job.archived === true) {
+    const archivedPdfPath = typeof job.archivedPdfPath === 'string' ? job.archivedPdfPath.trim() : '';
+    if (archivedPdfPath !== '') {
+      return archivedPdfPath;
+    }
+  }
+
+  const filename = typeof explicitFilename === 'string'
+    ? explicitFilename.trim()
+    : displayedFilenameForJob(job).trim();
+  if (filename === '') {
+    return '';
+  }
+
+  const basePath = normalizedPathValue(outputBasePathEl ? outputBasePathEl.value : pathsBaselineValue);
+  const clientDirName = effectiveClientDirName(job);
+  const category = findCategoryById(effectiveCategoryId(job));
+  const archiveFolderPath = category && typeof category.path === 'string' ? category.path.trim() : '';
+  const parts = [basePath, clientDirName, archiveFolderPath, filename]
+    .filter((part) => typeof part === 'string' && part.trim() !== '')
+    .map((part, index) => index === 0 ? part.replace(/[\\/]+$/, '') : part.replace(/^[\\/]+|[\\/]+$/g, ''));
+  return parts.join('/');
+}
+
 function syncFilenameField(job) {
   if (!filenameInputEl) {
     return;
@@ -2975,6 +3005,7 @@ function syncFilenameField(job) {
   const disabled = !job || job.status !== 'ready' || job.archived === true;
   filenameInputEl.disabled = disabled;
   filenameInputEl.value = job ? displayedFilenameForJob(job) : '';
+  filenameInputEl.title = job ? filenameTooltipForJob(job, filenameInputEl.value) : '';
 }
 
 function updateArchiveAction(job) {
@@ -10726,6 +10757,7 @@ filenameInputEl.addEventListener('input', () => {
   } else {
     filenameByJobId.set(selectedJobId, value);
   }
+  filenameInputEl.title = filenameTooltipForJob(currentJob, value);
   updateArchiveAction(currentJob);
   scheduleFilenameSave(selectedJobId, value);
 });

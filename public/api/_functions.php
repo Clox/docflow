@@ -8779,7 +8779,13 @@ function publish_draft_archiving_rules(array $config): array
 {
     $state = load_archiving_rules_state();
     $nextVersion = ((int) ($state['activeArchivingRulesVersion'] ?? 1)) + 1;
-    $state['activeArchivingRules'] = normalize_archiving_rules_set($state['draftArchivingRules'] ?? []);
+    $activeRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
+    $draftRules = normalize_archiving_rules_set($state['draftArchivingRules'] ?? []);
+    $draftRules['archiveFolders'] = sync_active_filename_templates_from_archive_folders(
+        is_array($draftRules['archiveFolders'] ?? null) ? $draftRules['archiveFolders'] : [],
+        is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : []
+    );
+    $state['activeArchivingRules'] = $draftRules;
     $state['activeArchivingRulesVersion'] = $nextVersion;
     $stored = save_archiving_rules_state($state);
 
