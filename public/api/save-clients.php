@@ -23,14 +23,38 @@ if (!is_array($payload) || !isset($payload['text']) || !is_string($payload['text
 $text = $payload['text'];
 $decoded = json_decode($text, true);
 if (!is_array($decoded)) {
-    json_response(['error' => 'clients.json must be a JSON array'], 400);
+    json_response(['error' => 'Clients payload must be a JSON array'], 400);
     exit;
 }
 
-$path = DATA_DIR . '/clients.json';
-if (file_put_contents($path, $text, LOCK_EX) === false) {
-    json_response(['error' => 'Could not save clients file'], 500);
+try {
+    $repository = client_repository_instance();
+    if ($repository === null) {
+        throw new RuntimeException('Client repository is unavailable.');
+    }
+
+    $stored = $repository->replaceAll($decoded);
+} catch (Throwable $e) {
+    json_response(['error' => $e->getMessage()], 500);
     exit;
 }
 
-json_response(['ok' => true]);
+$clients = [];
+foreach ($stored as $row) {
+    if (!is_array($row)) {
+        continue;
+    }
+    $clients[] = [
+        'firstName' => is_string($row['first_name'] ?? null) ? (string) $row['first_name'] : '',
+        'lastName' => is_string($row['last_name'] ?? null) ? (string) $row['last_name'] : '',
+        'folderName' => is_string($row['folder_name'] ?? null) ? (string) $row['folder_name'] : '',
+        'personalIdentityNumber' => is_string($row['personal_identity_number'] ?? null)
+            ? (string) $row['personal_identity_number']
+            : '',
+    ];
+}
+
+json_response([
+    'ok' => true,
+    'clients' => $clients,
+]);

@@ -219,7 +219,7 @@
 
   <template id="settings-template-clients">
     <h3>Huvudmän</h3>
-    <p>Redigera huvudmän som lagras i <code>data/clients.json</code>.</p>
+    <p>Redigera huvudmän som lagras i databasen.</p>
     <div id="clients-list" class="categories-list"></div>
     <div class="categories-actions">
       <button id="clients-add-row" type="button">Lägg till huvudman</button>

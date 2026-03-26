@@ -6,10 +6,6 @@ Why SQLite
 - The database is a single local file: `data/docflow.sqlite`.
 - Requires PHP with `pdo_sqlite` enabled.
 
-What stays in JSON
-- `data/archiving-rules.json` remains the source of truth for archive folders, categories, labels, data fields, and archiving-rule state.
-- SQLite is not used for archive structure in this version.
-
 What is stored in SQLite
 1. `senders`
 - One row per sender organization/authority/company.
@@ -28,6 +24,14 @@ What is stored in SQLite
 - These correspond to archived sender ids for:
   - approved archiving state
   - auto-detected state at approval
+
+4. `clients`
+- Stores principals/clients used for folder selection and personal identity number matching.
+- Keeps first name, last name, folder name, PIN, and UI sort order.
+
+5. `archiving_rules_state`
+- Stores the full active/draft archiving-rules state in SQLite.
+- Includes archive folders, categories, labels, data fields, predefined fields, system fields, and active rules version.
 
 Number semantics
 - `number`: canonical normalized value used for lookup and uniqueness.

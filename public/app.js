@@ -5859,7 +5859,7 @@ function defaultArchiveFolder() {
     filenameTemplate: {
       parts: [defaultFilenameTemplatePart('text')]
     },
-    categories: [defaultCategory()]
+    categories: []
   };
 }
 
@@ -6531,7 +6531,7 @@ function sanitizeArchiveFolder(archiveFolder) {
     name: typeof input.name === 'string' ? input.name : '',
     path: typeof input.path === 'string' ? input.path : '',
     filenameTemplate: sanitizeFilenameTemplate(migratedFilenameTemplate),
-    categories: categories.length > 0 ? categories : [defaultCategory()]
+    categories
   };
 }
 
@@ -9562,6 +9562,13 @@ function renderCategoriesEditor() {
     categoriesLabel.textContent = 'Kategorier';
     archiveFolderCategories.appendChild(categoriesLabel);
 
+    if (archiveFolder.categories.length === 0) {
+      const emptyCategories = document.createElement('div');
+      emptyCategories.className = 'categories-empty';
+      emptyCategories.textContent = 'Inga kategorier i mappen ännu.';
+      archiveFolderCategories.appendChild(emptyCategories);
+    }
+
     archiveFolder.categories.forEach((category, categoryIndex) => {
       const categoryNode = document.createElement('div');
       categoryNode.className = 'tree-node tree-category has-parent';
@@ -9578,9 +9585,6 @@ function renderCategoriesEditor() {
       removeCategoryButton.textContent = 'Ta bort kategori';
       removeCategoryButton.addEventListener('click', () => {
         categoriesDraft[archiveFolderIndex].categories.splice(categoryIndex, 1);
-        if (categoriesDraft[archiveFolderIndex].categories.length === 0) {
-          categoriesDraft[archiveFolderIndex].categories.push(defaultCategory());
-        }
         renderCategoriesEditor();
         updateSettingsActionButtons();
       });
@@ -10169,7 +10173,7 @@ async function loadClientsSettings() {
     parsed = JSON.parse(rawText);
   }
   if (!Array.isArray(parsed)) {
-    throw new Error('clients.json måste vara en JSON-lista');
+    throw new Error('Huvudmän måste vara en JSON-lista');
   }
 
   clientsDraft = parsed.map(sanitizeClientDraft);
@@ -10365,11 +10369,17 @@ async function saveClientsSettings() {
     body: JSON.stringify({ text })
   });
 
-  if (!response.ok) {
-    throw new Error('Kunde inte spara huvudmän');
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.clients)) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Kunde inte spara huvudmän';
+    throw new Error(message);
   }
 
-  clientsBaselineJson = JSON.stringify(normalized);
+  clientsDraft = payload.clients.map(sanitizeClientDraft);
+  clientsBaselineJson = normalizedClientsJson(clientsDraft);
+  renderClientsEditor();
   updateSettingsActionButtons();
   await fetchState({ refreshClients: true });
 }

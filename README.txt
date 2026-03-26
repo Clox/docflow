@@ -4,7 +4,7 @@ This local PHP tool reviews PDFs through a job pipeline.
 
 How it works:
 - Inbox: incoming untouched PDFs (configured in data/config.json).
-- Runtime JSON and other local state in `data/` are installation-local and are not meant to be versioned. See `docs/RUNTIME_DATA.md`.
+- Runtime data in `data/` are installation-local and are not meant to be versioned. See `docs/RUNTIME_DATA.md`.
 - Jobs: each claimed PDF gets its own jobs/<jobId>/ folder.
 - job.json is the source of truth for job state.
 
@@ -26,10 +26,9 @@ Processing model:
 - Actual processing runs in a separate background worker process.
 - This keeps the UI responsive while processing continues.
 
-SQLite sender lookup:
+SQLite runtime storage:
 - SQLite file: data/docflow.sqlite
-- Used for sender lookup data (senders + bankgiro/plusgiro metadata) and incremental job metadata.
-- Archiving rules now live in data/archiving-rules.json.
+- Used for sender lookup data, clients, archiving-rules state, and incremental job metadata.
 - Requires PHP extension: pdo_sqlite
 - Run DB migrations:
   ./scripts/migrate.php
@@ -39,20 +38,15 @@ UI behavior:
 - Header shows "PDF-filer" plus a spinner and "Bearbetar N fil(er)..." while processing jobs exist.
 - State auto-refreshes every 3 seconds so new ready jobs appear automatically.
 - Selecting a ready job loads /api/get-job-pdf.php?id=<jobId> in the iframe.
-- Client select is populated from data/clients.json and auto-selects matched client for selected job.
+- Client select is populated from SQLite and auto-selects matched client for selected job.
 - "Inställningar" modal includes:
-  - expandable "Huvudmän" editor for data/clients.json
+  - expandable "Huvudmän" editor backed by SQLite
   - "Reset all jobs" button that restores each job's source.pdf to inbox and removes job folders
 
 Configuration:
 - data/config.json
   - inboxDirectory: absolute path to incoming PDFs
   - jobsDirectory: absolute path to jobs root
-- data/clients.json
-  - name: display label
-  - dirName: matched client value
-  - personalIdentityNumber: used for OCR text matching (hyphen/no-hyphen supported)
-
 Testing note:
 - Processing currently has an intentional delay of 10 seconds per file in the worker to make spinner/processing-state behavior easy to verify.
 

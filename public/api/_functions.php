@@ -115,11 +115,6 @@ function load_config(): array
     ];
 }
 
-function archiving_rules_file_path(): string
-{
-    return DATA_DIR . '/archiving-rules.json';
-}
-
 function sanitize_ocr_pdf_text_substitutions($rows): array
 {
     if (!is_array($rows)) {
@@ -149,50 +144,30 @@ function sanitize_ocr_pdf_text_substitutions($rows): array
 
 function load_clients(): array
 {
-    $clientsPath = DATA_DIR . '/clients.json';
-    if (!is_file($clientsPath)) {
+    $repository = client_repository_instance();
+    if ($repository === null) {
         return [];
     }
 
-    $raw = file_get_contents($clientsPath);
-    if ($raw === false || trim($raw) === '') {
-        return [];
-    }
-
-    $data = json_decode($raw, true);
-    if (!is_array($data)) {
+    try {
+        $rows = $repository->listAll();
+    } catch (Throwable $e) {
         return [];
     }
 
     $clients = [];
-    foreach ($data as $row) {
+    foreach ($rows as $row) {
         if (!is_array($row)) {
             continue;
         }
 
-        $name = '';
-        if (is_string($row['name'] ?? null)) {
-            $name = trim((string) $row['name']);
-        } elseif (is_string($row['firstName'] ?? null) || is_string($row['lastName'] ?? null)) {
-            $firstName = is_string($row['firstName'] ?? null) ? trim((string) $row['firstName']) : '';
-            $lastName = is_string($row['lastName'] ?? null) ? trim((string) $row['lastName']) : '';
-            $name = trim($firstName . ' ' . $lastName);
-        }
-
-        $dirName = '';
-        if (is_string($row['dirName'] ?? null)) {
-            $dirName = trim((string) $row['dirName']);
-        } elseif (is_string($row['folderName'] ?? null)) {
-            $dirName = trim((string) $row['folderName']);
-        } elseif ($name !== '') {
-            $dirName = $name;
-        }
-
-        $pinRaw = $row['personalIdentityNumber'] ?? '';
-        if (!is_string($pinRaw) && !is_int($pinRaw) && !is_float($pinRaw)) {
-            continue;
-        }
-        $pin = trim((string) $pinRaw);
+        $firstName = is_string($row['first_name'] ?? null) ? trim((string) $row['first_name']) : '';
+        $lastName = is_string($row['last_name'] ?? null) ? trim((string) $row['last_name']) : '';
+        $name = trim($firstName . ' ' . $lastName);
+        $dirName = is_string($row['folder_name'] ?? null) ? trim((string) $row['folder_name']) : '';
+        $pin = is_string($row['personal_identity_number'] ?? null)
+            ? trim((string) $row['personal_identity_number'])
+            : '';
 
         if ($name === '' || $dirName === '' || $pin === '') {
             continue;
@@ -206,6 +181,26 @@ function load_clients(): array
     }
 
     return $clients;
+}
+
+function client_repository_instance(): ?\Docflow\Clients\ClientRepository
+{
+    static $initialized = false;
+    static $repository = null;
+
+    if ($initialized) {
+        return $repository;
+    }
+
+    $initialized = true;
+    try {
+        $pdo = \Docflow\Database\Connection::make();
+        $repository = new \Docflow\Clients\ClientRepository($pdo);
+    } catch (Throwable $e) {
+        $repository = null;
+    }
+
+    return $repository;
 }
 
 function sender_repository_instance(): ?\Docflow\Senders\SenderRepository
@@ -241,6 +236,26 @@ function job_repository_instance(): ?\Docflow\Jobs\JobRepository
     try {
         $pdo = \Docflow\Database\Connection::make();
         $repository = new \Docflow\Jobs\JobRepository($pdo);
+    } catch (Throwable $e) {
+        $repository = null;
+    }
+
+    return $repository;
+}
+
+function archiving_rules_state_repository_instance(): ?\Docflow\Archiving\ArchivingRulesStateRepository
+{
+    static $initialized = false;
+    static $repository = null;
+
+    if ($initialized) {
+        return $repository;
+    }
+
+    $initialized = true;
+    try {
+        $pdo = \Docflow\Database\Connection::make();
+        $repository = new \Docflow\Archiving\ArchivingRulesStateRepository($pdo);
     } catch (Throwable $e) {
         $repository = null;
     }
@@ -1353,25 +1368,42 @@ function normalize_archiving_rules_state(mixed $input): array
 
 function load_archiving_rules_state(): array
 {
-    $path = archiving_rules_file_path();
-    if (!is_file($path)) {
+    $repository = archiving_rules_state_repository_instance();
+    if ($repository === null) {
+        return normalize_archiving_rules_state([]);
+    }
+
+    $row = $repository->findSingleton();
+    if (!is_array($row)) {
         $initial = normalize_archiving_rules_state([]);
-        try {
-            write_json_file($path, $initial);
-        } catch (Throwable $ignored) {
-            // Keep runtime resilient if file cannot be created right now.
-        }
+        save_archiving_rules_state($initial);
         return $initial;
     }
 
-    $decoded = load_json_file($path);
+    $decoded = [
+        'activeArchivingRulesVersion' => (int) ($row['active_archiving_rules_version'] ?? 1),
+        'activeArchivingRules' => json_decode((string) ($row['active_archiving_rules_json'] ?? '[]'), true),
+        'draftArchivingRules' => json_decode((string) ($row['draft_archiving_rules_json'] ?? '[]'), true),
+    ];
+
     $normalized = normalize_archiving_rules_state($decoded);
-    if (json_encode($decoded) !== json_encode($normalized)) {
-        try {
-            write_json_file($path, $normalized);
-        } catch (Throwable $ignored) {
-            // Keep runtime resilient if file cannot be updated right now.
-        }
+    $activeJson = json_encode(
+        $normalized['activeArchivingRules'],
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+    $draftJson = json_encode(
+        $normalized['draftArchivingRules'],
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+
+    if (
+        !is_string($activeJson)
+        || !is_string($draftJson)
+        || (int) ($row['active_archiving_rules_version'] ?? 1) !== (int) $normalized['activeArchivingRulesVersion']
+        || trim((string) ($row['active_archiving_rules_json'] ?? '')) !== trim($activeJson)
+        || trim((string) ($row['draft_archiving_rules_json'] ?? '')) !== trim($draftJson)
+    ) {
+        save_archiving_rules_state($normalized);
     }
 
     return $normalized;
@@ -1380,7 +1412,16 @@ function load_archiving_rules_state(): array
 function save_archiving_rules_state(array $state): array
 {
     $normalized = normalize_archiving_rules_state($state);
-    write_json_file(archiving_rules_file_path(), $normalized);
+    $repository = archiving_rules_state_repository_instance();
+    if ($repository === null) {
+        throw new RuntimeException('Archiving rules state repository is unavailable.');
+    }
+
+    $repository->replaceState(
+        (int) ($normalized['activeArchivingRulesVersion'] ?? 1),
+        is_array($normalized['activeArchivingRules'] ?? null) ? $normalized['activeArchivingRules'] : [],
+        is_array($normalized['draftArchivingRules'] ?? null) ? $normalized['draftArchivingRules'] : []
+    );
     return $normalized;
 }
 
