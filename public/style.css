@@ -2563,14 +2563,20 @@ body {
   border: 1px solid #ccc;
   border-radius: 4px;
   line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
   cursor: text;
 }
 
 .filename-template-inline-flow.is-slot {
   border: 0;
   border-radius: 0;
+}
+
+.filename-template-inline-flow.filename-template-editable {
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 
@@ -2690,8 +2696,9 @@ body {
   padding: 3px 6px;
   background: transparent;
   line-height: 1;
-  white-space: pre-wrap;
+  white-space: pre;
   word-break: normal;
+  overflow-wrap: normal;
   cursor: text;
 }
 

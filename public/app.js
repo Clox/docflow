@@ -8963,24 +8963,8 @@ const isCaretAtEditableBoundary = (editable, direction) => {
     if (isTokenNode(adjacentCandidateToken)) {
       return focusTokenBoundaryEditable(adjacentCandidateToken, direction);
     }
-    const ownerToken = ownerEditable.closest('.filename-template-dom-token');
-    if (!(ownerToken instanceof HTMLElement)) {
-      return false;
-    }
-    const ownerEditables = tokenEditables(ownerToken);
-    const ownerIndex = ownerEditables.indexOf(ownerEditable);
-    if (ownerIndex < 0) {
-      return false;
-    }
-    const nextOwnerIndex = direction === 'back' ? ownerIndex - 1 : ownerIndex + 1;
-    if (nextOwnerIndex < 0 || nextOwnerIndex >= ownerEditables.length) {
-      return false;
-    }
     setActiveEditable(ownerEditable);
-    if (!setCaretAdjacentToNode(ownerEditable, currentToken, direction)) {
-      return false;
-    }
-    return moveCaretAcrossTokenBoundary(ownerEditable, direction);
+    return setCaretAdjacentToNode(ownerEditable, currentToken, direction);
   };
 
   const focusTokenBoundaryEditable = (token, direction) => {
