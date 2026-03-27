@@ -10299,6 +10299,8 @@ function build_job_state_entry(
                 'updatedAt' => $updatedAt,
                 'hasReviewPdf' => $hasReviewPdf,
                 'hasSourcePdf' => $hasSourcePdf,
+                'reprocessMode' => is_string($job['reprocessMode'] ?? null) ? trim((string) $job['reprocessMode']) : null,
+                'forceOcr' => ($job['forceOcr'] ?? false) === true,
                 'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
                 'analysis' => $analysis,
                 'selectedClientDirName' => $selectedClientDirName,
@@ -10324,6 +10326,8 @@ function build_job_state_entry(
                 'updatedAt' => $updatedAt,
                 'hasReviewPdf' => $hasReviewPdf,
                 'hasSourcePdf' => $hasSourcePdf,
+                'reprocessMode' => is_string($job['reprocessMode'] ?? null) ? trim((string) $job['reprocessMode']) : null,
+                'forceOcr' => ($job['forceOcr'] ?? false) === true,
                 'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
                 'analysis' => $analysis,
                 'selectedClientDirName' => $selectedClientDirName,
@@ -10423,6 +10427,8 @@ function build_job_state_entry(
         'updatedAt' => $updatedAt,
         'hasReviewPdf' => $hasReviewPdf,
         'hasSourcePdf' => $hasSourcePdf,
+        'reprocessMode' => is_string($job['reprocessMode'] ?? null) ? trim((string) $job['reprocessMode']) : null,
+        'forceOcr' => ($job['forceOcr'] ?? false) === true,
         'ocr' => is_array($job['ocr'] ?? null) ? $job['ocr'] : null,
         'analysis' => $analysis,
         'matchedClientDirName' => $matchedClientDirName,
@@ -10869,7 +10875,7 @@ function reset_job_by_id(array $config, string $jobId): array
     ];
 }
 
-function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-ocr'): array
+function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-ocr', bool $forceOcr = false): array
 {
     if (!is_valid_job_id($jobId)) {
         throw new RuntimeException('Invalid job id');
@@ -10898,7 +10904,6 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         throw new RuntimeException('Missing source.pdf');
     }
 
-    $forceOcr = false;
     $storedDocflowOcrVersion = job_docflow_ocr_version($job);
     $requiresFreshOcr = $storedDocflowOcrVersion === null || $storedDocflowOcrVersion < docflow_ocr_version();
     if ($normalizedMode === 'post-ocr' && $requiresFreshOcr) {

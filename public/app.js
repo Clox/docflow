@@ -3177,6 +3177,7 @@ function renderSelectedJobPanel() {
     selectedJobNameEl.textContent = 'Inget jobb markerat';
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
     selectedJobReprocessEl.disabled = true;
+    selectedJobReprocessEl.title = 'Markera ett jobb först.';
     syncFilenameField(null);
     updateArchiveAction(null);
     return;
@@ -3195,7 +3196,13 @@ function renderSelectedJobPanel() {
   };
 
   if (selectedJob.status === 'processing') {
-    appendLine('Status: Bearbetas');
+    if (selectedJob.reprocessMode === 'full' && selectedJob.forceOcr === true) {
+      appendLine('Status: Tvingad helomkörning');
+    } else if (selectedJob.reprocessMode === 'full') {
+      appendLine('Status: Helomkörning');
+    } else {
+      appendLine('Status: Bearbetas');
+    }
   } else if (selectedJob.status === 'failed') {
     appendLine('Status: Misslyckat');
   } else if (selectedJob.archived === true) {
@@ -3221,7 +3228,16 @@ function renderSelectedJobPanel() {
   }
 
   selectedJobMetaEl.replaceChildren(...metaLines);
-  selectedJobReprocessEl.disabled = selectedJob.status === 'processing' || selectedJob.archived === true || !selectedJob.hasReviewPdf;
+  selectedJobReprocessEl.disabled = selectedJob.status === 'processing'
+    || selectedJob.archived === true
+    || (!selectedJob.hasReviewPdf && !selectedJob.hasSourcePdf);
+  selectedJobReprocessEl.title = selectedJobReprocessEl.disabled
+    ? (selectedJob.status === 'processing'
+      ? 'Jobbet bearbetas redan.'
+      : (selectedJob.archived === true
+        ? 'Arkiverade jobb kan inte köras om här.'
+        : 'Det finns varken review.pdf eller source.pdf att köra om från.'))
+    : 'Klicka för att analysera igen från review.pdf. Håll Ctrl nedtryckt för att tvinga en helomkörning från source.pdf.';
   syncFilenameField(selectedJob);
   updateArchiveAction(selectedJob);
 }
@@ -4803,7 +4819,7 @@ function applyJobEvents(events) {
   }
 }
 
-function applyOptimisticReprocess(jobId) {
+function applyOptimisticReprocess(jobId, mode = 'post-ocr', options = {}) {
   const sourceJob = findJobById(jobId);
   if (!sourceJob) {
     return false;
@@ -4816,7 +4832,9 @@ function applyOptimisticReprocess(jobId) {
   const processingJob = {
     ...sourceJob,
     status: 'processing',
-    error: null
+    error: null,
+    reprocessMode: mode === 'full' ? 'full' : 'post-ocr',
+    forceOcr: options.forceOcr === true
   };
 
   applyState({
@@ -10688,9 +10706,9 @@ function cloneCurrentStateForRollback() {
   };
 }
 
-async function reprocessSingleJob(jobId, mode) {
+async function reprocessSingleJob(jobId, mode, options = {}) {
   const rollbackState = cloneCurrentStateForRollback();
-  applyOptimisticReprocess(jobId);
+  applyOptimisticReprocess(jobId, mode, options);
   try {
     const response = await fetch('/api/reset-jobs.php', {
       method: 'POST',
@@ -10700,6 +10718,7 @@ async function reprocessSingleJob(jobId, mode) {
       body: JSON.stringify({
         jobId,
         mode,
+        forceOcr: options.forceOcr === true,
       })
     });
 
@@ -10729,13 +10748,13 @@ async function reprocessSingleJob(jobId, mode) {
   }
 }
 
-async function handleSelectedJobReprocess(mode) {
+async function handleSelectedJobReprocess(mode, options = {}) {
   if (!selectedJobId) {
     return;
   }
 
   try {
-    await reprocessSingleJob(selectedJobId, mode);
+    await reprocessSingleJob(selectedJobId, mode, options);
   } catch (error) {
     if (stateUpdateTransport !== 'sse') {
       scheduleStatePoll(0);
@@ -11008,7 +11027,11 @@ settingsCloseEl.addEventListener('click', () => {
   closeSettingsModal();
 });
 
-selectedJobReprocessEl.addEventListener('click', async () => {
+selectedJobReprocessEl.addEventListener('click', async (event) => {
+  if (event.ctrlKey || event.metaKey) {
+    await handleSelectedJobReprocess('full', { forceOcr: true });
+    return;
+  }
   await handleSelectedJobReprocess('post-ocr');
 });
 
