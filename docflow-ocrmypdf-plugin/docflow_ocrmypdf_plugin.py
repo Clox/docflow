@@ -856,7 +856,6 @@ def _build_merged_objects_payload_from_page(
     )
     return {
         'engine': 'merged_objects',
-        'sourceEngine': 'rapidocr',
         'pageNumber': page_number + 1,
         'pageIndex': page_number,
         'sourceImage': rapidocr_payload.get('sourceImage'),
@@ -1269,15 +1268,13 @@ def _write_page_debug_artifacts(
 ) -> None:
     if output_dir is None:
         return
+    _ = merged_payload
 
     _write_debug_json(output_dir, 'tesseract', page_number, tesseract_payload)
     _write_debug_text(output_dir, 'tesseract', page_number, str(tesseract_payload.get('text', '') or ''))
 
     _write_debug_json(output_dir, 'rapidocr', page_number, rapidocr_payload)
     _write_debug_text(output_dir, 'rapidocr', page_number, str(rapidocr_payload.get('text', '') or ''))
-
-    _write_debug_json(output_dir, 'merged_objects', page_number, merged_payload)
-    _write_debug_text(output_dir, 'merged_objects', page_number, str(merged_payload.get('text', '') or ''))
 
 
 def _call_transform(module, name: str, text: str, **kwargs: Any) -> str:

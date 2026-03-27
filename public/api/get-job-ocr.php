@@ -107,9 +107,6 @@ function object_page_prefix_for_source(string $source): ?string
     if ($source === 'rapidocr') {
         return 'rapidocr';
     }
-    if ($source === 'merged-objects') {
-        return 'merged_objects';
-    }
     return null;
 }
 
@@ -179,6 +176,57 @@ try {
 
     $jobDir = dirname($ocrPath);
 
+    if ($normalizedSource === 'merged-objects') {
+        $mergedObjectPages = ensure_merged_objects_text_from_storage($jobDir, $id);
+        if ($mergedObjectPages !== []) {
+            $pages = [];
+            foreach ($mergedObjectPages as $index => $page) {
+                if (!is_array($page)) {
+                    continue;
+                }
+                $pageNumber = is_numeric($page['pageNumber'] ?? null)
+                    ? (int) $page['pageNumber']
+                    : ($index + 1);
+                if ($pageNumber <= 0) {
+                    $pageNumber = $index + 1;
+                }
+
+                $derivedSize = derive_page_size_from_words(is_array($page['words'] ?? null) ? $page['words'] : []);
+                $pageWidth = is_numeric($page['pageWidth'] ?? null)
+                    ? (float) $page['pageWidth']
+                    : $derivedSize['pageWidth'];
+                $pageHeight = is_numeric($page['pageHeight'] ?? null)
+                    ? (float) $page['pageHeight']
+                    : $derivedSize['pageHeight'];
+
+                $pages[] = [
+                    'number' => $pageNumber,
+                    'text' => is_string($page['text'] ?? null) ? (string) $page['text'] : '',
+                    'pageWidth' => $pageWidth,
+                    'pageHeight' => $pageHeight,
+                    'words' => is_array($page['words'] ?? null) ? $page['words'] : [],
+                    'lines' => [],
+                ];
+            }
+
+            if ($pages !== []) {
+                $chunks = [];
+                foreach ($pages as $page) {
+                    $pageNumber = (int) ($page['number'] ?? 0);
+                    $pageText = is_string($page['text'] ?? null) ? trim((string) $page['text'], "\n") : '';
+                    $chunks[] = '=== PAGE ' . $pageNumber . " ===\n" . $pageText;
+                }
+                json_response([
+                    'source' => $normalizedSource,
+                    'mode' => 'objects',
+                    'text' => implode("\n\n", $chunks),
+                    'pages' => $pages,
+                ]);
+                exit;
+            }
+        }
+    }
+
     $objectPrefix = object_page_prefix_for_source($normalizedSource);
     if ($objectPrefix !== null) {
         $objectPages = load_engine_object_pages($jobDir, $objectPrefix);
@@ -205,7 +253,7 @@ try {
     }
 
     if ($normalizedSource === 'merged') {
-        $mergedObjectPages = load_job_engine_debug_pages($jobDir, 'merged_objects');
+        $mergedObjectPages = ensure_merged_objects_text_from_storage($jobDir, $id);
         if ($mergedObjectPages !== []) {
             $chunks = [];
             $pagePayloads = [];

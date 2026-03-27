@@ -317,6 +317,120 @@ function sync_job_sender_snapshot_ids(string $jobId, ?int $senderId, ?int $autoS
     }
 }
 
+function normalize_stored_merged_objects_page(array $payload, int $fallbackPageNumber): array
+{
+    $pageNumber = is_numeric($payload['pageNumber'] ?? null) ? (int) $payload['pageNumber'] : $fallbackPageNumber;
+    if ($pageNumber <= 0) {
+        $pageNumber = $fallbackPageNumber > 0 ? $fallbackPageNumber : 1;
+    }
+
+    $pageIndex = is_numeric($payload['pageIndex'] ?? null) ? (int) $payload['pageIndex'] : max(0, $pageNumber - 1);
+    $sourceImage = is_string($payload['sourceImage'] ?? null) ? trim((string) $payload['sourceImage']) : null;
+    $pageWidth = is_numeric($payload['pageWidth'] ?? null) ? (float) $payload['pageWidth'] : null;
+    $pageHeight = is_numeric($payload['pageHeight'] ?? null) ? (float) $payload['pageHeight'] : null;
+    $words = array_values(array_filter(
+        is_array($payload['words'] ?? null) ? $payload['words'] : [],
+        static fn($word): bool => is_array($word)
+    ));
+
+    return [
+        'pageNumber' => $pageNumber,
+        'pageIndex' => max(0, $pageIndex),
+        'sourceImage' => $sourceImage,
+        'pageWidth' => $pageWidth,
+        'pageHeight' => $pageHeight,
+        'words' => $words,
+        'text' => is_string($payload['text'] ?? null) ? (string) $payload['text'] : '',
+    ];
+}
+
+function normalize_stored_merged_objects_document(array $document): ?array
+{
+    $pages = [];
+    $sourcePages = is_array($document['pages'] ?? null) ? $document['pages'] : [];
+    foreach ($sourcePages as $pageIndex => $page) {
+        if (!is_array($page)) {
+            continue;
+        }
+        $pages[] = normalize_stored_merged_objects_page($page, $pageIndex + 1);
+    }
+
+    if ($pages === []) {
+        return null;
+    }
+
+    return [
+        'engine' => 'merged_objects',
+        'pages' => $pages,
+    ];
+}
+
+function stored_merged_objects_pages(string $jobId): array
+{
+    $normalizedId = trim($jobId);
+    if ($normalizedId === '') {
+        return [];
+    }
+
+    $repository = job_repository_instance();
+    if ($repository === null) {
+        return [];
+    }
+
+    try {
+        $payload = $repository->findMergedObjectsPayload($normalizedId);
+    } catch (Throwable $e) {
+        return [];
+    }
+
+    $document = is_array($payload) ? normalize_stored_merged_objects_document($payload) : null;
+    return is_array($document['pages'] ?? null) ? $document['pages'] : [];
+}
+
+function sync_job_merged_objects_document(string $jobId, array $document): void
+{
+    $normalizedId = trim($jobId);
+    if ($normalizedId === '') {
+        return;
+    }
+
+    $normalizedDocument = normalize_stored_merged_objects_document($document);
+    if ($normalizedDocument === null) {
+        clear_job_merged_objects_document($normalizedId);
+        return;
+    }
+
+    $repository = job_repository_instance();
+    if ($repository === null) {
+        return;
+    }
+
+    try {
+        $repository->upsertMergedObjectsPayload($normalizedId, $normalizedDocument);
+    } catch (Throwable $e) {
+        // Best effort only. The caller still writes merged_objects.txt on disk.
+    }
+}
+
+function clear_job_merged_objects_document(string $jobId): void
+{
+    $normalizedId = trim($jobId);
+    if ($normalizedId === '') {
+        return;
+    }
+
+    $repository = job_repository_instance();
+    if ($repository === null) {
+        return;
+    }
+
+    try {
+        $repository->clearMergedObjectsPayload($normalizedId);
+    } catch (Throwable $e) {
+        // Best effort only.
+    }
+}
+
 function detect_org_number_from_ocr_text(string $ocrText): ?string
 {
     $pattern = '/\b(?:\d{6}[-\s]?\d{4}|(?:19|20)\d{2}[-\s]?\d{2}[-\s]?\d{2}[-\s]?\d{4})\b/u';
@@ -3080,6 +3194,66 @@ function load_job_engine_debug_pages(string $jobDir, string $engine): array
     return $pages;
 }
 
+function build_merged_objects_txt_from_pages(array $pages): string
+{
+    $chunks = [];
+    foreach ($pages as $index => $page) {
+        if (!is_array($page)) {
+            continue;
+        }
+        $pageNumber = is_numeric($page['pageNumber'] ?? null)
+            ? (int) $page['pageNumber']
+            : ($index + 1);
+        if ($pageNumber <= 0) {
+            $pageNumber = $index + 1;
+        }
+        $pageText = rtrim(render_grid_text_from_debug_payload($page), "\r\n");
+        $chunks[] = '=== PAGE ' . $pageNumber . " ===\n" . $pageText;
+    }
+
+    return implode("\n\n", $chunks);
+}
+
+function write_merged_objects_text_from_pages(string $jobDir, array $pages): void
+{
+    $targetPath = $jobDir . '/merged_objects.txt';
+    $combined = build_merged_objects_txt_from_pages($pages);
+    if ($combined === '') {
+        if (is_file($targetPath)) {
+            @unlink($targetPath);
+        }
+        return;
+    }
+
+    file_put_contents($targetPath, $combined . "\n");
+}
+
+function job_id_from_directory(string $jobDir): ?string
+{
+    $jobId = trim((string) basename(rtrim($jobDir, DIRECTORY_SEPARATOR)));
+    return is_valid_job_id($jobId) ? $jobId : null;
+}
+
+function ensure_merged_objects_text_from_storage(string $jobDir, ?string $jobId = null): array
+{
+    $resolvedJobId = is_string($jobId) && is_valid_job_id($jobId) ? $jobId : job_id_from_directory($jobDir);
+    if ($resolvedJobId === null) {
+        return [];
+    }
+
+    $pages = stored_merged_objects_pages($resolvedJobId);
+    if ($pages === []) {
+        return [];
+    }
+
+    $targetPath = $jobDir . '/merged_objects.txt';
+    if (!is_file($targetPath)) {
+        write_merged_objects_text_from_pages($jobDir, $pages);
+    }
+
+    return $pages;
+}
+
 function last_ocrmypdf_error(): ?string
 {
     $value = $GLOBALS['docflow_last_ocrmypdf_error'] ?? null;
@@ -4301,52 +4475,63 @@ function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload,
     $sourceImage = is_string($rapidocrPayload['sourceImage'] ?? null) ? $rapidocrPayload['sourceImage'] : null;
     $tesseractWords = normalize_debug_words_for_merge($tesseractPayload, 'tesseract');
 
-    $mergedLines = [];
     $mergedWords = [];
-    foreach (is_array($rapidocrPayload['lines'] ?? null) ? $rapidocrPayload['lines'] : [] as $lineIndex => $line) {
+    foreach (is_array($rapidocrPayload['lines'] ?? null) ? $rapidocrPayload['lines'] : [] as $line) {
         if (!is_array($line)) {
             continue;
         }
         $segments = merge_rapidocr_line_into_segments($line);
         $segments = apply_tesseract_swedish_truth_to_segments($segments, $tesseractWords);
-        $lineText = implode(' ', array_map(static fn(array $segment): string => (string) ($segment['text'] ?? ''), $segments));
-        $lineBbox = normalize_debug_word_bbox($line['bbox'] ?? null);
-        $lineScore = null;
-        if (is_int($line['score'] ?? null) || is_float($line['score'] ?? null) || (is_string($line['score'] ?? null) && is_numeric($line['score'] ?? null))) {
-            $lineScore = max(0.0, min(1.0, (float) $line['score']));
-        }
-
-        $lineWords = [];
-        foreach ($segments as $segmentIndex => $segment) {
-            $lineWords[] = $segment;
+        foreach ($segments as $segment) {
             $mergedWords[] = $segment;
         }
-
-        $mergedLines[] = [
-            'index' => $lineIndex,
-            'text' => $lineText,
-            'bbox' => $lineBbox,
-            'score' => $lineScore,
-            'words' => $lineWords,
-        ];
     }
 
-    $pageText = implode("\n", array_values(array_filter(array_map(
-        static fn(array $line): string => trim((string) ($line['text'] ?? '')),
-        $mergedLines
-    ), static fn(string $lineText): bool => $lineText !== '')));
+    $pageText = render_grid_text_from_debug_payload([
+        'pageWidth' => $pageWidth,
+        'pageHeight' => $pageHeight,
+        'words' => $mergedWords,
+        'text' => '',
+    ]);
 
     return [
         'engine' => 'merged_objects',
-        'sourceEngine' => 'rapidocr',
         'pageNumber' => $pageNumber,
         'pageIndex' => max(0, $pageNumber - 1),
         'sourceImage' => $sourceImage,
         'pageWidth' => $pageWidth,
         'pageHeight' => $pageHeight,
-        'lines' => $mergedLines,
         'words' => $mergedWords,
-        'text' => $pageText,
+        'text' => rtrim($pageText, "\r\n"),
+    ];
+}
+
+function build_merged_objects_document_from_rapidocr_pages(array $rapidocrPages, array $tesseractPages = []): ?array
+{
+    if ($rapidocrPages === []) {
+        return null;
+    }
+
+    $pages = [];
+    foreach ($rapidocrPages as $pageIndex => $rapidocrPage) {
+        if (!is_array($rapidocrPage)) {
+            continue;
+        }
+        $pageNumber = is_numeric($rapidocrPage['pageNumber'] ?? null) ? (int) $rapidocrPage['pageNumber'] : ($pageIndex + 1);
+        if ($pageNumber <= 0) {
+            $pageNumber = $pageIndex + 1;
+        }
+        $tesseractPage = is_array($tesseractPages[$pageIndex] ?? null) ? $tesseractPages[$pageIndex] : [];
+        $pages[] = build_merged_objects_payload_from_rapidocr_page($rapidocrPage, $pageNumber, $tesseractPage);
+    }
+
+    if ($pages === []) {
+        return null;
+    }
+
+    return [
+        'engine' => 'merged_objects',
+        'pages' => $pages,
     ];
 }
 
@@ -4354,7 +4539,11 @@ function write_merged_object_debug_files_from_rapidocr(string $jobDir): void
 {
     $rapidocrPages = load_job_engine_debug_pages($jobDir, 'rapidocr');
     $tesseractPages = load_job_engine_debug_pages($jobDir, 'tesseract');
+    $jobId = job_id_from_directory($jobDir);
     if ($rapidocrPages === []) {
+        if ($jobId !== null) {
+            clear_job_merged_objects_document($jobId);
+        }
         foreach (glob($jobDir . '/merged_objects_page_*.json') ?: [] as $path) {
             @unlink($path);
         }
@@ -4367,18 +4556,29 @@ function write_merged_object_debug_files_from_rapidocr(string $jobDir): void
         return;
     }
 
-    foreach ($rapidocrPages as $pageIndex => $rapidocrPage) {
-        if (!is_array($rapidocrPage)) {
-            continue;
+    $document = build_merged_objects_document_from_rapidocr_pages($rapidocrPages, $tesseractPages);
+    if ($document === null) {
+        if ($jobId !== null) {
+            clear_job_merged_objects_document($jobId);
         }
-        $pageNumber = is_numeric($rapidocrPage['pageNumber'] ?? null) ? (int) $rapidocrPage['pageNumber'] : ($pageIndex + 1);
-        $tesseractPage = is_array($tesseractPages[$pageIndex] ?? null) ? $tesseractPages[$pageIndex] : [];
-        $payload = build_merged_objects_payload_from_rapidocr_page($rapidocrPage, $pageNumber, $tesseractPage);
-        $path = $jobDir . '/merged_objects_page_' . str_pad((string) $pageNumber, 2, '0', STR_PAD_LEFT) . '.json';
-        write_json_file($path, $payload);
+        if (is_file($jobDir . '/merged_objects.txt')) {
+            @unlink($jobDir . '/merged_objects.txt');
+        }
+        return;
     }
 
-    regenerate_debug_text_files_from_json($jobDir, 'merged_objects');
+    if ($jobId !== null) {
+        sync_job_merged_objects_document($jobId, $document);
+    }
+
+    foreach (glob($jobDir . '/merged_objects_page_*.json') ?: [] as $path) {
+        @unlink($path);
+    }
+    foreach (glob($jobDir . '/merged_objects_page_*.txt') ?: [] as $path) {
+        @unlink($path);
+    }
+
+    write_merged_objects_text_from_pages($jobDir, is_array($document['pages'] ?? null) ? $document['pages'] : []);
 }
 
 function bbox_intersection_area(array $left, array $right): float
@@ -9453,7 +9653,11 @@ function process_claimed_job(
     $textSourcePdfPath = $sourcePdfPath;
     $sourceDocflowOcrVersion = pdf_docflow_ocr_version($sourcePdfPath);
     $resolvedDocflowOcrVersion = $sourceDocflowOcrVersion;
+    $jobId = job_id_from_directory($jobDir);
     if ($runOcr) {
+        if ($jobId !== null) {
+            clear_job_merged_objects_document($jobId);
+        }
         foreach (glob($jobDir . '/tesseract_page_*.json') ?: [] as $path) {
             @unlink($path);
         }
@@ -9540,6 +9744,9 @@ function process_claimed_job(
         }
         $textSourcePdfPath = $reviewPdfPath;
         $resolvedDocflowOcrVersion = pdf_docflow_ocr_version($reviewPdfPath);
+        if (!is_file($jobDir . '/merged_objects.txt')) {
+            ensure_merged_objects_text_from_storage($jobDir, $jobId);
+        }
     }
 
     $ocrText = '';
