@@ -8558,8 +8558,12 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     wrapper.appendChild(createFilenameTemplateToolbar(sharedContext));
   }
 
-  const sequence = document.createElement(depth === 0 && !isSlotEditor ? 'div' : 'span');
+  const isRootEditor = depth === 0 && !isSlotEditor;
+  const sequence = document.createElement(isRootEditor ? 'div' : 'span');
   sequence.className = 'filename-template-inline-flow';
+  if (isRootEditor) {
+    sequence.classList.add('is-root');
+  }
   if (isSlotEditor) {
     sequence.classList.add('is-slot');
   }
@@ -8643,6 +8647,10 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
   const isTokenNode = (node) =>
     node instanceof HTMLElement
     && node.classList.contains('filename-template-dom-token');
+
+  const isRootTextSlot = (node) =>
+    node instanceof HTMLElement
+    && node.classList.contains('filename-template-root-slot');
 
   const debugFilenameTemplateNav = (...args) => {
     if (!DEBUG_FILENAME_TEMPLATE_NAV) {
@@ -8730,6 +8738,15 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
           next.remove();
           return true;
         }
+      }
+    }
+
+    if (isRootTextSlot(editable) && isCaretAtEditableBoundary(editable, direction)) {
+      const adjacentToken = rootSlotAdjacentToken(editable, direction);
+      if (adjacentToken) {
+        adjacentToken.remove();
+        syncRootSequenceFromDom(editable._filenameTemplateRootOwner || null);
+        return true;
       }
     }
     return false;
@@ -8838,51 +8855,6 @@ const isCaretAtEditableBoundary = (editable, direction) => {
     return true;
   };
 
-  const nearestFilenameTemplateScrollContainer = (node) => {
-    if (!(node instanceof HTMLElement)) {
-      return null;
-    }
-    if (node.matches('.filename-template-inline-flow.filename-template-editable:not(.is-slot)')) {
-      return node;
-    }
-    return node.closest('.filename-template-inline-flow.filename-template-editable:not(.is-slot)');
-  };
-
-  const scrollFilenameTemplatePositionIntoView = (editable, targetNode = null, direction = 'fwd') => {
-    const anchorNode = targetNode instanceof HTMLElement
-      ? targetNode
-      : editable instanceof HTMLElement
-        ? editable
-        : null;
-    const scrollContainer = nearestFilenameTemplateScrollContainer(anchorNode);
-    if (!(scrollContainer instanceof HTMLElement)) {
-      return;
-    }
-    requestAnimationFrame(() => {
-      if (!document.body.contains(scrollContainer)) {
-        return;
-      }
-      const containerRect = scrollContainer.getBoundingClientRect();
-      const targetRect = anchorNode instanceof HTMLElement
-        ? anchorNode.getBoundingClientRect()
-        : null;
-      const padding = 24;
-      if (!(targetRect instanceof DOMRect)) {
-        return;
-      }
-      const targetEdge = direction === 'back'
-        ? targetRect.left
-        : targetRect.right;
-      const minVisible = containerRect.left + padding;
-      const maxVisible = containerRect.right - padding;
-      if (targetEdge > maxVisible) {
-        scrollContainer.scrollLeft += targetEdge - maxVisible;
-      } else if (targetEdge < minVisible) {
-        scrollContainer.scrollLeft -= minVisible - targetEdge;
-      }
-    });
-  };
-
 	const adjacentTokenAtCaret = (editable, direction) => {
 	const selection = window.getSelection();
 	if (!selection || selection.rangeCount === 0) {
@@ -8914,6 +8886,13 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 	if (directToken) {
 		return directToken;
 	}
+
+  if (isRootTextSlot(editable) && isCaretAtEditableBoundary(editable, direction)) {
+    const siblingToken = rootSlotAdjacentToken(editable, direction);
+    if (siblingToken) {
+      return siblingToken;
+    }
+  }
 
 	let node = range.startContainer;
 	let offset = range.startOffset;
@@ -9109,6 +9088,13 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 	const ownerEditable = currentToken.parentElement instanceof HTMLElement
 		? currentToken.parentElement.closest('.filename-template-editable')
 		: null;
+  if (!(ownerEditable instanceof HTMLElement) && focusRootSlotAdjacentToToken(currentToken, direction)) {
+    debugFilenameTemplateNav('root-slot-adjacent', {
+      direction,
+      editable: describeEditable(editable),
+    });
+    return true;
+  }
 	if (!(ownerEditable instanceof HTMLElement)) {
 		debugFilenameTemplateNav('no-owner-editable', {
 			direction,
@@ -9237,11 +9223,20 @@ let activeEditable = null;
     sharedContext.insertPart = (part) => insertPartIntoEditable(editable, part);
   };
 
-  const syncEditableFromDom = (editable) => {
-    if (!(editable instanceof HTMLElement) || !Array.isArray(editable._filenameTemplateTargetParts)) {
+  const rootSequenceSlotTextPart = (editable) => {
+    if (!(editable instanceof HTMLElement)) {
+      return null;
+    }
+    if (!Array.isArray(editable._filenameTemplateTargetParts)) {
+      return null;
+    }
+    return editable._filenameTemplateTargetParts[0] || null;
+  };
+
+  const normalizeEditableTextNodeChildren = (editable, chipsOnly = false) => {
+    if (!(editable instanceof HTMLElement)) {
       return;
     }
-    const chipsOnly = editable._filenameTemplateChipsOnly === true;
     Array.from(editable.childNodes).forEach((child) => {
       if (child.nodeType === Node.TEXT_NODE || isTokenNode(child)) {
         return;
@@ -9253,6 +9248,111 @@ let activeEditable = null;
       child.remove();
     });
     editable.normalize();
+  };
+
+  const readTextValueFromEditable = (editable) => {
+    if (!(editable instanceof HTMLElement)) {
+      return '';
+    }
+    normalizeEditableTextNodeChildren(editable, false);
+    let value = '';
+    Array.from(editable.childNodes).forEach((child) => {
+      if (child.nodeType === Node.TEXT_NODE) {
+        value += editableTextToModelText(child.nodeValue || '');
+      }
+    });
+    return value;
+  };
+
+  const buildRootSequencePartsFromDom = (rootSequence, slotOverride = null) => {
+    const nextParts = [];
+    const appendText = (value) => {
+      const textValue = typeof value === 'string' ? value : '';
+      const previous = nextParts[nextParts.length - 1] || null;
+      if (previous && previous.type === 'text') {
+        previous.value = String(previous.value || '') + textValue;
+        return;
+      }
+      nextParts.push({ type: 'text', value: textValue });
+    };
+
+    Array.from(rootSequence.childNodes).forEach((child) => {
+      if (isRootTextSlot(child)) {
+        if (slotOverride && slotOverride.editable === child) {
+          appendText(slotOverride.value);
+          return;
+        }
+        const textPart = rootSequenceSlotTextPart(child);
+        if (textPart && textPart.type === 'text') {
+          appendText(String(textPart.value || ''));
+          return;
+        }
+        appendText(readTextValueFromEditable(child));
+        return;
+      }
+      if (isTokenNode(child)) {
+        const normalized = readTokenPartState(child);
+        if (normalized) {
+          nextParts.push(normalized);
+        }
+      }
+    });
+
+    return nextParts;
+  };
+
+  const syncRootSequenceFromDom = (rootSequence, slotOverride = null) => {
+    if (!(rootSequence instanceof HTMLElement) || !Array.isArray(rootSequence._filenameTemplateTargetParts)) {
+      return;
+    }
+    const nextParts = buildRootSequencePartsFromDom(rootSequence, slotOverride);
+    replaceParts(rootSequence._filenameTemplateTargetParts, nextParts, false);
+    onChange();
+  };
+
+  const rootSlotAdjacentToken = (editable, direction) => {
+    if (!isRootTextSlot(editable)) {
+      return null;
+    }
+    const sibling = direction === 'back'
+      ? editable.previousSibling
+      : editable.nextSibling;
+    return isTokenNode(sibling) ? sibling : null;
+  };
+
+  const focusRootSlotAdjacentToToken = (token, direction) => {
+    if (!(token instanceof HTMLElement)) {
+      return false;
+    }
+    const sibling = direction === 'back'
+      ? token.previousSibling
+      : token.nextSibling;
+    if (!isRootTextSlot(sibling)) {
+      return false;
+    }
+    setActiveEditable(sibling);
+    return setCaretAtEditableBoundary(sibling, direction === 'back' ? 'fwd' : 'back');
+  };
+
+  const syncEditableFromDom = (editable) => {
+    if (!(editable instanceof HTMLElement) || !Array.isArray(editable._filenameTemplateTargetParts)) {
+      return;
+    }
+    if (editable.classList.contains('is-root')) {
+      syncRootSequenceFromDom(editable);
+      return;
+    }
+    if (isRootTextSlot(editable)) {
+      const textValue = readTextValueFromEditable(editable);
+      replaceParts(editable._filenameTemplateTargetParts, [{ type: 'text', value: textValue }], false);
+      syncRootSequenceFromDom(editable._filenameTemplateRootOwner || null, {
+        editable,
+        value: textValue,
+      });
+      return;
+    }
+    const chipsOnly = editable._filenameTemplateChipsOnly === true;
+    normalizeEditableTextNodeChildren(editable, chipsOnly);
     const nextParts = [];
     const appendText = (value) => {
       if (value === '') {
@@ -9295,6 +9395,15 @@ let activeEditable = null;
         : null;
       if (ownerEditable instanceof HTMLElement && ownerEditable !== editable) {
         syncEditableFromDom(ownerEditable);
+        return;
+      }
+      const rootOwner = ownerToken.parentElement instanceof HTMLElement
+        && ownerToken.parentElement.classList.contains('filename-template-inline-flow')
+        && ownerToken.parentElement.classList.contains('is-root')
+          ? ownerToken.parentElement
+          : null;
+      if (rootOwner instanceof HTMLElement) {
+        syncRootSequenceFromDom(rootOwner);
         return;
       }
     }
@@ -9422,6 +9531,17 @@ let activeEditable = null;
     return slotEditable;
   };
 
+  const buildRootTextSlot = (textValue, rootSequence) => {
+    const slotEditable = document.createElement('span');
+    slotEditable.className = 'filename-template-root-slot filename-template-inline-flow is-slot';
+    slotEditable._filenameTemplateTargetParts = [{ type: 'text', value: String(textValue || '') }];
+    slotEditable._filenameTemplateChipsOnly = false;
+    slotEditable._filenameTemplateRootOwner = rootSequence;
+    attachEditableHandlers(slotEditable);
+    renderEditorParts(slotEditable, slotEditable._filenameTemplateTargetParts);
+    return slotEditable;
+  };
+
   const createTokenNode = (part, ownerEditable) => {
     const normalizedPart = createPartObject(part);
     const token = document.createElement('span');
@@ -9525,6 +9645,38 @@ let activeEditable = null;
     return token;
   };
 
+  const renderRootSequence = (rootSequence, targetParts) => {
+    if (!(rootSequence instanceof HTMLElement)) {
+      return;
+    }
+    const normalizedParts = normalizeEditableFilenameTemplateParts(collapseTextParts(targetParts));
+    const entries = [{ type: 'text', value: '' }];
+    normalizedParts.forEach((part) => {
+      if (!part || typeof part !== 'object') {
+        return;
+      }
+      if (part.type === 'text') {
+        entries[entries.length - 1].value = String(entries[entries.length - 1].value || '') + String(part.value || '');
+        return;
+      }
+      const normalized = sanitizeFilenameTemplatePart(part);
+      if (!normalized || normalized.type === 'text') {
+        return;
+      }
+      entries.push(normalized);
+      entries.push({ type: 'text', value: '' });
+    });
+
+    rootSequence.replaceChildren();
+    entries.forEach((entry) => {
+      if (entry.type === 'text') {
+        rootSequence.appendChild(buildRootTextSlot(entry.value || '', rootSequence));
+        return;
+      }
+      rootSequence.appendChild(createTokenNode(entry, rootSequence));
+    });
+  };
+
   const buildInsertedPartsFromEditable = (editable, part) => {
     if (!(editable instanceof HTMLElement) || !Array.isArray(editable._filenameTemplateTargetParts)) {
       return null;
@@ -9622,6 +9774,74 @@ let activeEditable = null;
     if (!(editable instanceof HTMLElement)) {
       return;
     }
+    const rootOwner = editable._filenameTemplateRootOwner instanceof HTMLElement
+      ? editable._filenameTemplateRootOwner
+      : null;
+    if (rootOwner) {
+      const insertion = buildInsertedPartsFromEditable(editable, part);
+      if (!insertion) {
+        return;
+      }
+      const { parts: insertedParts, insertedPartIndex } = insertion;
+      const nextRootParts = [];
+      let insertedTokenGlobalIndex = -1;
+      let tokenCount = 0;
+
+      Array.from(rootOwner.childNodes).forEach((child) => {
+        if (child === editable) {
+          insertedParts.forEach((candidate, candidateIndex) => {
+            const normalized = sanitizeFilenameTemplatePart(candidate);
+            if (!normalized) {
+              return;
+            }
+            nextRootParts.push(normalized);
+            if (normalized.type !== 'text') {
+              if (candidateIndex === insertedPartIndex) {
+                insertedTokenGlobalIndex = tokenCount;
+              }
+              tokenCount += 1;
+            }
+          });
+          return;
+        }
+        if (isRootTextSlot(child)) {
+          const textPart = rootSequenceSlotTextPart(child);
+          nextRootParts.push({ type: 'text', value: String(textPart && textPart.type === 'text' ? textPart.value || '' : '') });
+          return;
+        }
+        if (isTokenNode(child)) {
+          const normalized = readTokenPartState(child);
+          if (normalized) {
+            nextRootParts.push(normalized);
+            tokenCount += 1;
+          }
+        }
+      });
+
+      replaceParts(rootOwner._filenameTemplateTargetParts, nextRootParts, false);
+      renderRootSequence(rootOwner, rootOwner._filenameTemplateTargetParts);
+      onChange();
+
+      if (insertedTokenGlobalIndex >= 0) {
+        const tokenNodes = Array.from(rootOwner.querySelectorAll(':scope > .filename-template-dom-token'));
+        const insertedTokenNode = tokenNodes[insertedTokenGlobalIndex] || null;
+        const followingSlot = insertedTokenNode instanceof HTMLElement && isRootTextSlot(insertedTokenNode.nextSibling)
+          ? insertedTokenNode.nextSibling
+          : null;
+        if (followingSlot instanceof HTMLElement) {
+          setActiveEditable(followingSlot);
+          setCaretAtEditableBoundary(followingSlot, 'back');
+          return;
+        }
+      }
+
+      const trailingSlot = Array.from(rootOwner.childNodes).reverse().find((child) => isRootTextSlot(child)) || null;
+      if (trailingSlot instanceof HTMLElement) {
+        setActiveEditable(trailingSlot);
+        setCaretToEnd(trailingSlot);
+      }
+      return;
+    }
     const insertion = buildInsertedPartsFromEditable(editable, part);
     if (!insertion) {
       return;
@@ -9641,29 +9861,46 @@ let activeEditable = null;
       if (insertedTokenNode instanceof HTMLElement) {
         setActiveEditable(editable);
         if (setCaretAdjacentToNode(editable, insertedTokenNode, 'fwd')) {
-          scrollFilenameTemplatePositionIntoView(editable, insertedTokenNode, 'fwd');
           return;
         }
       }
     }
     setActiveEditable(editable);
     setCaretToEnd(editable);
-    const scrollContainer = nearestFilenameTemplateScrollContainer(editable);
-    if (scrollContainer instanceof HTMLElement) {
-      requestAnimationFrame(() => {
-        scrollContainer.scrollLeft = scrollContainer.scrollWidth;
-      });
-    }
   };
 
   sequence._filenameTemplateTargetParts = parts;
-  attachEditableHandlers(sequence);
-  sequence.dataset.placeholder = depth === 0 && !isSlotEditor
-    ? 'Skriv filnamnsmall...'
-    : inlinePlaceholder;
-  renderEditorParts(sequence, parts);
-  wrapper.appendChild(sequence);
-  if (!context && !isSlotEditor) {
+  if (!isRootEditor) {
+    attachEditableHandlers(sequence);
+    sequence.dataset.placeholder = inlinePlaceholder;
+    renderEditorParts(sequence, parts);
+  } else {
+    renderRootSequence(sequence, parts);
+  }
+  if (isRootEditor) {
+    const scrollShell = document.createElement('div');
+    scrollShell.className = 'filename-template-inline-scroll';
+    scrollShell.appendChild(sequence);
+    scrollShell.addEventListener('mousedown', (event) => {
+      if (event.target !== scrollShell) {
+        return;
+      }
+      const trailingSlot = Array.from(sequence.childNodes).reverse().find((child) => isRootTextSlot(child)) || null;
+      if (trailingSlot instanceof HTMLElement) {
+        setActiveEditable(trailingSlot);
+        queueMicrotask(() => setCaretToEnd(trailingSlot));
+      }
+    });
+    wrapper.appendChild(scrollShell);
+  } else {
+    wrapper.appendChild(sequence);
+  }
+  if (!context && isRootEditor) {
+    const trailingSlot = Array.from(sequence.childNodes).reverse().find((child) => isRootTextSlot(child)) || null;
+    if (trailingSlot instanceof HTMLElement) {
+      setActiveEditable(trailingSlot);
+    }
+  } else if (!context && !isSlotEditor) {
     setActiveEditable(sequence);
   }
 

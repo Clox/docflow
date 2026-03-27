@@ -2555,13 +2555,21 @@ body {
   gap: 6px;
 }
 
+.filename-template-inline-scroll {
+  display: block;
+  min-height: 42px;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  cursor: text;
+}
+
 .filename-template-inline-flow {
   display: block;
   min-height: 42px;
   padding: 8px;
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 4px;
   line-height: 1.7;
   white-space: pre;
   word-break: normal;
@@ -2569,14 +2577,28 @@ body {
   cursor: text;
 }
 
-.filename-template-inline-flow.is-slot {
-  border: 0;
-  border-radius: 0;
+.filename-template-inline-flow.is-root {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  width: max-content;
+  min-width: 100%;
+  min-height: calc(42px - 16px);
+  box-sizing: border-box;
+  vertical-align: top;
 }
 
-.filename-template-inline-flow.filename-template-editable:not(.is-slot) {
-  overflow-x: auto;
-  overflow-y: hidden;
+.filename-template-inline-flow.is-slot {
+  min-height: var(--filename-template-chip-inner-height);
+}
+
+.filename-template-root-slot.is-slot {
+  display: inline-block;
+  min-width: 4px;
+  min-height: 1.7em;
+  padding: 0;
+  line-height: 1.7;
+  vertical-align: middle;
 }
 
 
