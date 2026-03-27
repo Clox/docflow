@@ -2608,9 +2608,12 @@ body {
 
 .filename-template-inline-token-label {
   display: inline-grid;
+  justify-items: center;
+  align-items: center;
   border-radius: 999px;
   padding: 1px 3px;
   transition: color 0.12s ease;
+  text-align: center;
 }
 
 .filename-template-inline-token-label::after {
@@ -2624,6 +2627,7 @@ body {
 
 .filename-template-inline-token-label-text {
   grid-area: 1 / 1;
+  justify-self: center;
 }
 
 .filename-template-dom-token.is-active > .filename-template-inline-token-shell > .filename-template-inline-token-center > .filename-template-inline-token > .filename-template-inline-token-label > .filename-template-inline-token-label-text {
