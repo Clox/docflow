@@ -9881,16 +9881,6 @@ let activeEditable = null;
     const scrollShell = document.createElement('div');
     scrollShell.className = 'filename-template-inline-scroll';
     scrollShell.appendChild(sequence);
-    scrollShell.addEventListener('mousedown', (event) => {
-      if (event.target !== scrollShell) {
-        return;
-      }
-      const trailingSlot = Array.from(sequence.childNodes).reverse().find((child) => isRootTextSlot(child)) || null;
-      if (trailingSlot instanceof HTMLElement) {
-        setActiveEditable(trailingSlot);
-        queueMicrotask(() => setCaretToEnd(trailingSlot));
-      }
-    });
     wrapper.appendChild(scrollShell);
   } else {
     wrapper.appendChild(sequence);
