@@ -8602,6 +8602,12 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     );
   };
 
+  const editableTextToModelText = (value) =>
+    String(value || '').replace(/\u00a0/g, ' ');
+
+  const modelTextToEditableText = (value) =>
+    String(value || '').replace(/(^ +| +$)/g, (match) => '\u00a0'.repeat(match.length));
+
   const setCaretToEnd = (editable) => {
     if (!(editable instanceof HTMLElement)) {
       return;
@@ -8832,6 +8838,51 @@ const isCaretAtEditableBoundary = (editable, direction) => {
     return true;
   };
 
+  const nearestFilenameTemplateScrollContainer = (node) => {
+    if (!(node instanceof HTMLElement)) {
+      return null;
+    }
+    if (node.matches('.filename-template-inline-flow.filename-template-editable:not(.is-slot)')) {
+      return node;
+    }
+    return node.closest('.filename-template-inline-flow.filename-template-editable:not(.is-slot)');
+  };
+
+  const scrollFilenameTemplatePositionIntoView = (editable, targetNode = null, direction = 'fwd') => {
+    const anchorNode = targetNode instanceof HTMLElement
+      ? targetNode
+      : editable instanceof HTMLElement
+        ? editable
+        : null;
+    const scrollContainer = nearestFilenameTemplateScrollContainer(anchorNode);
+    if (!(scrollContainer instanceof HTMLElement)) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (!document.body.contains(scrollContainer)) {
+        return;
+      }
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const targetRect = anchorNode instanceof HTMLElement
+        ? anchorNode.getBoundingClientRect()
+        : null;
+      const padding = 24;
+      if (!(targetRect instanceof DOMRect)) {
+        return;
+      }
+      const targetEdge = direction === 'back'
+        ? targetRect.left
+        : targetRect.right;
+      const minVisible = containerRect.left + padding;
+      const maxVisible = containerRect.right - padding;
+      if (targetEdge > maxVisible) {
+        scrollContainer.scrollLeft += targetEdge - maxVisible;
+      } else if (targetEdge < minVisible) {
+        scrollContainer.scrollLeft -= minVisible - targetEdge;
+      }
+    });
+  };
+
 	const adjacentTokenAtCaret = (editable, direction) => {
 	const selection = window.getSelection();
 	if (!selection || selection.rangeCount === 0) {
@@ -8961,7 +9012,12 @@ const isCaretAtEditableBoundary = (editable, direction) => {
       ? currentToken.previousSibling
       : currentToken.nextSibling;
     if (isTokenNode(adjacentCandidateToken)) {
-      return focusTokenBoundaryEditable(adjacentCandidateToken, direction);
+      setActiveEditable(ownerEditable);
+      return setCaretAdjacentToNode(
+        ownerEditable,
+        adjacentCandidateToken,
+        direction === 'back' ? 'fwd' : 'back'
+      );
     }
     setActiveEditable(ownerEditable);
     return setCaretAdjacentToNode(ownerEditable, currentToken, direction);
@@ -9077,6 +9133,9 @@ const isCaretAtEditableBoundary = (editable, direction) => {
       return;
     }
     const normalized = sanitizeFilenameTemplatePart(part) || defaultFilenameTemplatePart('text');
+    token._filenameTemplateLivePart = part && typeof part === 'object'
+      ? part
+      : normalized;
     token._filenameTemplatePart = normalized;
     try {
       token.dataset.filenameTemplatePart = JSON.stringify(normalized);
@@ -9088,6 +9147,10 @@ const isCaretAtEditableBoundary = (editable, direction) => {
   const readTokenPartState = (token) => {
     if (!(token instanceof HTMLElement)) {
       return null;
+    }
+    const live = sanitizeFilenameTemplatePart(token._filenameTemplateLivePart);
+    if (live) {
+      return live;
     }
     const direct = sanitizeFilenameTemplatePart(token._filenameTemplatePart);
     if (direct) {
@@ -9103,6 +9166,39 @@ const isCaretAtEditableBoundary = (editable, direction) => {
       return sanitizeFilenameTemplatePart(JSON.parse(serialized));
     } catch (error) {
       return null;
+    }
+  };
+
+  const tokenLivePartState = (token) => {
+    if (!(token instanceof HTMLElement)) {
+      return null;
+    }
+    const live = token._filenameTemplateLivePart;
+    return live && typeof live === 'object' ? live : null;
+  };
+
+  const syncOwnerTokenLivePart = (ownerToken, editable) => {
+    if (!(ownerToken instanceof HTMLElement) || !(editable instanceof HTMLElement)) {
+      return;
+    }
+    const liveOwnerPart = tokenLivePartState(ownerToken);
+    if (!liveOwnerPart) {
+      return;
+    }
+    const slot = editable.closest('.filename-template-inline-token-slot');
+    if (!(slot instanceof HTMLElement)) {
+      return;
+    }
+    if (slot.classList.contains('filename-template-inline-token-slot--prefix')) {
+      liveOwnerPart.prefixParts = editable._filenameTemplateTargetParts;
+      return;
+    }
+    if (slot.classList.contains('filename-template-inline-token-slot--suffix')) {
+      liveOwnerPart.suffixParts = editable._filenameTemplateTargetParts;
+      return;
+    }
+    if (slot.classList.contains('filename-template-inline-token-slot--candidates')) {
+      liveOwnerPart.parts = editable._filenameTemplateTargetParts;
     }
   };
 
@@ -9152,7 +9248,7 @@ let activeEditable = null;
       }
       const fallbackText = child.textContent || '';
       if (!chipsOnly && fallbackText !== '') {
-        editable.insertBefore(document.createTextNode(fallbackText), child);
+        editable.insertBefore(document.createTextNode(modelTextToEditableText(fallbackText)), child);
       }
       child.remove();
     });
@@ -9173,7 +9269,7 @@ let activeEditable = null;
     Array.from(editable.childNodes).forEach((child) => {
       if (child.nodeType === Node.TEXT_NODE) {
         if (!chipsOnly) {
-          appendText(child.nodeValue || '');
+          appendText(editableTextToModelText(child.nodeValue || ''));
         }
         return;
       }
@@ -9189,7 +9285,8 @@ let activeEditable = null;
     replaceParts(editable._filenameTemplateTargetParts, nextParts, chipsOnly);
     const ownerToken = editable.closest('.filename-template-dom-token');
     if (ownerToken instanceof HTMLElement) {
-      const ownerPart = readTokenPartState(ownerToken);
+      syncOwnerTokenLivePart(ownerToken, editable);
+      const ownerPart = tokenLivePartState(ownerToken) || readTokenPartState(ownerToken);
       if (ownerPart) {
         writeTokenPartState(ownerToken, ownerPart);
       }
@@ -9297,7 +9394,7 @@ let activeEditable = null;
     editable.replaceChildren();
     targetParts.forEach((part) => {
       if (part.type === 'text') {
-        editable.appendChild(document.createTextNode(part.value || ''));
+        editable.appendChild(document.createTextNode(modelTextToEditableText(part.value || '')));
         return;
       }
       editable.appendChild(createTokenNode(part, editable));
@@ -9456,7 +9553,9 @@ let activeEditable = null;
       }
       nextParts.push({ type: 'text', value: textValue });
     };
+    let insertedPartIndex = -1;
     const appendInsertedPart = () => {
+      insertedPartIndex = nextParts.length;
       nextParts.push(createPartObject(part));
     };
 
@@ -9481,21 +9580,21 @@ let activeEditable = null;
         const textValue = child.nodeValue || '';
         if (range.startContainer === child) {
           const safeOffset = Math.max(0, Math.min(range.startOffset, textValue.length));
-          appendText(textValue.slice(0, safeOffset));
+          appendText(editableTextToModelText(textValue.slice(0, safeOffset)));
           if (!inserted) {
             appendInsertedPart();
             inserted = true;
           }
-          appendText(textValue.slice(safeOffset));
+          appendText(editableTextToModelText(textValue.slice(safeOffset)));
         } else {
-          appendText(textValue);
+          appendText(editableTextToModelText(textValue));
         }
         return;
       }
 
       if (!isTokenNode(child)) {
         if (!chipsOnly) {
-          appendText(child.textContent || '');
+          appendText(editableTextToModelText(child.textContent || ''));
         }
         return;
       }
@@ -9513,33 +9612,48 @@ let activeEditable = null;
       appendInsertedPart();
     }
 
-    return nextParts;
+    return {
+      parts: nextParts,
+      insertedPartIndex,
+    };
   };
 
   const insertPartIntoEditable = (editable, part) => {
     if (!(editable instanceof HTMLElement)) {
       return;
     }
-    const nextParts = buildInsertedPartsFromEditable(editable, part);
-    if (!nextParts) {
+    const insertion = buildInsertedPartsFromEditable(editable, part);
+    if (!insertion) {
       return;
     }
+    const { parts: nextParts, insertedPartIndex } = insertion;
     replaceParts(editable._filenameTemplateTargetParts, nextParts, editable._filenameTemplateChipsOnly === true);
     renderEditorParts(editable, editable._filenameTemplateTargetParts);
     onChange();
 
-    const tokenNodes = Array.from(editable.querySelectorAll(':scope > .filename-template-dom-token'));
-    const tokenNode = tokenNodes[tokenNodes.length - 1] || null;
-    const firstSlot = tokenNode instanceof HTMLElement
-      ? tokenNode.querySelector('.filename-template-editable')
-      : null;
-    if (firstSlot instanceof HTMLElement) {
-      setActiveEditable(firstSlot);
-      setCaretToEnd(firstSlot);
-      return;
+    if (insertedPartIndex >= 0) {
+      const insertedTokenIndex = nextParts
+        .slice(0, insertedPartIndex + 1)
+        .filter((candidate) => candidate && typeof candidate === 'object' && candidate.type !== 'text')
+        .length - 1;
+      const tokenNodes = Array.from(editable.querySelectorAll(':scope > .filename-template-dom-token'));
+      const insertedTokenNode = tokenNodes[insertedTokenIndex] || null;
+      if (insertedTokenNode instanceof HTMLElement) {
+        setActiveEditable(editable);
+        if (setCaretAdjacentToNode(editable, insertedTokenNode, 'fwd')) {
+          scrollFilenameTemplatePositionIntoView(editable, insertedTokenNode, 'fwd');
+          return;
+        }
+      }
     }
     setActiveEditable(editable);
     setCaretToEnd(editable);
+    const scrollContainer = nearestFilenameTemplateScrollContainer(editable);
+    if (scrollContainer instanceof HTMLElement) {
+      requestAnimationFrame(() => {
+        scrollContainer.scrollLeft = scrollContainer.scrollWidth;
+      });
+    }
   };
 
   sequence._filenameTemplateTargetParts = parts;

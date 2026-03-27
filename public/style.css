@@ -2574,7 +2574,7 @@ body {
   border-radius: 0;
 }
 
-.filename-template-inline-flow.filename-template-editable {
+.filename-template-inline-flow.filename-template-editable:not(.is-slot) {
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -2686,9 +2686,9 @@ body {
 }
 
 .filename-template-inline-token-slot--candidates {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 120px;
-  max-width: 360px;
+  max-width: none;
 }
 
 .filename-template-inline-token-slot.is-slot {
@@ -2744,19 +2744,15 @@ body {
   box-shadow: inset 1px 0 0 #f2d1a9, inset -1px 0 0 #f2d1a9;
 }
 
-.filename-template-inline-token-slot--prefix.is-slot,
-.filename-template-inline-token-slot--suffix.is-slot {
-  display: inline-flex;
-  align-items: center;
-}
-
 .filename-template-inline-token-slot--prefix.is-slot {
+  line-height: calc(var(--filename-template-chip-inner-height) - 6px);
   border-right: 0;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
 
 .filename-template-inline-token-slot--suffix.is-slot {
+  line-height: calc(var(--filename-template-chip-inner-height) - 6px);
   border-left: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
