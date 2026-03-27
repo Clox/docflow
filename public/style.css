@@ -2601,7 +2601,28 @@ body {
 }
 
 .filename-template-inline-token-label {
-  display: inline-block;
+  display: inline-grid;
+  border-radius: 999px;
+  padding: 1px 3px;
+  transition: color 0.12s ease;
+}
+
+.filename-template-inline-token-label::after {
+  content: attr(data-label);
+  grid-area: 1 / 1;
+  font-weight: 700;
+  visibility: hidden;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.filename-template-inline-token-label-text {
+  grid-area: 1 / 1;
+}
+
+.filename-template-dom-token.is-active > .filename-template-inline-token-shell > .filename-template-inline-token-center > .filename-template-inline-token > .filename-template-inline-token-label > .filename-template-inline-token-label-text {
+  font-weight: 700;
+  color: #0f172a;
 }
 
 .filename-template-dom-token {
@@ -2749,6 +2770,7 @@ body {
 
 .filename-template-inline-token-center .filename-template-inline-token-slot--candidates.is-slot {
   min-height: 22px;
+  margin: 3px 0;
   padding: 2px 8px;
   border: 1px solid rgba(100, 116, 139, .7);
   border-radius: 999px;

@@ -8930,16 +8930,58 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		return [];
 	}
 
-	const slotSelectors = [
-		'.filename-template-inline-token-slot--prefix.filename-template-editable',
-		'.filename-template-inline-token-slot--candidates.filename-template-editable',
-		'.filename-template-inline-token-slot--suffix.filename-template-editable',
-	];
+	const ownEditable = (selector) =>
+		Array.from(token.querySelectorAll(selector)).find(
+			(editable) => editable instanceof HTMLElement
+				&& editable.closest('.filename-template-dom-token') === token
+		) || null;
 
-	return slotSelectors
-		.map((selector) => token.querySelector(selector))
-		.filter((editable) => editable instanceof HTMLElement);
+	return [
+		ownEditable('.filename-template-inline-token-slot--prefix.filename-template-editable'),
+		ownEditable('.filename-template-inline-token-slot--candidates.filename-template-editable'),
+		ownEditable('.filename-template-inline-token-slot--suffix.filename-template-editable'),
+	].filter((editable) => editable instanceof HTMLElement);
 	};
+
+  const focusSiblingEditable = (editable, direction) => {
+    if (!(editable instanceof HTMLElement)) {
+      return false;
+    }
+    const currentToken = editable.closest('.filename-template-dom-token');
+    if (!(currentToken instanceof HTMLElement)) {
+      return false;
+    }
+    const ownerEditable = currentToken.parentElement instanceof HTMLElement
+      ? currentToken.parentElement.closest('.filename-template-editable')
+      : null;
+    if (!(ownerEditable instanceof HTMLElement) || ownerEditable === editable || ownerEditable._filenameTemplateChipsOnly !== true) {
+      return false;
+    }
+    const adjacentCandidateToken = direction === 'back'
+      ? currentToken.previousSibling
+      : currentToken.nextSibling;
+    if (isTokenNode(adjacentCandidateToken)) {
+      return focusTokenBoundaryEditable(adjacentCandidateToken, direction);
+    }
+    const ownerToken = ownerEditable.closest('.filename-template-dom-token');
+    if (!(ownerToken instanceof HTMLElement)) {
+      return false;
+    }
+    const ownerEditables = tokenEditables(ownerToken);
+    const ownerIndex = ownerEditables.indexOf(ownerEditable);
+    if (ownerIndex < 0) {
+      return false;
+    }
+    const nextOwnerIndex = direction === 'back' ? ownerIndex - 1 : ownerIndex + 1;
+    if (nextOwnerIndex < 0 || nextOwnerIndex >= ownerEditables.length) {
+      return false;
+    }
+    setActiveEditable(ownerEditable);
+    if (!setCaretAdjacentToNode(ownerEditable, currentToken, direction)) {
+      return false;
+    }
+    return moveCaretAcrossTokenBoundary(ownerEditable, direction);
+  };
 
   const focusTokenBoundaryEditable = (token, direction) => {
     const editables = tokenEditables(token);
@@ -8963,16 +9005,18 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		editable: describeEditable(editable),
 	});
 
-	const nearbyToken = adjacentTokenAtCaret(editable, direction);
-	if (nearbyToken) {
-		debugFilenameTemplateNav('nearby-token', {
-			direction,
-			editable: describeEditable(editable),
-			token: nearbyToken.querySelector('.filename-template-inline-token-label')?.textContent?.trim()
-			  || nearbyToken.querySelector('.filename-template-inline-token')?.textContent?.trim()
-			  || 'token',
-		});
-		return focusTokenBoundaryEditable(nearbyToken, direction);
+	if (editable._filenameTemplateChipsOnly !== true) {
+		const nearbyToken = adjacentTokenAtCaret(editable, direction);
+		if (nearbyToken) {
+			debugFilenameTemplateNav('nearby-token', {
+				direction,
+				editable: describeEditable(editable),
+				token: nearbyToken.querySelector('.filename-template-inline-token-label')?.textContent?.trim()
+				  || nearbyToken.querySelector('.filename-template-inline-token')?.textContent?.trim()
+				  || 'token',
+			});
+			return focusTokenBoundaryEditable(nearbyToken, direction);
+		}
 	}
 
 	const atBoundary = isCaretAtEditableBoundary(editable, direction);
@@ -9012,6 +9056,13 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		});
 		setActiveEditable(siblingEditable);
 		return setCaretAtEditableBoundary(siblingEditable, direction === 'back' ? 'fwd' : 'back');
+		}
+		if (focusSiblingEditable(editable, direction)) {
+			debugFilenameTemplateNav('owner-sibling-editable', {
+				direction,
+				from: describeEditable(editable),
+			});
+			return true;
 		}
 	}
 
@@ -9073,10 +9124,29 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 
 let activeEditable = null;
 
-  const setActiveEditable = (editable) => {
+  const setActiveToken = (editable) => {
+    wrapper.querySelectorAll('.filename-template-dom-token.is-active').forEach((node) => node.classList.remove('is-active'));
     if (!(editable instanceof HTMLElement)) {
       return;
     }
+    const activeToken = editable.closest('.filename-template-dom-token');
+    if (activeToken instanceof HTMLElement) {
+      activeToken.classList.add('is-active');
+    }
+  };
+
+  const clearActiveEditable = () => {
+    wrapper.querySelectorAll('.filename-template-editable.is-active').forEach((node) => node.classList.remove('is-active'));
+    wrapper.querySelectorAll('.filename-template-dom-token.is-active').forEach((node) => node.classList.remove('is-active'));
+    activeEditable = null;
+  };
+
+  const setActiveEditable = (editable) => {
+    if (!(editable instanceof HTMLElement)) {
+      clearActiveEditable();
+      return;
+    }
+    setActiveToken(editable);
     if (activeEditable === editable) {
       sharedContext.insertPart = (part) => insertPartIntoEditable(editable, part);
       return;
@@ -9171,6 +9241,13 @@ let activeEditable = null;
       editable.dataset.placeholder = inlinePlaceholder;
     }
     editable.addEventListener('focus', () => setActiveEditable(editable));
+    editable.addEventListener('blur', () => {
+      queueMicrotask(() => {
+        if (!wrapper.contains(document.activeElement)) {
+          clearActiveEditable();
+        }
+      });
+    });
     editable.addEventListener('click', (event) => {
       if (!isInnermostEditableEventTarget(event.target)) {
         return;
@@ -9291,7 +9368,11 @@ let activeEditable = null;
     }
     const labelText = document.createElement('span');
     labelText.className = 'filename-template-inline-token-label';
-    labelText.textContent = meta.label;
+    labelText.dataset.label = meta.label;
+    const labelTextInner = document.createElement('span');
+    labelTextInner.className = 'filename-template-inline-token-label-text';
+    labelTextInner.textContent = meta.label;
+    labelText.appendChild(labelTextInner);
     label.appendChild(labelText);
     center.appendChild(label);
 
