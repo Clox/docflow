@@ -2733,6 +2733,12 @@ body {
   box-shadow: inset 1px 0 0 #f2d1a9, inset -1px 0 0 #f2d1a9;
 }
 
+.filename-template-inline-token-slot--prefix.is-slot,
+.filename-template-inline-token-slot--suffix.is-slot {
+  display: inline-flex;
+  align-items: center;
+}
+
 .filename-template-inline-token-slot--prefix.is-slot {
   border-right: 0;
   border-top-right-radius: 0;
