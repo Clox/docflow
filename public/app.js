@@ -29,6 +29,8 @@ const ocrSearchStatusEl = document.getElementById('ocr-search-status');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
 const jobListModeEl = document.getElementById('job-list-mode');
+const sidebarEl = document.querySelector('.sidebar');
+const sidebarSplitterEl = document.getElementById('sidebar-splitter');
 const clientSelectEl = document.getElementById('client-select');
 const senderSelectEl = document.getElementById('sender-select');
 const categorySelectEl = document.getElementById('category-select');
@@ -45,6 +47,7 @@ const settingsCloseEl = document.getElementById('settings-close');
 const selectedJobPanelEl = document.getElementById('selected-job-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
 const selectedJobMetaEl = document.getElementById('selected-job-meta');
+const selectedJobStatusEl = document.getElementById('selected-job-status');
 const selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
 const settingsPanelTemplateIds = {
   clients: 'settings-template-clients',
@@ -318,6 +321,10 @@ const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
 const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta', 'review']);
 const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'processing', 'archived']);
+const SIDEBAR_LIST_SIZE_STORAGE_KEY = 'docflow.sidebar.listSizePercent';
+const DEFAULT_SIDEBAR_LIST_SIZE_PERCENT = 35;
+const MIN_SIDEBAR_LIST_SIZE_PERCENT = 20;
+const MAX_SIDEBAR_LIST_SIZE_PERCENT = 80;
 
 let senderMergeState = null;
 let currentJobListMode = 'ready';
@@ -325,6 +332,7 @@ let archivingRulesReviewPayload = null;
 let archivingRulesReviewPayloadSignature = '';
 let archivedJobReviewPayload = null;
 let archivedReviewRequestSeq = 0;
+let activeSidebarSplitPointerId = null;
 let renderedArchivingReviewSignature = '';
 let extractionFieldsDraft = [];
 let predefinedExtractionFieldsDraft = [];
@@ -551,6 +559,124 @@ function renderCategorySelect(categories) {
   const hasCurrentValue = groups.some((group) => Array.isArray(group.options) && group.options.some((item) => item.value === currentValue));
   categorySelectEl.value = hasCurrentValue ? currentValue : '';
   categoryOptionsSignature = signature;
+}
+
+function clampSidebarListSizePercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return DEFAULT_SIDEBAR_LIST_SIZE_PERCENT;
+  }
+  return Math.max(MIN_SIDEBAR_LIST_SIZE_PERCENT, Math.min(MAX_SIDEBAR_LIST_SIZE_PERCENT, numeric));
+}
+
+function applySidebarListSizePercent(value, persist = true) {
+  if (!(sidebarEl instanceof HTMLElement)) {
+    return;
+  }
+  const nextValue = clampSidebarListSizePercent(value);
+  sidebarEl.style.setProperty('--sidebar-list-size', `${nextValue}%`);
+  if (!persist) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(SIDEBAR_LIST_SIZE_STORAGE_KEY, String(nextValue));
+  } catch (error) {
+    // Ignore local storage failures and keep the in-memory split.
+  }
+}
+
+function restoreSidebarListSizePercent() {
+  let nextValue = DEFAULT_SIDEBAR_LIST_SIZE_PERCENT;
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_LIST_SIZE_STORAGE_KEY);
+    if (stored !== null) {
+      nextValue = clampSidebarListSizePercent(Number.parseFloat(stored));
+    }
+  } catch (error) {
+    nextValue = DEFAULT_SIDEBAR_LIST_SIZE_PERCENT;
+  }
+  applySidebarListSizePercent(nextValue, false);
+}
+
+function updateSidebarSplitFromPointer(clientY) {
+  if (!(sidebarEl instanceof HTMLElement)) {
+    return;
+  }
+  const rect = sidebarEl.getBoundingClientRect();
+  if (rect.height <= 0) {
+    return;
+  }
+  const relativeY = clientY - rect.top;
+  const nextPercent = (relativeY / rect.height) * 100;
+  applySidebarListSizePercent(nextPercent);
+}
+
+function stopSidebarSplitDrag(event = null) {
+  if (sidebarSplitterEl instanceof HTMLElement && activeSidebarSplitPointerId !== null) {
+    try {
+      if (event && typeof event.pointerId === 'number' && sidebarSplitterEl.hasPointerCapture(event.pointerId)) {
+        sidebarSplitterEl.releasePointerCapture(event.pointerId);
+      }
+    } catch (error) {
+      // Ignore capture release failures.
+    }
+    sidebarSplitterEl.classList.remove('is-dragging');
+  }
+  document.body.classList.remove('is-resizing-sidebar');
+  activeSidebarSplitPointerId = null;
+}
+
+function startSidebarSplitDrag(event) {
+  if (!(sidebarEl instanceof HTMLElement) || !(sidebarSplitterEl instanceof HTMLElement)) {
+    return;
+  }
+  if (typeof event.button === 'number' && event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  activeSidebarSplitPointerId = typeof event.pointerId === 'number' ? event.pointerId : null;
+  sidebarSplitterEl.classList.add('is-dragging');
+  document.body.classList.add('is-resizing-sidebar');
+  try {
+    if (activeSidebarSplitPointerId !== null) {
+      sidebarSplitterEl.setPointerCapture(activeSidebarSplitPointerId);
+    }
+  } catch (error) {
+    // Ignore pointer capture failures and keep dragging with window events.
+  }
+  updateSidebarSplitFromPointer(event.clientY);
+}
+
+function handleSidebarSplitPointerMove(event) {
+  if (activeSidebarSplitPointerId === null) {
+    return;
+  }
+  if (typeof event.pointerId === 'number' && event.pointerId !== activeSidebarSplitPointerId) {
+    return;
+  }
+  updateSidebarSplitFromPointer(event.clientY);
+}
+
+function selectedJobStatusText(job) {
+  if (!job) {
+    return '';
+  }
+  if (job.status === 'processing') {
+    if (job.reprocessMode === 'full' && job.forceOcr === true) {
+      return 'Status: Tvingad helomkörning';
+    }
+    if (job.reprocessMode === 'full') {
+      return 'Status: Helomkörning';
+    }
+    return 'Status: Bearbetas';
+  }
+  if (job.status === 'failed') {
+    return 'Status: Misslyckat';
+  }
+  if (job.archived === true) {
+    return 'Status: Arkiverat';
+  }
+  return 'Status: Klar';
 }
 
 function setClientForJob(job) {
@@ -3369,6 +3495,9 @@ function renderSelectedJobPanel() {
     syncReviewViewModeAvailability(null, { allowFallback: false });
     selectedJobPanelEl.classList.add('is-empty');
     selectedJobNameEl.textContent = 'Inget jobb markerat';
+    if (selectedJobStatusEl) {
+      selectedJobStatusEl.textContent = '';
+    }
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
     selectedJobReprocessEl.disabled = true;
     selectedJobReprocessEl.title = 'Markera ett jobb först.';
@@ -3380,6 +3509,9 @@ function renderSelectedJobPanel() {
   syncReviewViewModeAvailability(selectedJob, { allowFallback: false });
   selectedJobPanelEl.classList.remove('is-empty');
   selectedJobNameEl.textContent = selectedJob.originalFilename || selectedJob.id;
+  if (selectedJobStatusEl) {
+    selectedJobStatusEl.textContent = selectedJobStatusText(selectedJob);
+  }
 
   const metaLines = [];
   const appendLine = (text, extraClass = '') => {
@@ -3388,22 +3520,6 @@ function renderSelectedJobPanel() {
     line.textContent = text;
     metaLines.push(line);
   };
-
-  if (selectedJob.status === 'processing') {
-    if (selectedJob.reprocessMode === 'full' && selectedJob.forceOcr === true) {
-      appendLine('Status: Tvingad helomkörning');
-    } else if (selectedJob.reprocessMode === 'full') {
-      appendLine('Status: Helomkörning');
-    } else {
-      appendLine('Status: Bearbetas');
-    }
-  } else if (selectedJob.status === 'failed') {
-    appendLine('Status: Misslyckat');
-  } else if (selectedJob.archived === true) {
-    appendLine('Status: Arkiverat');
-  } else {
-    appendLine('Status: Klar');
-  }
 
   if (selectedJob && selectedJob.ocr && selectedJob.ocr.usedExistingText === true) {
     appendLine('Dokumentet hade redan OCR-text. OCR-steget hoppades över.');
@@ -11977,6 +12093,13 @@ renderOcrProcessingCommand();
 updateOcrPageImageControls();
 applyOcrZoom();
 setActiveOcrSource(currentOcrSource, { reload: false });
+restoreSidebarListSizePercent();
+if (sidebarSplitterEl instanceof HTMLElement) {
+  sidebarSplitterEl.addEventListener('pointerdown', startSidebarSplitDrag);
+  window.addEventListener('pointermove', handleSidebarSplitPointerMove);
+  window.addEventListener('pointerup', stopSidebarSplitDrag);
+  window.addEventListener('pointercancel', stopSidebarSplitDrag);
+}
 applyHashState();
 window.addEventListener('hashchange', () => {
   applyHashState();

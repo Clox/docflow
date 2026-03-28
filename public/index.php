@@ -27,14 +27,22 @@
         </div>
         <ul id="job-list" class="job-list"></ul>
       </div>
+      <div
+        id="sidebar-splitter"
+        class="sidebar-splitter"
+        role="separator"
+        aria-label="Ändra höjd mellan jobblistan och panelen för markerat jobb"
+        aria-orientation="horizontal"
+        title="Dra upp eller ner för att ändra höjd mellan jobblistan och panelen för markerat jobb"
+      ></div>
       <section id="selected-job-panel" class="selected-job-panel">
         <div class="selected-job-panel-body">
-          <div class="selected-job-panel-header">Markerat jobb</div>
-          <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
-          <div class="selected-job-panel-section">
-            <div class="selected-job-panel-section-title">Status</div>
-            <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
+          <div class="selected-job-panel-header-row">
+            <div class="selected-job-panel-header">Markerat jobb</div>
+            <div id="selected-job-status" class="selected-job-status"></div>
           </div>
+          <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
+          <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
           <div class="selected-job-panel-section selected-job-fields">
             <div class="selected-job-panel-section-title">Arkivering</div>
             <div class="field-group">
