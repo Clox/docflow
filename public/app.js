@@ -3381,6 +3381,7 @@ function updateArchiveAction(job) {
   }
 
   if (!job) {
+    archiveActionEl.dataset.jobAction = 'archive';
     archiveActionEl.disabled = true;
     archiveActionEl.textContent = 'Arkivera';
     archiveActionEl.title = 'Markera ett jobb först.';
@@ -3388,6 +3389,7 @@ function updateArchiveAction(job) {
   }
 
   const isArchived = job.archived === true;
+  archiveActionEl.dataset.jobAction = isArchived ? 'restore' : 'archive';
   archiveActionEl.textContent = isArchived ? 'Återställ' : 'Arkivera';
   if (isArchived) {
     archiveActionEl.disabled = false;
