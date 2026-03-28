@@ -1023,7 +1023,7 @@ function appendCategoryMatchesSection(container, title, categories, emptyText) {
   const tbody = document.createElement('tbody');
 
   categories.forEach((category) => {
-    const fallbackName = entityLabel === 'Etikett' ? 'Namnlös etikett' : 'Namnlös kategori';
+    const fallbackName = 'Namnlös kategori';
     const name = category && typeof category.name === 'string' && category.name !== ''
       ? category.name
       : fallbackName;
