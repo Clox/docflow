@@ -2685,8 +2685,11 @@ body {
   padding: 0;
   border: 0;
   border-radius: 999px;
-  background: transparent;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.75);
   isolation: isolate;
+  --filename-template-chip-fill-ring: #f1f5f9;
+  --filename-template-chip-line-ring: #8f98a8;
   --filename-template-chip-inner-height: 28px;
   min-height: var(--filename-template-chip-inner-height);
 }
@@ -2695,17 +2698,46 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  border: 1px solid #b7c1cf;
   border-radius: 999px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  box-shadow: inset 0 0 0 1px #b7c1cf;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.filename-template-inline-token-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 4px solid var(--filename-template-chip-fill-ring);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--filename-template-chip-line-ring);
   pointer-events: none;
   z-index: 0;
 }
 
 .filename-template-inline-token-shell > * {
   position: relative;
-  z-index: 1;
+  z-index: 2;
+}
+
+.filename-template-inline-token-shell:has(> .filename-template-inline-token-center--system) {
+  --filename-template-chip-fill-ring: #f1f5f9;
+}
+
+.filename-template-inline-token-shell:has(> .filename-template-inline-token-center--category) {
+  --filename-template-chip-fill-ring: #e9f7ff;
+}
+
+.filename-template-inline-token-shell:has(> .filename-template-inline-token-center--data) {
+  --filename-template-chip-fill-ring: #eefcf4;
+}
+
+.filename-template-inline-token-shell:has(> .filename-template-inline-token-center--labels) {
+  --filename-template-chip-fill-ring: #fdf0ff;
+}
+
+.filename-template-inline-token-shell:has(> .filename-template-inline-token-center--special) {
+  --filename-template-chip-fill-ring: #fff4e7;
 }
 
 .filename-template-inline-token-slot {
@@ -2727,6 +2759,7 @@ body {
 
 .filename-template-inline-token-slot.is-slot {
   display: block;
+  position: relative;
   align-self: stretch;
   box-sizing: border-box;
   min-width: 20px;
@@ -2741,6 +2774,8 @@ body {
 }
 
 .filename-template-inline-token-center {
+  position: relative;
+  z-index: 2;
   border-top: 1px solid #8f98a8;
   border-bottom: 1px solid #8f98a8;
   display: inline-flex;
@@ -2748,6 +2783,7 @@ body {
   align-self: stretch;
   gap: 4px;
   min-height: var(--filename-template-chip-inner-height);
+  margin: -1px -2px;
   padding: 0 10px;
   border-radius: 999px;
   box-shadow: inset 1px 0 0 rgba(148, 163, 184, .45), inset -1px 0 0 rgba(148, 163, 184, .45);
