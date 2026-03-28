@@ -28,42 +28,48 @@
         <ul id="job-list" class="job-list"></ul>
       </div>
       <section id="selected-job-panel" class="selected-job-panel">
-        <div class="selected-job-panel-header">Markerat jobb</div>
-        <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
-        <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
-        <div class="selected-job-actions">
+        <div class="selected-job-panel-body">
+          <div class="selected-job-panel-header">Markerat jobb</div>
+          <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
+          <div class="selected-job-panel-section">
+            <div class="selected-job-panel-section-title">Status</div>
+            <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
+          </div>
+          <div class="selected-job-panel-section selected-job-fields">
+            <div class="selected-job-panel-section-title">Arkivering</div>
+            <div class="field-group">
+              <label class="floating-label" for="client-select">Huvudman</label>
+              <select id="client-select">
+                <option value="" hidden>Välj huvudman</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="floating-label" for="sender-select">Avsändare</label>
+              <select id="sender-select">
+                <option value="" hidden>Välj avsändare</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="floating-label" for="category-select">Kategori</label>
+              <select id="category-select">
+                <option value="" hidden>Välj kategori</option>
+              </select>
+            </div>
+            <div class="field-group field-group-filename">
+              <label class="floating-label" for="filename-input">Filnamn</label>
+              <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">
+            </div>
+          </div>
+        </div>
+        <div class="selected-job-panel-footer">
           <button id="selected-job-reprocess" type="button" disabled>Analysera igen</button>
+          <button id="archive-action" type="button" disabled title="Markera ett jobb först.">Arkivera</button>
         </div>
       </section>
     </aside>
 
     <main class="main">
       <div class="topbar">
-        <div class="topbar-left">
-          <div class="field-group">
-            <label class="floating-label" for="client-select">Huvudman</label>
-            <select id="client-select">
-              <option value="" hidden>Välj huvudman</option>
-            </select>
-          </div>
-          <div class="field-group">
-            <label class="floating-label" for="sender-select">Avsändare</label>
-            <select id="sender-select">
-              <option value="" hidden>Välj avsändare</option>
-            </select>
-          </div>
-          <div class="field-group">
-            <label class="floating-label" for="category-select">Kategori</label>
-            <select id="category-select">
-              <option value="" hidden>Välj kategori</option>
-            </select>
-          </div>
-          <div class="field-group field-group-filename">
-            <label class="floating-label" for="filename-input">Filnamn</label>
-            <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">
-          </div>
-          <button id="archive-action" type="button" disabled title="Markera ett jobb först.">Arkivera</button>
-        </div>
         <div class="topbar-right">
           <div class="field-group">
             <label class="floating-label" for="view-mode">Vy</label>

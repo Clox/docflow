@@ -42,14 +42,20 @@ try {
         $systemLabels = [];
     }
     $labels = array_values(array_merge($systemLabels, $labels));
+    $fields = $extracted['extractionFields'] ?? [];
+    if (!is_array($fields)) {
+        $fields = [];
+    }
 
     json_response([
         'categories' => $categories,
         'labels' => $labels,
+        'fields' => $fields,
     ]);
 } catch (Throwable $e) {
     json_response([
         'categories' => [],
         'labels' => [],
+        'fields' => [],
     ], 500);
 }

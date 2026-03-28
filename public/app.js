@@ -1200,14 +1200,104 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
   container.appendChild(tableWrap);
 }
 
+function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
+  const header = document.createElement('h3');
+  header.className = 'matches-header';
+  header.textContent = title;
+  container.appendChild(header);
+
+  const fields = fieldsByKey && typeof fieldsByKey === 'object'
+    ? Object.entries(fieldsByKey)
+      .map(([fieldKey, field]) => {
+        if (!field || typeof field !== 'object') {
+          return null;
+        }
+        const rawValue = Object.prototype.hasOwnProperty.call(field, 'value') ? field.value : null;
+        if (rawValue === null || rawValue === undefined || rawValue === '') {
+          return null;
+        }
+        return {
+          key: typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : fieldKey,
+          name: typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : fieldKey,
+          value: rawValue,
+          raw: typeof field.raw === 'string' ? field.raw : '',
+          source: typeof field.source === 'string' ? field.source : '',
+          confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
+        };
+      })
+      .filter(Boolean)
+    : [];
+
+  if (fields.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'matches-empty';
+    empty.textContent = emptyText;
+    container.appendChild(empty);
+    return;
+  }
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'matches-table-wrap';
+  const table = document.createElement('table');
+  table.className = 'matches-table';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  ['Datafält', 'Värde', 'Källa', 'Råtext', 'Säkerhet'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    if (label === 'Säkerhet') {
+      th.className = 'is-numeric';
+    }
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+
+  fields.forEach((field) => {
+    const tr = document.createElement('tr');
+
+    const nameCell = document.createElement('td');
+    nameCell.textContent = field.name || field.key || 'Namnlöst datafält';
+    tr.appendChild(nameCell);
+
+    const valueCell = document.createElement('td');
+    valueCell.textContent = String(field.value);
+    tr.appendChild(valueCell);
+
+    const sourceCell = document.createElement('td');
+    sourceCell.textContent = field.source || '';
+    tr.appendChild(sourceCell);
+
+    const rawCell = document.createElement('td');
+    rawCell.textContent = field.raw || '';
+    tr.appendChild(rawCell);
+
+    const confidenceCell = document.createElement('td');
+    confidenceCell.className = 'is-numeric';
+    confidenceCell.textContent = field.confidence === null ? '' : String(field.confidence);
+    tr.appendChild(confidenceCell);
+
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  container.appendChild(tableWrap);
+}
+
 function renderMatchesContent(payload) {
   matchesViewEl.innerHTML = '';
 
   const categories = payload && Array.isArray(payload.categories) ? payload.categories : [];
   const labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
+  const fields = payload && typeof payload.fields === 'object' && payload.fields !== null ? payload.fields : {};
 
   appendCategoryMatchesSection(matchesViewEl, 'Kategorier', categories, 'Inga kategorimatchningar hittades.');
   appendRuleMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
+  appendFieldMatchesSection(matchesViewEl, 'Datafält', fields, 'Inga datafältsmatchningar hittades.');
 }
 
 async function setViewerMatches(jobId) {
