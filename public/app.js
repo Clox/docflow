@@ -9670,6 +9670,8 @@ let activeEditable = null;
 
   const buildSlotEditor = (targetParts, placeholder, slotClassName = '') => {
     const chipsOnly = slotClassName.includes('filename-template-inline-token-slot--candidates');
+    const wrappedEdgeSlot = slotClassName.includes('filename-template-inline-token-slot--prefix')
+      || slotClassName.includes('filename-template-inline-token-slot--suffix');
     targetParts.splice(
       0,
       targetParts.length,
@@ -9686,7 +9688,16 @@ let activeEditable = null;
     slotEditable._filenameTemplateChipsOnly = chipsOnly;
     attachEditableHandlers(slotEditable);
     renderEditorParts(slotEditable, targetParts);
-    return slotEditable;
+    if (!wrappedEdgeSlot) {
+      return slotEditable;
+    }
+    const slotWrap = document.createElement('span');
+    const wrapRoleClass = slotClassName.includes('filename-template-inline-token-slot--prefix')
+      ? 'filename-template-inline-token-slot-wrap--prefix'
+      : 'filename-template-inline-token-slot-wrap--suffix';
+    slotWrap.className = `filename-template-inline-token-slot-wrap ${wrapRoleClass}`;
+    slotWrap.appendChild(slotEditable);
+    return slotWrap;
   };
 
   const buildRootTextSlot = (textValue, rootSequence) => {
