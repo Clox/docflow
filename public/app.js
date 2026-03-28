@@ -485,15 +485,29 @@ function categoryDisplayName(category) {
 }
 
 function renderCategorySelect(categories) {
-  const options = categories
-    .map((category) => ({
-      value: category && typeof category.id === 'string' ? category.id.trim() : '',
-      label: categoryDisplayName(category)
-    }))
-    .filter((category) => category.value !== '' && category.label !== '');
+  const groups = [];
+  const groupOrder = new Map();
+  (Array.isArray(categories) ? categories : []).forEach((category) => {
+    const value = category && typeof category.id === 'string' ? category.id.trim() : '';
+    const label = categoryDisplayName(category);
+    if (!value || !label) {
+      return;
+    }
+    const groupLabel = category && typeof category.archiveFolderName === 'string' && category.archiveFolderName.trim() !== ''
+      ? category.archiveFolderName.trim()
+      : (category && typeof category.path === 'string' && category.path.trim() !== '' ? category.path.trim() : 'Övrigt');
+    if (!groupOrder.has(groupLabel)) {
+      groupOrder.set(groupLabel, groups.length);
+      groups.push({
+        label: groupLabel,
+        options: [],
+      });
+    }
+    groups[groupOrder.get(groupLabel)].options.push({ value, label });
+  });
   const signature = JSON.stringify({
     action: EDIT_CATEGORIES_OPTION_VALUE,
-    options
+    groups
   });
   if (signature === categoryOptionsSignature) {
     return;
@@ -519,14 +533,22 @@ function renderCategorySelect(categories) {
   separatorOption.disabled = true;
   categorySelectEl.appendChild(separatorOption);
 
-  options.forEach((item) => {
-    const option = document.createElement('option');
-    option.value = item.value;
-    option.textContent = item.label;
-    categorySelectEl.appendChild(option);
+  groups.forEach((group) => {
+    if (!group || !Array.isArray(group.options) || group.options.length === 0) {
+      return;
+    }
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = group.label;
+    group.options.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = item.value;
+      option.textContent = item.label;
+      optgroup.appendChild(option);
+    });
+    categorySelectEl.appendChild(optgroup);
   });
 
-  const hasCurrentValue = options.some((item) => item.value === currentValue);
+  const hasCurrentValue = groups.some((group) => Array.isArray(group.options) && group.options.some((item) => item.value === currentValue));
   categorySelectEl.value = hasCurrentValue ? currentValue : '';
   categoryOptionsSignature = signature;
 }
@@ -966,7 +988,89 @@ async function setViewerOcr(jobId) {
   }
 }
 
-function appendMatchesSection(container, title, categories, emptyText, entityLabel = 'Kategori') {
+function appendCategoryMatchesSection(container, title, categories, emptyText) {
+  const header = document.createElement('h3');
+  header.className = 'matches-header';
+  header.textContent = title;
+  container.appendChild(header);
+
+  if (!Array.isArray(categories) || categories.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'matches-empty';
+    empty.textContent = emptyText;
+    container.appendChild(empty);
+    return;
+  }
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'matches-table-wrap';
+  const table = document.createElement('table');
+  table.className = 'matches-table';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  ['Kategori', 'Mapp', 'Prioritet', 'Matchande etiketter'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    if (label === 'Prioritet') {
+      th.className = 'is-numeric';
+    }
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+
+  categories.forEach((category) => {
+    const fallbackName = entityLabel === 'Etikett' ? 'Namnlös etikett' : 'Namnlös kategori';
+    const name = category && typeof category.name === 'string' && category.name !== ''
+      ? category.name
+      : fallbackName;
+    const folderName = category && typeof category.archiveFolderName === 'string' && category.archiveFolderName.trim() !== ''
+      ? category.archiveFolderName.trim()
+      : (category && typeof category.path === 'string' ? category.path : '');
+    const priority = category && Number.isFinite(Number(category.priority))
+      ? Number(category.priority)
+      : 1;
+    const matchedLabels = category && Array.isArray(category.matchedLabels)
+      ? category.matchedLabels
+      : [];
+    const matchedLabelText = matchedLabels
+      .map((label) => label && typeof label.name === 'string' && label.name.trim() !== ''
+        ? label.name.trim()
+        : (label && typeof label.id === 'string' ? label.id : ''))
+      .filter(Boolean)
+      .join(', ');
+
+    const tr = document.createElement('tr');
+
+    const categoryCell = document.createElement('td');
+    categoryCell.textContent = name;
+    tr.appendChild(categoryCell);
+
+    const folderCell = document.createElement('td');
+    folderCell.textContent = folderName;
+    tr.appendChild(folderCell);
+
+    const priorityCell = document.createElement('td');
+    priorityCell.className = 'is-numeric';
+    priorityCell.textContent = String(priority);
+    tr.appendChild(priorityCell);
+
+    const labelsCell = document.createElement('td');
+    labelsCell.textContent = matchedLabelText || '(Ingen matchande etikett)';
+    tr.appendChild(labelsCell);
+
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  container.appendChild(tableWrap);
+}
+
+function appendRuleMatchesSection(container, title, categories, emptyText, entityLabel = 'Kategori') {
   const header = document.createElement('h3');
   header.className = 'matches-header';
   header.textContent = title;
@@ -1102,8 +1206,8 @@ function renderMatchesContent(payload) {
   const categories = payload && Array.isArray(payload.categories) ? payload.categories : [];
   const labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
 
-  appendMatchesSection(matchesViewEl, 'Kategorier', categories, 'Inga kategorimatchningar hittades.');
-  appendMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
+  appendCategoryMatchesSection(matchesViewEl, 'Kategorier', categories, 'Inga kategorimatchningar hittades.');
+  appendRuleMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
 }
 
 async function setViewerMatches(jobId) {
@@ -5856,8 +5960,8 @@ function defaultRule() {
 function defaultCategory() {
   return {
     name: '',
-    minScore: 1,
-    rules: [defaultRule()],
+    priority: 1,
+    labelIds: [],
   };
 }
 
@@ -6527,20 +6631,34 @@ function sanitizeLabelRule(rule) {
   return sanitizeRule(rule);
 }
 
-function sanitizeCategoryRule(rule) {
-  return sanitizeRule(rule);
+function sanitizeCategoryLabelIds(labelIds) {
+  const normalized = [];
+  const seen = new Set();
+
+  const appendLabelId = (value) => {
+    const labelId = typeof value === 'string' ? value.trim() : '';
+    if (!labelId || seen.has(labelId)) {
+      return;
+    }
+    seen.add(labelId);
+    normalized.push(labelId);
+  };
+
+  if (Array.isArray(labelIds)) {
+    labelIds.forEach(appendLabelId);
+  }
+
+  return normalized;
 }
 
 function sanitizeCategory(category) {
   const input = category && typeof category === 'object' ? category : {};
   const name = typeof input.name === 'string' ? input.name : '';
-  const rawRules = Array.isArray(input.rules) ? input.rules : [];
-  const rules = rawRules.map(sanitizeCategoryRule);
   return {
     id: slugifyText(name, '-', ''),
     name,
-    minScore: sanitizePositiveInt(input.minScore, 1),
-    rules: rules.length > 0 ? rules : [defaultRule()],
+    priority: sanitizePositiveInt(input.priority, 1),
+    labelIds: sanitizeCategoryLabelIds(input.labelIds),
   };
 }
 
@@ -6620,7 +6738,7 @@ function systemLabelOptions() {
     .filter((label) => label.value !== '' && label.label !== '');
 }
 
-function categoryRuleLabelOptions() {
+function categoryLabelOptions() {
   const options = [...systemLabelOptions(), ...sanitizeLabels(labelsDraft)
     .map((label) => ({
       value: typeof label.id === 'string' ? label.id.trim() : '',
@@ -6652,10 +6770,50 @@ function duplicateCategoryIds(folders) {
   return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([id]) => id));
 }
 
+function duplicateCategoryLabelIds(folders) {
+  const counts = new Map();
+  (Array.isArray(folders) ? folders : []).forEach((folder) => {
+    const categories = Array.isArray(folder && folder.categories) ? folder.categories : [];
+    categories.map(sanitizeCategory).forEach((category) => {
+      sanitizeCategoryLabelIds(category.labelIds).forEach((labelId) => {
+        counts.set(labelId, (counts.get(labelId) || 0) + 1);
+      });
+    });
+  });
+  return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([id]) => id));
+}
+
+function categoryLabelOptionsForCategory(folderIndex, categoryIndex, currentLabelId = '') {
+  const normalizedCurrentId = typeof currentLabelId === 'string' ? currentLabelId.trim() : '';
+  const blocked = new Set();
+
+  (Array.isArray(categoriesDraft) ? categoriesDraft : []).forEach((folder, nextFolderIndex) => {
+    const categories = Array.isArray(folder && folder.categories) ? folder.categories : [];
+    categories.forEach((category, nextCategoryIndex) => {
+      const labelIds = sanitizeCategoryLabelIds(category && category.labelIds);
+      labelIds.forEach((labelId) => {
+        const isCurrentCategory = nextFolderIndex === folderIndex && nextCategoryIndex === categoryIndex;
+        if (isCurrentCategory && labelId === normalizedCurrentId) {
+          return;
+        }
+        blocked.add(labelId);
+      });
+    });
+  });
+
+  return categoryLabelOptions().filter((option) => {
+    return option.value === normalizedCurrentId || !blocked.has(option.value);
+  });
+}
+
 function categoriesValidationError() {
   const duplicates = duplicateCategoryIds(categoriesDraft);
   if (duplicates.size > 0) {
     return `Kategori-id krockar: ${Array.from(duplicates).join(', ')}`;
+  }
+  const duplicateLabelIds = duplicateCategoryLabelIds(categoriesDraft);
+  if (duplicateLabelIds.size > 0) {
+    return `Etiketter kan bara användas i en kategori: ${Array.from(duplicateLabelIds).join(', ')}`;
   }
   for (const folder of categoriesDraft) {
     const categories = Array.isArray(folder && folder.categories) ? folder.categories : [];
@@ -8054,7 +8212,7 @@ function setExtractionFieldsTab(tabId) {
 
 function labelRuleOptions(currentLabelId = '') {
   const normalizedCurrentId = typeof currentLabelId === 'string' ? currentLabelId.trim() : '';
-  return categoryRuleLabelOptions().filter((option) => option.value !== normalizedCurrentId);
+  return categoryLabelOptions().filter((option) => option.value !== normalizedCurrentId);
 }
 
 function currentLabelDraftForEditor(options = {}) {
@@ -10055,167 +10213,106 @@ function renderCategoriesEditor() {
         updateSettingsActionButtons();
       });
 
-      const minScoreInput = document.createElement('input');
-      minScoreInput.type = 'number';
-      minScoreInput.step = '1';
-      minScoreInput.min = '1';
-      minScoreInput.value = String(category.minScore);
-      minScoreInput.addEventListener('input', () => {
-        categoriesDraft[archiveFolderIndex].categories[categoryIndex].minScore = sanitizePositiveInt(minScoreInput.value, 1);
+      const priorityInput = document.createElement('input');
+      priorityInput.type = 'number';
+      priorityInput.step = '1';
+      priorityInput.min = '1';
+      priorityInput.value = String(category.priority);
+      priorityInput.addEventListener('input', () => {
+        categoriesDraft[archiveFolderIndex].categories[categoryIndex].priority = sanitizePositiveInt(priorityInput.value, 1);
         updateSettingsActionButtons();
       });
 
       fields.appendChild(createFloatingField('Namn', categoryNameInput));
-      fields.appendChild(createFloatingField('Minpoäng', minScoreInput, 'score-field'));
+      fields.appendChild(createFloatingField('Prioritet', priorityInput, 'score-field'));
       fields.appendChild(removeCategoryButton);
       categoryBody.appendChild(fields);
 
-      const ruleList = createTreeChildren({ markerless: true });
+      const labelList = createTreeChildren({ markerless: true });
 
-      const rulesLabel = document.createElement('div');
-      rulesLabel.className = 'archive-level-label';
-      rulesLabel.textContent = 'Regler';
-      ruleList.appendChild(rulesLabel);
+      const labelsLabel = document.createElement('div');
+      labelsLabel.className = 'archive-level-label';
+      labelsLabel.textContent = 'Etiketter';
+      labelList.appendChild(labelsLabel);
 
-      category.rules.forEach((rule, ruleIndex) => {
-        const ruleNode = document.createElement('div');
-        ruleNode.className = 'tree-node tree-rule has-parent';
+      const currentLabelIds = sanitizeCategoryLabelIds(category.labelIds);
+      categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds = currentLabelIds;
+      const labelRows = currentLabelIds.concat(['']);
 
-        const ruleRow = createTreeRow({ markerless: true });
+      labelRows.forEach((selectedLabelId, labelIndex) => {
+        const labelNode = document.createElement('div');
+        labelNode.className = 'tree-node tree-rule has-parent';
 
-        const ruleBody = document.createElement('div');
-        ruleBody.className = 'tree-body rule-body';
-        appendTreeBodyIcon(ruleBody, 'tree-body-icon tree-body-icon-rule');
+        const labelRow = createTreeRow({ markerless: true });
+        const labelBody = document.createElement('div');
+        labelBody.className = 'tree-body rule-body';
+        appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-rule');
 
-        const ruleFields = document.createElement('div');
-        ruleFields.className = 'rule-fields';
-        const labelOptions = categoryRuleLabelOptions();
+        const labelFields = document.createElement('div');
+        labelFields.className = 'rule-fields category-label-fields';
 
-        const typeSelect = document.createElement('select');
-        [
-          ['text', 'Innehåller text...'],
-          ['label', 'Har etikett...'],
-        ].forEach(([value, label]) => {
+        const labelOptions = categoryLabelOptionsForCategory(archiveFolderIndex, categoryIndex, selectedLabelId);
+        const labelSelect = document.createElement('select');
+        const placeholderOption = document.createElement('option');
+        placeholderOption.value = '';
+        placeholderOption.disabled = true;
+        placeholderOption.hidden = true;
+        placeholderOption.textContent = labelOptions.length > 0 ? 'Välj etikett' : 'Inga etiketter';
+        labelSelect.appendChild(placeholderOption);
+        labelOptions.forEach((optionData) => {
           const option = document.createElement('option');
-          option.value = value;
-          option.textContent = label;
-          typeSelect.appendChild(option);
+          option.value = optionData.value;
+          option.textContent = optionData.label;
+          labelSelect.appendChild(option);
         });
-        typeSelect.value = rule.type === 'label'
-          ? 'label'
-          : 'text';
-        typeSelect.addEventListener('change', () => {
-          const nextType = typeSelect.value === 'label' ? 'label' : 'text';
-          const nextRule = categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex];
-          nextRule.type = nextType;
-          if (nextType === 'label') {
-            nextRule.text = '';
-            const fallbackLabelId = labelOptions[0] && typeof labelOptions[0].value === 'string'
-              ? labelOptions[0].value
-              : '';
-            nextRule.labelId = labelOptions.some((option) => option.value === nextRule.labelId)
-              ? nextRule.labelId
-              : fallbackLabelId;
-          } else {
-            nextRule.labelId = '';
+        labelSelect.disabled = labelOptions.length === 0;
+        const syncLabelSelectPlaceholderState = () => {
+          labelSelect.classList.toggle('is-placeholder', labelSelect.value === '');
+        };
+        labelSelect.value = labelOptions.some((option) => option.value === selectedLabelId)
+          ? selectedLabelId
+          : '';
+        syncLabelSelectPlaceholderState();
+        labelSelect.addEventListener('change', () => {
+          const nextLabelIds = sanitizeCategoryLabelIds(categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds);
+          if (labelSelect.value) {
+            nextLabelIds[labelIndex] = labelSelect.value;
+          } else if (labelIndex < nextLabelIds.length) {
+            nextLabelIds.splice(labelIndex, 1);
           }
+          categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds = sanitizeCategoryLabelIds(nextLabelIds);
+          syncLabelSelectPlaceholderState();
           renderCategoriesEditor();
           updateSettingsActionButtons();
         });
+        labelFields.appendChild(createFloatingField('Etikett', labelSelect));
 
-        const textInput = document.createElement('input');
-        textInput.type = 'text';
-        textInput.placeholder = 'Ex: "Förfallodatum"';
-        textInput.value = rule.text;
-        textInput.addEventListener('input', () => {
-          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].text = textInput.value;
-          updateSettingsActionButtons();
-        });
-
-        const labelSelect = document.createElement('select');
-        if (labelOptions.length === 0) {
-          const option = document.createElement('option');
-          option.value = '';
-          option.textContent = 'Inga etiketter';
-          labelSelect.appendChild(option);
-          labelSelect.disabled = true;
-        } else {
-          labelOptions.forEach((optionData) => {
-            const option = document.createElement('option');
-            option.value = optionData.value;
-            option.textContent = optionData.label;
-            labelSelect.appendChild(option);
-          });
-          const currentLabelId = typeof rule.labelId === 'string' ? rule.labelId.trim() : '';
-          const resolvedLabelId = labelOptions.some((option) => option.value === currentLabelId)
-            ? currentLabelId
-            : labelOptions[0].value;
-          labelSelect.value = resolvedLabelId;
-          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].labelId = resolvedLabelId;
-        }
-        labelSelect.addEventListener('change', () => {
-          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].labelId = labelSelect.value;
-          updateSettingsActionButtons();
-        });
-
-        const scoreInput = document.createElement('input');
-        scoreInput.type = 'number';
-        scoreInput.step = '1';
-        scoreInput.min = '1';
-        scoreInput.value = String(rule.score);
-        scoreInput.addEventListener('input', () => {
-          categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
-          updateSettingsActionButtons();
-        });
-
-        ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
-        if (rule.type === 'label') {
-          ruleFields.appendChild(createFloatingField('Etikett', labelSelect));
-        } else {
-          ruleFields.appendChild(createFloatingField('Regeltext', textInput));
-        }
-        ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
-
-        if (ruleIndex > 0) {
-          const removeRuleButton = document.createElement('button');
-          removeRuleButton.type = 'button';
-          removeRuleButton.className = 'rule-remove';
-          removeRuleButton.textContent = 'Ta bort';
-          removeRuleButton.addEventListener('click', () => {
-            categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules.splice(ruleIndex, 1);
-            if (categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules.length === 0) {
-              categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules.push(defaultRule());
-            }
+        if (selectedLabelId) {
+          const removeLabelButton = document.createElement('button');
+          removeLabelButton.type = 'button';
+          removeLabelButton.className = 'rule-remove';
+          removeLabelButton.textContent = 'Ta bort';
+          removeLabelButton.addEventListener('click', () => {
+            const nextLabelIds = sanitizeCategoryLabelIds(categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds);
+            nextLabelIds.splice(labelIndex, 1);
+            categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds = nextLabelIds;
             renderCategoriesEditor();
             updateSettingsActionButtons();
           });
-          ruleFields.appendChild(removeRuleButton);
+          labelFields.appendChild(removeLabelButton);
         } else {
           const placeholder = document.createElement('div');
           placeholder.className = 'rule-remove-placeholder';
-          ruleFields.appendChild(placeholder);
+          labelFields.appendChild(placeholder);
         }
 
-        ruleBody.appendChild(ruleFields);
-        ruleRow.appendChild(ruleBody);
-        ruleNode.appendChild(ruleRow);
-        ruleList.appendChild(ruleNode);
+        labelBody.appendChild(labelFields);
+        labelRow.appendChild(labelBody);
+        labelNode.appendChild(labelRow);
+        labelList.appendChild(labelNode);
       });
 
-      categoryBody.appendChild(ruleList);
-
-      const ruleActions = document.createElement('div');
-      ruleActions.className = 'category-rule-actions';
-      const addRuleButton = document.createElement('button');
-      addRuleButton.type = 'button';
-      addRuleButton.textContent = 'Lägg till regel';
-      addRuleButton.addEventListener('click', () => {
-        categoriesDraft[archiveFolderIndex].categories[categoryIndex].rules.push(defaultRule());
-        renderCategoriesEditor();
-        updateSettingsActionButtons();
-      });
-      ruleActions.appendChild(addRuleButton);
-      categoryBody.appendChild(ruleActions);
+      categoryBody.appendChild(labelList);
 
       categoryRow.appendChild(categoryBody);
       categoryNode.appendChild(categoryRow);

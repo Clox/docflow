@@ -693,11 +693,27 @@ function normalize_editable_label_rule(mixed $input): array
     ]);
 }
 
-function normalize_category_rule(mixed $input): array
+function normalize_category_label_ids(mixed $input): array
 {
-    return normalize_archive_rule($input, [
-        'allowLabel' => true,
-    ]);
+    $labelIds = [];
+    $seen = [];
+
+    $appendLabelId = static function (mixed $value) use (&$labelIds, &$seen): void {
+        $labelId = is_string($value) ? trim((string) $value) : '';
+        if ($labelId === '' || isset($seen[$labelId])) {
+            return;
+        }
+        $seen[$labelId] = true;
+        $labelIds[] = $labelId;
+    };
+
+    if (is_array($input)) {
+        foreach ($input as $value) {
+            $appendLabelId($value);
+        }
+    }
+
+    return $labelIds;
 }
 
 function slugify_text(string $value, string $separator = '-', string $fallback = ''): string
@@ -1286,27 +1302,22 @@ function build_categories_from_archive_folders(array $archiveFolders): array
             if (!is_array($category)) {
                 continue;
             }
-
-            $rulesIn = $category['rules'] ?? [];
-            $rules = [];
-            if (is_array($rulesIn)) {
-                foreach ($rulesIn as $ruleIn) {
-                    if (!is_array($ruleIn)) {
-                        continue;
-                    }
-
-                    $rules[] = normalize_category_rule($ruleIn);
-                }
+            $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
+            $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
+            if ($categoryId === '') {
+                $categoryId = slugify_text($categoryName, '-', '');
             }
+            $priority = positive_int($category['priority'] ?? 1, 1);
+            $labelIds = normalize_category_label_ids($category['labelIds'] ?? null);
 
             $categories[] = [
-                'id' => is_string($category['id'] ?? null) ? trim((string) $category['id']) : '',
-                'name' => is_string($category['name'] ?? null) ? trim((string) $category['name']) : '',
+                'id' => $categoryId,
+                'name' => $categoryName,
                 'archiveFolderId' => $archiveFolderId,
                 'path' => $archiveFolderPath,
                 'archiveFolderName' => $archiveFolderName,
-                'minScore' => positive_int($category['minScore'] ?? 1, 1),
-                'rules' => $rules,
+                'priority' => $priority,
+                'labelIds' => $labelIds,
                 'filenameTemplate' => $archiveFolderFilenameTemplate,
             ];
         }
@@ -1338,6 +1349,7 @@ function normalize_archive_structure(array $input): array
 {
     $archiveFolders = [];
     $usedCategoryIds = [];
+    $usedCategoryLabelIds = [];
     foreach ($input as $row) {
         if (!is_array($row)) {
             continue;
@@ -1371,7 +1383,7 @@ function normalize_archive_structure(array $input): array
             'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
             'path' => is_string($row['path'] ?? null) ? trim((string) $row['path']) : '',
             'filenameTemplate' => $filenameTemplate,
-            'categories' => normalize_archive_categories($row['categories'] ?? [], $usedCategoryIds),
+            'categories' => normalize_archive_categories($row['categories'] ?? [], $usedCategoryIds, $usedCategoryLabelIds),
         ];
     }
 
@@ -2085,7 +2097,7 @@ function archived_job_active_result(array $config, string $jobId, array $job, ar
     );
 }
 
-function normalize_archive_categories(mixed $input, array &$usedCategoryIds = []): array
+function normalize_archive_categories(mixed $input, array &$usedCategoryIds = [], array &$usedCategoryLabelIds = []): array
 {
     if (!is_array($input)) {
         return [];
@@ -2096,13 +2108,13 @@ function normalize_archive_categories(mixed $input, array &$usedCategoryIds = []
         if (!is_array($row)) {
             continue;
         }
-        $categories[] = normalize_archive_category($row, $usedCategoryIds);
+        $categories[] = normalize_archive_category($row, $usedCategoryIds, $usedCategoryLabelIds);
     }
 
     return $categories;
 }
 
-function normalize_archive_category(array $input, array &$usedCategoryIds = []): array
+function normalize_archive_category(array $input, array &$usedCategoryIds = [], array &$usedCategoryLabelIds = []): array
 {
     $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
     $id = slugify_text($name, '-', '');
@@ -2113,24 +2125,19 @@ function normalize_archive_category(array $input, array &$usedCategoryIds = []):
         throw new RuntimeException('Kategori-id krockar: ' . $id);
     }
     $usedCategoryIds[$id] = true;
-
-    $rulesIn = $input['rules'] ?? [];
-    $rules = [];
-    if (is_array($rulesIn)) {
-        foreach ($rulesIn as $ruleIn) {
-            $rules[] = normalize_category_rule($ruleIn);
+    $labelIds = normalize_category_label_ids($input['labelIds'] ?? null);
+    foreach ($labelIds as $labelId) {
+        if (isset($usedCategoryLabelIds[$labelId])) {
+            throw new RuntimeException('Etikett används redan av en annan kategori: ' . $labelId);
         }
-    }
-
-    if (count($rules) === 0) {
-        $rules[] = normalize_category_rule([]);
+        $usedCategoryLabelIds[$labelId] = $id;
     }
 
     return [
         'id' => $id,
         'name' => $name,
-        'minScore' => positive_int($input['minScore'] ?? 1, 1),
-        'rules' => $rules,
+        'priority' => positive_int($input['priority'] ?? 1, 1),
+        'labelIds' => $labelIds,
     ];
 }
 
@@ -5257,35 +5264,35 @@ function normalize_for_matching(string $text, array $replacementMap): string
     return strtr($normalized, $replacementMap);
 }
 
-function find_category_signal_matches(string $ocrText, array $categories, array $replacementMap, array $context = []): array
+function find_scored_rule_signal_matches(string $ocrText, array $entities, array $replacementMap, array $context = []): array
 {
     $normalizedOcr = normalize_for_matching($ocrText, $replacementMap);
     $inverseMap = build_inverse_single_char_map($replacementMap);
     $matches = [];
     $matchedLabelsById = is_array($context['matchedLabelsById'] ?? null) ? $context['matchedLabelsById'] : [];
 
-    foreach ($categories as $categoryIndex => $category) {
-        if (!is_array($category)) {
+    foreach ($entities as $entityIndex => $entity) {
+        if (!is_array($entity)) {
             continue;
         }
 
-        $rules = $category['rules'] ?? [];
+        $rules = $entity['rules'] ?? [];
         if (!is_array($rules) || count($rules) === 0) {
             continue;
         }
 
-        $minScore = positive_int($category['minScore'] ?? 1, 1);
-        $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
-        $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
-        $categoryPath = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
-        $archiveFolderName = is_string($category['archiveFolderName'] ?? null) ? trim((string) $category['archiveFolderName']) : '';
-        $systemLabelKey = is_string($category['systemLabelKey'] ?? null) ? trim((string) $category['systemLabelKey']) : '';
-        $isSystemLabel = ($category['isSystemLabel'] ?? false) === true;
-        if ($categoryId === '') {
+        $minScore = positive_int($entity['minScore'] ?? 1, 1);
+        $entityId = is_string($entity['id'] ?? null) ? trim((string) $entity['id']) : '';
+        $entityName = is_string($entity['name'] ?? null) ? trim((string) $entity['name']) : '';
+        $entityPath = is_string($entity['path'] ?? null) ? trim((string) $entity['path']) : '';
+        $archiveFolderName = is_string($entity['archiveFolderName'] ?? null) ? trim((string) $entity['archiveFolderName']) : '';
+        $systemLabelKey = is_string($entity['systemLabelKey'] ?? null) ? trim((string) $entity['systemLabelKey']) : '';
+        $isSystemLabel = ($entity['isSystemLabel'] ?? false) === true;
+        if ($entityId === '') {
             continue;
         }
-        if ($categoryName === '') {
-            $categoryName = 'Unnamed category';
+        if ($entityName === '') {
+            $entityName = 'Namnlös post';
         }
 
         $score = 0;
@@ -5338,16 +5345,16 @@ function find_category_signal_matches(string $ocrText, array $categories, array 
         }
 
         $matches[] = [
-            'id' => $categoryId,
-            'name' => $categoryName,
-            'path' => $categoryPath,
+            'id' => $entityId,
+            'name' => $entityName,
+            'path' => $entityPath,
             'archiveFolderName' => $archiveFolderName,
             'systemLabelKey' => $systemLabelKey,
             'isSystemLabel' => $isSystemLabel,
             'minScore' => $minScore,
             'score' => $score,
             'matchedRules' => $matchedRules,
-            '_categoryOrder' => is_int($categoryIndex) ? $categoryIndex : 0,
+            '_categoryOrder' => is_int($entityIndex) ? $entityIndex : 0,
         ];
     }
 
@@ -5367,7 +5374,7 @@ function find_category_signal_matches(string $ocrText, array $categories, array 
     return $matches;
 }
 
-function filter_category_matches_by_threshold(array $matches): array
+function filter_scored_rule_matches_by_threshold(array $matches): array
 {
     $filtered = [];
     foreach ($matches as $match) {
@@ -5390,10 +5397,88 @@ function filter_category_matches_by_threshold(array $matches): array
     return $filtered;
 }
 
+function find_scored_rule_matches(string $ocrText, array $entities, array $replacementMap, array $context = []): array
+{
+    $signalMatches = find_scored_rule_signal_matches($ocrText, $entities, $replacementMap, $context);
+    return filter_scored_rule_matches_by_threshold($signalMatches);
+}
+
 function find_category_matches(string $ocrText, array $categories, array $replacementMap, array $context = []): array
 {
-    $signalMatches = find_category_signal_matches($ocrText, $categories, $replacementMap, $context);
-    return filter_category_matches_by_threshold($signalMatches);
+    unset($ocrText, $replacementMap);
+
+    $matchedLabelsById = is_array($context['matchedLabelsById'] ?? null) ? $context['matchedLabelsById'] : [];
+    $matches = [];
+
+    foreach ($categories as $categoryIndex => $category) {
+        if (!is_array($category)) {
+            continue;
+        }
+
+        $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
+        if ($categoryId === '') {
+            continue;
+        }
+
+        $labelIds = normalize_category_label_ids($category['labelIds'] ?? null);
+        if (count($labelIds) === 0) {
+            continue;
+        }
+
+        $matchedLabels = [];
+        foreach ($labelIds as $labelId) {
+            $matchedLabel = $matchedLabelsById[$labelId] ?? null;
+            if (!is_array($matchedLabel)) {
+                continue;
+            }
+            $labelName = is_string($matchedLabel['name'] ?? null) ? trim((string) $matchedLabel['name']) : '';
+            $matchedLabels[] = [
+                'id' => $labelId,
+                'name' => $labelName !== '' ? $labelName : $labelId,
+            ];
+        }
+
+        if (count($matchedLabels) === 0) {
+            continue;
+        }
+
+        $priority = positive_int($category['priority'] ?? 1, 1);
+        $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
+        $categoryPath = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
+        $archiveFolderId = is_string($category['archiveFolderId'] ?? null) ? trim((string) $category['archiveFolderId']) : '';
+        $archiveFolderName = is_string($category['archiveFolderName'] ?? null) ? trim((string) $category['archiveFolderName']) : '';
+
+        $matches[] = [
+            'id' => $categoryId,
+            'name' => $categoryName !== '' ? $categoryName : 'Namnlös kategori',
+            'path' => $categoryPath,
+            'archiveFolderId' => $archiveFolderId,
+            'archiveFolderName' => $archiveFolderName,
+            'priority' => $priority,
+            'matchCount' => count($matchedLabels),
+            'matchedLabelIds' => array_values(array_map(static function (array $label): string {
+                return (string) $label['id'];
+            }, $matchedLabels)),
+            'matchedLabels' => $matchedLabels,
+            '_categoryOrder' => is_int($categoryIndex) ? $categoryIndex : 0,
+        ];
+    }
+
+    usort($matches, static function (array $a, array $b): int {
+        $priorityCompare = (int) ($b['priority'] ?? 1) <=> (int) ($a['priority'] ?? 1);
+        if ($priorityCompare !== 0) {
+            return $priorityCompare;
+        }
+
+        return (int) ($a['_categoryOrder'] ?? 0) <=> (int) ($b['_categoryOrder'] ?? 0);
+    });
+
+    foreach ($matches as &$match) {
+        unset($match['_categoryOrder']);
+    }
+    unset($match);
+
+    return $matches;
 }
 
 function find_incremental_label_matches(string $ocrText, array $labels, array $replacementMap, array $context = []): array
@@ -5409,7 +5494,7 @@ function find_incremental_label_matches(string $ocrText, array $labels, array $r
 
         $currentContext = $baseContext;
         $currentContext['matchedLabelsById'] = $matchedLabelsById;
-        $labelMatches = find_category_matches($ocrText, [$label], $replacementMap, $currentContext);
+        $labelMatches = find_scored_rule_matches($ocrText, [$label], $replacementMap, $currentContext);
         foreach ($labelMatches as $match) {
             if (!is_array($match)) {
                 continue;
@@ -7387,14 +7472,11 @@ function top_category_match(array $matches): ?array
             continue;
         }
         $categoryId = is_string($match['id'] ?? null) ? trim((string) $match['id']) : '';
-        $score = $match['score'] ?? null;
-        $numericScore = is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))
-            ? (float) $score
-            : null;
-        if ($categoryId === '' || $numericScore === null || $numericScore <= 0) {
+        $priority = positive_int($match['priority'] ?? 1, 1);
+        if ($categoryId === '' || $priority < 1) {
             continue;
         }
-        if ($best === null || $numericScore > (float) ($best['score'] ?? 0)) {
+        if ($best === null || $priority > positive_int($best['priority'] ?? 1, 1)) {
             $best = $match;
         }
     }
@@ -10392,28 +10474,25 @@ function build_job_state_entry(
             }
 
             $categoryId = is_string($categoryMatch['id'] ?? null) ? trim((string) $categoryMatch['id']) : '';
-            $score = $categoryMatch['score'] ?? null;
-            $numericScore = is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))
-                ? (float) $score
-                : null;
+            $priority = positive_int($categoryMatch['priority'] ?? 1, 1);
 
-            if ($categoryId === '' || $numericScore === null || $numericScore <= 0) {
+            if ($categoryId === '' || $priority <= 0) {
                 continue;
             }
 
             $order = isset($categoryOrderById[$categoryId]) ? (int) $categoryOrderById[$categoryId] : 999999;
             $resolvedName = isset($categoryNameById[$categoryId]) ? (string) $categoryNameById[$categoryId] : '';
-            if ($topMatchedCategoryScore === null || $numericScore > $topMatchedCategoryScore) {
+            if ($topMatchedCategoryScore === null || $priority > $topMatchedCategoryScore) {
                 $topMatchedCategoryId = $categoryId;
                 $topMatchedCategoryName = $resolvedName;
-                $topMatchedCategoryScore = $numericScore;
+                $topMatchedCategoryScore = (float) $priority;
                 $bestOrder = $order;
                 continue;
             }
-            if ($numericScore === $topMatchedCategoryScore && $order < $bestOrder) {
+            if ((float) $priority === $topMatchedCategoryScore && $order < $bestOrder) {
                 $topMatchedCategoryId = $categoryId;
                 $topMatchedCategoryName = $resolvedName;
-                $topMatchedCategoryScore = $numericScore;
+                $topMatchedCategoryScore = (float) $priority;
                 $bestOrder = $order;
             }
         }
@@ -10953,7 +11032,22 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         }
     }
 
+    sync_job_sender_snapshot_ids($jobId, null, null);
+
     unset($job['error'], $job['analysis']);
+    unset(
+        $job['selectedClientDirName'],
+        $job['selectedSenderId'],
+        $job['selectedCategoryId'],
+        $job['filename'],
+        $job['approvedArchiving'],
+        $job['archiveSnapshot'],
+        $job['needsRuleReview'],
+        $job['ruleReviewTargetRulesVersion'],
+        $job['lastResolvedArchivingRulesVersion'],
+        $job['ruleReviewProposedValue'],
+        $job['ruleReviewDiff']
+    );
     $job['status'] = 'processing';
     $job['updatedAt'] = now_iso();
     $job['reprocessMode'] = $normalizedMode;

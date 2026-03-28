@@ -2473,6 +2473,14 @@ body {
   background: #fff;
 }
 
+.rule-fields .floating-input-group select.is-placeholder {
+  color: #808080;
+}
+
+.rule-fields .floating-input-group select.is-placeholder option {
+  color: #111;
+}
+
 .folder-fields input:disabled,
 .category-fields input:disabled {
   background: #f3f4f6;
@@ -2484,6 +2492,10 @@ body {
   grid-template-columns: minmax(150px, 190px) 1fr minmax(70px, 82px) auto;
   gap: 8px;
   align-items: start;
+}
+
+.category-label-fields {
+  grid-template-columns: minmax(220px, 1fr) auto;
 }
 
 .floating-input-group {
