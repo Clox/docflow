@@ -373,26 +373,32 @@ body.is-resizing-sidebar {
 
 .topbar {
   display: flex;
-  justify-content: flex-end;
-  align-items: center;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
   padding: 8px 12px;
   border-bottom: 1px solid #ddd;
   background: #fff;
-  gap: 8px;
+  gap: 10px 12px;
 }
 
 .app-notices {
   display: flex;
-  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  padding: 10px 14px 0;
-  background: #f8fafc;
+  padding: 0;
+  background: transparent;
 }
 
 .app-notice {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex: 0 1 auto;
   gap: 12px;
   padding: 10px 12px;
   border: 1px solid #d7dee8;
@@ -419,6 +425,16 @@ body.is-resizing-sidebar {
   border-radius: 6px;
   background: #fff;
   cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .archived-review-panel {

@@ -78,6 +78,7 @@
 
     <main class="main">
       <div class="topbar">
+        <div id="app-notices" class="app-notices hidden"></div>
         <div class="topbar-right">
           <div class="field-group">
             <label class="floating-label" for="view-mode">Vy</label>
@@ -98,7 +99,6 @@
           </button>
         </div>
       </div>
-      <div id="app-notices" class="app-notices hidden"></div>
 
       <div class="viewer-wrap">
         <div id="ocr-toolbar" class="ocr-toolbar">

@@ -40,6 +40,7 @@ try {
             ? $draftRules['archiveFolders']
             : [],
         'archivingRules' => build_archiving_rules_state_payload($config),
+        'lastEventId' => latest_job_event_id(),
         'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
         'hasUnpublishedChanges' => archiving_rules_have_unpublished_changes(
             is_array($stored['activeArchivingRules'] ?? null) ? $stored['activeArchivingRules'] : [],

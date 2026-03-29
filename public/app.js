@@ -221,10 +221,12 @@ let loadedMatchesJobId = '';
 let loadedMetaJobId = '';
 let pdfFrameJobIds = pdfFrameEls.map(() => '');
 let pollInFlight = false;
+let pendingFetchStateOptions = null;
 let stateStream = null;
 let statePollTimer = null;
 let stateUpdateTransport = 'polling';
 let stateEventCursor = 0;
+let archivingRulesLocalRevision = 0;
 let currentViewMode = 'pdf';
 let currentOcrSource = 'merged';
 let currentOcrZoom = 100;
@@ -1781,6 +1783,48 @@ function applyArchivingRulesStatePayload(payload, options = {}) {
   }
 }
 
+function mergeFetchStateOptions(baseOptions = {}, nextOptions = {}) {
+  const base = baseOptions && typeof baseOptions === 'object' ? baseOptions : {};
+  const next = nextOptions && typeof nextOptions === 'object' ? nextOptions : {};
+  const merged = {
+    refreshClients: base.refreshClients === true || next.refreshClients === true,
+    refreshSenders: base.refreshSenders === true || next.refreshSenders === true,
+    refreshCategories: base.refreshCategories === true || next.refreshCategories === true,
+    force: base.force === true || next.force === true,
+  };
+  if (base.syncTransport === false && next.syncTransport === false) {
+    merged.syncTransport = false;
+  }
+  return merged;
+}
+
+function syncStateEventCursorFromPayload(payload) {
+  const lastEventId = Number.parseInt(String(payload && payload.lastEventId || ''), 10);
+  if (Number.isInteger(lastEventId) && lastEventId > stateEventCursor) {
+    stateEventCursor = lastEventId;
+  }
+}
+
+function applyArchivingRulesPayloadFromResponse(payload, options = {}) {
+  syncStateEventCursorFromPayload(payload);
+  if (
+    options.bumpLocalRevision !== true
+    && Number.isInteger(options.expectedLocalRevision)
+    && options.expectedLocalRevision !== archivingRulesLocalRevision
+  ) {
+    return;
+  }
+  if (!payload || !payload.archivingRules || typeof payload.archivingRules !== 'object') {
+    return;
+  }
+  if (options.bumpLocalRevision === true) {
+    archivingRulesLocalRevision += 1;
+  }
+  applyArchivingRulesStatePayload(payload.archivingRules, {
+    forceRender: options.forceRender === true
+  });
+}
+
 function findReviewLabelName(payload, labelId) {
   const normalized = typeof labelId === 'string' ? labelId.trim() : '';
   if (!normalized) {
@@ -2485,7 +2529,8 @@ async function resetArchivingRulesDraft() {
   if (!response.ok || !payload || payload.ok !== true) {
     throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte kassera utkastet.');
   }
-  await Promise.all([loadCategories(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshCategories: true })]);
+  applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
+  await Promise.all([loadCategories(), loadLabels({ reload: true }), loadExtractionFields()]);
 }
 
 async function publishArchivingRules() {
@@ -2501,6 +2546,7 @@ async function publishArchivingRules() {
     throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte använda utkastet.');
   }
 
+  applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   await Promise.all([loadCategories(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshCategories: true })]);
   const flaggedCount = payload.flaggedArchivedJobs && Number.isInteger(payload.flaggedArchivedJobs.flaggedCount)
     ? payload.flaggedArchivedJobs.flaggedCount
@@ -5026,6 +5072,9 @@ function applyJobEvents(events) {
     }
 
     const eventId = Number.parseInt(String(eventPayload.id || ''), 10);
+    if (Number.isInteger(eventId) && eventId > 0 && eventId <= stateEventCursor) {
+      return;
+    }
     if (Number.isInteger(eventId) && eventId > stateEventCursor) {
       stateEventCursor = eventId;
     }
@@ -11047,6 +11096,7 @@ async function loadOcrProcessingSettings(options = {}) {
 }
 
 async function loadCategories() {
+  const requestLocalRevision = archivingRulesLocalRevision;
   const response = await fetch('/api/get-categories.php', { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Kunde inte ladda arkivstruktur');
@@ -11059,9 +11109,10 @@ async function loadCategories() {
 
   categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
   categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
-  if (payload.archivingRules && typeof payload.archivingRules === 'object') {
-    applyArchivingRulesStatePayload(payload.archivingRules, { forceRender: true });
-  }
+  applyArchivingRulesPayloadFromResponse(payload, {
+    forceRender: true,
+    expectedLocalRevision: requestLocalRevision
+  });
   const selectedJob = findJobById(selectedJobId);
   if (selectedJob) {
     syncFilenameField(selectedJob);
@@ -11081,6 +11132,7 @@ async function loadLabels(options = {}) {
     return;
   }
 
+  const requestLocalRevision = archivingRulesLocalRevision;
   const response = await fetch('/api/get-labels.php', { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Kunde inte ladda etiketter');
@@ -11095,6 +11147,10 @@ async function loadLabels(options = {}) {
   systemLabelsDraft = sanitizeSystemLabels(payload.systemLabels);
   labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
   hasLoadedLabels = true;
+  applyArchivingRulesPayloadFromResponse(payload, {
+    forceRender: true,
+    expectedLocalRevision: requestLocalRevision
+  });
   renderLabelsEditor();
   if (categoriesListEl) {
     renderCategoriesEditor();
@@ -11103,6 +11159,7 @@ async function loadLabels(options = {}) {
 }
 
 async function loadExtractionFields() {
+  const requestLocalRevision = archivingRulesLocalRevision;
   const response = await fetch('/api/get-extraction-fields.php', { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Kunde inte ladda datafält');
@@ -11117,6 +11174,10 @@ async function loadExtractionFields() {
   predefinedExtractionFieldsDraft = payload.predefinedFields.map((field, index) => sanitizeExtractionField(field, index));
   systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
   extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
+  applyArchivingRulesPayloadFromResponse(payload, {
+    forceRender: true,
+    expectedLocalRevision: requestLocalRevision
+  });
   renderExtractionFieldsEditor();
   renderSystemExtractionFieldsEditor();
   if (categoriesListEl) {
@@ -11239,9 +11300,9 @@ async function saveCategories() {
     syncFilenameField(selectedJob);
     updateArchiveAction(selectedJob);
   }
+  applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   renderCategoriesEditor();
   updateSettingsActionButtons();
-  await fetchState({ refreshCategories: true, force: true });
 }
 
 async function saveLabels() {
@@ -11278,8 +11339,8 @@ async function saveLabels() {
   if (categoriesListEl) {
     renderCategoriesEditor();
   }
+  applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   updateSettingsActionButtons();
-  await fetchState({ force: true });
 }
 
 async function saveExtractionFields() {
@@ -11315,8 +11376,8 @@ async function saveExtractionFields() {
   if (categoriesListEl) {
     renderCategoriesEditor();
   }
+  applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   updateSettingsActionButtons();
-  await fetchState({ force: true });
 }
 
 async function savePathSettings() {
@@ -11905,6 +11966,7 @@ window.addEventListener('beforeunload', (event) => {
 
 async function fetchState(options = {}) {
   if (pollInFlight) {
+    pendingFetchStateOptions = mergeFetchStateOptions(pendingFetchStateOptions, options);
     return;
   }
 
@@ -11917,6 +11979,7 @@ async function fetchState(options = {}) {
   const includeCategories = !hasLoadedCategories || refreshCategories;
 
   pollInFlight = true;
+  const startedArchivingRulesLocalRevision = archivingRulesLocalRevision;
   try {
     const params = new URLSearchParams();
     if (includeClients) {
@@ -11960,12 +12023,16 @@ async function fetchState(options = {}) {
       return;
     }
 
+    const shouldApplyArchivingRules = startedArchivingRulesLocalRevision === archivingRulesLocalRevision;
+
     applyState({
       processingJobs: Array.isArray(nextState.processingJobs) ? nextState.processingJobs : [],
       readyJobs: nextState.readyJobs,
       archivedJobs: nextState.archivedJobs,
       failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : [],
-      archivingRules: nextState.archivingRules && typeof nextState.archivingRules === 'object' ? nextState.archivingRules : undefined,
+      archivingRules: shouldApplyArchivingRules && nextState.archivingRules && typeof nextState.archivingRules === 'object'
+        ? nextState.archivingRules
+        : undefined,
       clients: includeClients && Array.isArray(nextState.clients) ? nextState.clients : undefined,
       senders: includeSenders && Array.isArray(nextState.senders) ? nextState.senders : undefined,
       categories: includeCategories && Array.isArray(nextState.categories) ? nextState.categories : undefined
@@ -12000,6 +12067,13 @@ async function fetchState(options = {}) {
     pollInFlight = false;
     if (options.syncTransport !== false) {
       syncStateUpdateTransport();
+    }
+    if (pendingFetchStateOptions) {
+      const nextQueuedOptions = pendingFetchStateOptions;
+      pendingFetchStateOptions = null;
+      queueMicrotask(() => {
+        fetchState(nextQueuedOptions);
+      });
     }
   }
 }
@@ -12042,6 +12116,9 @@ function startStateStream() {
         return;
       }
       const eventId = Number.parseInt(String(event.lastEventId || ''), 10);
+      if (Number.isInteger(eventId) && eventId > 0 && eventId <= stateEventCursor) {
+        return;
+      }
       if (Number.isInteger(eventId) && eventId > stateEventCursor) {
         stateEventCursor = eventId;
       }

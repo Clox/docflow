@@ -59,6 +59,8 @@ try {
         'ok' => true,
         'labels' => is_array($stored['draftArchivingRules']['labels'] ?? null) ? $stored['draftArchivingRules']['labels'] : [],
         'systemLabels' => is_array($stored['draftArchivingRules']['systemLabels'] ?? null) ? $stored['draftArchivingRules']['systemLabels'] : system_labels_template(),
+        'archivingRules' => build_archiving_rules_state_payload($config),
+        'lastEventId' => latest_job_event_id(),
         'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
         'hasUnpublishedChanges' => json_encode($stored['activeArchivingRules'] ?? null) !== json_encode($stored['draftArchivingRules'] ?? null),
     ]);

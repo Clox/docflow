@@ -43,6 +43,8 @@ try {
         'fields' => is_array($stored['draftArchivingRules']['fields'] ?? null) ? $stored['draftArchivingRules']['fields'] : [],
         'predefinedFields' => is_array($stored['draftArchivingRules']['predefinedFields'] ?? null) ? $stored['draftArchivingRules']['predefinedFields'] : [],
         'systemFields' => is_array($stored['draftArchivingRules']['systemFields'] ?? null) ? $stored['draftArchivingRules']['systemFields'] : [],
+        'archivingRules' => build_archiving_rules_state_payload($config),
+        'lastEventId' => latest_job_event_id(),
         'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
         'hasUnpublishedChanges' => json_encode($stored['activeArchivingRules'] ?? null) !== json_encode($stored['draftArchivingRules'] ?? null),
     ]);

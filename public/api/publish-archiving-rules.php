@@ -15,6 +15,8 @@ try {
     maybe_queue_archiving_rules_update_event($config);
     json_response([
         'ok' => true,
+        'archivingRules' => build_archiving_rules_state_payload($config),
+        'lastEventId' => latest_job_event_id(),
         'activeArchivingRulesVersion' => (int) ($result['activeArchivingRulesVersion'] ?? 1),
         'hasUnpublishedChanges' => false,
         'reprocessedJobs' => $result['reprocessedJobs'] ?? ['reprocessedJobIds' => [], 'reprocessedCount' => 0],
