@@ -69,7 +69,8 @@ final class SenderRepository
                 s.notes AS sender_notes,
                 p.id AS payment_id,
                 p.type AS payment_type,
-                p.number AS payment_number
+                p.number AS payment_number,
+                p.payee_name AS payment_payee_name
             FROM senders s
             LEFT JOIN sender_payment_numbers p ON p.sender_id = s.id
             WHERE s.merged_into_sender_id IS NULL
@@ -117,10 +118,118 @@ final class SenderRepository
                     $type,
                     is_string($row['payment_number'] ?? null) ? trim((string) $row['payment_number']) : ''
                 ),
+                'payeeName' => is_string($row['payment_payee_name'] ?? null) ? trim((string) $row['payment_payee_name']) : '',
             ];
         }
 
         return array_values($sendersById);
+    }
+
+    public function findEditorRowById(int $senderId): ?array
+    {
+        if ($senderId < 1) {
+            return null;
+        }
+
+        foreach ($this->listEditorRows() as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            if ((int) ($row['id'] ?? 0) === $senderId) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+
+    public function listPaymentNumbersMissingPayeeName(int $limit = 10): array
+    {
+        $normalizedLimit = max(1, min(100, $limit));
+        $statement = $this->pdo->prepare(
+            'SELECT
+                p.id,
+                p.sender_id,
+                s.name AS sender_name,
+                p.type,
+                p.number,
+                p.payee_name
+            FROM sender_payment_numbers p
+            INNER JOIN senders s ON s.id = p.sender_id
+            WHERE s.merged_into_sender_id IS NULL
+              AND (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
+            ORDER BY s.name ASC, p.type ASC, p.number ASC, p.id ASC
+            LIMIT :limit'
+        );
+        $statement->bindValue(':limit', $normalizedLimit, PDO::PARAM_INT);
+        $statement->execute();
+
+        $rows = $statement->fetchAll();
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $items = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $paymentId = isset($row['id']) ? (int) $row['id'] : 0;
+            $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
+            if ($paymentId < 1 || $senderId < 1) {
+                continue;
+            }
+
+            $type = is_string($row['type'] ?? null) ? trim(strtolower((string) $row['type'])) : 'bankgiro';
+            $normalizedNumber = is_string($row['number'] ?? null) ? trim((string) $row['number']) : '';
+
+            $items[] = [
+                'paymentId' => $paymentId,
+                'senderId' => $senderId,
+                'senderName' => is_string($row['sender_name'] ?? null) ? trim((string) $row['sender_name']) : '',
+                'type' => $type,
+                'number' => $this->formatPaymentNumberForDisplay($type, $normalizedNumber),
+                'normalizedNumber' => $normalizedNumber,
+                'payeeName' => is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '',
+            ];
+        }
+
+        return $items;
+    }
+
+    public function updatePaymentPayeeName(int $paymentId, ?string $payeeName): void
+    {
+        if ($paymentId < 1) {
+            throw new RuntimeException('Payment id is required.');
+        }
+
+        $normalizedPayeeName = null;
+        if (is_string($payeeName)) {
+            $normalizedPayeeName = trim($payeeName);
+            if ($normalizedPayeeName === '') {
+                $normalizedPayeeName = null;
+            }
+        }
+
+        $statement = $this->pdo->prepare(
+            'UPDATE sender_payment_numbers
+            SET payee_name = :payee_name,
+                updated_at = :updated_at
+            WHERE id = :id'
+        );
+        $statement->execute([
+            ':id' => $paymentId,
+            ':payee_name' => $normalizedPayeeName,
+            ':updated_at' => date(DATE_ATOM),
+        ]);
+
+        if ($statement->rowCount() < 1) {
+            $exists = $this->pdo->prepare('SELECT 1 FROM sender_payment_numbers WHERE id = :id LIMIT 1');
+            $exists->execute([':id' => $paymentId]);
+            if ($exists->fetchColumn() === false) {
+                throw new RuntimeException('Payment number not found.');
+            }
+        }
     }
 
     public function findById(int $id): ?array

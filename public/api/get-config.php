@@ -16,6 +16,9 @@ try {
         'ocrOptimizeLevel' => (int) $config['ocrOptimizeLevel'],
         'stateUpdateTransport' => (string) $config['stateUpdateTransport'],
         'ocrTextExtractionMethod' => (string) $config['ocrTextExtractionMethod'],
+        'chromeExtensionId' => docflow_chrome_extension_id(),
+        'chromeExtensionVersion' => docflow_chrome_extension_version(),
+        'chromeExtensionSuppressMissingNotice' => (bool) ($config['chromeExtensionSuppressMissingNotice'] ?? false),
         'ocrPdfTextSubstitutions' => is_array($config['ocrPdfTextSubstitutions'] ?? null)
             ? $config['ocrPdfTextSubstitutions']
             : [],

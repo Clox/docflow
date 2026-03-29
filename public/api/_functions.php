@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 const DOCFLOW_OCR_VERSION = 1;
 const DOCFLOW_OCR_METADATA_KEY = 'docflow-ocr-version';
+const DOCFLOW_CHROME_EXTENSION_VERSION = '1.0.0';
+const DOCFLOW_CHROME_EXTENSION_ID = 'bgpmmblhdghhdcoeoepbelbonhdhcdkg';
+const DOCFLOW_CHROME_EXTENSION_MANIFEST_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqU9P0SMG3OD3yGoztzCpvGVjdN/kKLgsy8fpCKxlYkIUXzd8eRbFI4kOIMY8PefngWIrVG2dnioOi6naXKtxDFaLvyUkHbxqrqxVK882I4dnKNrygS1HUnWOFLZExwr8+3cJGEvv+gue3Fq6LvTKsNlJQktdmrTqGbD0SLrNopOUPmlRL9qnfHzA4MyqciFiLGZVte7327HRzzQM7LJQ2pG8N8qzt75vift/XEPh4Rvre7nwHmmfQE1UulNaeazvNbtEsmhJwG3wQcsHDKlhUijMiRdrucKLpfnzI/4+ngADIjjibKrBt5bFqJIrBM3LRkuuCAeAWrDWNVUK95WzEQIDAQAB';
 
 function json_response(array $payload, int $status = 200): void
 {
@@ -19,6 +22,21 @@ function now_iso(): string
 function docflow_ocr_version(): int
 {
     return DOCFLOW_OCR_VERSION;
+}
+
+function docflow_chrome_extension_version(): string
+{
+    return DOCFLOW_CHROME_EXTENSION_VERSION;
+}
+
+function docflow_chrome_extension_id(): string
+{
+    return DOCFLOW_CHROME_EXTENSION_ID;
+}
+
+function docflow_chrome_extension_manifest_key(): string
+{
+    return DOCFLOW_CHROME_EXTENSION_MANIFEST_KEY;
 }
 
 function config_file_path(): string
@@ -62,6 +80,7 @@ function load_config(): array
     $ocrOptimizeLevel = $config['ocrOptimizeLevel'] ?? 1;
     $stateUpdateTransport = $config['stateUpdateTransport'] ?? 'polling';
     $ocrTextExtractionMethod = $config['ocrTextExtractionMethod'] ?? 'layout';
+    $chromeExtensionSuppressMissingNotice = $config['chromeExtensionSuppressMissingNotice'] ?? false;
     $ocrPdfTextSubstitutions = sanitize_ocr_pdf_text_substitutions(
         $config['ocrPdfTextSubstitutions'] ?? []
     );
@@ -102,6 +121,12 @@ function load_config(): array
     if ($ocrTextExtractionMethod !== 'bbox') {
         $ocrTextExtractionMethod = 'layout';
     }
+    if (!is_bool($chromeExtensionSuppressMissingNotice)) {
+        $chromeExtensionSuppressMissingNotice = filter_var($chromeExtensionSuppressMissingNotice, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        if (!is_bool($chromeExtensionSuppressMissingNotice)) {
+            $chromeExtensionSuppressMissingNotice = false;
+        }
+    }
 
     return [
         'inboxDirectory' => $inboxDirectory,
@@ -112,6 +137,7 @@ function load_config(): array
         'stateUpdateTransport' => $stateUpdateTransport,
         'ocrTextExtractionMethod' => $ocrTextExtractionMethod,
         'ocrPdfTextSubstitutions' => $ocrPdfTextSubstitutions,
+        'chromeExtensionSuppressMissingNotice' => $chromeExtensionSuppressMissingNotice,
     ];
 }
 

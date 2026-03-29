@@ -27,6 +27,7 @@ if (
     && !array_key_exists('ocrTextExtractionMethod', $payload)
     && !array_key_exists('ocrPdfTextSubstitutions', $payload)
     && !array_key_exists('stateUpdateTransport', $payload)
+    && !array_key_exists('chromeExtensionSuppressMissingNotice', $payload)
 ) {
     json_response(['error' => 'No config values provided'], 400);
     exit;
@@ -123,6 +124,15 @@ if (array_key_exists('stateUpdateTransport', $payload)) {
     $nextStateUpdateTransport = $stateUpdateTransport;
 }
 
+$nextChromeExtensionSuppressMissingNotice = null;
+if (array_key_exists('chromeExtensionSuppressMissingNotice', $payload)) {
+    if (!is_bool($payload['chromeExtensionSuppressMissingNotice'])) {
+        json_response(['error' => 'Chrome extension notice suppression must be boolean'], 400);
+        exit;
+    }
+    $nextChromeExtensionSuppressMissingNotice = $payload['chromeExtensionSuppressMissingNotice'];
+}
+
 try {
     $config = load_raw_config();
     if ($nextOutputBaseDirectory !== null) {
@@ -143,6 +153,9 @@ try {
     if ($nextStateUpdateTransport !== null) {
         $config['stateUpdateTransport'] = $nextStateUpdateTransport;
     }
+    if ($nextChromeExtensionSuppressMissingNotice !== null) {
+        $config['chromeExtensionSuppressMissingNotice'] = $nextChromeExtensionSuppressMissingNotice;
+    }
     save_raw_config($config);
     json_response([
         'ok' => true,
@@ -152,6 +165,9 @@ try {
         'ocrTextExtractionMethod' => is_string($config['ocrTextExtractionMethod'] ?? null) ? (string) $config['ocrTextExtractionMethod'] : 'layout',
         'ocrPdfTextSubstitutions' => sanitize_ocr_pdf_text_substitutions($config['ocrPdfTextSubstitutions'] ?? []),
         'stateUpdateTransport' => is_string($config['stateUpdateTransport'] ?? null) ? (string) $config['stateUpdateTransport'] : 'polling',
+        'chromeExtensionId' => docflow_chrome_extension_id(),
+        'chromeExtensionVersion' => docflow_chrome_extension_version(),
+        'chromeExtensionSuppressMissingNotice' => (bool) ($config['chromeExtensionSuppressMissingNotice'] ?? false),
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);
