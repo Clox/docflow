@@ -368,6 +368,7 @@ let chromeExtensionRuntime = {
 let chromeExtensionPingInFlight = false;
 let chromeExtensionPayeeLookupTimer = null;
 let chromeExtensionPayeeLookupInFlight = false;
+let chromeExtensionPresenceTimer = null;
 
 jobListModeEl.value = currentJobListMode;
 
@@ -1671,6 +1672,7 @@ function setChromeExtensionRuntime(nextState = {}) {
   };
   renderAppNotices();
   renderSystemChromeExtensionStatus();
+  syncChromeExtensionPresencePolling();
 }
 
 async function loadChromeExtensionConfig() {
@@ -1781,14 +1783,23 @@ async function pingChromeExtension(options = {}) {
       throw new Error('Ogiltigt svar från Chrome-tillägget.');
     }
 
+    const nextStatus = chromeExtensionIsCurrentVersion(payload.version) ? 'installed' : 'outdated';
+    const hadUsableExtension = chromeExtensionIsUsable();
+    const swedbankSessionAvailable = payload.swedbankSessionAvailable === true;
     setChromeExtensionRuntime({
-      status: chromeExtensionIsCurrentVersion(payload.version) ? 'installed' : 'outdated',
+      status: nextStatus,
       version: payload.version.trim(),
       lastError: '',
-      swedbankSessionAvailable: payload.swedbankSessionAvailable === true,
+      swedbankSessionAvailable,
       hasAnySwedbankTab: payload.hasAnySwedbankTab === true,
-      loginRequired: false,
+      loginRequired: swedbankSessionAvailable
+        ? false
+        : (chromeExtensionRuntime.loginRequired === true && chromeExtensionRuntime.missingPayeeCount > 0),
     });
+
+    if (!hadUsableExtension && nextStatus === 'installed') {
+      scheduleChromeExtensionPayeeLookup(100);
+    }
   } catch (error) {
     setChromeExtensionRuntime({
       status: 'missing',
@@ -1809,6 +1820,51 @@ function clearChromeExtensionPayeeLookupTimer() {
     window.clearTimeout(chromeExtensionPayeeLookupTimer);
     chromeExtensionPayeeLookupTimer = null;
   }
+}
+
+function clearChromeExtensionPresenceTimer() {
+  if (chromeExtensionPresenceTimer !== null) {
+    window.clearTimeout(chromeExtensionPresenceTimer);
+    chromeExtensionPresenceTimer = null;
+  }
+}
+
+function shouldMonitorChromeExtensionPresence() {
+  if (!extensionMessagingAvailable()) {
+    return false;
+  }
+  return chromeExtensionRuntime.status === 'missing' || chromeExtensionRuntime.status === 'outdated';
+}
+
+function scheduleChromeExtensionPresenceCheck(delay = 1500) {
+  clearChromeExtensionPresenceTimer();
+  if (!shouldMonitorChromeExtensionPresence()) {
+    return;
+  }
+  chromeExtensionPresenceTimer = window.setTimeout(async () => {
+    chromeExtensionPresenceTimer = null;
+    if (document.hidden) {
+      scheduleChromeExtensionPresenceCheck(delay);
+      return;
+    }
+    try {
+      await pingChromeExtension();
+    } catch (_error) {
+      // pingChromeExtension updates runtime state on its own
+    } finally {
+      if (shouldMonitorChromeExtensionPresence()) {
+        scheduleChromeExtensionPresenceCheck(1500);
+      }
+    }
+  }, Math.max(200, delay));
+}
+
+function syncChromeExtensionPresencePolling() {
+  if (shouldMonitorChromeExtensionPresence()) {
+    scheduleChromeExtensionPresenceCheck(1500);
+    return;
+  }
+  clearChromeExtensionPresenceTimer();
 }
 
 function scheduleChromeExtensionPayeeLookup(delay = 1500) {
@@ -12815,6 +12871,16 @@ if (sidebarSplitterEl instanceof HTMLElement) {
 applyHashState();
 window.addEventListener('hashchange', () => {
   applyHashState();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && shouldMonitorChromeExtensionPresence()) {
+    scheduleChromeExtensionPresenceCheck(100);
+  }
+});
+window.addEventListener('focus', () => {
+  if (shouldMonitorChromeExtensionPresence()) {
+    scheduleChromeExtensionPresenceCheck(100);
+  }
 });
 Promise.all([
   fetchState({ refreshSenders: true }),

@@ -11,7 +11,7 @@
     <aside class="sidebar">
       <div class="sidebar-list-wrap">
         <div class="sidebar-title">
-          <span class="sidebar-title-label">Jobb</span>
+          <span class="sidebar-title-label">Dokument</span>
           <div class="sidebar-title-controls">
             <span id="processing-indicator" class="processing hidden">
               <span class="spinner" aria-hidden="true"></span>
@@ -38,7 +38,7 @@
       <section id="selected-job-panel" class="selected-job-panel">
         <div class="selected-job-panel-body">
           <div class="selected-job-panel-header-row">
-            <div class="selected-job-panel-header">Markerat jobb</div>
+            <div class="selected-job-panel-header">Markerat dokument</div>
             <div id="selected-job-status" class="selected-job-status"></div>
           </div>
           <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
