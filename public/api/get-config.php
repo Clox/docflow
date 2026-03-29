@@ -18,6 +18,7 @@ try {
         'ocrTextExtractionMethod' => (string) $config['ocrTextExtractionMethod'],
         'chromeExtensionId' => docflow_chrome_extension_id(),
         'chromeExtensionVersion' => docflow_chrome_extension_version(),
+        'chromeExtensionDirectory' => docflow_chrome_extension_directory(),
         'chromeExtensionSuppressMissingNotice' => (bool) ($config['chromeExtensionSuppressMissingNotice'] ?? false),
         'ocrPdfTextSubstitutions' => is_array($config['ocrPdfTextSubstitutions'] ?? null)
             ? $config['ocrPdfTextSubstitutions']

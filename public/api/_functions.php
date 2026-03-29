@@ -39,6 +39,13 @@ function docflow_chrome_extension_manifest_key(): string
     return DOCFLOW_CHROME_EXTENSION_MANIFEST_KEY;
 }
 
+function docflow_chrome_extension_directory(): string
+{
+    $path = dirname(__DIR__, 2) . '/chrome-extension/docflow-extension';
+    $resolved = realpath($path);
+    return is_string($resolved) && $resolved !== '' ? $resolved : $path;
+}
+
 function config_file_path(): string
 {
     return DATA_DIR . '/config.json';
@@ -608,7 +615,7 @@ function load_senders(): array
     }
 
     try {
-        $rows = $repository->listAll();
+        $rows = $repository->listEditorRows();
     } catch (Throwable $e) {
         return [];
     }
@@ -628,6 +635,11 @@ function load_senders(): array
         $senders[] = [
             'id' => $id,
             'name' => $name,
+            'orgNumber' => is_string($row['orgNumber'] ?? null) ? trim((string) $row['orgNumber']) : '',
+            'paymentNumbers' => array_values(array_filter(
+                is_array($row['paymentNumbers'] ?? null) ? $row['paymentNumbers'] : [],
+                static fn (mixed $payment): bool => is_array($payment)
+            )),
         ];
     }
 
@@ -10352,6 +10364,65 @@ function build_job_state_category_indexes(): array
     return [$categoryOrderById, $categoryNameById];
 }
 
+function extracted_field_scalar_value(array $extracted, string $fieldKey): ?string
+{
+    $field = is_array($extracted['extractionFields'][$fieldKey] ?? null)
+        ? $extracted['extractionFields'][$fieldKey]
+        : null;
+    if (!is_array($field)) {
+        return null;
+    }
+
+    $value = $field['value'] ?? null;
+    if ($value === null) {
+        return null;
+    }
+    if (is_string($value)) {
+        $trimmed = trim($value);
+        return $trimmed !== '' ? $trimmed : null;
+    }
+    if (is_numeric($value)) {
+        return trim((string) $value);
+    }
+
+    return null;
+}
+
+function build_job_sender_summary(?array $extracted, ?int $matchedSenderId, ?int $selectedSenderId): ?array
+{
+    if (!is_array($extracted)) {
+        return null;
+    }
+
+    $senderLookup = is_array($extracted['senderLookup'] ?? null) ? $extracted['senderLookup'] : [];
+    $query = is_array($senderLookup['query'] ?? null) ? $senderLookup['query'] : [];
+    $sender = is_array($senderLookup['sender'] ?? null) ? $senderLookup['sender'] : [];
+
+    $summary = [
+        'matchedBy' => is_string($senderLookup['matchedBy'] ?? null) ? trim((string) $senderLookup['matchedBy']) : '',
+        'matchedValue' => is_string($senderLookup['matchedValue'] ?? null) ? trim((string) $senderLookup['matchedValue']) : '',
+        'orgNumber' => is_string($query['orgNumber'] ?? null) ? trim((string) $query['orgNumber']) : '',
+        'bankgiro' => is_string($query['bankgiro'] ?? null) ? trim((string) $query['bankgiro']) : '',
+        'plusgiro' => is_string($query['plusgiro'] ?? null) ? trim((string) $query['plusgiro']) : '',
+        'paymentReceiver' => extracted_field_scalar_value($extracted, 'payment_receiver') ?? '',
+        'supplier' => extracted_field_scalar_value($extracted, 'supplier') ?? '',
+        'matchedSenderName' => is_string($sender['name'] ?? null) ? trim((string) $sender['name']) : '',
+        'matchedSenderId' => $matchedSenderId,
+        'selectedSenderId' => $selectedSenderId,
+    ];
+
+    foreach ($summary as $key => $value) {
+        if ($key === 'matchedSenderId' || $key === 'selectedSenderId') {
+            continue;
+        }
+        if ($value !== '') {
+            return $summary;
+        }
+    }
+
+    return ($matchedSenderId !== null || $selectedSenderId !== null) ? $summary : null;
+}
+
 function build_job_state_entry(
     array $config,
     string $jobDir,
@@ -10395,6 +10466,8 @@ function build_job_state_entry(
     $needsRuleReview = ($job['needsRuleReview'] ?? false) === true;
     $archivedAt = is_string($job['archivedAt'] ?? null) ? trim((string) $job['archivedAt']) : null;
     $archivedPdfPath = is_string($job['archivedPdfPath'] ?? null) ? trim((string) $job['archivedPdfPath']) : null;
+    $extracted = load_json_file($jobDir . '/extracted.json');
+    $senderSummary = build_job_sender_summary($extracted, null, $selectedSenderId);
 
     if ($status === 'processing') {
         return [
@@ -10415,6 +10488,7 @@ function build_job_state_entry(
                 'selectedSenderId' => $selectedSenderId,
                 'selectedCategoryId' => $selectedCategoryId,
                 'filename' => $filename,
+                'senderSummary' => $senderSummary,
                 'needsRuleReview' => $needsRuleReview,
                 'archived' => $isArchived,
                 'archivedAt' => $archivedAt,
@@ -10442,6 +10516,7 @@ function build_job_state_entry(
                 'selectedSenderId' => $selectedSenderId,
                 'selectedCategoryId' => $selectedCategoryId,
                 'filename' => $filename,
+                'senderSummary' => $senderSummary,
                 'needsRuleReview' => $needsRuleReview,
                 'archived' => $isArchived,
                 'archivedAt' => $archivedAt,
@@ -10456,8 +10531,6 @@ function build_job_state_entry(
     $topMatchedCategoryId = null;
     $topMatchedCategoryName = null;
     $topMatchedCategoryScore = null;
-    $extracted = load_json_file($jobDir . '/extracted.json');
-
     $preselectedClient = is_array($analysis['preselectedClient'] ?? null)
         ? $analysis['preselectedClient']
         : null;
@@ -10524,6 +10597,8 @@ function build_job_state_entry(
         }
     }
 
+    $senderSummary = build_job_sender_summary($extracted, $matchedSenderId, $selectedSenderId);
+
     $readyPayload = [
         'id' => $id,
         'originalFilename' => $originalFilename,
@@ -10545,6 +10620,7 @@ function build_job_state_entry(
         'selectedSenderId' => $selectedSenderId,
         'selectedCategoryId' => $selectedCategoryId,
         'filename' => $filename,
+        'senderSummary' => $senderSummary,
         'needsRuleReview' => $needsRuleReview,
         'archived' => $isArchived,
         'archivedAt' => $archivedAt,

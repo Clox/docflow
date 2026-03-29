@@ -11,7 +11,7 @@
     <aside class="sidebar">
       <div class="sidebar-list-wrap">
         <div class="sidebar-title">
-          <span>Jobb</span>
+          <span class="sidebar-title-label">Jobb</span>
           <div class="sidebar-title-controls">
             <span id="processing-indicator" class="processing hidden">
               <span class="spinner" aria-hidden="true"></span>
@@ -43,6 +43,12 @@
           </div>
           <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
           <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
+          <div class="selected-job-panel-section">
+            <div class="selected-job-panel-section-title">Avsändare</div>
+            <div id="selected-job-sender-info" class="selected-job-sender-info">
+              Ingen avsändarinformation tillgänglig ännu.
+            </div>
+          </div>
           <div class="selected-job-panel-section selected-job-fields">
             <div class="selected-job-panel-section-title">Arkivering</div>
             <div class="field-group">
@@ -209,6 +215,7 @@
         <div class="settings-nav-section">
           <div class="settings-nav-group-title">System</div>
           <button class="settings-tab" data-settings-tab="system" type="button">System</button>
+          <button class="settings-tab" data-settings-tab="extensions" type="button">Tillägg</button>
         </div>
       </aside>
       <section class="settings-content">
@@ -222,6 +229,7 @@
         <div id="settings-panel-archiving-review" class="settings-panel hidden"></div>
         <div id="settings-panel-paths" class="settings-panel hidden"></div>
         <div id="settings-panel-system" class="settings-panel hidden"></div>
+        <div id="settings-panel-extensions" class="settings-panel hidden"></div>
 
         <div class="settings-footer-row">
           <div id="settings-panel-actions-host" class="settings-panel-actions-host"></div>
@@ -517,6 +525,55 @@
       <p>Ogiltigförklara alla jobb och flytta tillbaka <code>source.pdf</code> till inbox.</p>
       <button id="settings-reset-jobs" type="button">Återställ alla jobb</button>
     </div>
+  </template>
+
+  <template id="settings-template-extensions">
+    <h3>Tillägg</h3>
+    <section class="system-extension-card">
+      <div class="system-extension-header-row">
+        <div>
+          <h4>Chrome-tillägg</h4>
+          <p class="system-extension-lead">Detta tillägg används för att hämta information om bankgiro och plusgiro via Swedbank.</p>
+          <p class="system-extension-lead">Det gör att Docflow kan identifiera avsändare bättre och automatisera delar av processen när sådana nummer hittas i dokument.</p>
+        </div>
+        <span id="system-chrome-extension-status" class="ocr-status-badge">Kontrollerar...</span>
+      </div>
+
+      <div class="system-extension-section-title">Instruktioner för att installera tillägget</div>
+
+      <div class="system-extension-install-step">
+        <div class="system-extension-step-title">1. Öppna Chrome Extensions-sidan.</div>
+        <div class="system-extension-copy-row">
+          <input id="system-chrome-extension-page" class="settings-select system-extension-path" type="text" value="chrome://extensions" readonly>
+          <button id="system-chrome-extension-copy-page" type="button">Kopiera adress</button>
+        </div>
+      </div>
+
+      <div class="system-extension-install-step">
+        <div class="system-extension-step-title">2. Slå på "Developer mode" (uppe till höger).</div>
+      </div>
+
+      <div class="system-extension-install-step">
+        <div class="system-extension-step-title">3. Klicka "Läs in opaketerat" (eller "Load unpacked").</div>
+      </div>
+
+      <div class="system-extension-install-step">
+        <div class="system-extension-step-title">4. Välj denna mapp:</div>
+        <div class="system-extension-copy-row">
+          <input id="system-chrome-extension-directory" class="settings-select system-extension-path" type="text" value="" readonly>
+          <button id="system-chrome-extension-copy-directory" type="button">Kopiera sökväg</button>
+        </div>
+      </div>
+
+      <div class="system-extension-actions">
+        <button id="system-chrome-extension-test" type="button">Testa tillägget</button>
+      </div>
+      <label class="system-extension-checkbox">
+        <input id="system-chrome-extension-suppress-missing" type="checkbox">
+        <span>Dölj notis när tillägget saknas eller inte svarar.</span>
+      </label>
+      <div id="system-chrome-extension-debug" class="system-extension-debug"></div>
+    </section>
   </template>
 
   <script src="/app.js"></script>

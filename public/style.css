@@ -74,11 +74,20 @@ body.is-resizing-sidebar {
   margin: 0;
   padding: 12px 14px;
   border-bottom: 1px solid #ddd;
-  font-size: 16px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.sidebar-title-label,
+.selected-job-panel-header {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
 }
 
 .sidebar-title-controls {
@@ -229,14 +238,6 @@ body.is-resizing-sidebar {
   gap: 12px;
 }
 
-.selected-job-panel-header {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #666;
-}
-
 .selected-job-panel-header-row {
   display: flex;
   align-items: baseline;
@@ -257,12 +258,23 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-panel-section {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 16px 12px 12px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #fff;
 }
 
 .selected-job-panel-section-title {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  transform: translateY(-50%);
+  padding: 0 6px;
+  background: #fff;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -291,6 +303,38 @@ body.is-resizing-sidebar {
 
 .selected-job-meta-line.is-warning {
   color: #8a4b11;
+}
+
+.selected-job-sender-info {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 8px;
+  font-size: 12px;
+  color: #4b5563;
+  align-items: baseline;
+}
+
+.selected-job-sender-row {
+  display: contents;
+}
+
+.selected-job-sender-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.selected-job-sender-value {
+  color: #1f2937;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.selected-job-sender-value.is-muted {
+  color: #6b7280;
 }
 
 .selected-job-fields {
@@ -418,6 +462,11 @@ body.is-resizing-sidebar {
   background: #eff6ff;
 }
 
+.app-notice.is-error {
+  border-color: #f3b0b0;
+  background: #fff2f2;
+}
+
 .app-notice button {
   font: inherit;
   padding: 6px 10px;
@@ -435,6 +484,114 @@ body.is-resizing-sidebar {
   font-size: 14px;
   margin-left: auto;
   flex: 0 0 auto;
+}
+
+.system-extension-card {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #d7dee8;
+  border-radius: 10px;
+  background: #f8fafc;
+  display: grid;
+  gap: 14px;
+}
+
+.system-extension-header-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.system-extension-header-row h4 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.system-extension-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.system-extension-install-step {
+  display: grid;
+  gap: 8px;
+}
+
+.system-extension-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.system-extension-lead {
+  margin: 0;
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.45;
+}
+
+.system-extension-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.system-extension-path {
+  flex: 0 1 auto;
+  min-width: 240px;
+  max-width: none;
+  width: auto;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.system-extension-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.system-extension-actions a,
+.system-extension-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font: inherit;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.system-extension-actions .button-success {
+  border-color: #86c38f;
+  background: #1f8a46;
+  color: #fff;
+}
+
+.system-extension-actions .button-success:hover {
+  background: #176b35;
+}
+
+.system-extension-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.system-extension-debug {
+  font-size: 12px;
+  color: #64748b;
+  min-height: 18px;
 }
 
 .archived-review-panel {
@@ -1892,6 +2049,12 @@ body.is-resizing-sidebar {
   border: 1px solid #ccc;
   border-radius: 4px;
   background: #fff;
+}
+
+#system-chrome-extension-page.settings-select,
+#system-chrome-extension-directory.settings-select {
+  max-width: none;
+  width: auto;
 }
 
 .categories-list {

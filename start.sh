@@ -57,6 +57,7 @@ while IFS= read -r pid; do
 done < <(pgrep -f "${DISPATCHER_SCRIPT}" || true)
 
 ./scripts/migrate.php
+php ./scripts/generate_chrome_extension_manifest.php "${URL}"
 
 PHP_CLI_SERVER_WORKERS="${WORKERS}" php -S "${HOST}:${PORT}" -t "${DOCROOT}" > "${LOG_FILE}" 2>&1 &
 SERVER_PID=$!

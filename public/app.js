@@ -47,6 +47,7 @@ const settingsCloseEl = document.getElementById('settings-close');
 const selectedJobPanelEl = document.getElementById('selected-job-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
 const selectedJobMetaEl = document.getElementById('selected-job-meta');
+const selectedJobSenderInfoEl = document.getElementById('selected-job-sender-info');
 const selectedJobStatusEl = document.getElementById('selected-job-status');
 const selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
 const settingsPanelTemplateIds = {
@@ -59,7 +60,8 @@ const settingsPanelTemplateIds = {
   'data-fields': 'settings-template-data-fields',
   'archiving-review': 'settings-template-archiving-review',
   paths: 'settings-template-paths',
-  system: 'settings-template-system'
+  system: 'settings-template-system',
+  extensions: 'settings-template-extensions'
 };
 let clientsListEl = null;
 let clientsAddRowEl = null;
@@ -137,6 +139,14 @@ let labelsViewCustomEl = null;
 let labelsViewSystemEl = null;
 let settingsResetJobsEl = null;
 let systemStateTransportEl = null;
+let systemChromeExtensionStatusEl = null;
+let systemChromeExtensionTestEl = null;
+let systemChromeExtensionSuppressMissingEl = null;
+let systemChromeExtensionDebugEl = null;
+let systemChromeExtensionPageEl = null;
+let systemChromeExtensionDirectoryEl = null;
+let systemChromeExtensionCopyPageEl = null;
+let systemChromeExtensionCopyDirectoryEl = null;
 let outputBasePathEl = null;
 let pathsCancelEl = null;
 let pathsApplyEl = null;
@@ -342,6 +352,22 @@ let systemExtractionFieldsDraft = [];
 let extractionFieldsBuiltInCollapsed = true;
 let extractionFieldsCustomCollapsed = false;
 let activeExtractionFieldsTabId = 'fields';
+let chromeExtensionRequiredId = '';
+let chromeExtensionRequiredVersion = '';
+let chromeExtensionDirectory = '';
+let chromeExtensionSuppressMissingNotice = false;
+let chromeExtensionRuntime = {
+  status: 'unknown',
+  version: '',
+  lastError: '',
+  swedbankSessionAvailable: null,
+  hasAnySwedbankTab: false,
+  loginRequired: false,
+  missingPayeeCount: 0,
+};
+let chromeExtensionPingInFlight = false;
+let chromeExtensionPayeeLookupTimer = null;
+let chromeExtensionPayeeLookupInFlight = false;
 
 jobListModeEl.value = currentJobListMode;
 
@@ -1595,6 +1621,346 @@ async function openArchivingReviewSettingsDirect() {
   return true;
 }
 
+async function openExtensionsSettingsDirect() {
+  if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
+    return false;
+  }
+
+  openSettingsModal();
+  setSettingsTab('extensions');
+
+  try {
+    await ensureSettingsPanelReady('extensions', { reload: true });
+  } catch (error) {
+    alert('Kunde inte ladda Tillägg.');
+    return false;
+  }
+
+  return true;
+}
+
+function extensionMessagingAvailable() {
+  return !!(window.chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function');
+}
+
+function chromeExtensionIsCurrentVersion(version) {
+  return version !== '' && version === chromeExtensionRequiredVersion;
+}
+
+function chromeExtensionIsUsable() {
+  return chromeExtensionRuntime.status === 'installed' && chromeExtensionIsCurrentVersion(chromeExtensionRuntime.version);
+}
+
+function applyChromeExtensionConfigPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
+
+  chromeExtensionRequiredId = typeof payload.chromeExtensionId === 'string' ? payload.chromeExtensionId.trim() : chromeExtensionRequiredId;
+  chromeExtensionRequiredVersion = typeof payload.chromeExtensionVersion === 'string' ? payload.chromeExtensionVersion.trim() : chromeExtensionRequiredVersion;
+  chromeExtensionDirectory = typeof payload.chromeExtensionDirectory === 'string' ? payload.chromeExtensionDirectory.trim() : chromeExtensionDirectory;
+  chromeExtensionSuppressMissingNotice = payload.chromeExtensionSuppressMissingNotice === true;
+  renderAppNotices();
+  renderSystemChromeExtensionStatus();
+}
+
+function setChromeExtensionRuntime(nextState = {}) {
+  chromeExtensionRuntime = {
+    ...chromeExtensionRuntime,
+    ...(nextState && typeof nextState === 'object' ? nextState : {}),
+  };
+  renderAppNotices();
+  renderSystemChromeExtensionStatus();
+}
+
+async function loadChromeExtensionConfig() {
+  const response = await fetch('/api/get-config.php', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Kunde inte ladda extension-konfiguration.');
+  }
+
+  const payload = await response.json();
+  if (!payload || typeof payload.chromeExtensionId !== 'string' || typeof payload.chromeExtensionVersion !== 'string') {
+    throw new Error('Ogiltigt svar för extension-konfiguration.');
+  }
+
+  applyChromeExtensionConfigPayload(payload);
+  return payload;
+}
+
+function updateSystemChromeExtensionDebug(message) {
+  if (systemChromeExtensionDebugEl instanceof HTMLElement) {
+    systemChromeExtensionDebugEl.textContent = typeof message === 'string' ? message : '';
+  }
+}
+
+function renderSystemChromeExtensionStatus() {
+  if (!(systemChromeExtensionStatusEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const status = chromeExtensionRuntime.status;
+  let text = 'Kontrollerar...';
+  systemChromeExtensionStatusEl.className = 'ocr-status-badge';
+
+  if (status === 'installed') {
+    text = `Installerat${chromeExtensionRuntime.version ? ` (${chromeExtensionRuntime.version})` : ''}`;
+    systemChromeExtensionStatusEl.classList.add('is-installed');
+  } else if (status === 'outdated') {
+    text = `Utdaterat${chromeExtensionRuntime.version ? ` (${chromeExtensionRuntime.version})` : ''}`;
+    systemChromeExtensionStatusEl.classList.add('is-failed');
+  } else if (status === 'missing') {
+    text = 'Ej installerat';
+    systemChromeExtensionStatusEl.classList.add('is-missing');
+  }
+
+  systemChromeExtensionStatusEl.textContent = text;
+
+  if (systemChromeExtensionSuppressMissingEl instanceof HTMLInputElement) {
+    systemChromeExtensionSuppressMissingEl.checked = chromeExtensionSuppressMissingNotice === true;
+  }
+  if (systemChromeExtensionPageEl instanceof HTMLInputElement) {
+    systemChromeExtensionPageEl.value = 'chrome://extensions';
+  }
+  if (systemChromeExtensionDirectoryEl instanceof HTMLInputElement) {
+    systemChromeExtensionDirectoryEl.value = chromeExtensionDirectory;
+    systemChromeExtensionDirectoryEl.title = chromeExtensionDirectory;
+    syncReadonlyInputWidth(systemChromeExtensionDirectoryEl);
+  }
+}
+
+function syncReadonlyInputWidth(inputEl) {
+  if (!(inputEl instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const value = String(inputEl.value || '');
+  const widthCh = Math.max(28, value.length + 1);
+  inputEl.style.width = `${widthCh}ch`;
+}
+
+function sendMessageToChromeExtension(message) {
+  return new Promise((resolve, reject) => {
+    if (!extensionMessagingAvailable()) {
+      reject(new Error('Chrome-tillägg kan inte nås från den här webbläsaren.'));
+      return;
+    }
+    if (!chromeExtensionRequiredId) {
+      reject(new Error('Chrome-tilläggets id saknas.'));
+      return;
+    }
+
+    try {
+      chrome.runtime.sendMessage(chromeExtensionRequiredId, message, (response) => {
+        const lastError = chrome.runtime.lastError;
+        if (lastError) {
+          reject(new Error(lastError.message || 'Chrome-tillägget svarade inte.'));
+          return;
+        }
+        resolve(response || null);
+      });
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error || 'Unknown extension error')));
+    }
+  });
+}
+
+async function pingChromeExtension(options = {}) {
+  if (chromeExtensionPingInFlight) {
+    return chromeExtensionRuntime;
+  }
+
+  chromeExtensionPingInFlight = true;
+  try {
+    if (options.reloadConfig === true || !chromeExtensionRequiredId || !chromeExtensionRequiredVersion) {
+      await loadChromeExtensionConfig();
+    }
+
+    const payload = await sendMessageToChromeExtension({ type: 'docflow.ping' });
+    if (!payload || payload.ok !== true || typeof payload.version !== 'string') {
+      throw new Error('Ogiltigt svar från Chrome-tillägget.');
+    }
+
+    setChromeExtensionRuntime({
+      status: chromeExtensionIsCurrentVersion(payload.version) ? 'installed' : 'outdated',
+      version: payload.version.trim(),
+      lastError: '',
+      swedbankSessionAvailable: payload.swedbankSessionAvailable === true,
+      hasAnySwedbankTab: payload.hasAnySwedbankTab === true,
+      loginRequired: false,
+    });
+  } catch (error) {
+    setChromeExtensionRuntime({
+      status: 'missing',
+      version: '',
+      lastError: error instanceof Error ? error.message : String(error || 'Chrome-tillägget svarade inte.'),
+      swedbankSessionAvailable: null,
+      hasAnySwedbankTab: false,
+    });
+  } finally {
+    chromeExtensionPingInFlight = false;
+  }
+
+  return chromeExtensionRuntime;
+}
+
+function clearChromeExtensionPayeeLookupTimer() {
+  if (chromeExtensionPayeeLookupTimer !== null) {
+    window.clearTimeout(chromeExtensionPayeeLookupTimer);
+    chromeExtensionPayeeLookupTimer = null;
+  }
+}
+
+function scheduleChromeExtensionPayeeLookup(delay = 1500) {
+  clearChromeExtensionPayeeLookupTimer();
+  chromeExtensionPayeeLookupTimer = window.setTimeout(() => {
+    chromeExtensionPayeeLookupTimer = null;
+    processMissingPayeeNames().catch((error) => {
+      console.error(error);
+    });
+  }, delay);
+}
+
+async function processMissingPayeeNames() {
+  if (chromeExtensionPayeeLookupInFlight || !chromeExtensionIsUsable()) {
+    return;
+  }
+
+  chromeExtensionPayeeLookupInFlight = true;
+  try {
+    const response = await fetch('/api/get-missing-sender-payment-payees.php?limit=1', { cache: 'no-store' });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.items)) {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte läsa betalnummer utan payeeName.');
+    }
+
+    const remainingCount = Number.parseInt(String(payload.remainingCount || 0), 10) || 0;
+    setChromeExtensionRuntime({
+      missingPayeeCount: remainingCount,
+      loginRequired: chromeExtensionRuntime.loginRequired === true && remainingCount > 0,
+    });
+
+    const item = payload.items[0] || null;
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+
+    const extensionPayload = await sendMessageToChromeExtension({
+      type: 'docflow.lookupPayee',
+      lookupType: item.type,
+      number: item.normalizedNumber || item.number,
+    });
+
+    if (!extensionPayload || extensionPayload.ok !== true) {
+      const loginRequired = extensionPayload && extensionPayload.loginRequired === true;
+      setChromeExtensionRuntime({
+        swedbankSessionAvailable: loginRequired ? false : chromeExtensionRuntime.swedbankSessionAvailable,
+        loginRequired,
+        missingPayeeCount: remainingCount,
+        lastError: extensionPayload && typeof extensionPayload.message === 'string'
+          ? extensionPayload.message
+          : 'Swedbank-uppslaget misslyckades.',
+      });
+      if (loginRequired) {
+        return;
+      }
+      scheduleChromeExtensionPayeeLookup(10000);
+      return;
+    }
+
+    const resolvedPayeeName = typeof extensionPayload.payeeName === 'string'
+      ? extensionPayload.payeeName.trim()
+      : '';
+    if (resolvedPayeeName === '') {
+      setChromeExtensionRuntime({
+        swedbankSessionAvailable: true,
+        loginRequired: false,
+        missingPayeeCount: remainingCount,
+        lastError: 'Swedbank svarade utan payeeName för betalnumret.',
+      });
+      scheduleChromeExtensionPayeeLookup(30000);
+      return;
+    }
+
+    const saveResponse = await fetch('/api/save-sender-payment-payee.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        paymentId: item.paymentId,
+        payeeName: resolvedPayeeName,
+      }),
+    });
+    const savePayload = await saveResponse.json().catch(() => null);
+    if (!saveResponse.ok || !savePayload || savePayload.ok !== true) {
+      throw new Error(savePayload && typeof savePayload.error === 'string' ? savePayload.error : 'Kunde inte spara payeeName.');
+    }
+
+    setChromeExtensionRuntime({
+      swedbankSessionAvailable: true,
+      loginRequired: false,
+      missingPayeeCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
+      lastError: '',
+    });
+    await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+
+    if ((Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0) > 0) {
+      scheduleChromeExtensionPayeeLookup(400);
+    }
+  } finally {
+    chromeExtensionPayeeLookupInFlight = false;
+  }
+}
+
+async function openSwedbankLoginFlow() {
+  try {
+    const payload = await sendMessageToChromeExtension({ type: 'docflow.openSwedbankLogin' });
+    if (!payload || payload.ok !== true) {
+      throw new Error(payload && typeof payload.message === 'string' ? payload.message : 'Kunde inte öppna Swedbank-inloggningen.');
+    }
+    setChromeExtensionRuntime({
+      loginRequired: false,
+      lastError: '',
+    });
+    window.setTimeout(() => {
+      pingChromeExtension().finally(() => {
+        scheduleChromeExtensionPayeeLookup(1200);
+      });
+    }, 1200);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : 'Kunde inte öppna Swedbank.');
+  }
+}
+
+async function extensionTest() {
+  try {
+    const runtime = await pingChromeExtension({ reloadConfig: true });
+    console.log('Docflow extension test', {
+      requiredId: chromeExtensionRequiredId,
+      requiredVersion: chromeExtensionRequiredVersion,
+      runtime,
+    });
+    updateSystemChromeExtensionDebug(
+      runtime.status === 'installed'
+        ? `Kontakt OK. Version ${runtime.version}.`
+        : runtime.status === 'outdated'
+          ? `Fel version. Installerad: ${runtime.version}, krävd: ${chromeExtensionRequiredVersion}.`
+          : 'Tillägget svarade inte.'
+    );
+    if (chromeExtensionIsUsable()) {
+      scheduleChromeExtensionPayeeLookup(100);
+    }
+    return runtime;
+  } catch (error) {
+    console.error('Docflow extension test failed', error);
+    updateSystemChromeExtensionDebug(error instanceof Error ? error.message : 'Test misslyckades.');
+    throw error;
+  }
+}
+
+window.extensionTest = extensionTest;
+
 function renderAppNotices() {
   if (!(appNoticesEl instanceof HTMLElement)) {
     return;
@@ -1613,6 +1979,49 @@ function renderAppNotices() {
     button.textContent = 'Granska ändringar';
     button.addEventListener('click', () => {
       openArchivingReviewSettingsDirect();
+    });
+    notice.append(text, button);
+    notices.push(notice);
+  }
+
+  if (chromeExtensionRuntime.status === 'missing' && chromeExtensionSuppressMissingNotice !== true) {
+    const notice = document.createElement('div');
+    notice.className = 'app-notice is-warning';
+    const text = document.createElement('span');
+    text.textContent = 'Chrome-tillägget för Swedbank saknas eller svarar inte.';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Visa tillägg';
+    button.addEventListener('click', () => {
+      openExtensionsSettingsDirect();
+    });
+    notice.append(text, button);
+    notices.push(notice);
+  } else if (chromeExtensionRuntime.status === 'outdated') {
+    const notice = document.createElement('div');
+    notice.className = 'app-notice is-warning';
+    const text = document.createElement('span');
+    text.textContent = `Chrome-tillägget är utdaterat. Krävd version är ${chromeExtensionRequiredVersion || 'okänd'}.`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Visa tillägg';
+    button.addEventListener('click', () => {
+      openExtensionsSettingsDirect();
+    });
+    notice.append(text, button);
+    notices.push(notice);
+  }
+
+  if (chromeExtensionRuntime.loginRequired === true && chromeExtensionRuntime.missingPayeeCount > 0) {
+    const notice = document.createElement('div');
+    notice.className = 'app-notice is-error';
+    const text = document.createElement('span');
+    text.textContent = 'Swedbank är inte tillgängligt just nu. Logga in för att hämta namn för betalnummer.';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Logga in';
+    button.addEventListener('click', () => {
+      openSwedbankLoginFlow();
     });
     notice.append(text, button);
     notices.push(notice);
@@ -3111,6 +3520,117 @@ function effectiveSenderId(job) {
   return '';
 }
 
+function senderSummaryForJob(job) {
+  return job && job.senderSummary && typeof job.senderSummary === 'object'
+    ? job.senderSummary
+    : null;
+}
+
+function findPayeeNameForSenderNumber(sender, type, number) {
+  if (!sender || typeof sender !== 'object' || !Array.isArray(sender.paymentNumbers)) {
+    return '';
+  }
+  const normalizedDigits = digitsOnly(number);
+  if (!normalizedDigits) {
+    return '';
+  }
+  const match = sender.paymentNumbers.find((payment) => {
+    if (!payment || typeof payment !== 'object') {
+      return false;
+    }
+    const paymentType = String(payment.type || '').trim().toLowerCase();
+    return paymentType === type && digitsOnly(payment.number) === normalizedDigits;
+  });
+  return match && typeof match.payeeName === 'string' ? match.payeeName.trim() : '';
+}
+
+function appendSelectedJobSenderRow(fragment, label, value, options = {}) {
+  if (!(fragment instanceof DocumentFragment)) {
+    return;
+  }
+
+  const normalizedValue = typeof value === 'string' ? value.trim() : '';
+  if (normalizedValue === '' && options.allowEmpty !== true) {
+    return;
+  }
+
+  const row = document.createElement('div');
+  row.className = 'selected-job-sender-row';
+  const labelEl = document.createElement('div');
+  labelEl.className = 'selected-job-sender-label';
+  labelEl.textContent = label;
+  const valueEl = document.createElement('div');
+  valueEl.className = 'selected-job-sender-value';
+  if (normalizedValue === '') {
+    valueEl.classList.add('is-muted');
+    valueEl.textContent = options.emptyText || 'Saknas';
+  } else {
+    valueEl.textContent = normalizedValue;
+  }
+  row.append(labelEl, valueEl);
+  fragment.appendChild(row);
+}
+
+function renderSelectedJobSenderSection(job) {
+  if (!(selectedJobSenderInfoEl instanceof HTMLElement)) {
+    return;
+  }
+
+  if (!job) {
+    selectedJobSenderInfoEl.textContent = 'Ingen avsändarinformation tillgänglig ännu.';
+    return;
+  }
+
+  const summary = senderSummaryForJob(job);
+  const senderId = Number.parseInt(effectiveSenderId(job), 10) || 0;
+  const sender = senderId > 0 ? findSenderById(senderId) : null;
+  const paymentRows = [];
+  const payeeNames = [];
+
+  if (summary) {
+    if (typeof summary.bankgiro === 'string' && summary.bankgiro.trim() !== '') {
+      const payeeName = findPayeeNameForSenderNumber(sender, 'bankgiro', summary.bankgiro);
+      paymentRows.push({
+        label: 'Bankgiro',
+        value: summary.bankgiro.trim(),
+      });
+      if (payeeName) {
+        payeeNames.push(payeeName);
+      }
+    }
+    if (typeof summary.plusgiro === 'string' && summary.plusgiro.trim() !== '') {
+      const payeeName = findPayeeNameForSenderNumber(sender, 'plusgiro', summary.plusgiro);
+      paymentRows.push({
+        label: 'Plusgiro',
+        value: summary.plusgiro.trim(),
+      });
+      if (payeeName) {
+        payeeNames.push(payeeName);
+      }
+    }
+  }
+
+  const uniquePayeeNames = Array.from(new Set(payeeNames.filter((value) => typeof value === 'string' && value.trim() !== '')));
+
+  const fragment = document.createDocumentFragment();
+  appendSelectedJobSenderRow(fragment, 'Namn', sender && typeof sender.name === 'string' ? sender.name : (summary && summary.matchedSenderName) || '', {
+    allowEmpty: true,
+    emptyText: 'Ingen avsändare vald',
+  });
+  appendSelectedJobSenderRow(fragment, 'Org.nr', summary && summary.orgNumber ? summary.orgNumber : '');
+  paymentRows.forEach((row) => {
+    appendSelectedJobSenderRow(fragment, row.label, row.value);
+  });
+  appendSelectedJobSenderRow(fragment, 'PayeeName', uniquePayeeNames.join(', '));
+
+  if (!fragment.hasChildNodes()) {
+    selectedJobSenderInfoEl.textContent = 'Ingen avsändarinformation tillgänglig ännu.';
+    return;
+  }
+
+  selectedJobSenderInfoEl.replaceChildren(fragment);
+}
+
 function effectiveCategoryId(job) {
   const isKnownCategory = (value) => {
     const normalized = typeof value === 'string' ? value.trim() : '';
@@ -3547,6 +4067,7 @@ function renderSelectedJobPanel() {
       selectedJobStatusEl.textContent = '';
     }
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
+    renderSelectedJobSenderSection(null);
     selectedJobReprocessEl.disabled = true;
     selectedJobReprocessEl.title = 'Markera ett jobb först.';
     syncFilenameField(null);
@@ -3586,6 +4107,7 @@ function renderSelectedJobPanel() {
   }
 
   selectedJobMetaEl.replaceChildren(...metaLines);
+  renderSelectedJobSenderSection(selectedJob);
   selectedJobReprocessEl.disabled = selectedJob.status === 'processing'
     || selectedJob.archived === true
     || (!selectedJob.hasReviewPdf && !selectedJob.hasSourcePdf);
@@ -4977,6 +5499,9 @@ function applyState(nextState) {
   }
   if (shouldUpdateSenders) {
     renderSenderSelect(state.senders);
+    if (chromeExtensionIsUsable()) {
+      scheduleChromeExtensionPayeeLookup(500);
+    }
   }
   if (shouldUpdateCategories) {
     renderCategorySelect(state.categories);
@@ -5766,6 +6291,75 @@ function bindSettingsPanelRefs(tabId) {
         alert('Kunde inte återställa jobb.');
       }
     });
+  } else if (tabId === 'extensions') {
+    systemChromeExtensionStatusEl = document.getElementById('system-chrome-extension-status');
+    systemChromeExtensionTestEl = document.getElementById('system-chrome-extension-test');
+    systemChromeExtensionSuppressMissingEl = document.getElementById('system-chrome-extension-suppress-missing');
+    systemChromeExtensionDebugEl = document.getElementById('system-chrome-extension-debug');
+    systemChromeExtensionPageEl = document.getElementById('system-chrome-extension-page');
+    systemChromeExtensionDirectoryEl = document.getElementById('system-chrome-extension-directory');
+    systemChromeExtensionCopyPageEl = document.getElementById('system-chrome-extension-copy-page');
+    systemChromeExtensionCopyDirectoryEl = document.getElementById('system-chrome-extension-copy-directory');
+    if (systemChromeExtensionSuppressMissingEl instanceof HTMLInputElement) {
+      systemChromeExtensionSuppressMissingEl.checked = chromeExtensionSuppressMissingNotice === true;
+      systemChromeExtensionSuppressMissingEl.addEventListener('change', async () => {
+        const previousValue = chromeExtensionSuppressMissingNotice === true;
+        const nextValue = systemChromeExtensionSuppressMissingEl.checked === true;
+        if (nextValue === previousValue) {
+          return;
+        }
+        systemChromeExtensionSuppressMissingEl.disabled = true;
+        try {
+          await saveChromeExtensionSuppressMissingSetting(nextValue);
+          updateSystemChromeExtensionDebug(nextValue ? 'Notisen för saknat tillägg är dold.' : 'Notisen för saknat tillägg visas igen.');
+        } catch (error) {
+          systemChromeExtensionSuppressMissingEl.checked = previousValue;
+          alert(error.message || 'Kunde inte spara inställningen för Chrome-tillägget.');
+        } finally {
+          systemChromeExtensionSuppressMissingEl.disabled = false;
+        }
+      });
+    }
+    if (systemChromeExtensionCopyPageEl) {
+      systemChromeExtensionCopyPageEl.addEventListener('click', async () => {
+        try {
+          const copied = await copyTextToClipboard('chrome://extensions');
+          if (!copied) {
+            throw new Error('Kunde inte kopiera adressen.');
+          }
+          updateSystemChromeExtensionDebug('Adressen kopierades.');
+        } catch (error) {
+          alert(error.message || 'Kunde inte kopiera adressen.');
+        }
+      });
+    }
+    if (systemChromeExtensionCopyDirectoryEl) {
+      systemChromeExtensionCopyDirectoryEl.addEventListener('click', async () => {
+        try {
+          const copied = await copyTextToClipboard(chromeExtensionDirectory);
+          if (!copied) {
+            throw new Error('Kunde inte kopiera sökvägen.');
+          }
+          updateSystemChromeExtensionDebug('Sökvägen kopierades.');
+        } catch (error) {
+          alert(error.message || 'Kunde inte kopiera sökvägen.');
+        }
+      });
+    }
+    if (systemChromeExtensionTestEl) {
+      systemChromeExtensionTestEl.addEventListener('click', async () => {
+        systemChromeExtensionTestEl.disabled = true;
+        updateSystemChromeExtensionDebug('Testar kommunikationen med Chrome-tillägget...');
+        try {
+          await extensionTest();
+        } catch (error) {
+          alert(error instanceof Error ? error.message : 'Testet mot Chrome-tillägget misslyckades.');
+        } finally {
+          systemChromeExtensionTestEl.disabled = false;
+        }
+      });
+    }
+    renderSystemChromeExtensionStatus();
   }
 
   boundSettingsPanels.add(tabId);
@@ -5806,7 +6400,9 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
     } else if (tabId === 'paths') {
       await loadPathSettings();
     } else if (tabId === 'system') {
-      // State transport setting is hydrated from /api/get-state.php and saved via /api/save-config.php.
+      // System-fliken använder lokalt state för transportval och reset-knapp.
+    } else if (tabId === 'extensions') {
+      await loadSystemSettings();
     }
 
     loadedSettingsPanels.add(tabId);
@@ -5921,7 +6517,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'labels', 'data-fields', 'archiving-review', 'paths', 'system'];
+  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'labels', 'data-fields', 'archiving-review', 'paths', 'system', 'extensions'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -6285,7 +6881,31 @@ async function saveStateTransportSetting(nextTransport) {
   }
 
   stateUpdateTransport = sanitizeStateUpdateTransport(payload.stateUpdateTransport, stateUpdateTransport);
+  applyChromeExtensionConfigPayload(payload);
   return stateUpdateTransport;
+}
+
+async function saveChromeExtensionSuppressMissingSetting(nextValue) {
+  const response = await fetch('/api/save-config.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      chromeExtensionSuppressMissingNotice: nextValue === true,
+    })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Kunde inte spara inställningen för Chrome-tillägget';
+    throw new Error(message);
+  }
+
+  applyChromeExtensionConfigPayload(payload);
+  return chromeExtensionSuppressMissingNotice;
 }
 
 function clientUiKey(row) {
@@ -6376,7 +6996,8 @@ function defaultSenderPaymentDraft() {
   return {
     id: null,
     type: 'bankgiro',
-    number: ''
+    number: '',
+    payeeName: ''
   };
 }
 
@@ -6452,7 +7073,8 @@ function sanitizeSenderPaymentDraft(row) {
   return {
     id,
     type,
-    number: typeof input.number === 'string' ? input.number : ''
+    number: typeof input.number === 'string' ? input.number : '',
+    payeeName: typeof input.payeeName === 'string' ? input.payeeName : '',
   };
 }
 
@@ -11053,6 +11675,17 @@ async function loadPathSettings() {
   updateSettingsActionButtons();
 }
 
+async function loadSystemSettings() {
+  const payload = await loadChromeExtensionConfig();
+  stateUpdateTransport = sanitizeStateUpdateTransport(payload.stateUpdateTransport, stateUpdateTransport);
+  if (systemStateTransportEl) {
+    systemStateTransportEl.value = stateUpdateTransport;
+  }
+  await pingChromeExtension();
+  renderSystemChromeExtensionStatus();
+  updateSystemChromeExtensionDebug('');
+}
+
 async function loadOcrProcessingSettings(options = {}) {
   const response = await fetch('/api/get-config.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -12184,7 +12817,7 @@ window.addEventListener('hashchange', () => {
   applyHashState();
 });
 Promise.all([
-  fetchState(),
+  fetchState({ refreshSenders: true }),
   loadCategories().catch(() => {
     categoriesDraft = [];
     categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
@@ -12203,6 +12836,12 @@ Promise.all([
     extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
     console.error('Kunde inte ladda datafält vid app-start.');
   }),
+  pingChromeExtension({ reloadConfig: true }).catch(() => {
+    console.error('Kunde inte kontrollera Chrome-tillägget vid app-start.');
+  }),
 ]).finally(() => {
   syncStateUpdateTransport();
+  if (chromeExtensionIsUsable()) {
+    scheduleChromeExtensionPayeeLookup(1200);
+  }
 });

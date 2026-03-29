@@ -197,6 +197,22 @@ final class SenderRepository
         return $items;
     }
 
+    public function countPaymentNumbersMissingPayeeName(): int
+    {
+        $statement = $this->pdo->query(
+            'SELECT COUNT(*)
+            FROM sender_payment_numbers p
+            INNER JOIN senders s ON s.id = p.sender_id
+            WHERE s.merged_into_sender_id IS NULL
+              AND (p.payee_name IS NULL OR trim(p.payee_name) = \'\')'
+        );
+        if ($statement === false) {
+            return 0;
+        }
+
+        return max(0, (int) $statement->fetchColumn());
+    }
+
     public function updatePaymentPayeeName(int $paymentId, ?string $payeeName): void
     {
         if ($paymentId < 1) {

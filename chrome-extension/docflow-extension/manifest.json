@@ -1,0 +1,23 @@
+{
+    "manifest_version": 3,
+    "name": "Docflow Chrome Connector",
+    "description": "Docflows koppling till Swedbank för BG/PG-uppslag.",
+    "version": "1.0.0",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqU9P0SMG3OD3yGoztzCpvGVjdN/kKLgsy8fpCKxlYkIUXzd8eRbFI4kOIMY8PefngWIrVG2dnioOi6naXKtxDFaLvyUkHbxqrqxVK882I4dnKNrygS1HUnWOFLZExwr8+3cJGEvv+gue3Fq6LvTKsNlJQktdmrTqGbD0SLrNopOUPmlRL9qnfHzA4MyqciFiLGZVte7327HRzzQM7LJQ2pG8N8qzt75vift/XEPh4Rvre7nwHmmfQE1UulNaeazvNbtEsmhJwG3wQcsHDKlhUijMiRdrucKLpfnzI/4+ngADIjjibKrBt5bFqJIrBM3LRkuuCAeAWrDWNVUK95WzEQIDAQAB",
+    "background": {
+        "service_worker": "background.js"
+    },
+    "permissions": [
+        "tabs",
+        "scripting"
+    ],
+    "host_permissions": [
+        "https://online.swedbank.se/*",
+        "https://www.swedbank.se/*"
+    ],
+    "externally_connectable": {
+        "matches": [
+            "http://127.0.0.1:4321/*"
+        ]
+    }
+}
