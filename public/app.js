@@ -1836,6 +1836,12 @@ function shouldMonitorChromeExtensionPresence() {
   return chromeExtensionRuntime.status === 'missing' || chromeExtensionRuntime.status === 'outdated';
 }
 
+function shouldRetrySwedbankLookupAfterLogin() {
+  return chromeExtensionIsUsable()
+    && chromeExtensionRuntime.loginRequired === true
+    && chromeExtensionRuntime.missingPayeeCount > 0;
+}
+
 function scheduleChromeExtensionPresenceCheck(delay = 1500) {
   clearChromeExtensionPresenceTimer();
   if (!shouldMonitorChromeExtensionPresence()) {
@@ -2080,6 +2086,17 @@ function renderAppNotices() {
       openSwedbankLoginFlow();
     });
     notice.append(text, button);
+    notices.push(notice);
+  } else if (
+    chromeExtensionRuntime.status === 'installed'
+    && chromeExtensionRuntime.missingPayeeCount > 0
+    && chromeExtensionRuntime.lastError
+  ) {
+    const notice = document.createElement('div');
+    notice.className = 'app-notice is-error';
+    const text = document.createElement('span');
+    text.textContent = `Swedbank-uppslaget misslyckades: ${chromeExtensionRuntime.lastError}`;
+    notice.append(text);
     notices.push(notice);
   }
 
@@ -12873,13 +12890,26 @@ window.addEventListener('hashchange', () => {
   applyHashState();
 });
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && shouldMonitorChromeExtensionPresence()) {
+  if (document.hidden) {
+    return;
+  }
+  if (shouldMonitorChromeExtensionPresence()) {
     scheduleChromeExtensionPresenceCheck(100);
+  }
+  if (shouldRetrySwedbankLookupAfterLogin()) {
+    pingChromeExtension().finally(() => {
+      scheduleChromeExtensionPayeeLookup(100);
+    });
   }
 });
 window.addEventListener('focus', () => {
   if (shouldMonitorChromeExtensionPresence()) {
     scheduleChromeExtensionPresenceCheck(100);
+  }
+  if (shouldRetrySwedbankLookupAfterLogin()) {
+    pingChromeExtension().finally(() => {
+      scheduleChromeExtensionPayeeLookup(100);
+    });
   }
 });
 Promise.all([

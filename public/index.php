@@ -38,7 +38,7 @@
       <section id="selected-job-panel" class="selected-job-panel">
         <div class="selected-job-panel-body">
           <div class="selected-job-panel-header-row">
-            <div class="selected-job-panel-header">Markerat dokument</div>
+            <div class="selected-job-panel-header">Detaljer</div>
             <div id="selected-job-status" class="selected-job-status"></div>
           </div>
           <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>

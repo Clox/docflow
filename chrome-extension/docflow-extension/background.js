@@ -6,6 +6,14 @@ const DOCFLOW_SWEDBANK_FALLBACK_PATTERNS = [
   'https://www.swedbank.se/*'
 ];
 
+function normalizeTabUrl(tab) {
+  return typeof tab?.url === 'string' ? tab.url : '';
+}
+
+function isSwedbankLoginUrl(url) {
+  return typeof url === 'string' && url.includes('/logga-in');
+}
+
 function firstNonEmptyString(values) {
   for (const value of values) {
     if (typeof value !== 'string') {
@@ -19,6 +27,17 @@ function firstNonEmptyString(values) {
   return '';
 }
 
+function extractSwedbankError(payload) {
+  const generalErrors = Array.isArray(payload?.errorMessages?.general)
+    ? payload.errorMessages.general
+    : [];
+  const firstError = generalErrors.find((item) => item && typeof item === 'object') || null;
+  return {
+    code: firstNonEmptyString([firstError?.code]),
+    message: firstNonEmptyString([firstError?.message]),
+  };
+}
+
 async function queryTabs(urlPatterns) {
   try {
     const tabs = await chrome.tabs.query({ url: urlPatterns });
@@ -30,14 +49,30 @@ async function queryTabs(urlPatterns) {
 
 async function findSwedbankSessionTab() {
   const appTabs = await queryTabs(DOCFLOW_SWEDBANK_APP_PATTERNS);
-  const validAppTab = appTabs.find((tab) => typeof tab.id === 'number' && tab.id > 0);
-  if (validAppTab) {
-    return { tab: validAppTab, sessionAvailable: true };
+  const candidateAppTabs = appTabs.filter((tab) => typeof tab.id === 'number' && tab.id > 0);
+  const usableAppTab = candidateAppTabs.find((tab) => !isSwedbankLoginUrl(normalizeTabUrl(tab))) || null;
+  if (usableAppTab) {
+    return {
+      tab: usableAppTab,
+      sessionAvailable: true,
+      sessionTabs: candidateAppTabs.filter((tab) => !isSwedbankLoginUrl(normalizeTabUrl(tab))),
+      loginTabs: candidateAppTabs.filter((tab) => isSwedbankLoginUrl(normalizeTabUrl(tab))),
+    };
+  }
+
+  const loginTab = candidateAppTabs.find((tab) => isSwedbankLoginUrl(normalizeTabUrl(tab))) || null;
+  if (loginTab) {
+    return {
+      tab: loginTab,
+      sessionAvailable: false,
+      sessionTabs: [],
+      loginTabs: [loginTab],
+    };
   }
 
   const fallbackTabs = await queryTabs(DOCFLOW_SWEDBANK_FALLBACK_PATTERNS);
   const fallbackTab = fallbackTabs.find((tab) => typeof tab.id === 'number' && tab.id > 0) || null;
-  return { tab: fallbackTab, sessionAvailable: false };
+  return { tab: fallbackTab, sessionAvailable: false, sessionTabs: [], loginTabs: [] };
 }
 
 async function executeLookupInTab(tabId, payload) {
@@ -97,20 +132,27 @@ function normalizeLookupResponse(type, number, result) {
   const responseUrl = typeof result?.responseUrl === 'string' ? result.responseUrl : '';
   const rawText = typeof result?.rawText === 'string' ? result.rawText : '';
   const status = Number.isInteger(result?.status) ? result.status : 0;
+  const swedbankError = extractSwedbankError(payload);
 
   const loginRequired =
-    status === 401
-    || status === 403
+    swedbankError.code === 'STRONGER_AUTHENTICATION_NEEDED'
     || responseUrl.includes('/logga-in')
-    || /logga\s*in/i.test(rawText);
+    || /logga\s*in/i.test(rawText)
+    || ((status === 401 || status === 403) && swedbankError.code === '');
 
   if (!result || result.ok !== true) {
     return {
       ok: false,
-      errorCode: loginRequired ? 'NO_SESSION' : 'LOOKUP_FAILED',
+      errorCode: loginRequired
+        ? 'NO_SESSION'
+        : (swedbankError.code || 'LOOKUP_FAILED'),
       message: loginRequired
-        ? 'Ingen användbar Swedbank-session hittades.'
-        : (result?.scriptError || `Swedbank lookup failed with status ${status || 0}.`),
+        ? 'Swedbank kräver att du loggar in igen för att hämta namn för betalnummer.'
+        : (
+          swedbankError.message
+          || result?.scriptError
+          || `Swedbank lookup failed with status ${status || 0}.`
+        ),
       status,
       loginRequired,
     };
@@ -174,7 +216,8 @@ async function handleLookupPayee(message) {
   }
 
   const swedbank = await findSwedbankSessionTab();
-  if (!swedbank.tab || swedbank.sessionAvailable !== true || typeof swedbank.tab.id !== 'number') {
+  const sessionTabs = Array.isArray(swedbank.sessionTabs) ? swedbank.sessionTabs : [];
+  if (sessionTabs.length < 1) {
     return {
       ok: false,
       errorCode: 'NO_SESSION',
@@ -183,8 +226,35 @@ async function handleLookupPayee(message) {
     };
   }
 
-  const result = await executeLookupInTab(swedbank.tab.id, { type, number });
-  return normalizeLookupResponse(type, number, result);
+  let firstNonSessionError = null;
+  for (const tab of sessionTabs) {
+    if (typeof tab?.id !== 'number' || tab.id < 1) {
+      continue;
+    }
+
+    const result = await executeLookupInTab(tab.id, { type, number });
+    const normalized = normalizeLookupResponse(type, number, result);
+    if (normalized.ok === true) {
+      return normalized;
+    }
+    if (normalized.loginRequired === true) {
+      continue;
+    }
+    if (firstNonSessionError === null) {
+      firstNonSessionError = normalized;
+    }
+  }
+
+  if (firstNonSessionError) {
+    return firstNonSessionError;
+  }
+
+  return {
+    ok: false,
+    errorCode: 'NO_SESSION',
+    message: 'Ingen användbar Swedbank-session hittades.',
+    loginRequired: true,
+  };
 }
 
 async function handleOpenLogin() {
