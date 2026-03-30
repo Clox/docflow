@@ -3728,24 +3728,6 @@ function senderSummaryForJob(job) {
     : null;
 }
 
-function findPayeeNameForSenderNumber(sender, type, number) {
-  if (!sender || typeof sender !== 'object' || !Array.isArray(sender.paymentNumbers)) {
-    return '';
-  }
-  const normalizedDigits = digitsOnly(number);
-  if (!normalizedDigits) {
-    return '';
-  }
-  const match = sender.paymentNumbers.find((payment) => {
-    if (!payment || typeof payment !== 'object') {
-      return false;
-    }
-    const paymentType = String(payment.type || '').trim().toLowerCase();
-    return paymentType === type && digitsOnly(payment.number) === normalizedDigits;
-  });
-  return match && typeof match.payeeName === 'string' ? match.payeeName.trim() : '';
-}
-
 function appendSelectedJobSenderRow(fragment, label, value, options = {}) {
   if (!(fragment instanceof DocumentFragment)) {
     return;
@@ -3784,46 +3766,14 @@ function renderSelectedJobSenderSection(job) {
   }
 
   const summary = senderSummaryForJob(job);
-  const senderId = Number.parseInt(effectiveSenderId(job), 10) || 0;
-  const sender = senderId > 0 ? findSenderById(senderId) : null;
-  const paymentRows = [];
-  const payeeNames = [];
-
-  if (summary) {
-    if (typeof summary.bankgiro === 'string' && summary.bankgiro.trim() !== '') {
-      const payeeName = findPayeeNameForSenderNumber(sender, 'bankgiro', summary.bankgiro);
-      paymentRows.push({
-        label: 'Bankgiro',
-        value: summary.bankgiro.trim(),
-      });
-      if (payeeName) {
-        payeeNames.push(payeeName);
-      }
-    }
-    if (typeof summary.plusgiro === 'string' && summary.plusgiro.trim() !== '') {
-      const payeeName = findPayeeNameForSenderNumber(sender, 'plusgiro', summary.plusgiro);
-      paymentRows.push({
-        label: 'Plusgiro',
-        value: summary.plusgiro.trim(),
-      });
-      if (payeeName) {
-        payeeNames.push(payeeName);
-      }
-    }
-  }
-
-  const uniquePayeeNames = Array.from(new Set(payeeNames.filter((value) => typeof value === 'string' && value.trim() !== '')));
 
   const fragment = document.createDocumentFragment();
-  appendSelectedJobSenderRow(fragment, 'Namn', sender && typeof sender.name === 'string' ? sender.name : (summary && summary.matchedSenderName) || '', {
-    allowEmpty: true,
-    emptyText: 'Ingen avsändare vald',
-  });
-  appendSelectedJobSenderRow(fragment, 'Org.nr', summary && summary.orgNumber ? summary.orgNumber : '');
-  paymentRows.forEach((row) => {
-    appendSelectedJobSenderRow(fragment, row.label, row.value);
-  });
-  appendSelectedJobSenderRow(fragment, 'PayeeName', uniquePayeeNames.join(', '));
+  appendSelectedJobSenderRow(fragment, 'Bankgiro', summary && typeof summary.bankgiro === 'string' ? summary.bankgiro : '');
+  appendSelectedJobSenderRow(fragment, 'Plusgiro', summary && typeof summary.plusgiro === 'string' ? summary.plusgiro : '');
+  appendSelectedJobSenderRow(fragment, 'IBAN', summary && typeof summary.iban === 'string' ? summary.iban : '');
+  appendSelectedJobSenderRow(fragment, 'SWIFT', summary && typeof summary.swift === 'string' ? summary.swift : '');
+  appendSelectedJobSenderRow(fragment, 'Betalningsmottagare', summary && typeof summary.paymentReceiver === 'string' ? summary.paymentReceiver : '');
+  appendSelectedJobSenderRow(fragment, 'Leverantör', summary && typeof summary.supplier === 'string' ? summary.supplier : '');
 
   if (!fragment.hasChildNodes()) {
     selectedJobSenderInfoEl.textContent = 'Ingen avsändarinformation tillgänglig ännu.';

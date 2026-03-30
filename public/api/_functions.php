@@ -7925,18 +7925,38 @@ function calculate_auto_archiving_result_from_text(
     $configuredFieldMeta = simplify_extraction_field_meta($configuredFieldResults);
     $fieldPartitions = partition_archiving_field_values($configuredFieldValues, $rules);
 
-    $orgNumber = detect_org_number_from_ocr_text($ocrText);
     $bankgiroValue = is_string($configuredFieldValues['bankgiro'] ?? null)
         ? trim((string) $configuredFieldValues['bankgiro'])
         : null;
     $plusgiroValue = is_string($configuredFieldValues['plusgiro'] ?? null)
         ? trim((string) $configuredFieldValues['plusgiro'])
         : null;
+    $ibanValue = is_string($configuredFieldValues['iban'] ?? null)
+        ? trim((string) $configuredFieldValues['iban'])
+        : null;
+    $swiftValue = is_string($configuredFieldValues['swift'] ?? null)
+        ? trim((string) $configuredFieldValues['swift'])
+        : null;
+    $paymentReceiverValue = is_string($configuredFieldValues['payment_receiver'] ?? null)
+        ? trim((string) $configuredFieldValues['payment_receiver'])
+        : null;
+    $supplierValue = is_string($configuredFieldValues['supplier'] ?? null)
+        ? trim((string) $configuredFieldValues['supplier'])
+        : null;
     $senderLookup = sender_lookup_result(
-        $orgNumber,
+        null,
         $bankgiroValue !== '' ? $bankgiroValue : null,
         $plusgiroValue !== '' ? $plusgiroValue : null
     );
+    $senderLookup['query'] = [
+        'orgNumber' => null,
+        'bankgiro' => $bankgiroValue !== '' ? $bankgiroValue : null,
+        'plusgiro' => $plusgiroValue !== '' ? $plusgiroValue : null,
+        'iban' => $ibanValue !== '' ? $ibanValue : null,
+        'swift' => $swiftValue !== '' ? $swiftValue : null,
+        'payment_receiver' => $paymentReceiverValue !== '' ? $paymentReceiverValue : null,
+        'supplier' => $supplierValue !== '' ? $supplierValue : null,
+    ];
 
     $matchedClientDirName = match_client_dir_name($ocrText, $clients);
     $preselectedClient = null;
@@ -9710,6 +9730,10 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
                     'orgNumber' => null,
                     'bankgiro' => null,
                     'plusgiro' => null,
+                    'iban' => null,
+                    'swift' => null,
+                    'payment_receiver' => null,
+                    'supplier' => null,
                 ],
                 'matched' => false,
                 'matchedBy' => null,
@@ -10370,45 +10394,28 @@ function extracted_field_scalar_value(array $extracted, string $fieldKey): ?stri
 
 function build_job_sender_summary(?array $extracted, ?int $matchedSenderId, ?int $selectedSenderId): ?array
 {
+    unset($matchedSenderId, $selectedSenderId);
+
     if (!is_array($extracted)) {
         return null;
     }
 
-    $senderLookup = is_array($extracted['senderLookup'] ?? null) ? $extracted['senderLookup'] : [];
-    $query = is_array($senderLookup['query'] ?? null) ? $senderLookup['query'] : [];
-    $sender = is_array($senderLookup['sender'] ?? null) ? $senderLookup['sender'] : [];
-    $bankgiro = is_string($query['bankgiro'] ?? null) ? trim((string) $query['bankgiro']) : '';
-    if ($bankgiro === '') {
-        $bankgiro = extracted_field_scalar_value($extracted, 'bankgiro') ?? '';
-    }
-    $plusgiro = is_string($query['plusgiro'] ?? null) ? trim((string) $query['plusgiro']) : '';
-    if ($plusgiro === '') {
-        $plusgiro = extracted_field_scalar_value($extracted, 'plusgiro') ?? '';
-    }
-
     $summary = [
-        'matchedBy' => is_string($senderLookup['matchedBy'] ?? null) ? trim((string) $senderLookup['matchedBy']) : '',
-        'matchedValue' => is_string($senderLookup['matchedValue'] ?? null) ? trim((string) $senderLookup['matchedValue']) : '',
-        'orgNumber' => is_string($query['orgNumber'] ?? null) ? trim((string) $query['orgNumber']) : '',
-        'bankgiro' => trim((string) $bankgiro),
-        'plusgiro' => trim((string) $plusgiro),
+        'bankgiro' => extracted_field_scalar_value($extracted, 'bankgiro') ?? '',
+        'plusgiro' => extracted_field_scalar_value($extracted, 'plusgiro') ?? '',
+        'iban' => extracted_field_scalar_value($extracted, 'iban') ?? '',
+        'swift' => extracted_field_scalar_value($extracted, 'swift') ?? '',
         'paymentReceiver' => extracted_field_scalar_value($extracted, 'payment_receiver') ?? '',
         'supplier' => extracted_field_scalar_value($extracted, 'supplier') ?? '',
-        'matchedSenderName' => is_string($sender['name'] ?? null) ? trim((string) $sender['name']) : '',
-        'matchedSenderId' => $matchedSenderId,
-        'selectedSenderId' => $selectedSenderId,
     ];
 
-    foreach ($summary as $key => $value) {
-        if ($key === 'matchedSenderId' || $key === 'selectedSenderId') {
-            continue;
-        }
+    foreach ($summary as $value) {
         if ($value !== '') {
             return $summary;
         }
     }
 
-    return ($matchedSenderId !== null || $selectedSenderId !== null) ? $summary : null;
+    return null;
 }
 
 function build_job_state_entry(
