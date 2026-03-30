@@ -70,7 +70,8 @@ final class SenderRepository
                 p.id AS payment_id,
                 p.type AS payment_type,
                 p.number AS payment_number,
-                p.payee_name AS payment_payee_name
+                p.payee_name AS payment_payee_name,
+                p.payee_lookup_status AS payment_payee_lookup_status
             FROM senders s
             LEFT JOIN sender_payment_numbers p ON p.sender_id = s.id
             WHERE s.merged_into_sender_id IS NULL
@@ -119,6 +120,7 @@ final class SenderRepository
                     is_string($row['payment_number'] ?? null) ? trim((string) $row['payment_number']) : ''
                 ),
                 'payeeName' => is_string($row['payment_payee_name'] ?? null) ? trim((string) $row['payment_payee_name']) : '',
+                'payeeLookupStatus' => is_string($row['payment_payee_lookup_status'] ?? null) ? trim((string) $row['payment_payee_lookup_status']) : '',
             ];
         }
 
@@ -153,11 +155,13 @@ final class SenderRepository
                 s.name AS sender_name,
                 p.type,
                 p.number,
-                p.payee_name
+                p.payee_name,
+                p.payee_lookup_status
             FROM sender_payment_numbers p
             INNER JOIN senders s ON s.id = p.sender_id
             WHERE s.merged_into_sender_id IS NULL
               AND (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
+              AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\')
             ORDER BY s.name ASC, p.type ASC, p.number ASC, p.id ASC
             LIMIT :limit'
         );
@@ -191,6 +195,7 @@ final class SenderRepository
                 'number' => $this->formatPaymentNumberForDisplay($type, $normalizedNumber),
                 'normalizedNumber' => $normalizedNumber,
                 'payeeName' => is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '',
+                'payeeLookupStatus' => is_string($row['payee_lookup_status'] ?? null) ? trim((string) $row['payee_lookup_status']) : '',
             ];
         }
 
@@ -204,7 +209,8 @@ final class SenderRepository
             FROM sender_payment_numbers p
             INNER JOIN senders s ON s.id = p.sender_id
             WHERE s.merged_into_sender_id IS NULL
-              AND (p.payee_name IS NULL OR trim(p.payee_name) = \'\')'
+              AND (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
+              AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\')'
         );
         if ($statement === false) {
             return 0;
@@ -213,7 +219,7 @@ final class SenderRepository
         return max(0, (int) $statement->fetchColumn());
     }
 
-    public function updatePaymentPayeeName(int $paymentId, ?string $payeeName): void
+    public function updatePaymentPayeeName(int $paymentId, ?string $payeeName, ?string $lookupStatus = null): void
     {
         if ($paymentId < 1) {
             throw new RuntimeException('Payment id is required.');
@@ -227,15 +233,31 @@ final class SenderRepository
             }
         }
 
+        $normalizedLookupStatus = null;
+        if (is_string($lookupStatus)) {
+            $normalizedLookupStatus = trim(strtolower($lookupStatus));
+            if ($normalizedLookupStatus === '') {
+                $normalizedLookupStatus = null;
+            }
+        }
+        if ($normalizedLookupStatus !== null && $normalizedLookupStatus !== 'not_found') {
+            throw new RuntimeException('Unsupported payee lookup status.');
+        }
+        if ($normalizedPayeeName !== null) {
+            $normalizedLookupStatus = null;
+        }
+
         $statement = $this->pdo->prepare(
             'UPDATE sender_payment_numbers
             SET payee_name = :payee_name,
+                payee_lookup_status = :payee_lookup_status,
                 updated_at = :updated_at
             WHERE id = :id'
         );
         $statement->execute([
             ':id' => $paymentId,
             ':payee_name' => $normalizedPayeeName,
+            ':payee_lookup_status' => $normalizedLookupStatus,
             ':updated_at' => date(DATE_ATOM),
         ]);
 

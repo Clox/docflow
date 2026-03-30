@@ -294,6 +294,14 @@ try {
             requires_ocr = 0,
             source = :source,
             confidence = 1,
+            payee_name = CASE
+                WHEN type <> :type OR number <> :number THEN NULL
+                ELSE payee_name
+            END,
+            payee_lookup_status = CASE
+                WHEN type <> :type OR number <> :number THEN NULL
+                ELSE payee_lookup_status
+            END,
             updated_at = :updated_at
         WHERE id = :id'
     );

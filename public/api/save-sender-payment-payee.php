@@ -34,18 +34,25 @@ if ($payeeName !== null && !is_string($payeeName)) {
     exit;
 }
 
+$lookupStatus = $payload['lookupStatus'] ?? null;
+if ($lookupStatus !== null && !is_string($lookupStatus)) {
+    json_response(['error' => 'lookupStatus must be a string or null'], 400);
+    exit;
+}
+
 try {
     $repository = sender_repository_instance();
     if ($repository === null) {
         throw new RuntimeException('Sender repository is unavailable.');
     }
 
-    $repository->updatePaymentPayeeName($paymentId, $payeeName);
+    $repository->updatePaymentPayeeName($paymentId, $payeeName, $lookupStatus);
 
     json_response([
         'ok' => true,
         'paymentId' => $paymentId,
         'payeeName' => is_string($payeeName) ? trim($payeeName) : null,
+        'lookupStatus' => is_string($lookupStatus) ? trim(strtolower($lookupStatus)) : null,
         'remainingCount' => $repository->countPaymentNumbersMissingPayeeName(),
     ]);
 } catch (Throwable $e) {

@@ -1914,6 +1914,37 @@ async function processMissingPayeeNames() {
     });
 
     if (!extensionPayload || extensionPayload.ok !== true) {
+      const payeeNotFound = extensionPayload && extensionPayload.errorCode === 'PAYEE_NOT_FOUND';
+      if (payeeNotFound) {
+        const saveResponse = await fetch('/api/save-sender-payment-payee.php', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            paymentId: item.paymentId,
+            payeeName: null,
+            lookupStatus: 'not_found',
+          }),
+        });
+        const savePayload = await saveResponse.json().catch(() => null);
+        if (!saveResponse.ok || !savePayload || savePayload.ok !== true) {
+          throw new Error(savePayload && typeof savePayload.error === 'string' ? savePayload.error : 'Kunde inte spara status för betalnummer utan mottagare.');
+        }
+
+        setChromeExtensionRuntime({
+          swedbankSessionAvailable: true,
+          loginRequired: false,
+          missingPayeeCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
+          lastError: '',
+        });
+
+        if ((Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0) > 0) {
+          scheduleChromeExtensionPayeeLookup(400);
+        }
+        return;
+      }
+
       const loginRequired = extensionPayload && extensionPayload.loginRequired === true;
       setChromeExtensionRuntime({
         swedbankSessionAvailable: loginRequired ? false : chromeExtensionRuntime.swedbankSessionAvailable,

@@ -31,10 +31,16 @@ function extractSwedbankError(payload) {
   const generalErrors = Array.isArray(payload?.errorMessages?.general)
     ? payload.errorMessages.general
     : [];
+  const fieldErrors = Array.isArray(payload?.errorMessages?.fields)
+    ? payload.errorMessages.fields
+    : [];
   const firstError = generalErrors.find((item) => item && typeof item === 'object') || null;
+  const firstFieldError = fieldErrors.find((item) => item && typeof item === 'object') || null;
   return {
     code: firstNonEmptyString([firstError?.code]),
     message: firstNonEmptyString([firstError?.message]),
+    field: firstNonEmptyString([firstFieldError?.field]),
+    fieldMessage: firstNonEmptyString([firstFieldError?.message]),
   };
 }
 
@@ -88,7 +94,7 @@ async function executeLookupInTab(tabId, payload) {
           method: 'GET',
           credentials: 'include',
           headers: {
-            'x-client': ''
+            'x-client': 'fdp-internet-bank/232.1.0'
           }
         });
         const rawText = await response.text();
@@ -133,6 +139,10 @@ function normalizeLookupResponse(type, number, result) {
   const rawText = typeof result?.rawText === 'string' ? result.rawText : '';
   const status = Number.isInteger(result?.status) ? result.status : 0;
   const swedbankError = extractSwedbankError(payload);
+  const notFound =
+    status === 400
+    && swedbankError.field === 'accountNumber'
+    && /ingen mottagare/i.test(swedbankError.fieldMessage);
 
   const loginRequired =
     swedbankError.code === 'STRONGER_AUTHENTICATION_NEEDED'
@@ -143,18 +153,28 @@ function normalizeLookupResponse(type, number, result) {
   if (!result || result.ok !== true) {
     return {
       ok: false,
-      errorCode: loginRequired
-        ? 'NO_SESSION'
-        : (swedbankError.code || 'LOOKUP_FAILED'),
-      message: loginRequired
-        ? 'Swedbank kräver att du loggar in igen för att hämta namn för betalnummer.'
+      errorCode: notFound
+        ? 'PAYEE_NOT_FOUND'
         : (
-          swedbankError.message
-          || result?.scriptError
-          || `Swedbank lookup failed with status ${status || 0}.`
+          loginRequired
+            ? 'NO_SESSION'
+            : (swedbankError.code || 'LOOKUP_FAILED')
+        ),
+      message: notFound
+        ? (swedbankError.fieldMessage || 'Det finns ingen mottagare med det här numret.')
+        : (
+          loginRequired
+            ? 'Swedbank kräver att du loggar in igen för att hämta namn för betalnummer.'
+            : (
+              swedbankError.message
+              || swedbankError.fieldMessage
+              || result?.scriptError
+              || `Swedbank lookup failed with status ${status || 0}.`
+            )
         ),
       status,
-      loginRequired,
+      loginRequired: notFound ? false : loginRequired,
+      notFound,
     };
   }
 
