@@ -27,6 +27,10 @@ try {
         exit;
     }
 
+    if (is_array($job['analysis'] ?? null) && array_key_exists('senderLookup', $job['analysis'])) {
+        unset($job['analysis']['senderLookup']);
+    }
+
     json_response(['job' => $job]);
 } catch (Throwable $e) {
     json_response(['job' => null], 500);

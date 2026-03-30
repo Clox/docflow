@@ -3707,15 +3707,6 @@ function effectiveSenderId(job) {
   if (preselectedSender && Number.isInteger(Number(preselectedSender.id)) && Number(preselectedSender.id) > 0 && isKnownSender(preselectedSender.id)) {
     return String(preselectedSender.id);
   }
-  const senderLookup = job.analysis && typeof job.analysis === 'object' && job.analysis.senderLookup && typeof job.analysis.senderLookup === 'object'
-    ? job.analysis.senderLookup
-    : null;
-  const lookupSender = senderLookup && senderLookup.sender && typeof senderLookup.sender === 'object'
-    ? senderLookup.sender
-    : null;
-  if (lookupSender && Number.isInteger(Number(lookupSender.id)) && Number(lookupSender.id) > 0 && isKnownSender(lookupSender.id)) {
-    return String(lookupSender.id);
-  }
   if (Number.isInteger(job.matchedSenderId) && job.matchedSenderId > 0 && isKnownSender(job.matchedSenderId)) {
     return String(job.matchedSenderId);
   }
@@ -3768,6 +3759,7 @@ function renderSelectedJobSenderSection(job) {
   const summary = senderSummaryForJob(job);
 
   const fragment = document.createDocumentFragment();
+  appendSelectedJobSenderRow(fragment, 'Org.nr', summary && typeof summary.orgNumber === 'string' ? summary.orgNumber : '');
   appendSelectedJobSenderRow(fragment, 'Bankgiro', summary && typeof summary.bankgiro === 'string' ? summary.bankgiro : '');
   appendSelectedJobSenderRow(fragment, 'Plusgiro', summary && typeof summary.plusgiro === 'string' ? summary.plusgiro : '');
   appendSelectedJobSenderRow(fragment, 'IBAN', summary && typeof summary.iban === 'string' ? summary.iban : '');
@@ -8011,30 +8003,102 @@ function defaultExtractionField() {
   return {
     key: '',
     name: '',
+    aliases: [''],
     searchString: '',
+    isRegex: true,
+    normalizationType: 'none',
+    normalizationChars: '',
   };
+}
+
+function sanitizeExtractionFieldAliasesInput(aliases, legacyFallback = '') {
+  const values = Array.isArray(aliases)
+    ? aliases
+    : ((typeof aliases === 'string' || typeof aliases === 'number') ? [String(aliases)] : []);
+  const normalized = [];
+  const seen = new Set();
+
+  values.forEach((value) => {
+    const alias = String(value || '').trim();
+    if (!alias) {
+      return;
+    }
+    const dedupeKey = alias.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+    seen.add(dedupeKey);
+    normalized.push(alias);
+  });
+
+  const fallback = String(legacyFallback || '').trim();
+  if (normalized.length === 0 && fallback) {
+    normalized.push(fallback);
+  }
+
+  return normalized;
+}
+
+function sanitizeExtractionFieldNormalizationType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'whitelist' || normalized === 'blacklist' ? normalized : 'none';
+}
+
+function extractionFieldAliasesForEditor(field) {
+  const sanitized = sanitizeExtractionField(field);
+  const aliases = Array.isArray(sanitized.aliases) ? [...sanitized.aliases] : [];
+  if (aliases.length === 0 || String(aliases[aliases.length - 1] || '').trim() !== '') {
+    aliases.push('');
+  }
+  return aliases;
 }
 
 function sanitizeExtractionField(field, fallbackIndex = 0) {
   const input = field && typeof field === 'object' ? field : {};
   const name = typeof input.name === 'string' ? input.name : '';
+  const extractor = typeof input.extractor === 'string' && input.extractor.trim() !== ''
+    ? input.extractor.trim()
+    : 'generic_label';
+  const isSystemField = input.isSystemField === true
+    || (typeof input.systemFieldKey === 'string' && input.systemFieldKey.trim() !== '');
+  let searchString = typeof input.searchString === 'string'
+    ? input.searchString
+    : (typeof input.query === 'string' ? input.query : '');
+  const legacyAliasFallback = extractor === 'generic_label'
+    && !Array.isArray(input.aliases)
+    && String(searchString || '').trim() !== ''
+    ? searchString
+    : '';
+  const aliases = sanitizeExtractionFieldAliasesInput(input.aliases, legacyAliasFallback);
+  if (legacyAliasFallback) {
+    searchString = '';
+  }
   const normalizedKey = typeof input.key === 'string' && input.key.trim() !== ''
     ? input.key.trim()
     : normalizeConfigKey(name || `field_${fallbackIndex + 1}`);
   return {
     key: normalizedKey,
     name,
-    searchString: typeof input.searchString === 'string'
-      ? input.searchString
-      : (typeof input.query === 'string' ? input.query : ''),
-    extractor: typeof input.extractor === 'string' && input.extractor.trim() !== ''
-      ? input.extractor.trim()
-      : 'generic_label',
+    aliases,
+    searchString,
+    isRegex: isSystemField ? input.isRegex === true : true,
+    normalizationType: sanitizeExtractionFieldNormalizationType(input.normalizationType),
+    normalizationChars: typeof input.normalizationChars === 'string' ? input.normalizationChars : '',
+    extractor,
     predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
     isPredefinedField: input.isPredefinedField === true,
     systemFieldKey: typeof input.systemFieldKey === 'string' ? input.systemFieldKey : '',
     isSystemField: input.isSystemField === true,
   };
+}
+
+function syncExtractionFieldAliasInputSize(input) {
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+  const sample = String(input.value || input.placeholder || '');
+  const contentLength = Array.from(sample).length;
+  input.size = Math.max(8, Math.min(28, contentLength + 1));
 }
 
 function sanitizeExtractionFields(fields) {
@@ -9037,6 +9101,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
   const fields = document.createElement('div');
   fields.className = 'category-fields category-fields--wide';
+  const useAdvancedFieldUi = !readOnly;
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
@@ -9056,7 +9121,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
   const queryInput = document.createElement('input');
   queryInput.type = 'text';
-  queryInput.placeholder = isDocumentDateField ? 'Särskild intern heuristik' : 'Ex: "huvudman"';
+  queryInput.placeholder = isDocumentDateField ? 'Särskild intern heuristik' : 'Ex: "\\d{6}[- ]?\\d{4}"';
   queryInput.value = isDocumentDateField
     ? 'Ort + datum / brevhuvud / fristående datum'
     : field.searchString;
@@ -9069,20 +9134,147 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
     });
   }
 
-  const keyInput = document.createElement('input');
-  keyInput.type = 'text';
-  keyInput.value = field.key;
-  keyInput.disabled = true;
-
   fields.appendChild(createFloatingField('Namn', nameInput));
-  fields.appendChild(createFloatingField(isDocumentDateField ? 'Extraktion' : 'Söksträng', queryInput));
-  fields.appendChild(createFloatingField('Nyckel', keyInput));
+
+  if (useAdvancedFieldUi) {
+    const aliasesField = document.createElement('div');
+    aliasesField.className = 'floating-input-group extraction-field-aliases-field';
+    const aliasesLabel = document.createElement('label');
+    aliasesLabel.className = 'floating-input-label';
+    aliasesLabel.textContent = 'Sökord';
+    const aliasesList = document.createElement('div');
+    aliasesList.className = 'extraction-field-aliases';
+    const aliasValues = extractionFieldAliasesForEditor(field);
+
+    const syncAliasesToDraft = () => {
+      collection[index].aliases = sanitizeExtractionFieldAliasesInput(aliasValues);
+      updateSettingsActionButtons();
+    };
+
+    const renderAliasRows = (focusIndex = null, selectionStart = null, selectionEnd = null) => {
+      aliasesList.innerHTML = '';
+      const nonEmptyCount = aliasValues.filter((value) => String(value || '').trim() !== '').length;
+
+      aliasValues.forEach((aliasValue, aliasIndex) => {
+        const aliasRow = document.createElement('div');
+        aliasRow.className = 'extraction-field-alias-row';
+
+        const aliasInputWrap = document.createElement('div');
+        aliasInputWrap.className = 'extraction-field-alias-input-wrap';
+
+        const aliasInput = document.createElement('input');
+        aliasInput.type = 'text';
+        aliasInput.placeholder = 'Ex: "org.nr"';
+        aliasInput.value = aliasValue;
+        aliasInput.dataset.aliasIndex = String(aliasIndex);
+        syncExtractionFieldAliasInputSize(aliasInput);
+        aliasInput.addEventListener('input', () => {
+          aliasValues[aliasIndex] = aliasInput.value;
+          syncExtractionFieldAliasInputSize(aliasInput);
+          syncAliasesToDraft();
+          if (aliasIndex === aliasValues.length - 1 && aliasInput.value.trim() !== '') {
+            const nextSelectionStart = aliasInput.selectionStart;
+            const nextSelectionEnd = aliasInput.selectionEnd;
+            aliasValues.push('');
+            renderAliasRows(aliasIndex, nextSelectionStart, nextSelectionEnd);
+          }
+        });
+
+        aliasInputWrap.appendChild(aliasInput);
+        if (aliasIndex > 0) {
+          aliasInput.classList.add('has-inline-remove');
+          const removeAliasButton = document.createElement('button');
+          removeAliasButton.type = 'button';
+          removeAliasButton.className = 'extraction-field-alias-remove';
+          removeAliasButton.setAttribute('aria-label', 'Ta bort sökord');
+          removeAliasButton.title = 'Ta bort sökord';
+          removeAliasButton.textContent = '×';
+          const removingLastAlias = nonEmptyCount <= 1 && aliasInput.value.trim() !== '';
+          removeAliasButton.disabled = removingLastAlias;
+          removeAliasButton.addEventListener('click', () => {
+            if (removingLastAlias) {
+              return;
+            }
+            aliasValues.splice(aliasIndex, 1);
+            if (aliasValues.length === 0 || String(aliasValues[aliasValues.length - 1] || '').trim() !== '') {
+              aliasValues.push('');
+            }
+            syncAliasesToDraft();
+            renderAliasRows();
+          });
+          aliasInputWrap.appendChild(removeAliasButton);
+        }
+        aliasRow.appendChild(aliasInputWrap);
+        aliasesList.appendChild(aliasRow);
+      });
+
+      if (focusIndex !== null) {
+        const inputs = Array.from(aliasesList.querySelectorAll('input'));
+        const targetInput = inputs[focusIndex] || null;
+        if (targetInput) {
+          targetInput.focus();
+          if (selectionStart !== null && selectionEnd !== null) {
+            targetInput.setSelectionRange(selectionStart, selectionEnd);
+          }
+        }
+      }
+    };
+
+    renderAliasRows();
+    aliasesField.appendChild(aliasesLabel);
+    aliasesField.appendChild(aliasesList);
+    fields.appendChild(aliasesField);
+
+    fields.appendChild(createFloatingField('Värdemönster (regex)', queryInput));
+
+    const normalizationTypeSelect = document.createElement('select');
+    normalizationTypeSelect.className = 'extraction-field-normalization-select';
+    [
+      ['none', 'Ingen'],
+      ['whitelist', 'Whitelist'],
+      ['blacklist', 'Blacklist'],
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      normalizationTypeSelect.appendChild(option);
+    });
+    normalizationTypeSelect.value = sanitizeExtractionFieldNormalizationType(field.normalizationType);
+
+    const normalizationCharsInput = document.createElement('input');
+    normalizationCharsInput.type = 'text';
+    normalizationCharsInput.placeholder = 'Ex: 0123456789';
+    normalizationCharsInput.value = field.normalizationChars || '';
+
+    const syncNormalizationUi = () => {
+      const normalizationType = sanitizeExtractionFieldNormalizationType(normalizationTypeSelect.value);
+      collection[index].normalizationType = normalizationType;
+      collection[index].normalizationChars = normalizationCharsInput.value;
+      normalizationCharsInput.disabled = normalizationType === 'none';
+      normalizationCharsInput.placeholder = normalizationType === 'none'
+        ? 'Ingen normalisering vald'
+        : 'Ex: 0123456789';
+      updateSettingsActionButtons();
+    };
+
+    normalizationTypeSelect.addEventListener('change', syncNormalizationUi);
+    normalizationCharsInput.addEventListener('input', syncNormalizationUi);
+
+    const normalizationGroup = document.createElement('div');
+    normalizationGroup.className = 'extraction-field-normalization-group';
+    normalizationGroup.appendChild(createFloatingField('Normalisering', normalizationTypeSelect));
+    normalizationGroup.appendChild(createFloatingField('Normaliseringstecken', normalizationCharsInput));
+    fields.appendChild(normalizationGroup);
+    syncNormalizationUi();
+  } else {
+    fields.appendChild(createFloatingField(isDocumentDateField ? 'Extraktion' : 'Söksträng', queryInput));
+  }
 
   if (allowRemove) {
     const removeButton = document.createElement('button');
     removeButton.type = 'button';
     removeButton.className = 'category-remove';
-    removeButton.textContent = 'Ta bort';
+    removeButton.textContent = 'Ta bort datafält';
     removeButton.addEventListener('click', () => {
       collection.splice(index, 1);
       renderExtractionFieldsEditor();
@@ -9105,7 +9297,7 @@ function renderExtractionFieldsEditor() {
 
   extractionFieldsEditorEl.innerHTML = '';
 
-  const builtInGroup = createEditorGroup('Fördefinerade', extractionFieldsBuiltInCollapsed, () => {
+  const builtInGroup = createEditorGroup('Fördefinierade', extractionFieldsBuiltInCollapsed, () => {
     extractionFieldsBuiltInCollapsed = !extractionFieldsBuiltInCollapsed;
   }, renderExtractionFieldsEditor);
   const ownGroup = createEditorGroup('Egna', extractionFieldsCustomCollapsed, () => {
@@ -9119,12 +9311,12 @@ function renderExtractionFieldsEditor() {
   if (predefinedExtractionFieldsDraft.length === 0) {
     const emptyBuiltIn = document.createElement('div');
     emptyBuiltIn.className = 'categories-empty';
-    emptyBuiltIn.textContent = 'Inga fördefinerade datafält ännu.';
+    emptyBuiltIn.textContent = 'Inga fördefinierade datafält ännu.';
     builtInGroup.content.appendChild(emptyBuiltIn);
   } else {
     predefinedExtractionFieldsDraft.forEach((field, index) => {
       renderSingleExtractionFieldEditor(builtInGroup.content, predefinedExtractionFieldsDraft, index, {
-        showLock: true,
+        showLock: false,
         allowRemove: false,
       });
     });

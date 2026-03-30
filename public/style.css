@@ -316,20 +316,22 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-sender-info {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  column-gap: 10px;
-  row-gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   font-size: 12px;
   color: #4b5563;
-  align-items: baseline;
 }
 
 .selected-job-sender-row {
-  display: contents;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .selected-job-sender-label {
+  flex: 0 0 auto;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.03em;
@@ -338,10 +340,12 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-sender-value {
+  flex: 1 1 auto;
   color: #1f2937;
-  word-break: break-word;
   min-width: 0;
   text-align: right;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .selected-job-sender-value.is-muted {
@@ -2758,6 +2762,7 @@ body.is-resizing-sidebar {
 }
 
 .category-fields input,
+.category-fields select,
 .rule-fields select,
 .rule-fields input[type="text"],
 .rule-fields input[type="number"] {
@@ -2819,6 +2824,87 @@ body.is-resizing-sidebar {
   font-size: 11px;
   line-height: 1;
   z-index: 1;
+}
+
+.extraction-field-aliases-field {
+  grid-column: 1 / -1;
+}
+
+.extraction-field-aliases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 10px;
+  align-items: center;
+}
+
+.extraction-field-alias-row {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.extraction-field-alias-input-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.extraction-field-alias-row input {
+  width: auto;
+  min-width: 8ch;
+  max-width: min(100%, 28ch);
+  flex: 0 1 auto;
+}
+
+.extraction-field-alias-row input.has-inline-remove {
+  padding-right: 26px;
+}
+
+.extraction-field-alias-remove {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #a11;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.extraction-field-alias-remove:hover {
+  color: #7f1d1d;
+}
+
+.extraction-field-alias-remove:disabled {
+  opacity: 0.45;
+  cursor: default;
+  color: #a11;
+}
+
+.extraction-field-normalization-group {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(150px, 210px) minmax(180px, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+.extraction-field-normalization-select {
+  height: 32px;
+  min-height: 32px;
 }
 
 .score-field input[type="number"] {
