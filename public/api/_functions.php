@@ -8004,7 +8004,8 @@ function calculate_auto_archiving_result_from_text(
 
 function load_job_ocr_text(string $jobDir): string
 {
-    $ocrPath = $jobDir . '/ocr.txt';
+    ensure_merged_objects_text_from_storage($jobDir);
+    $ocrPath = $jobDir . '/merged_objects.txt';
     $raw = is_file($ocrPath) ? file_get_contents($ocrPath) : false;
     return is_string($raw) ? $raw : '';
 }
@@ -9722,7 +9723,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
         'files' => [
             'sourcePdf' => 'source.pdf',
             'reviewPdf' => 'review.pdf',
-            'ocrText' => 'ocr.txt',
+            'ocrText' => 'merged_objects.txt',
             'ocrObjects' => 'ocr-objects.json',
             'extracted' => 'extracted.json',
         ],
@@ -9758,10 +9759,14 @@ function process_claimed_job(
 ): array
 {
     $reviewPdfPath = $jobDir . '/review.pdf';
-    $ocrPath = $jobDir . '/ocr.txt';
+    $legacyOcrPath = $jobDir . '/ocr.txt';
+    $ocrmypdfSidecarPath = $jobDir . '/ocrmypdf_sidecar.txt';
     $ocrObjectsPath = $jobDir . '/ocr-objects.json';
-    if (is_file($ocrPath)) {
-        @unlink($ocrPath);
+    if (is_file($legacyOcrPath)) {
+        @unlink($legacyOcrPath);
+    }
+    if (is_file($ocrmypdfSidecarPath)) {
+        @unlink($ocrmypdfSidecarPath);
     }
     if (is_file($ocrObjectsPath)) {
         @unlink($ocrObjectsPath);
@@ -9810,7 +9815,7 @@ function process_claimed_job(
         $ocrProcessedPdf = run_ocrmypdf(
             $sourcePdfPath,
             $reviewPdfPath,
-            $ocrPath,
+            $ocrmypdfSidecarPath,
             $jobDir,
             $ocrSkipExistingText,
             $ocrOptimizeLevel,
@@ -9869,37 +9874,12 @@ function process_claimed_job(
         }
     }
 
-    $ocrText = '';
-    $extracted = null;
-    if ($ocrTextExtractionMethod === 'bbox') {
-        $bboxObjects = extract_bbox_layout_objects_from_pdf($textSourcePdfPath);
-        if ($bboxObjects !== null && $bboxObjects !== []) {
-            write_json_file($ocrObjectsPath, [
-                'source' => 'pdftotext-bbox-layout',
-                'pages' => $bboxObjects,
-            ]);
-            $extracted = render_grid_text_from_bbox_objects($bboxObjects);
-        } elseif (is_file($ocrObjectsPath)) {
-            @unlink($ocrObjectsPath);
-        }
-    } else {
-        if (is_file($ocrObjectsPath)) {
-            @unlink($ocrObjectsPath);
-        }
+    if (is_file($ocrObjectsPath)) {
+        @unlink($ocrObjectsPath);
     }
+    unset($ocrTextExtractionMethod, $fallbackTxtPath);
 
-    if (!is_string($extracted) || $extracted === '') {
-        $extracted = extract_text_from_pdf($textSourcePdfPath);
-    }
-    if ($extracted === null || $extracted === '') {
-        $ocrText = fallback_ocr_text_from_path($fallbackTxtPath);
-    } else {
-        $ocrText = $extracted;
-    }
-
-    if (file_put_contents($ocrPath, $ocrText) === false) {
-        throw new RuntimeException('Could not write ocr.txt');
-    }
+    $ocrText = load_job_ocr_text($jobDir);
 
     $activeRulesSource = load_active_archiving_rules();
     $allActiveFields = array_values(array_merge(
@@ -10397,13 +10377,21 @@ function build_job_sender_summary(?array $extracted, ?int $matchedSenderId, ?int
     $senderLookup = is_array($extracted['senderLookup'] ?? null) ? $extracted['senderLookup'] : [];
     $query = is_array($senderLookup['query'] ?? null) ? $senderLookup['query'] : [];
     $sender = is_array($senderLookup['sender'] ?? null) ? $senderLookup['sender'] : [];
+    $bankgiro = is_string($query['bankgiro'] ?? null) ? trim((string) $query['bankgiro']) : '';
+    if ($bankgiro === '') {
+        $bankgiro = extracted_field_scalar_value($extracted, 'bankgiro') ?? '';
+    }
+    $plusgiro = is_string($query['plusgiro'] ?? null) ? trim((string) $query['plusgiro']) : '';
+    if ($plusgiro === '') {
+        $plusgiro = extracted_field_scalar_value($extracted, 'plusgiro') ?? '';
+    }
 
     $summary = [
         'matchedBy' => is_string($senderLookup['matchedBy'] ?? null) ? trim((string) $senderLookup['matchedBy']) : '',
         'matchedValue' => is_string($senderLookup['matchedValue'] ?? null) ? trim((string) $senderLookup['matchedValue']) : '',
         'orgNumber' => is_string($query['orgNumber'] ?? null) ? trim((string) $query['orgNumber']) : '',
-        'bankgiro' => is_string($query['bankgiro'] ?? null) ? trim((string) $query['bankgiro']) : '',
-        'plusgiro' => is_string($query['plusgiro'] ?? null) ? trim((string) $query['plusgiro']) : '',
+        'bankgiro' => trim((string) $bankgiro),
+        'plusgiro' => trim((string) $plusgiro),
         'paymentReceiver' => extracted_field_scalar_value($extracted, 'payment_receiver') ?? '',
         'supplier' => extracted_field_scalar_value($extracted, 'supplier') ?? '',
         'matchedSenderName' => is_string($sender['name'] ?? null) ? trim((string) $sender['name']) : '',
@@ -11098,6 +11086,7 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
 
     $artifactPaths = [
         $jobDir . '/ocr.txt',
+        $jobDir . '/ocrmypdf_sidecar.txt',
         $jobDir . '/ocr-objects.json',
         $jobDir . '/extracted.json',
     ];

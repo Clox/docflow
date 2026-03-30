@@ -76,9 +76,18 @@ body.is-resizing-sidebar {
   border-bottom: 1px solid #ddd;
   font-size: 14px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+}
+
+.sidebar-title-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 1px;
 }
 
 .sidebar-title-label,
@@ -95,6 +104,7 @@ body.is-resizing-sidebar {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  margin-left: auto;
 }
 
 #job-list-mode {
@@ -736,8 +746,9 @@ body.is-resizing-sidebar {
   align-items: center;
   gap: 8px;
   color: #444;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: normal;
+  line-height: 1.2;
   white-space: nowrap;
 }
 

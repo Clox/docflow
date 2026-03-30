@@ -14,10 +14,7 @@ Job flow:
 3. Each stable PDF is claimed into jobs/<jobId>/source.pdf.
 4. job.json is created with status "processing".
 5. review.pdf is created (copy of source.pdf).
-6. ocr.txt is created:
-   - uses pdftotext if available
-   - otherwise fallback to same-named .txt next to inbox PDF
-   - otherwise empty text
+6. merged_objects.txt is created from the merged OCR object document.
 7. extracted.json is written with matchedClientDirName from personal identity number matching.
 8. job.json is updated last to status "ready" (or "failed" on error).
 

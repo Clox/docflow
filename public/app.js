@@ -19,6 +19,10 @@ const ocrPageImageOpacityEl = document.getElementById('ocr-page-image-opacity');
 const matchesViewEl = document.getElementById('matches-view');
 const metaViewEl = document.getElementById('meta-view');
 const viewModeEl = document.getElementById('view-mode');
+const pdfViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="pdf"]') : null;
+const ocrViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="ocr"]') : null;
+const matchesViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="matches"]') : null;
+const metaViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="meta"]') : null;
 const reviewViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="review"]') : null;
 const ocrSearchBarEl = document.getElementById('ocr-search-bar');
 const ocrSearchInputEl = document.getElementById('ocr-search-input');
@@ -234,6 +238,7 @@ let pollInFlight = false;
 let pendingFetchStateOptions = null;
 let stateStream = null;
 let statePollTimer = null;
+let reprocessWatchTimer = null;
 let stateUpdateTransport = 'polling';
 let stateEventCursor = 0;
 let archivingRulesLocalRevision = 0;
@@ -317,6 +322,7 @@ const filenameSaveTimerByJobId = new Map();
 const lastKnownJobDisplayById = new Map();
 const pinnedProcessingJobIds = new Set();
 const pinnedProcessingOrderById = new Map();
+const reprocessWatchJobIds = new Set();
 const ocrPageImageCache = new Map();
 const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
@@ -387,6 +393,50 @@ function setProcessingInfo(processingJobs) {
 
   processingIndicatorEl.classList.remove('hidden');
   processingTextEl.textContent = `Bearbetar ${processingJobs.length} fil(er)...`;
+}
+
+function pruneReprocessWatchJobs() {
+  Array.from(reprocessWatchJobIds).forEach((jobId) => {
+    const job = findJobById(jobId);
+    if (!job || job.status !== 'processing') {
+      reprocessWatchJobIds.delete(jobId);
+    }
+  });
+
+  if (reprocessWatchJobIds.size === 0 && reprocessWatchTimer !== null) {
+    window.clearTimeout(reprocessWatchTimer);
+    reprocessWatchTimer = null;
+  }
+}
+
+function scheduleReprocessWatchPoll(delay = 1500) {
+  pruneReprocessWatchJobs();
+  if (reprocessWatchJobIds.size === 0) {
+    return;
+  }
+
+  if (reprocessWatchTimer !== null) {
+    window.clearTimeout(reprocessWatchTimer);
+  }
+
+  reprocessWatchTimer = window.setTimeout(async () => {
+    reprocessWatchTimer = null;
+    pruneReprocessWatchJobs();
+    if (reprocessWatchJobIds.size === 0) {
+      return;
+    }
+
+    try {
+      await fetchState({ force: true });
+    } catch (_error) {
+      // Ignore and retry while a watched job still appears to be processing.
+    } finally {
+      pruneReprocessWatchJobs();
+      if (reprocessWatchJobIds.size > 0) {
+        scheduleReprocessWatchPoll(1500);
+      }
+    }
+  }, delay);
 }
 
 function syncSelectOptions(selectEl, placeholderText, options, lastSignature) {
@@ -947,6 +997,14 @@ function syncReviewViewModeAvailability(job, options = {}) {
   return available;
 }
 
+function syncPrimaryViewModeAvailability(job, options = {}) {
+  if (viewModeEl instanceof HTMLSelectElement) {
+    viewModeEl.value = currentViewMode;
+  }
+
+  return true;
+}
+
 function setViewerJob(jobId) {
   if (currentViewMode === 'review') {
     setViewerReview(jobId);
@@ -1071,6 +1129,15 @@ async function setViewerOcr(jobId) {
     return;
   }
 
+  const job = findJobById(jobId);
+  if (job && job.status === 'processing') {
+    loadedOcrJobId = '';
+    loadedOcrSource = '';
+    setOcrDocumentText(`Ingen ${ocrSourceDisplayName(currentOcrSource)} tillgänglig medan dokumentet bearbetas.`);
+    refreshOcrSearch();
+    return;
+  }
+
   const jobChanged = loadedOcrJobId !== '' && loadedOcrJobId !== jobId;
   if (jobChanged) {
     clearOcrViewCache();
@@ -1106,6 +1173,18 @@ async function setViewerOcr(jobId) {
         + encodeURIComponent(currentOcrSource),
       { cache: 'no-store' }
     );
+    if (response.status === 404) {
+      const resolvedText = `(Ingen ${ocrSourceDisplayName(currentOcrSource)} hittades)`;
+      setCachedOcrViewContent(currentOcrSource, {
+        text: resolvedText,
+        pages: null,
+        mode: 'text',
+      });
+      setOcrDocumentText(resolvedText);
+      refreshOcrSearch();
+      restoreOcrViewState(currentOcrSource);
+      return;
+    }
     if (!response.ok) {
       throw new Error('Kunde inte hämta OCR-data');
     }
@@ -1474,6 +1553,17 @@ async function setViewerMatches(jobId) {
     return;
   }
 
+  const job = findJobById(jobId);
+  if (job && job.status === 'processing') {
+    loadedMatchesJobId = '';
+    matchesViewEl.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'matches-empty';
+    empty.textContent = 'Inga matchningsdata tillgängliga medan dokumentet bearbetas.';
+    matchesViewEl.appendChild(empty);
+    return;
+  }
+
   if (loadedMatchesJobId === jobId) {
     return;
   }
@@ -1488,6 +1578,14 @@ async function setViewerMatches(jobId) {
 
   try {
     const response = await fetch('/api/get-job-matches.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
+    if (response.status === 404) {
+      matchesViewEl.innerHTML = '';
+      const empty = document.createElement('div');
+      empty.className = 'matches-empty';
+      empty.textContent = 'Inga matchningsdata hittades.';
+      matchesViewEl.appendChild(empty);
+      return;
+    }
     if (!response.ok) {
       throw new Error('Kunde inte hämta matchningar');
     }
@@ -5426,6 +5524,7 @@ function applySelectedJobId(jobId, options = {}) {
   const selectedJob = findJobById(jobId);
   selectedJobId = selectedJob ? selectedJob.id : '';
   syncReviewViewModeAvailability(selectedJob);
+  syncPrimaryViewModeAvailability(selectedJob);
   renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
   setViewerJob(selectedJobId);
   selectedJobStateSig = jobStateSignature(selectedJob);
@@ -5487,10 +5586,10 @@ function refreshSelection() {
   const currentSelection = findJobById(selectedJobId);
   if (currentSelection && isJobVisibleInCurrentList(currentSelection.id)) {
     const nextJobStateSig = jobStateSignature(currentSelection);
-    const shouldRefreshViewer = currentSelection.status !== 'processing'
-      && nextJobStateSig !== selectedJobStateSig;
+    const shouldRefreshViewer = nextJobStateSig !== selectedJobStateSig;
     selectedJobId = currentSelection.id;
     syncReviewViewModeAvailability(currentSelection);
+    syncPrimaryViewModeAvailability(currentSelection);
     if (shouldRefreshViewer) {
       setViewerJob(currentSelection.id);
     }
@@ -5592,6 +5691,7 @@ function applyState(nextState) {
       pinnedProcessingOrderById.delete(jobId);
     }
   });
+  pruneReprocessWatchJobs();
 
   setProcessingInfo(state.processingJobs);
   notifyFailedJobs(state.failedJobs);
@@ -11361,8 +11461,8 @@ function renderOcrProcessingCommand() {
 
   if (ocrTextExtractionCommandEl) {
     ocrTextExtractionCommandEl.textContent = extractionMethod === 'bbox'
-      ? 'pdftotext -bbox-layout input.pdf -'
-      : 'pdftotext -layout input.pdf ocr.txt';
+      ? 'merged_objects.txt byggs från sammanfogade OCR-objekt'
+      : 'merged_objects.txt byggs från sammanfogade OCR-objekt';
   }
 }
 
@@ -12259,10 +12359,12 @@ async function reprocessSingleJob(jobId, mode, options = {}) {
       clearPdfFrames();
     }
 
-    if (stateUpdateTransport !== 'sse') {
-      scheduleStatePoll(0);
-    }
+    reprocessWatchJobIds.add(jobId);
+    scheduleReprocessWatchPoll(1000);
+    scheduleStatePoll(0);
   } catch (error) {
+    reprocessWatchJobIds.delete(jobId);
+    pruneReprocessWatchJobs();
     applyState(rollbackState);
     throw error;
   }

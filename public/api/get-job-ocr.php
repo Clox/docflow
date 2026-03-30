@@ -162,19 +162,16 @@ try {
 
     $normalizedSource = trim($source);
     $filenameBySource = [
-        'merged' => 'ocr.txt',
+        'merged' => 'merged_objects.txt',
         'tesseract' => 'tesseract.txt',
         'rapidocr' => 'rapidocr.txt',
         'merged-objects' => 'merged_objects.txt',
     ];
-    $ocrFilename = $filenameBySource[$normalizedSource] ?? 'ocr.txt';
+    $ocrFilename = $filenameBySource[$normalizedSource] ?? 'merged_objects.txt';
 
-    $ocrPath = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR)
-        . DIRECTORY_SEPARATOR . $id
-        . DIRECTORY_SEPARATOR . 'ocr.txt';
-    $ocrPath = dirname($ocrPath) . DIRECTORY_SEPARATOR . $ocrFilename;
-
-    $jobDir = dirname($ocrPath);
+    $jobDir = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR)
+        . DIRECTORY_SEPARATOR . $id;
+    $ocrPath = $jobDir . DIRECTORY_SEPARATOR . $ocrFilename;
 
     if ($normalizedSource === 'merged-objects') {
         $mergedObjectPages = ensure_merged_objects_text_from_storage($jobDir, $id);
@@ -247,11 +244,6 @@ try {
         }
     }
 
-    if (!is_file($ocrPath)) {
-        http_response_code(404);
-        exit;
-    }
-
     if ($normalizedSource === 'merged') {
         $mergedObjectPages = ensure_merged_objects_text_from_storage($jobDir, $id);
         if ($mergedObjectPages !== []) {
@@ -285,36 +277,11 @@ try {
                 exit;
             }
         }
+    }
 
-        $ocrObjectsPath = dirname($ocrPath) . DIRECTORY_SEPARATOR . 'ocr-objects.json';
-        $ocrObjects = is_file($ocrObjectsPath) ? load_json_file($ocrObjectsPath) : null;
-        $pages = is_array($ocrObjects['pages'] ?? null) ? $ocrObjects['pages'] : [];
-        if ($pages !== []) {
-            $chunks = [];
-            $pagePayloads = [];
-            foreach ($pages as $index => $page) {
-                if (!is_array($page)) {
-                    continue;
-                }
-                $pageText = render_grid_text_from_bbox_objects([$page]);
-                $normalizedPageText = rtrim($pageText, "\r\n");
-                $pageNumber = $index + 1;
-                $pagePayloads[] = [
-                    'number' => $pageNumber,
-                    'text' => $normalizedPageText,
-                ];
-                $chunks[] = '=== PAGE ' . $pageNumber . " ===\n" . $normalizedPageText;
-            }
-            if ($chunks !== []) {
-                json_response([
-                    'source' => $normalizedSource,
-                    'mode' => 'text',
-                    'text' => implode("\n\n", $chunks),
-                    'pages' => $pagePayloads,
-                ]);
-                exit;
-            }
-        }
+    if (!is_file($ocrPath)) {
+        http_response_code(404);
+        exit;
     }
 
     $text = file_get_contents($ocrPath);

@@ -69,9 +69,9 @@ The system runs OCR on source.pdf.
 
 Output:
 
-ocr.txt
+merged_objects.txt
 
-This contains the raw OCR text extracted from the document.
+This contains the rendered text from the merged OCR object document.
 
 
 STEP 4: DOCUMENT PROPERTY EXTRACTION

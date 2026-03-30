@@ -55,7 +55,7 @@ docflow/
         20260308_221533_f4k92m/
           source.pdf
           review.pdf
-          ocr.txt
+          merged_objects.txt
           extracted.json
           job.json
           processing.lock

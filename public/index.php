@@ -11,12 +11,14 @@
     <aside class="sidebar">
       <div class="sidebar-list-wrap">
         <div class="sidebar-title">
-          <span class="sidebar-title-label">Dokument</span>
-          <div class="sidebar-title-controls">
+          <div class="sidebar-title-main">
+            <span class="sidebar-title-label">Dokument</span>
             <span id="processing-indicator" class="processing hidden">
               <span class="spinner" aria-hidden="true"></span>
               <span id="processing-text"></span>
             </span>
+          </div>
+          <div class="sidebar-title-controls">
             <select id="job-list-mode" aria-label="Jobblista">
               <option value="ready">Att granska</option>
               <option value="processing">Bearbetas</option>
