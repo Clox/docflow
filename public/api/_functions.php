@@ -7320,6 +7320,9 @@ function generic_text_segment_candidates_from_text(string $text, int $offsetBase
             if ($value === '') {
                 continue;
             }
+            if (@preg_match('/^[^\pL\d]+$/u', $value) === 1) {
+                continue;
+            }
 
             $candidates[] = [
                 'value' => $value,
@@ -7331,6 +7334,10 @@ function generic_text_segment_candidates_from_text(string $text, int $offsetBase
 
     if ($candidates !== []) {
         return $candidates;
+    }
+
+    if (@preg_match('/^[^\pL\d]+$/u', $trimmed) === 1) {
+        return [];
     }
 
     return [[
