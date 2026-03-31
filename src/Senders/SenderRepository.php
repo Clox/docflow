@@ -23,13 +23,17 @@ final class SenderRepository
         }
 
         $statement = $this->pdo->prepare(
-            'SELECT *
-            FROM senders
-            WHERE org_number = :org_number
-              AND merged_into_sender_id IS NULL
+            'SELECT
+                s.*,
+                o.id AS organization_match_id,
+                o.organization_number AS organization_match_number,
+                o.organization_name AS organization_match_name
+            FROM sender_organization_numbers o
+            INNER JOIN senders s ON s.id = o.sender_id
+            WHERE o.organization_number = :organization_number
             LIMIT 1'
         );
-        $statement->execute([':org_number' => $normalized]);
+        $statement->execute([':organization_number' => $normalized]);
         $sender = $statement->fetch();
 
         return is_array($sender) ? $sender : null;
@@ -48,9 +52,8 @@ final class SenderRepository
     public function listAll(): array
     {
         $statement = $this->pdo->query(
-            'SELECT id, name, org_number, domain, kind, notes, confidence, created_at, updated_at
+            'SELECT id, name, domain, kind, notes, confidence, matching_updated_at, created_at, updated_at
             FROM senders
-            WHERE merged_into_sender_id IS NULL
             ORDER BY name ASC, id ASC'
         );
         $rows = $statement->fetchAll();
@@ -61,21 +64,17 @@ final class SenderRepository
     {
         $statement = $this->pdo->query(
             'SELECT
-                s.id AS sender_id,
-                s.name AS sender_name,
-                s.org_number AS sender_org_number,
-                s.domain AS sender_domain,
-                s.kind AS sender_kind,
-                s.notes AS sender_notes,
-                p.id AS payment_id,
-                p.type AS payment_type,
-                p.number AS payment_number,
-                p.payee_name AS payment_payee_name,
-                p.payee_lookup_status AS payment_payee_lookup_status
-            FROM senders s
-            LEFT JOIN sender_payment_numbers p ON p.sender_id = s.id
-            WHERE s.merged_into_sender_id IS NULL
-            ORDER BY s.name ASC, s.id ASC, p.type ASC, p.number ASC, p.id ASC'
+                id,
+                name,
+                domain,
+                kind,
+                notes,
+                confidence,
+                matching_updated_at,
+                created_at,
+                updated_at
+            FROM senders
+            ORDER BY name ASC, id ASC'
         );
 
         $rows = $statement->fetchAll();
@@ -89,39 +88,101 @@ final class SenderRepository
                 continue;
             }
 
-            $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
+            $senderId = isset($row['id']) ? (int) $row['id'] : 0;
             if ($senderId < 1) {
                 continue;
             }
 
-            if (!isset($sendersById[$senderId])) {
-                $sendersById[$senderId] = [
-                    'id' => $senderId,
-                    'name' => is_string($row['sender_name'] ?? null) ? trim((string) $row['sender_name']) : '',
-                    'orgNumber' => is_string($row['sender_org_number'] ?? null) ? trim((string) $row['sender_org_number']) : '',
-                    'domain' => is_string($row['sender_domain'] ?? null) ? trim((string) $row['sender_domain']) : '',
-                    'kind' => is_string($row['sender_kind'] ?? null) ? trim((string) $row['sender_kind']) : '',
-                    'notes' => is_string($row['sender_notes'] ?? null) ? (string) $row['sender_notes'] : '',
-                    'paymentNumbers' => [],
+            $sendersById[$senderId] = [
+                'id' => $senderId,
+                'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
+                'domain' => is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '',
+                'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
+                'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
+                'organizationNumbers' => [],
+                'paymentNumbers' => [],
+            ];
+        }
+
+        if ($sendersById === []) {
+            return [];
+        }
+
+        $organizationRows = $this->pdo->query(
+            'SELECT
+                o.id AS organization_id,
+                o.sender_id AS organization_sender_id,
+                o.organization_number,
+                o.organization_name
+            FROM sender_organization_numbers o
+            INNER JOIN senders s ON s.id = o.sender_id
+            ORDER BY s.name ASC, s.id ASC, o.organization_number ASC, o.id ASC'
+        )->fetchAll();
+
+        if (is_array($organizationRows)) {
+            foreach ($organizationRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $senderId = isset($row['organization_sender_id']) ? (int) $row['organization_sender_id'] : 0;
+                if ($senderId < 1 || !isset($sendersById[$senderId])) {
+                    continue;
+                }
+                $organizationId = isset($row['organization_id']) ? (int) $row['organization_id'] : 0;
+                if ($organizationId < 1) {
+                    continue;
+                }
+
+                $sendersById[$senderId]['organizationNumbers'][] = [
+                    'id' => $organizationId,
+                    'organizationNumber' => $this->formatOrganizationNumberForDisplay(
+                        is_string($row['organization_number'] ?? null) ? trim((string) $row['organization_number']) : ''
+                    ),
+                    'organizationName' => is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '',
                 ];
             }
+        }
 
-            $paymentId = isset($row['payment_id']) ? (int) $row['payment_id'] : 0;
-            if ($paymentId < 1) {
-                continue;
+        $paymentRows = $this->pdo->query(
+            'SELECT
+                p.id AS payment_id,
+                p.sender_id,
+                p.type AS payment_type,
+                p.number AS payment_number,
+                p.payee_name AS payment_payee_name,
+                p.payee_lookup_status AS payment_payee_lookup_status
+            FROM sender_payment_numbers p
+            INNER JOIN senders s ON s.id = p.sender_id
+            ORDER BY s.name ASC, s.id ASC, p.type ASC, p.number ASC, p.id ASC'
+        )->fetchAll();
+
+        if (is_array($paymentRows)) {
+            foreach ($paymentRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
+                if ($senderId < 1 || !isset($sendersById[$senderId])) {
+                    continue;
+                }
+
+                $paymentId = isset($row['payment_id']) ? (int) $row['payment_id'] : 0;
+                if ($paymentId < 1) {
+                    continue;
+                }
+
+                $type = is_string($row['payment_type'] ?? null) ? trim(strtolower((string) $row['payment_type'])) : 'bankgiro';
+                $sendersById[$senderId]['paymentNumbers'][] = [
+                    'id' => $paymentId,
+                    'type' => $type,
+                    'number' => $this->formatPaymentNumberForDisplay(
+                        $type,
+                        is_string($row['payment_number'] ?? null) ? trim((string) $row['payment_number']) : ''
+                    ),
+                    'payeeName' => is_string($row['payment_payee_name'] ?? null) ? trim((string) $row['payment_payee_name']) : '',
+                    'payeeLookupStatus' => is_string($row['payment_payee_lookup_status'] ?? null) ? trim((string) $row['payment_payee_lookup_status']) : '',
+                ];
             }
-
-            $type = is_string($row['payment_type'] ?? null) ? trim(strtolower((string) $row['payment_type'])) : 'bankgiro';
-            $sendersById[$senderId]['paymentNumbers'][] = [
-                'id' => $paymentId,
-                'type' => $type,
-                'number' => $this->formatPaymentNumberForDisplay(
-                    $type,
-                    is_string($row['payment_number'] ?? null) ? trim((string) $row['payment_number']) : ''
-                ),
-                'payeeName' => is_string($row['payment_payee_name'] ?? null) ? trim((string) $row['payment_payee_name']) : '',
-                'payeeLookupStatus' => is_string($row['payment_payee_lookup_status'] ?? null) ? trim((string) $row['payment_payee_lookup_status']) : '',
-            ];
         }
 
         return array_values($sendersById);
@@ -159,8 +220,7 @@ final class SenderRepository
                 p.payee_lookup_status
             FROM sender_payment_numbers p
             INNER JOIN senders s ON s.id = p.sender_id
-            WHERE s.merged_into_sender_id IS NULL
-              AND (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
+            WHERE (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
               AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\')
             ORDER BY s.name ASC, p.type ASC, p.number ASC, p.id ASC
             LIMIT :limit'
@@ -208,8 +268,7 @@ final class SenderRepository
             'SELECT COUNT(*)
             FROM sender_payment_numbers p
             INNER JOIN senders s ON s.id = p.sender_id
-            WHERE s.merged_into_sender_id IS NULL
-              AND (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
+            WHERE (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
               AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\')'
         );
         if ($statement === false) {
@@ -288,30 +347,7 @@ final class SenderRepository
         if ($senderId < 1) {
             return null;
         }
-
-        $currentId = $senderId;
-        $visited = [];
-
-        while ($currentId > 0) {
-            if (isset($visited[$currentId])) {
-                throw new RuntimeException('Detected sender merge cycle for sender id ' . $senderId);
-            }
-            $visited[$currentId] = true;
-
-            $row = $this->findById($currentId);
-            if (!is_array($row)) {
-                return null;
-            }
-
-            $mergedIntoSenderId = isset($row['merged_into_sender_id']) ? (int) $row['merged_into_sender_id'] : 0;
-            if ($mergedIntoSenderId < 1) {
-                return $currentId;
-            }
-
-            $currentId = $mergedIntoSenderId;
-        }
-
-        return null;
+        return $this->findById($senderId) !== null ? $senderId : null;
     }
 
     public function findByDocumentIdentifiers(?string $orgNumber, ?string $bankgiro, ?string $plusgiro): ?array
@@ -348,7 +384,6 @@ final class SenderRepository
 
     public function createSender(
         string $name,
-        ?string $orgNumber = null,
         ?string $domain = null,
         ?string $kind = null,
         ?string $notes = null,
@@ -359,32 +394,24 @@ final class SenderRepository
             throw new RuntimeException('Sender name is required.');
         }
 
-        $normalizedOrgNumber = null;
-        if (is_string($orgNumber) && trim($orgNumber) !== '') {
-            $normalizedOrgNumber = IdentifierNormalizer::normalizeOrgNumber($orgNumber);
-            if ($normalizedOrgNumber === null) {
-                throw new RuntimeException('Invalid org number.');
-            }
-        }
-
         $timestamp = date(DATE_ATOM);
         $statement = $this->pdo->prepare(
             'INSERT INTO senders (
                 name,
-                org_number,
                 domain,
                 kind,
                 notes,
                 confidence,
+                matching_updated_at,
                 created_at,
                 updated_at
             ) VALUES (
                 :name,
-                :org_number,
                 :domain,
                 :kind,
                 :notes,
                 :confidence,
+                :matching_updated_at,
                 :created_at,
                 :updated_at
             )'
@@ -392,11 +419,11 @@ final class SenderRepository
 
         $statement->execute([
             ':name' => $name,
-            ':org_number' => $normalizedOrgNumber,
             ':domain' => $domain !== null ? trim($domain) : null,
             ':kind' => $kind !== null ? trim($kind) : null,
             ':notes' => $notes,
             ':confidence' => $confidence,
+            ':matching_updated_at' => $timestamp,
             ':created_at' => $timestamp,
             ':updated_at' => $timestamp,
         ]);
@@ -525,7 +552,6 @@ final class SenderRepository
             INNER JOIN senders s ON s.id = p.sender_id
             WHERE p.type = :type
               AND p.number = :number
-              AND s.merged_into_sender_id IS NULL
             LIMIT 1'
         );
 
@@ -560,5 +586,15 @@ final class SenderRepository
         }
 
         return $digits;
+    }
+
+    private function formatOrganizationNumberForDisplay(string $number): string
+    {
+        $digits = preg_replace('/\D+/', '', $number);
+        if (!is_string($digits) || $digits === '' || strlen($digits) !== 10) {
+            return is_string($number) ? trim($number) : '';
+        }
+
+        return substr($digits, 0, 6) . '-' . substr($digits, 6);
     }
 }

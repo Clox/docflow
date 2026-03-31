@@ -2466,7 +2466,7 @@ function ensureArchivedReviewDraft(jobId, payload) {
     ? payload.activeAutoResult
     : {};
   const draft = {
-    principalId: typeof source.principalId === 'string' ? source.principalId : '',
+    clientId: typeof source.clientId === 'string' ? source.clientId : '',
     senderId: source.senderId ? String(source.senderId) : '',
     categoryId: typeof source.categoryId === 'string' ? source.categoryId : '',
     filename: typeof source.filename === 'string' ? source.filename : '',
@@ -2552,7 +2552,7 @@ async function saveArchivedReviewAction(action) {
     action,
   };
   if (action === 'manual' && draft) {
-    body.principalId = draft.principalId || null;
+    body.clientId = draft.clientId || null;
     body.senderId = draft.senderId || null;
     body.categoryId = draft.categoryId || null;
     body.filename = draft.filename || null;
@@ -2756,14 +2756,14 @@ function renderArchivedReviewPanel() {
 
   addSelectPair(
     'Huvudman',
-    typeof archivedValue.principalId === 'string' ? archivedValue.principalId : '',
-    draft.principalId,
+    typeof archivedValue.clientId === 'string' ? archivedValue.clientId : '',
+    draft.clientId,
     (Array.isArray(state.clients) ? state.clients : []).map((client) => ({
       value: client && typeof client.dirName === 'string' ? client.dirName : '',
       label: client && typeof client.dirName === 'string' ? client.dirName : ''
     })).filter((option) => option.value && option.label),
     (value) => {
-      draft.principalId = value;
+      draft.clientId = value;
     }
   );
 
@@ -3667,8 +3667,8 @@ function effectiveClientDirName(job) {
     return job.selectedClientDirName.trim();
   }
   const autoResult = autoArchivingResultForJob(job);
-  if (autoResult && typeof autoResult.principalId === 'string' && isKnownClient(autoResult.principalId)) {
-    return autoResult.principalId.trim();
+  if (autoResult && typeof autoResult.clientId === 'string' && isKnownClient(autoResult.clientId)) {
+    return autoResult.clientId.trim();
   }
   if (typeof job.matchedClientDirName === 'string' && isKnownClient(job.matchedClientDirName)) {
     return job.matchedClientDirName.trim();
@@ -6019,6 +6019,9 @@ function bindSettingsPanelRefs(tabId) {
     senderMergeCancelEl = document.getElementById('sender-merge-cancel');
     senderMergeApplyEl = document.getElementById('sender-merge-apply');
     sendersSortOrderEl.value = sendersSortOrder;
+    if (String(sendersSortOrderEl.value || '') !== sendersSortOrder) {
+      sendersSortOrder = String(sendersSortOrderEl.value || 'name');
+    }
     sendersAddRowEl.addEventListener('click', () => {
       sendersDraft.push(defaultSenderDraft());
       renderSendersEditor();
@@ -7129,12 +7132,20 @@ function defaultSenderDraft() {
     uiKey: `tmp-${senderDraftUiKeySeq++}`,
     id: null,
     name: '',
-    orgNumber: '',
     domain: '',
     kind: '',
     notes: '',
+    organizationNumbers: [],
     paymentNumbers: [],
     mergedSourceSenderIds: []
+  };
+}
+
+function defaultSenderOrganizationDraft() {
+  return {
+    id: null,
+    organizationNumber: '',
+    organizationName: '',
   };
 }
 
@@ -7191,21 +7202,47 @@ function sanitizeSenderDraft(row) {
   const uiKey = typeof input.uiKey === 'string' && input.uiKey.trim() !== ''
     ? input.uiKey.trim()
     : `tmp-${senderDraftUiKeySeq++}`;
+  const rawOrganizationNumbers = Array.isArray(input.organizationNumbers) ? input.organizationNumbers : [];
   const rawPaymentNumbers = Array.isArray(input.paymentNumbers) ? input.paymentNumbers : [];
+  const fallbackOrgNumber = typeof input.orgNumber === 'string' ? input.orgNumber : '';
+  const organizationNumbers = rawOrganizationNumbers.map(sanitizeSenderOrganizationDraft);
+  if (organizationNumbers.length === 0 && fallbackOrgNumber.trim() !== '') {
+    organizationNumbers.push(sanitizeSenderOrganizationDraft({
+      organizationNumber: fallbackOrgNumber,
+      organizationName: typeof input.name === 'string' ? input.name : '',
+    }));
+  }
   return {
     uiKey,
     id,
     name: typeof input.name === 'string' ? input.name : '',
-    orgNumber: typeof input.orgNumber === 'string' ? input.orgNumber : '',
     domain: typeof input.domain === 'string' ? input.domain : '',
     kind: typeof input.kind === 'string' ? input.kind : '',
     notes: typeof input.notes === 'string' ? input.notes : '',
+    organizationNumbers,
     paymentNumbers: rawPaymentNumbers.map(sanitizeSenderPaymentDraft),
     mergedSourceSenderIds: Array.isArray(input.mergedSourceSenderIds)
       ? Array.from(new Set(input.mergedSourceSenderIds
         .map((value) => Number.parseInt(String(value || ''), 10))
         .filter((value) => Number.isInteger(value) && value > 0)))
       : []
+  };
+}
+
+function sanitizeSenderOrganizationDraft(row) {
+  const input = row && typeof row === 'object' ? row : {};
+  const idValue = input.id;
+  const id = Number.isInteger(idValue) && idValue > 0
+    ? idValue
+    : null;
+  return {
+    id,
+    organizationNumber: typeof input.organizationNumber === 'string'
+      ? input.organizationNumber
+      : (typeof input.orgNumber === 'string' ? input.orgNumber : ''),
+    organizationName: typeof input.organizationName === 'string'
+      ? input.organizationName
+      : (typeof input.name === 'string' ? input.name : ''),
   };
 }
 
@@ -7230,7 +7267,10 @@ function senderSortFieldValue(row, field) {
   }
 
   if (field === 'orgNumber') {
-    return String(row.orgNumber || '').trim().toLowerCase();
+    const firstOrganization = Array.isArray(row.organizationNumbers)
+      ? row.organizationNumbers.find((organization) => organization && typeof organization.organizationNumber === 'string' && organization.organizationNumber.trim() !== '')
+      : null;
+    return String(firstOrganization && firstOrganization.organizationNumber || '').trim().toLowerCase();
   }
 
   if (field === 'domain') {
@@ -7367,6 +7407,34 @@ function mergedSenderNotes(rows) {
   return parts.join('\n\n');
 }
 
+function mergedSenderOrganizationNumbers(rows) {
+  const itemsByKey = new Map();
+  rows.forEach((row) => {
+    const organizationRows = Array.isArray(row && row.organizationNumbers) ? row.organizationNumbers : [];
+    organizationRows.forEach((organization) => {
+      const normalized = sanitizeSenderOrganizationDraft(organization);
+      const key = digitsOnly(normalized.organizationNumber);
+      if (key === '') {
+        return;
+      }
+      if (!itemsByKey.has(key)) {
+        itemsByKey.set(key, normalized);
+        return;
+      }
+      const existing = itemsByKey.get(key);
+      if (existing && (!existing.organizationName || String(existing.organizationName).trim() === '') && normalized.organizationName.trim() !== '') {
+        itemsByKey.set(key, {
+          ...existing,
+          organizationName: normalized.organizationName,
+        });
+      }
+    });
+  });
+  return Array.from(itemsByKey.entries())
+    .sort((a, b) => a[0].localeCompare(b[0], 'sv'))
+    .map(([, value]) => value);
+}
+
 function mergedSenderPaymentNumbers(rows) {
   const seen = new Set();
   const payments = [];
@@ -7461,7 +7529,6 @@ function buildSenderMergeState() {
 
   const rows = selectedEntries.map((entry) => entry.row);
   const nameOptions = uniqueSenderFieldOptions(rows, 'name');
-  const orgNumberOptions = uniqueSenderFieldOptions(rows, 'orgNumber', { ignoreEmpty: true });
   const domainOptions = uniqueSenderFieldOptions(rows, 'domain', { ignoreEmpty: true });
   const baseEntry = selectedEntries[0];
   const baseUiKey = baseEntry.uiKey;
@@ -7475,14 +7542,13 @@ function buildSenderMergeState() {
       uiKey,
       id: baseId,
       name: nameOptions[0] || '',
-      orgNumber: orgNumberOptions[0] || '',
       domain: domainOptions[0] || '',
       notes: mergedSenderNotes(rows),
+      organizationNumbers: mergedSenderOrganizationNumbers(rows),
       paymentNumbers: mergedSenderPaymentNumbers(rows)
     }),
     fieldOptions: {
       name: nameOptions,
-      orgNumber: orgNumberOptions,
       domain: domainOptions
     }
   };
@@ -8480,15 +8546,6 @@ function buildSenderEditorNode(row, rowIndex) {
     updateSettingsActionButtons();
   });
 
-  const orgNumberInput = document.createElement('input');
-  orgNumberInput.type = 'text';
-  orgNumberInput.placeholder = 'Ex: 556677-8899';
-  orgNumberInput.value = row.orgNumber;
-  orgNumberInput.addEventListener('input', () => {
-    sendersDraft[rowIndex].orgNumber = orgNumberInput.value;
-    updateSettingsActionButtons();
-  });
-
   const domainInput = document.createElement('input');
   domainInput.type = 'text';
   domainInput.placeholder = 'Ex: regionvarmland.se';
@@ -8555,7 +8612,6 @@ function buildSenderEditorNode(row, rowIndex) {
   senderSummaryFields.className = 'sender-summary-fields';
   senderSummaryFields.appendChild(senderSelectCheckbox);
   senderSummaryFields.appendChild(createFloatingField('Namn', nameInput));
-  senderSummaryFields.appendChild(createFloatingField('Org.nr', orgNumberInput));
   senderHeader.appendChild(senderSummaryFields);
   senderBody.appendChild(senderHeader);
 
@@ -8569,6 +8625,65 @@ function buildSenderEditorNode(row, rowIndex) {
   senderFields.appendChild(removeButton);
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   senderDetails.appendChild(senderFields);
+
+  const organizationList = createTreeChildren({ markerless: true });
+
+  const organizationsLabel = document.createElement('div');
+  organizationsLabel.className = 'archive-level-label';
+  organizationsLabel.textContent = 'Organisationsnummer';
+  organizationList.appendChild(organizationsLabel);
+
+  row.organizationNumbers.forEach((organization, organizationIndex) => {
+    const organizationNode = document.createElement('div');
+    organizationNode.className = 'tree-node tree-category has-parent';
+
+    const organizationRowEl = createTreeRow({ markerless: true });
+
+    const organizationBody = document.createElement('div');
+    organizationBody.className = 'tree-body category-body';
+    appendTreeBodyIcon(organizationBody, 'tree-body-icon sender-organization-icon');
+
+    const organizationFields = document.createElement('div');
+    organizationFields.className = 'sender-organization-fields';
+
+    const organizationNumberInput = document.createElement('input');
+    organizationNumberInput.type = 'text';
+    organizationNumberInput.placeholder = 'Ex: 212000-1850';
+    organizationNumberInput.value = organization.organizationNumber;
+    organizationNumberInput.addEventListener('input', () => {
+      sendersDraft[rowIndex].organizationNumbers[organizationIndex].organizationNumber = organizationNumberInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const organizationNameInput = document.createElement('input');
+    organizationNameInput.type = 'text';
+    organizationNameInput.placeholder = 'Observerat namn';
+    organizationNameInput.value = organization.organizationName;
+    organizationNameInput.addEventListener('input', () => {
+      sendersDraft[rowIndex].organizationNumbers[organizationIndex].organizationName = organizationNameInput.value;
+      updateSettingsActionButtons();
+    });
+
+    const removeOrganizationButton = document.createElement('button');
+    removeOrganizationButton.type = 'button';
+    removeOrganizationButton.className = 'category-remove';
+    removeOrganizationButton.textContent = 'Ta bort';
+    removeOrganizationButton.addEventListener('click', () => {
+      sendersDraft[rowIndex].organizationNumbers.splice(organizationIndex, 1);
+      renderSendersEditor();
+      updateSettingsActionButtons();
+    });
+
+    organizationFields.appendChild(createFloatingField('Org.nr', organizationNumberInput));
+    organizationFields.appendChild(createFloatingField('Namn', organizationNameInput));
+    organizationFields.appendChild(removeOrganizationButton);
+    organizationBody.appendChild(organizationFields);
+    organizationRowEl.appendChild(organizationBody);
+    organizationNode.appendChild(organizationRowEl);
+    organizationList.appendChild(organizationNode);
+  });
+
+  senderDetails.appendChild(organizationList);
 
   const paymentList = createTreeChildren({ markerless: true });
 
@@ -8648,6 +8763,14 @@ function buildSenderEditorNode(row, rowIndex) {
 
   const senderActions = document.createElement('div');
   senderActions.className = 'folder-actions';
+  const addOrganizationButton = document.createElement('button');
+  addOrganizationButton.type = 'button';
+  addOrganizationButton.textContent = 'Lägg till organisationsnummer';
+  addOrganizationButton.addEventListener('click', () => {
+    sendersDraft[rowIndex].organizationNumbers.push(defaultSenderOrganizationDraft());
+    renderSendersEditor();
+    updateSettingsActionButtons();
+  });
   const addPaymentButton = document.createElement('button');
   addPaymentButton.type = 'button';
   addPaymentButton.textContent = 'Lägg till betalnummer';
@@ -8656,6 +8779,7 @@ function buildSenderEditorNode(row, rowIndex) {
     renderSendersEditor();
     updateSettingsActionButtons();
   });
+  senderActions.appendChild(addOrganizationButton);
   senderActions.appendChild(addPaymentButton);
   senderDetails.appendChild(senderActions);
   senderBody.appendChild(senderDetails);
@@ -8806,9 +8930,6 @@ function renderSenderMergeEditor() {
   senderFields.appendChild(createSenderMergeField('Namn', 'name', fieldOptions.name, draft, (value) => {
     senderMergeState.draft.name = value;
   }));
-  senderFields.appendChild(createSenderMergeField('Org.nr', 'orgNumber', fieldOptions.orgNumber, draft, (value) => {
-    senderMergeState.draft.orgNumber = value;
-  }));
   senderFields.appendChild(createSenderMergeField('Domän', 'domain', fieldOptions.domain, draft, (value) => {
     senderMergeState.draft.domain = value;
   }));
@@ -8821,6 +8942,60 @@ function renderSenderMergeEditor() {
   });
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   rootBody.appendChild(senderFields);
+
+  const organizationList = createTreeChildren({ markerless: true });
+
+  const organizationsLabel = document.createElement('div');
+  organizationsLabel.className = 'archive-level-label';
+  organizationsLabel.textContent = 'Organisationsnummer';
+  organizationList.appendChild(organizationsLabel);
+
+  draft.organizationNumbers.forEach((organization, organizationIndex) => {
+    const organizationNode = document.createElement('div');
+    organizationNode.className = 'tree-node tree-category has-parent';
+
+    const organizationRowEl = createTreeRow({ markerless: true });
+
+    const organizationBody = document.createElement('div');
+    organizationBody.className = 'tree-body category-body';
+    appendTreeBodyIcon(organizationBody, 'tree-body-icon sender-organization-icon');
+
+    const organizationFields = document.createElement('div');
+    organizationFields.className = 'sender-organization-fields';
+
+    const organizationNumberInput = document.createElement('input');
+    organizationNumberInput.type = 'text';
+    organizationNumberInput.value = organization.organizationNumber;
+    organizationNumberInput.addEventListener('input', () => {
+      senderMergeState.draft.organizationNumbers[organizationIndex].organizationNumber = organizationNumberInput.value;
+    });
+
+    const organizationNameInput = document.createElement('input');
+    organizationNameInput.type = 'text';
+    organizationNameInput.value = organization.organizationName;
+    organizationNameInput.addEventListener('input', () => {
+      senderMergeState.draft.organizationNumbers[organizationIndex].organizationName = organizationNameInput.value;
+    });
+
+    const removeOrganizationButton = document.createElement('button');
+    removeOrganizationButton.type = 'button';
+    removeOrganizationButton.className = 'category-remove';
+    removeOrganizationButton.textContent = 'Ta bort';
+    removeOrganizationButton.addEventListener('click', () => {
+      senderMergeState.draft.organizationNumbers.splice(organizationIndex, 1);
+      renderSenderMergeEditor();
+    });
+
+    organizationFields.appendChild(createFloatingField('Org.nr', organizationNumberInput));
+    organizationFields.appendChild(createFloatingField('Namn', organizationNameInput));
+    organizationFields.appendChild(removeOrganizationButton);
+    organizationBody.appendChild(organizationFields);
+    organizationRowEl.appendChild(organizationBody);
+    organizationNode.appendChild(organizationRowEl);
+    organizationList.appendChild(organizationNode);
+  });
+
+  rootBody.appendChild(organizationList);
 
   const paymentList = createTreeChildren({ markerless: true });
 
@@ -8896,6 +9071,13 @@ function renderSenderMergeEditor() {
 
   const mergeActions = document.createElement('div');
   mergeActions.className = 'folder-actions';
+  const addOrganizationButton = document.createElement('button');
+  addOrganizationButton.type = 'button';
+  addOrganizationButton.textContent = 'Lägg till organisationsnummer';
+  addOrganizationButton.addEventListener('click', () => {
+    senderMergeState.draft.organizationNumbers.push(defaultSenderOrganizationDraft());
+    renderSenderMergeEditor();
+  });
   const addPaymentButton = document.createElement('button');
   addPaymentButton.type = 'button';
   addPaymentButton.textContent = 'Lägg till betalnummer';
@@ -8903,6 +9085,7 @@ function renderSenderMergeEditor() {
     senderMergeState.draft.paymentNumbers.push(defaultSenderPaymentDraft());
     renderSenderMergeEditor();
   });
+  mergeActions.appendChild(addOrganizationButton);
   mergeActions.appendChild(addPaymentButton);
   rootBody.appendChild(mergeActions);
 

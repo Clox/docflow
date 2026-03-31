@@ -276,7 +276,6 @@
         <label class="settings-label" for="senders-sort-order">Sortering</label>
         <select id="senders-sort-order" class="settings-select">
           <option value="name">Namn</option>
-          <option value="orgNumber">Org.nr</option>
           <option value="domain">Domän</option>
           <option value="paymentCount">Antal betalnummer</option>
           <option value="similarity">Misstänkt samma</option>

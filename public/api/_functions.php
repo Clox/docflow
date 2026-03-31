@@ -322,8 +322,8 @@ function job_sender_snapshot_ids(string $jobId): ?array
     $autoSenderId = isset($row['auto_sender_id']) && (int) $row['auto_sender_id'] > 0 ? (int) $row['auto_sender_id'] : null;
 
     return [
-        'senderId' => resolve_active_sender_id($senderId),
-        'autoSenderId' => resolve_active_sender_id($autoSenderId),
+        'senderId' => $senderId,
+        'autoSenderId' => $autoSenderId,
     ];
 }
 
@@ -344,6 +344,50 @@ function sync_job_sender_snapshot_ids(string $jobId, ?int $senderId, ?int $autoS
             $normalizedId,
             $senderId !== null && $senderId > 0 ? $senderId : null,
             $autoSenderId !== null && $autoSenderId > 0 ? $autoSenderId : null
+        );
+    } catch (Throwable $e) {
+        // Best effort for now. job.json remains the fallback while this migration lands.
+    }
+}
+
+function job_analysis_snapshot(string $jobId): ?array
+{
+    $normalizedId = trim($jobId);
+    if ($normalizedId === '') {
+        return null;
+    }
+
+    $repository = job_repository_instance();
+    if ($repository === null) {
+        return null;
+    }
+
+    try {
+        $row = $repository->findAnalysisSnapshot($normalizedId);
+    } catch (Throwable $e) {
+        return null;
+    }
+
+    return is_array($row) ? $row : null;
+}
+
+function sync_job_analysis_snapshot(string $jobId, array $autoResult, ?string $analyzedAt = null): void
+{
+    $normalizedId = trim($jobId);
+    if ($normalizedId === '') {
+        return;
+    }
+
+    $repository = job_repository_instance();
+    if ($repository === null) {
+        return;
+    }
+
+    try {
+        $repository->upsertAnalysisSnapshot(
+            $normalizedId,
+            normalize_auto_archiving_result($autoResult),
+            $analyzedAt
         );
     } catch (Throwable $e) {
         // Best effort for now. job.json remains the fallback while this migration lands.
@@ -562,7 +606,7 @@ function sender_lookup_result(?string $orgNumber, ?string $bankgiro, ?string $pl
     $sender = [
         'id' => isset($match['id']) ? (int) $match['id'] : 0,
         'name' => is_string($match['name'] ?? null) ? $match['name'] : '',
-        'orgNumber' => is_string($match['org_number'] ?? null) ? $match['org_number'] : null,
+        'orgNumber' => is_string($match['organization_match_number'] ?? null) ? $match['organization_match_number'] : null,
         'domain' => is_string($match['domain'] ?? null) ? $match['domain'] : null,
         'kind' => is_string($match['kind'] ?? null) ? $match['kind'] : null,
         'confidence' => isset($match['confidence']) ? (float) $match['confidence'] : 1.0,
@@ -635,7 +679,10 @@ function load_senders(): array
         $senders[] = [
             'id' => $id,
             'name' => $name,
-            'orgNumber' => is_string($row['orgNumber'] ?? null) ? trim((string) $row['orgNumber']) : '',
+            'organizationNumbers' => array_values(array_filter(
+                is_array($row['organizationNumbers'] ?? null) ? $row['organizationNumbers'] : [],
+                static fn (mixed $organization): bool => is_array($organization)
+            )),
             'paymentNumbers' => array_values(array_filter(
                 is_array($row['paymentNumbers'] ?? null) ? $row['paymentNumbers'] : [],
                 static fn (mixed $payment): bool => is_array($payment)
@@ -2821,7 +2868,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $job['filename'] = $filename;
     $approvedSnapshotValue = normalize_auto_archiving_result(array_merge($userApprovedAtApproval, [
         'filename' => $filename,
-        'principalId' => $selectedClientDirName,
+        'clientId' => $selectedClientDirName,
         'senderId' => $selectedSenderId,
         'categoryId' => $selectedCategoryId,
         'archiveFolderId' => is_string($category['archiveFolderId'] ?? null) ? trim((string) $category['archiveFolderId']) : null,
@@ -8085,7 +8132,7 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
 
     $categoryId = is_string($autoResult['categoryId'] ?? null) ? trim((string) $autoResult['categoryId']) : '';
     $senderId = (int) ($autoResult['senderId'] ?? 0);
-    $principalId = is_string($autoResult['principalId'] ?? null) ? trim((string) $autoResult['principalId']) : '';
+    $clientId = is_string($autoResult['clientId'] ?? null) ? trim((string) $autoResult['clientId']) : '';
     $fields = is_array($autoResult['fields'] ?? null) ? $autoResult['fields'] : [];
     $systemFields = is_array($autoResult['systemFields'] ?? null) ? $autoResult['systemFields'] : [];
     $allFields = array_merge($fields, $systemFields);
@@ -8094,8 +8141,8 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
     $sender = $senderId > 0 ? find_sender_by_id($senders, $senderId) : null;
 
     $setValue($values, 'category', is_array($category) ? ($category['name'] ?? null) : null);
-    $setValue($values, 'client', $principalId);
-    $setValue($values, 'main_client', $principalId);
+    $setValue($values, 'client', $clientId);
+    $setValue($values, 'main_client', $clientId);
     $setValue($values, 'sender', is_array($sender) ? ($sender['name'] ?? null) : null);
 
     if (array_key_exists('amount', $allFields)) {
@@ -8204,8 +8251,13 @@ function normalize_auto_archiving_result(array $result): array
     ksort($fields, SORT_NATURAL);
     ksort($systemFields, SORT_NATURAL);
 
+    $clientId = is_string($result['clientId'] ?? null) ? trim((string) $result['clientId']) : '';
+    if ($clientId === '' && is_string($result['principalId'] ?? null)) {
+        $clientId = trim((string) $result['principalId']);
+    }
+
     return [
-        'principalId' => is_string($result['principalId'] ?? null) ? trim((string) $result['principalId']) : null,
+        'clientId' => $clientId !== '' ? $clientId : null,
         'senderId' => isset($result['senderId']) && (int) $result['senderId'] > 0 ? (int) $result['senderId'] : null,
         'categoryId' => is_string($result['categoryId'] ?? null) ? trim((string) $result['categoryId']) : null,
         'labels' => array_values(array_unique($labels)),
@@ -8215,6 +8267,57 @@ function normalize_auto_archiving_result(array $result): array
         'archiveFolderId' => is_string($result['archiveFolderId'] ?? null) ? trim((string) $result['archiveFolderId']) : null,
         'archiveFolderPath' => is_string($result['archiveFolderPath'] ?? null) ? trim((string) $result['archiveFolderPath']) : null,
     ];
+}
+
+function job_auto_archiving_result(array $job): array
+{
+    $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
+    $normalized = normalize_auto_archiving_result(
+        is_array($analysis['autoArchivingResult'] ?? null) ? $analysis['autoArchivingResult'] : []
+    );
+    if (
+        $normalized['clientId'] !== null
+        || $normalized['senderId'] !== null
+        || $normalized['categoryId'] !== null
+        || $normalized['labels'] !== []
+        || $normalized['fields'] !== []
+        || $normalized['systemFields'] !== []
+    ) {
+        return $normalized;
+    }
+
+    $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+    $stored = $jobId !== '' ? job_analysis_snapshot($jobId) : null;
+    return is_array($stored) ? normalize_auto_archiving_result($stored) : $normalized;
+}
+
+function job_analysis_payload(array $job): array
+{
+    $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
+    $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+    $stored = $jobId !== '' ? job_analysis_snapshot($jobId) : null;
+    $autoResult = job_auto_archiving_result($job);
+
+    if (
+        $autoResult['clientId'] !== null
+        || $autoResult['senderId'] !== null
+        || $autoResult['categoryId'] !== null
+        || $autoResult['labels'] !== []
+        || $autoResult['fields'] !== []
+        || $autoResult['systemFields'] !== []
+    ) {
+        $analysis['autoArchivingResult'] = $autoResult;
+    }
+
+    $analyzedAt = is_string($analysis['analyzedAt'] ?? null) ? trim((string) $analysis['analyzedAt']) : '';
+    if ($analyzedAt === '' && is_array($stored) && is_string($stored['analyzedAt'] ?? null)) {
+        $analyzedAt = trim((string) $stored['analyzedAt']);
+    }
+    if ($analyzedAt !== '') {
+        $analysis['analyzedAt'] = $analyzedAt;
+    }
+
+    return $analysis;
 }
 
 function normalize_auto_archiving_field_value(mixed $value): mixed
@@ -8292,7 +8395,7 @@ function calculate_auto_archiving_result_from_text(
     $bestCategory = top_category_match($categoryMatches);
 
     $autoResult = normalize_auto_archiving_result([
-        'principalId' => is_string($matchedClientDirName) && trim($matchedClientDirName) !== ''
+        'clientId' => is_string($matchedClientDirName) && trim($matchedClientDirName) !== ''
             ? trim($matchedClientDirName)
             : null,
         'senderId' => $matchedSenderId,
@@ -8367,9 +8470,7 @@ function current_approved_archiving_for_job(array $job): array
         return normalize_auto_archiving_result($job['approvedArchiving']);
     }
 
-    $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
-    $autoResult = is_array($analysis['autoArchivingResult'] ?? null) ? $analysis['autoArchivingResult'] : [];
-    $normalized = normalize_auto_archiving_result($autoResult);
+    $normalized = job_auto_archiving_result($job);
 
     $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null) ? trim((string) $job['selectedClientDirName']) : '';
     $selectedSenderId = resolve_active_sender_id(isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
@@ -8377,7 +8478,7 @@ function current_approved_archiving_for_job(array $job): array
     $filename = is_string($job['filename'] ?? null) ? trim((string) $job['filename']) : '';
 
     if ($selectedClientDirName !== '') {
-        $normalized['principalId'] = $selectedClientDirName;
+        $normalized['clientId'] = $selectedClientDirName;
     }
     if ($selectedSenderId > 0) {
         $normalized['senderId'] = $selectedSenderId;
@@ -8410,7 +8511,7 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
         : (is_string($job['filename'] ?? null) ? trim((string) $job['filename']) : '');
 
     if ($selectedClientDirName !== '') {
-        $approved['principalId'] = $selectedClientDirName;
+        $approved['clientId'] = $selectedClientDirName;
     }
     if ($selectedSenderId > 0) {
         $approved['senderId'] = $selectedSenderId;
@@ -8566,7 +8667,7 @@ function archiving_review_display_value(string $key, mixed $value, array $displa
         return '—';
     }
 
-    if ($key === 'principalId') {
+    if ($key === 'clientId') {
         $resolved = (string) $value;
         return $displayMaps['clients'][$resolved] ?? $resolved;
     }
@@ -8665,7 +8766,7 @@ function archiving_review_change_items(array $approved, array $activeResult, arr
     $items = [];
 
     foreach ([
-        'principalId' => 'Huvudman',
+        'clientId' => 'Huvudman',
         'senderId' => 'Avsändare',
         'categoryId' => 'Kategori',
         'archiveFolderId' => 'Arkivmapp',
@@ -8864,7 +8965,7 @@ function with_archiving_rules_review_lock(callable $callback)
 function archiving_result_diff_with_options(array $baseline, array $candidate, array $options = []): array
 {
     $includeFilename = ($options['includeFilename'] ?? true) !== false;
-    $scalarKeys = ['principalId', 'senderId', 'categoryId', 'archiveFolderId', 'archiveFolderPath'];
+    $scalarKeys = ['clientId', 'senderId', 'categoryId', 'archiveFolderId', 'archiveFolderPath'];
     if ($includeFilename) {
         array_splice($scalarKeys, 3, 0, ['filename']);
     }
@@ -9834,7 +9935,7 @@ function resolved_active_review_value(array $payload, array $proposed, array $co
     $categories = load_categories();
     $rules = load_active_archiving_rules();
 
-    $clientDirName = is_string($payload['principalId'] ?? null) ? trim((string) $payload['principalId']) : '';
+    $clientDirName = is_string($payload['clientId'] ?? null) ? trim((string) $payload['clientId']) : '';
     if ($clientDirName !== '') {
         $clientExists = false;
         foreach ($clients as $client) {
@@ -9902,7 +10003,7 @@ function resolved_active_review_value(array $payload, array $proposed, array $co
 
     $next = normalize_auto_archiving_result($proposed);
     if ($clientDirName !== '') {
-        $next['principalId'] = $clientDirName;
+        $next['clientId'] = $clientDirName;
     }
     if ($senderId > 0) {
         $next['senderId'] = $senderId;
@@ -9968,13 +10069,13 @@ function save_archived_job_review(array $config, string $jobId, string $action, 
         throw new RuntimeException('Bas-sökväg för utdata är inte konfigurerad');
     }
     if ($action !== 'keep') {
-        $principalId = is_string($nextApproved['principalId'] ?? null) ? trim((string) $nextApproved['principalId']) : '';
+        $clientId = is_string($nextApproved['clientId'] ?? null) ? trim((string) $nextApproved['clientId']) : '';
         $archiveFolderPath = is_string($nextApproved['archiveFolderPath'] ?? null) ? trim((string) $nextApproved['archiveFolderPath']) : '';
         $filename = is_string($nextApproved['filename'] ?? null) ? trim((string) $nextApproved['filename']) : '';
-        if ($principalId === '' || $filename === '') {
+        if ($clientId === '' || $filename === '') {
             throw new RuntimeException('Det nya arkiveringsvärdet är ofullständigt');
         }
-        $targetDirectory = rtrim($outputBaseDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $principalId;
+        $targetDirectory = rtrim($outputBaseDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $clientId;
         if ($archiveFolderPath !== '') {
             $targetDirectory .= DIRECTORY_SEPARATOR . $archiveFolderPath;
         }
@@ -9993,7 +10094,7 @@ function save_archived_job_review(array $config, string $jobId, string $action, 
 
     $normalizedApproved = normalize_auto_archiving_result($nextApproved);
     $job['approvedArchiving'] = $normalizedApproved;
-    $job['selectedClientDirName'] = is_string($nextApproved['principalId'] ?? null) ? trim((string) $nextApproved['principalId']) : null;
+    $job['selectedClientDirName'] = is_string($nextApproved['clientId'] ?? null) ? trim((string) $nextApproved['clientId']) : null;
     $job['selectedSenderId'] = isset($nextApproved['senderId']) ? (int) $nextApproved['senderId'] : null;
     $job['selectedCategoryId'] = is_string($nextApproved['categoryId'] ?? null) ? trim((string) $nextApproved['categoryId']) : null;
     $job['filename'] = is_string($nextApproved['filename'] ?? null) ? trim((string) $nextApproved['filename']) : null;
@@ -10233,6 +10334,12 @@ function process_claimed_job(
 
     write_json_file($jobDir . '/extracted.json', $extractedData);
 
+    $analyzedAt = now_iso();
+    $jobId = basename($jobDir);
+    if (is_string($jobId) && $jobId !== '') {
+        sync_job_analysis_snapshot($jobId, $analysisPayload['autoArchivingResult'], $analyzedAt);
+    }
+
     return [
         'extractedData' => $extractedData,
         'analysis' => [
@@ -10242,6 +10349,7 @@ function process_claimed_job(
             'extractionFieldMeta' => $analysisPayload['extractionFieldMeta'] !== [] ? $analysisPayload['extractionFieldMeta'] : new stdClass(),
             'labels' => $analysisPayload['labels'],
             'autoArchivingResult' => $analysisPayload['autoArchivingResult'],
+            'analyzedAt' => $analyzedAt,
         ],
         'ocr' => [
             'runOcr' => $runOcr,
@@ -10723,7 +10831,7 @@ function build_job_state_entry(
     $updatedAt = is_string($job['updatedAt'] ?? null) ? $job['updatedAt'] : $createdAt;
     $hasReviewPdf = job_review_pdf_path($config, $id, $job) !== null;
     $hasSourcePdf = is_file($jobDir . '/source.pdf');
-    $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
+    $analysis = job_analysis_payload($job);
     if (is_array($analysis) && array_key_exists('extractionFieldMeta', $analysis)) {
         unset($analysis['extractionFieldMeta']);
     }

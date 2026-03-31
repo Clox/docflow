@@ -2415,6 +2415,7 @@ body.is-resizing-sidebar {
 .sender-fields input,
 .sender-fields select,
 .sender-fields textarea,
+.sender-organization-fields input,
 .sender-payment-fields select,
 .sender-payment-fields input {
   width: 100%;
@@ -2437,6 +2438,13 @@ body.is-resizing-sidebar {
 .sender-payment-fields {
   display: grid;
   grid-template-columns: minmax(120px, 140px) minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.sender-organization-fields {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(180px, 1fr) auto;
   gap: 8px;
   align-items: start;
 }
@@ -2511,9 +2519,16 @@ body.is-resizing-sidebar {
   background-image: url('/assets/icons/123.svg');
 }
 
+.sender-organization-icon {
+  width: 22px;
+  height: 22px;
+  background-image: url('/assets/icons/123.svg');
+}
+
 .sender-header,
 .client-fields,
 .sender-fields,
+.sender-organization-fields,
 .sender-payment-fields {
   margin-left: 30px;
 }

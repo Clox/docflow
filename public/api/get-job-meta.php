@@ -27,6 +27,8 @@ try {
         exit;
     }
 
+    $job['analysis'] = job_analysis_payload($job);
+
     if (is_array($job['analysis'] ?? null) && array_key_exists('senderLookup', $job['analysis'])) {
         unset($job['analysis']['senderLookup']);
     }
