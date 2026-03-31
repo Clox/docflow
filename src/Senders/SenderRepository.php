@@ -219,10 +219,15 @@ final class SenderRepository
                 p.payee_name,
                 p.payee_lookup_status
             FROM sender_payment_numbers p
-            INNER JOIN senders s ON s.id = p.sender_id
+            LEFT JOIN senders s ON s.id = p.sender_id
             WHERE (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
               AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\')
-            ORDER BY s.name ASC, p.type ASC, p.number ASC, p.id ASC
+            ORDER BY
+                CASE WHEN s.name IS NULL OR trim(s.name) = \'\' THEN 1 ELSE 0 END ASC,
+                s.name ASC,
+                p.type ASC,
+                p.number ASC,
+                p.id ASC
             LIMIT :limit'
         );
         $statement->bindValue(':limit', $normalizedLimit, PDO::PARAM_INT);
@@ -239,8 +244,10 @@ final class SenderRepository
                 continue;
             }
             $paymentId = isset($row['id']) ? (int) $row['id'] : 0;
-            $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
-            if ($paymentId < 1 || $senderId < 1) {
+            $senderId = isset($row['sender_id']) && (int) $row['sender_id'] > 0
+                ? (int) $row['sender_id']
+                : null;
+            if ($paymentId < 1) {
                 continue;
             }
 
@@ -267,7 +274,6 @@ final class SenderRepository
         $statement = $this->pdo->query(
             'SELECT COUNT(*)
             FROM sender_payment_numbers p
-            INNER JOIN senders s ON s.id = p.sender_id
             WHERE (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
               AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\')'
         );
@@ -526,6 +532,190 @@ final class SenderRepository
             ':created_at' => $timestamp,
             ':updated_at' => $timestamp,
         ]);
+    }
+
+    public function observeOrganizationNumber(string $organizationNumber, ?string $organizationName = null): int
+    {
+        $normalizedNumber = IdentifierNormalizer::normalizeOrgNumber($organizationNumber);
+        if ($normalizedNumber === null) {
+            throw new RuntimeException('Invalid organization number.');
+        }
+
+        $normalizedName = is_string($organizationName) ? trim($organizationName) : '';
+        if ($normalizedName === '') {
+            $normalizedName = null;
+        }
+
+        $select = $this->pdo->prepare(
+            'SELECT id, organization_name
+            FROM sender_organization_numbers
+            WHERE organization_number = :organization_number
+            LIMIT 1'
+        );
+        $select->execute([':organization_number' => $normalizedNumber]);
+        $existing = $select->fetch();
+        $timestamp = date(DATE_ATOM);
+
+        if (is_array($existing)) {
+            $organizationId = isset($existing['id']) ? (int) $existing['id'] : 0;
+            if ($organizationId < 1) {
+                throw new RuntimeException('Observed organization row is invalid.');
+            }
+
+            $currentName = is_string($existing['organization_name'] ?? null)
+                ? trim((string) $existing['organization_name'])
+                : '';
+            $resolvedName = $currentName !== '' ? $currentName : $normalizedName;
+
+            $update = $this->pdo->prepare(
+                'UPDATE sender_organization_numbers
+                SET organization_name = :organization_name,
+                    updated_at = :updated_at
+                WHERE id = :id'
+            );
+            $update->execute([
+                ':id' => $organizationId,
+                ':organization_name' => $resolvedName !== '' ? $resolvedName : null,
+                ':updated_at' => $timestamp,
+            ]);
+
+            return $organizationId;
+        }
+
+        $insert = $this->pdo->prepare(
+            'INSERT INTO sender_organization_numbers (
+                organization_number,
+                organization_name,
+                sender_id,
+                created_at,
+                updated_at
+            ) VALUES (
+                :organization_number,
+                :organization_name,
+                NULL,
+                :created_at,
+                :updated_at
+            )'
+        );
+        $insert->execute([
+            ':organization_number' => $normalizedNumber,
+            ':organization_name' => $normalizedName,
+            ':created_at' => $timestamp,
+            ':updated_at' => $timestamp,
+        ]);
+
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function observePaymentNumber(
+        string $type,
+        string $number,
+        ?string $originalNumber = null,
+        ?string $source = 'document_auto',
+        float $confidence = 1.0
+    ): int {
+        $normalizedType = trim(strtolower($type));
+        if ($normalizedType !== 'bankgiro' && $normalizedType !== 'plusgiro') {
+            throw new RuntimeException('Payment number type must be bankgiro or plusgiro.');
+        }
+
+        $normalizedNumber = $normalizedType === 'bankgiro'
+            ? IdentifierNormalizer::normalizeBankgiro($number)
+            : IdentifierNormalizer::normalizePlusgiro($number);
+        if ($normalizedNumber === null) {
+            throw new RuntimeException('Invalid payment number.');
+        }
+
+        $normalizedOriginalNumber = is_string($originalNumber) ? trim($originalNumber) : '';
+        if ($normalizedOriginalNumber === '') {
+            $normalizedOriginalNumber = null;
+        }
+        $normalizedSource = is_string($source) ? trim($source) : '';
+        if ($normalizedSource === '') {
+            $normalizedSource = null;
+        }
+
+        $select = $this->pdo->prepare(
+            'SELECT id, original_number, source, confidence
+            FROM sender_payment_numbers
+            WHERE type = :type
+              AND number = :number
+            LIMIT 1'
+        );
+        $select->execute([
+            ':type' => $normalizedType,
+            ':number' => $normalizedNumber,
+        ]);
+        $existing = $select->fetch();
+        $timestamp = date(DATE_ATOM);
+
+        if (is_array($existing)) {
+            $paymentId = isset($existing['id']) ? (int) $existing['id'] : 0;
+            if ($paymentId < 1) {
+                throw new RuntimeException('Observed payment row is invalid.');
+            }
+
+            $currentOriginalNumber = is_string($existing['original_number'] ?? null)
+                ? trim((string) $existing['original_number'])
+                : '';
+            $currentSource = is_string($existing['source'] ?? null)
+                ? trim((string) $existing['source'])
+                : '';
+            $currentConfidence = isset($existing['confidence']) ? (float) $existing['confidence'] : 1.0;
+
+            $update = $this->pdo->prepare(
+                'UPDATE sender_payment_numbers
+                SET original_number = :original_number,
+                    source = :source,
+                    confidence = :confidence,
+                    updated_at = :updated_at
+                WHERE id = :id'
+            );
+            $update->execute([
+                ':id' => $paymentId,
+                ':original_number' => $currentOriginalNumber !== '' ? $currentOriginalNumber : $normalizedOriginalNumber,
+                ':source' => $currentSource !== '' ? $currentSource : $normalizedSource,
+                ':confidence' => max($currentConfidence, $confidence),
+                ':updated_at' => $timestamp,
+            ]);
+
+            return $paymentId;
+        }
+
+        $insert = $this->pdo->prepare(
+            'INSERT INTO sender_payment_numbers (
+                sender_id,
+                type,
+                number,
+                original_number,
+                requires_ocr,
+                source,
+                confidence,
+                created_at,
+                updated_at
+            ) VALUES (
+                NULL,
+                :type,
+                :number,
+                :original_number,
+                0,
+                :source,
+                :confidence,
+                :created_at,
+                :updated_at
+            )'
+        );
+        $insert->execute([
+            ':type' => $normalizedType,
+            ':number' => $normalizedNumber,
+            ':original_number' => $normalizedOriginalNumber,
+            ':source' => $normalizedSource,
+            ':confidence' => $confidence,
+            ':created_at' => $timestamp,
+            ':updated_at' => $timestamp,
+        ]);
+
+        return (int) $this->pdo->lastInsertId();
     }
 
     private function findByPaymentNumber(string $type, string $number): ?array

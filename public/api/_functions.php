@@ -10364,6 +10364,7 @@ function process_claimed_job(
     if (is_string($jobId) && $jobId !== '') {
         sync_job_analysis_snapshot($jobId, $analysisPayload['autoArchivingResult'], $analyzedAt);
     }
+    observe_extracted_sender_identifiers($analysisPayload['extractionFieldResults']);
 
     return [
         'extractedData' => $extractedData,
@@ -10832,6 +10833,65 @@ function build_job_sender_summary(?array $extracted, ?int $matchedSenderId, ?int
     }
 
     return null;
+}
+
+function extraction_field_result_string(array $results, string $key, string $property = 'value'): ?string
+{
+    $result = $results[$key] ?? null;
+    if (!is_array($result)) {
+        return null;
+    }
+
+    $value = $result[$property] ?? null;
+    if ($value === null) {
+        return null;
+    }
+    if (is_string($value)) {
+        $trimmed = trim($value);
+        return $trimmed !== '' ? $trimmed : null;
+    }
+    if (is_numeric($value)) {
+        return trim((string) $value);
+    }
+
+    return null;
+}
+
+function observe_extracted_sender_identifiers(array $fieldResults): void
+{
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        return;
+    }
+
+    $organizationNumber = extraction_field_result_string($fieldResults, 'organisationsnummer');
+    $organizationName = extraction_field_result_string($fieldResults, 'supplier');
+    $bankgiro = extraction_field_result_string($fieldResults, 'bankgiro');
+    $bankgiroRaw = extraction_field_result_string($fieldResults, 'bankgiro', 'raw');
+    $plusgiro = extraction_field_result_string($fieldResults, 'plusgiro');
+    $plusgiroRaw = extraction_field_result_string($fieldResults, 'plusgiro', 'raw');
+
+    if ($organizationNumber !== null) {
+        try {
+            $repository->observeOrganizationNumber($organizationNumber, $organizationName);
+        } catch (Throwable $e) {
+            // Best effort only. Identifier observation should not fail the document analysis pipeline.
+        }
+    }
+    if ($bankgiro !== null) {
+        try {
+            $repository->observePaymentNumber('bankgiro', $bankgiro, $bankgiroRaw, 'document_auto', 1.0);
+        } catch (Throwable $e) {
+            // Best effort only. Identifier observation should not fail the document analysis pipeline.
+        }
+    }
+    if ($plusgiro !== null) {
+        try {
+            $repository->observePaymentNumber('plusgiro', $plusgiro, $plusgiroRaw, 'document_auto', 1.0);
+        } catch (Throwable $e) {
+            // Best effort only. Identifier observation should not fail the document analysis pipeline.
+        }
+    }
 }
 
 function build_job_state_entry(

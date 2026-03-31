@@ -215,6 +215,7 @@ try {
         FROM sender_payment_numbers'
     )->fetchAll(PDO::FETCH_ASSOC);
     $existingPaymentRowsById = [];
+    $existingPaymentsByKey = [];
     foreach ($existingPaymentRows as $paymentRow) {
         if (!is_array($paymentRow)) {
             continue;
@@ -223,10 +224,16 @@ try {
         if ($paymentId < 1) {
             continue;
         }
-        $existingPaymentRowsById[$paymentId] = [
+        $rowData = [
             'senderId' => isset($paymentRow['sender_id']) ? (int) $paymentRow['sender_id'] : 0,
             'type' => is_string($paymentRow['type'] ?? null) ? trim(strtolower((string) $paymentRow['type'])) : 'bankgiro',
             'number' => is_string($paymentRow['number'] ?? null) ? trim((string) $paymentRow['number']) : '',
+        ];
+        $existingPaymentRowsById[$paymentId] = $rowData;
+        $paymentKey = $rowData['type'] . ':' . $rowData['number'];
+        $existingPaymentsByKey[$paymentKey] = [
+            'id' => $paymentId,
+            ...$rowData,
         ];
     }
 
@@ -279,7 +286,11 @@ try {
         }
     }
 
-    $deleteRemovedPayments = $pdo->prepare('DELETE FROM sender_payment_numbers WHERE id = :id');
+    $detachPayment = $pdo->prepare(
+        'UPDATE sender_payment_numbers
+        SET sender_id = NULL, updated_at = :updated_at
+        WHERE id = :id'
+    );
     $detachOrganization = $pdo->prepare(
         'UPDATE sender_organization_numbers
         SET sender_id = NULL, updated_at = :updated_at
@@ -415,10 +426,21 @@ try {
             continue;
         }
         $senderId = (int) ($paymentRow['senderId'] ?? 0);
+        if ($senderId < 1) {
+            continue;
+        }
         if ($shouldTouchExistingSender($senderId)) {
             $touchSender($senderId);
         }
-        $deleteRemovedPayments->execute([':id' => $paymentId]);
+        $detachPayment->execute([
+            ':id' => $paymentId,
+            ':updated_at' => date(DATE_ATOM),
+        ]);
+        $existingPaymentRowsById[$paymentId]['senderId'] = 0;
+        $paymentKey = (string) ($paymentRow['type'] ?? '') . ':' . (string) ($paymentRow['number'] ?? '');
+        if (isset($existingPaymentsByKey[$paymentKey])) {
+            $existingPaymentsByKey[$paymentKey]['senderId'] = 0;
+        }
     }
 
     foreach ($existingOrganizationRowsById as $organizationId => $organizationRow) {
@@ -575,20 +597,52 @@ try {
             } elseif ($paymentId !== null) {
                 throw new RuntimeException('Betalnumret som skulle uppdateras finns inte längre.');
             } else {
-                $insertPayment->execute([
-                    ':sender_id' => $senderId,
-                    ':type' => $paymentRow['type'],
-                    ':number' => $paymentRow['number'],
-                    ':original_number' => null,
-                    ':source' => 'docflow_editor',
-                    ':created_at' => $paymentTimestamp,
-                    ':updated_at' => $paymentTimestamp,
-                ]);
-                $paymentId = (int) $pdo->lastInsertId();
+                $paymentKey = $paymentRow['type'] . ':' . $paymentRow['number'];
+                $existingByKey = $existingPaymentsByKey[$paymentKey] ?? null;
+                if (is_array($existingByKey)) {
+                    $existingId = (int) ($existingByKey['id'] ?? 0);
+                    $existingSenderId = (int) ($existingByKey['senderId'] ?? 0);
+                    $canClaimExistingRow = $existingId > 0 && ($existingSenderId < 1 || !isset($submittedSenderIds[$existingSenderId]) || isset($claimedMergedSourceIds[$existingSenderId]));
+                    if (!$canClaimExistingRow) {
+                        throw new RuntimeException('Betalnummer måste vara unikt');
+                    }
+                    $paymentId = $existingId;
+                    $previousSenderId = $existingSenderId;
+                    $previousType = (string) ($existingByKey['type'] ?? '');
+                    $previousNumber = (string) ($existingByKey['number'] ?? '');
+                    $updatePayment->execute([
+                        ':id' => $paymentId,
+                        ':sender_id' => $senderId,
+                        ':type' => $paymentRow['type'],
+                        ':number' => $paymentRow['number'],
+                        ':source' => 'docflow_editor',
+                        ':updated_at' => $paymentTimestamp,
+                    ]);
+                } else {
+                    $insertPayment->execute([
+                        ':sender_id' => $senderId,
+                        ':type' => $paymentRow['type'],
+                        ':number' => $paymentRow['number'],
+                        ':original_number' => null,
+                        ':source' => 'docflow_editor',
+                        ':created_at' => $paymentTimestamp,
+                        ':updated_at' => $paymentTimestamp,
+                    ]);
+                    $paymentId = (int) $pdo->lastInsertId();
+                }
             }
 
             if ($paymentId !== null) {
+                if ($previousType !== '' && $previousNumber !== '') {
+                    unset($existingPaymentsByKey[$previousType . ':' . $previousNumber]);
+                }
                 $existingPaymentRowsById[$paymentId] = [
+                    'senderId' => $senderId,
+                    'type' => $paymentRow['type'],
+                    'number' => $paymentRow['number'],
+                ];
+                $existingPaymentsByKey[$paymentRow['type'] . ':' . $paymentRow['number']] = [
+                    'id' => $paymentId,
                     'senderId' => $senderId,
                     'type' => $paymentRow['type'],
                     'number' => $paymentRow['number'],
