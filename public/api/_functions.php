@@ -7376,6 +7376,15 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
             continue;
         }
 
+        $rawLength = strlen($raw);
+        $beforeChar = $start > 0 ? substr($text, $start - 1, 1) : '';
+        $afterChar = substr($text, $start + $rawLength, 1);
+        $touchesLeftToken = is_string($beforeChar) && $beforeChar !== '' && @preg_match('/[\pL\d]/u', $beforeChar) === 1;
+        $touchesRightToken = is_string($afterChar) && $afterChar !== '' && @preg_match('/[\pL\d]/u', $afterChar) === 1;
+        if ($touchesLeftToken || $touchesRightToken) {
+            continue;
+        }
+
         $candidates[] = [
             'value' => $raw,
             'raw' => $raw,
