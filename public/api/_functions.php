@@ -2419,6 +2419,27 @@ function archived_job_active_result(array $config, string $jobId, array $job, ar
     );
 }
 
+function archived_job_historical_auto_result(string $jobId, array $job, int $activeVersion): array
+{
+    $snapshot = job_archiving_snapshot($job);
+    if (is_array($snapshot) && (int) ($snapshot['approvedWithRulesVersion'] ?? 0) === $activeVersion) {
+        return normalize_auto_archiving_result(
+            is_array($snapshot['autoDetectedAtApproval'] ?? null) ? $snapshot['autoDetectedAtApproval'] : []
+        );
+    }
+
+    $stored = job_analysis_snapshot($jobId);
+    if (is_array($stored)) {
+        return normalize_auto_archiving_result($stored);
+    }
+
+    return normalize_auto_archiving_result(
+        is_array(($job['analysis'] ?? [])['autoArchivingResult'] ?? null)
+            ? $job['analysis']['autoArchivingResult']
+            : []
+    );
+}
+
 function normalize_archive_categories(mixed $input, array &$usedCategoryIds = [], array &$usedCategoryLabelIds = []): array
 {
     if (!is_array($input)) {
@@ -8271,6 +8292,12 @@ function normalize_auto_archiving_result(array $result): array
 
 function job_auto_archiving_result(array $job): array
 {
+    $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+    $stored = $jobId !== '' ? job_analysis_snapshot($jobId) : null;
+    if (is_array($stored)) {
+        return normalize_auto_archiving_result($stored);
+    }
+
     $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
     $normalized = normalize_auto_archiving_result(
         is_array($analysis['autoArchivingResult'] ?? null) ? $analysis['autoArchivingResult'] : []
@@ -8286,9 +8313,7 @@ function job_auto_archiving_result(array $job): array
         return $normalized;
     }
 
-    $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
-    $stored = $jobId !== '' ? job_analysis_snapshot($jobId) : null;
-    return is_array($stored) ? normalize_auto_archiving_result($stored) : $normalized;
+    return $normalized;
 }
 
 function job_analysis_payload(array $job): array
@@ -9507,7 +9532,7 @@ function collect_archiving_rules_review(array $config, int $chunkSize = 20): arr
             }
 
             $approved = current_approved_archiving_for_job($job);
-            $activeResult = archived_job_active_result($config, $jobId, $job, $activeRules, $activeVersion);
+            $activeResult = archived_job_historical_auto_result($jobId, $job, $activeVersion);
             $draftPayload = calculate_auto_archiving_result_for_job($config, $jobId, $draftRules, $job);
             $draftResult = normalize_auto_archiving_result($draftPayload['autoArchivingResult'] ?? []);
             $item = draft_archiving_review_item($jobId, $job, $approved, $activeResult, $draftResult, $displayMaps);
