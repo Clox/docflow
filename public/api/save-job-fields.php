@@ -29,7 +29,7 @@ if ($jobId === '' || !is_valid_job_id($jobId)) {
 try {
     $config = load_config();
     $updates = [];
-    foreach (['selectedClientDirName', 'selectedSenderId', 'selectedCategoryId', 'filename'] as $fieldKey) {
+    foreach (['selectedClientDirName', 'selectedSenderId', 'selectedCategoryId', 'selectedLabelIds', 'filename'] as $fieldKey) {
         if (array_key_exists($fieldKey, $payload)) {
             $updates[$fieldKey] = $payload[$fieldKey];
         }

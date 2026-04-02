@@ -1622,6 +1622,61 @@ function load_system_labels(): array
     return is_array($rules['systemLabels'] ?? null) ? $rules['systemLabels'] : system_labels_template();
 }
 
+function known_job_label_ids(): array
+{
+    $known = [];
+    foreach (array_merge(load_system_labels(), load_labels()) as $label) {
+        if (!is_array($label)) {
+            continue;
+        }
+        $labelId = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+        if ($labelId !== '') {
+            $known[$labelId] = true;
+        }
+    }
+
+    return $known;
+}
+
+function normalize_stored_job_label_ids(mixed $value): array
+{
+    $resolved = [];
+    $seen = [];
+    foreach (is_array($value) ? $value : [] as $item) {
+        $labelId = is_string($item) ? trim((string) $item) : '';
+        if ($labelId === '' || isset($seen[$labelId])) {
+            continue;
+        }
+        $seen[$labelId] = true;
+        $resolved[] = $labelId;
+    }
+
+    return $resolved;
+}
+
+function normalize_selected_job_label_ids_payload(mixed $value, array $knownLabelIds): array
+{
+    if (!is_array($value)) {
+        throw new RuntimeException('Ogiltiga etiketter');
+    }
+
+    $resolved = [];
+    $seen = [];
+    foreach ($value as $item) {
+        $labelId = is_string($item) ? trim((string) $item) : '';
+        if ($labelId === '' || isset($seen[$labelId])) {
+            continue;
+        }
+        if (!isset($knownLabelIds[$labelId])) {
+            throw new RuntimeException('Ogiltiga etiketter');
+        }
+        $seen[$labelId] = true;
+        $resolved[] = $labelId;
+    }
+
+    return $resolved;
+}
+
 function load_categories(): array
 {
     $rules = load_active_archiving_rules();
@@ -2689,6 +2744,7 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
     $clients = load_clients();
     $senders = load_senders();
     $categories = load_categories();
+    $knownLabelIds = known_job_label_ids();
 
     if (array_key_exists('selectedClientDirName', $payload)) {
         $value = $payload['selectedClientDirName'];
@@ -2740,6 +2796,15 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
         }
     }
 
+    if (array_key_exists('selectedLabelIds', $payload)) {
+        $value = $payload['selectedLabelIds'];
+        if ($value === null) {
+            unset($job['selectedLabelIds']);
+        } else {
+            $job['selectedLabelIds'] = normalize_selected_job_label_ids_payload($value, $knownLabelIds);
+        }
+    }
+
     if (array_key_exists('filename', $payload)) {
         $value = $payload['filename'];
         if ($value === null || trim((string) $value) === '') {
@@ -2755,6 +2820,7 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
         array_key_exists('selectedClientDirName', $payload)
         || array_key_exists('selectedSenderId', $payload)
         || array_key_exists('selectedCategoryId', $payload)
+        || array_key_exists('selectedLabelIds', $payload)
         || array_key_exists('filename', $payload)
     )) {
         invalidate_archiving_review_job($config, $jobId, true);
@@ -2818,6 +2884,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $clients = load_clients();
     $senders = load_senders();
     $categories = load_categories();
+    $knownLabelIds = known_job_label_ids();
 
     $selectedClientDirName = array_key_exists('selectedClientDirName', $payload)
         ? (is_string($payload['selectedClientDirName'] ?? null) ? trim((string) $payload['selectedClientDirName']) : '')
@@ -2828,6 +2895,9 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $selectedCategoryId = array_key_exists('selectedCategoryId', $payload)
         ? (is_string($payload['selectedCategoryId'] ?? null) ? trim((string) $payload['selectedCategoryId']) : '')
         : (is_string($job['selectedCategoryId'] ?? null) ? trim((string) $job['selectedCategoryId']) : '');
+    $selectedLabelIds = array_key_exists('selectedLabelIds', $payload)
+        ? (($payload['selectedLabelIds'] ?? null) === null ? null : normalize_selected_job_label_ids_payload($payload['selectedLabelIds'], $knownLabelIds))
+        : (array_key_exists('selectedLabelIds', $job) ? normalize_stored_job_label_ids($job['selectedLabelIds']) : null);
     $filenameInput = array_key_exists('filename', $payload)
         ? (is_string($payload['filename'] ?? null) ? (string) $payload['filename'] : '')
         : (is_string($job['filename'] ?? null) ? (string) $job['filename'] : '');
@@ -2886,6 +2956,11 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $job['selectedClientDirName'] = $selectedClientDirName;
     $job['selectedSenderId'] = $selectedSenderId;
     $job['selectedCategoryId'] = $selectedCategoryId;
+    if ($selectedLabelIds === null) {
+        unset($job['selectedLabelIds']);
+    } else {
+        $job['selectedLabelIds'] = $selectedLabelIds;
+    }
     $job['filename'] = $filename;
     $approvedSnapshotValue = normalize_auto_archiving_result(array_merge($userApprovedAtApproval, [
         'filename' => $filename,
@@ -8516,6 +8591,9 @@ function current_approved_archiving_for_job(array $job): array
     $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null) ? trim((string) $job['selectedClientDirName']) : '';
     $selectedSenderId = resolve_active_sender_id(isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
     $selectedCategoryId = is_string($job['selectedCategoryId'] ?? null) ? trim((string) $job['selectedCategoryId']) : '';
+    $selectedLabelIds = array_key_exists('selectedLabelIds', $job)
+        ? normalize_stored_job_label_ids($job['selectedLabelIds'])
+        : null;
     $filename = is_string($job['filename'] ?? null) ? trim((string) $job['filename']) : '';
 
     if ($selectedClientDirName !== '') {
@@ -8526,6 +8604,9 @@ function current_approved_archiving_for_job(array $job): array
     }
     if ($selectedCategoryId !== '') {
         $normalized['categoryId'] = $selectedCategoryId;
+    }
+    if (is_array($selectedLabelIds)) {
+        $normalized['labels'] = $selectedLabelIds;
     }
     if ($filename !== '') {
         $normalized['filename'] = $filename;
@@ -8547,6 +8628,9 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
     $selectedCategoryId = array_key_exists('selectedCategoryId', $payload)
         ? (is_string($payload['selectedCategoryId'] ?? null) ? trim((string) $payload['selectedCategoryId']) : '')
         : (is_string($job['selectedCategoryId'] ?? null) ? trim((string) $job['selectedCategoryId']) : '');
+    $selectedLabelIds = array_key_exists('selectedLabelIds', $payload)
+        ? (($payload['selectedLabelIds'] ?? null) === null ? null : normalize_selected_job_label_ids_payload($payload['selectedLabelIds'], known_job_label_ids()))
+        : (array_key_exists('selectedLabelIds', $job) ? normalize_stored_job_label_ids($job['selectedLabelIds']) : null);
     $filenameInput = array_key_exists('filename', $payload)
         ? (is_string($payload['filename'] ?? null) ? trim((string) $payload['filename']) : '')
         : (is_string($job['filename'] ?? null) ? trim((string) $job['filename']) : '');
@@ -8564,6 +8648,9 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
             $approved['archiveFolderId'] = is_string($category['archiveFolderId'] ?? null) ? trim((string) $category['archiveFolderId']) : null;
             $approved['archiveFolderPath'] = is_string($category['path'] ?? null) ? trim((string) $category['path']) : null;
         }
+    }
+    if (is_array($selectedLabelIds)) {
+        $approved['labels'] = $selectedLabelIds;
     }
     if ($filenameInput !== '') {
         $approved['filename'] = sanitize_pdf_filename($filenameInput);
@@ -10138,6 +10225,7 @@ function save_archived_job_review(array $config, string $jobId, string $action, 
     $job['selectedClientDirName'] = is_string($nextApproved['clientId'] ?? null) ? trim((string) $nextApproved['clientId']) : null;
     $job['selectedSenderId'] = isset($nextApproved['senderId']) ? (int) $nextApproved['senderId'] : null;
     $job['selectedCategoryId'] = is_string($nextApproved['categoryId'] ?? null) ? trim((string) $nextApproved['categoryId']) : null;
+    $job['selectedLabelIds'] = normalize_stored_job_label_ids($nextApproved['labels'] ?? null);
     $job['filename'] = is_string($nextApproved['filename'] ?? null) ? trim((string) $nextApproved['filename']) : null;
     $job['archivedPdfPath'] = $nextPath;
     set_job_archiving_snapshot($job, $activeVersion, $proposed, $normalizedApproved);
@@ -11117,6 +11205,9 @@ function build_job_state_entry(
     $selectedCategoryId = is_string($job['selectedCategoryId'] ?? null)
         ? trim((string) $job['selectedCategoryId'])
         : null;
+    $selectedLabelIds = array_key_exists('selectedLabelIds', $job)
+        ? normalize_stored_job_label_ids($job['selectedLabelIds'])
+        : null;
     $filename = is_string($job['filename'] ?? null)
         ? trim((string) $job['filename'])
         : null;
@@ -11145,6 +11236,7 @@ function build_job_state_entry(
                 'selectedClientDirName' => $selectedClientDirName,
                 'selectedSenderId' => $selectedSenderId,
                 'selectedCategoryId' => $selectedCategoryId,
+                'selectedLabelIds' => $selectedLabelIds,
                 'filename' => $filename,
                 'senderSummary' => $senderSummary,
                 'needsRuleReview' => $needsRuleReview,
@@ -11173,6 +11265,7 @@ function build_job_state_entry(
                 'selectedClientDirName' => $selectedClientDirName,
                 'selectedSenderId' => $selectedSenderId,
                 'selectedCategoryId' => $selectedCategoryId,
+                'selectedLabelIds' => $selectedLabelIds,
                 'filename' => $filename,
                 'senderSummary' => $senderSummary,
                 'needsRuleReview' => $needsRuleReview,
@@ -11268,6 +11361,7 @@ function build_job_state_entry(
         'selectedClientDirName' => $selectedClientDirName,
         'selectedSenderId' => $selectedSenderId,
         'selectedCategoryId' => $selectedCategoryId,
+        'selectedLabelIds' => $selectedLabelIds,
         'filename' => $filename,
         'senderSummary' => $senderSummary,
         'needsRuleReview' => $needsRuleReview,
@@ -11791,6 +11885,7 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         $job['selectedClientDirName'],
         $job['selectedSenderId'],
         $job['selectedCategoryId'],
+        $job['selectedLabelIds'],
         $job['filename'],
         $job['approvedArchiving'],
         $job['archiveSnapshot'],

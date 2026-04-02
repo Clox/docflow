@@ -79,6 +79,39 @@
                 <option value="" hidden>Välj kategori</option>
               </select>
             </div>
+            <div class="field-group field-group-job-labels">
+              <label class="floating-label" for="job-labels-field">Etiketter</label>
+              <button
+                id="job-labels-field"
+                class="job-labels-field"
+                type="button"
+                disabled
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                aria-controls="job-labels-overlay"
+              >
+                <span id="job-labels-summary" class="job-labels-summary"></span>
+              </button>
+              <div id="job-labels-focus-hint" class="job-labels-field-hint" aria-hidden="true">Tryck Enter för att visa/redigera etiketter</div>
+              <div id="job-labels-overlay" class="job-labels-overlay" aria-hidden="true">
+                <div class="job-labels-combobox">
+                  <input
+                    id="job-labels-combobox"
+                    class="job-labels-combobox-input"
+                    type="text"
+                    placeholder="Lägg till etikett…"
+                    autocomplete="off"
+                    spellcheck="false"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded="false"
+                    aria-controls="job-labels-combobox-list"
+                  >
+                  <div id="job-labels-combobox-list" class="job-labels-combobox-list" role="listbox"></div>
+                </div>
+                <div id="job-labels-selected" class="job-labels-selected" tabindex="0"></div>
+              </div>
+            </div>
             <div class="field-group field-group-filename">
               <label class="floating-label" for="filename-input">Filnamn</label>
               <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">

@@ -38,6 +38,7 @@ try {
         'selectedClientDirName' => $payload['selectedClientDirName'] ?? null,
         'selectedSenderId' => $payload['selectedSenderId'] ?? null,
         'selectedCategoryId' => $payload['selectedCategoryId'] ?? null,
+        'selectedLabelIds' => $payload['selectedLabelIds'] ?? null,
         'filename' => $payload['filename'] ?? null,
     ]);
     $entry = load_job_state_entry_by_id($config, $jobId);

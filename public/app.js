@@ -38,6 +38,13 @@ const sidebarSplitterEl = document.getElementById('sidebar-splitter');
 const clientSelectEl = document.getElementById('client-select');
 const senderSelectEl = document.getElementById('sender-select');
 const categorySelectEl = document.getElementById('category-select');
+const jobLabelsFieldEl = document.getElementById('job-labels-field');
+const jobLabelsSummaryEl = document.getElementById('job-labels-summary');
+const jobLabelsOverlayEl = document.getElementById('job-labels-overlay');
+const jobLabelsComboboxEl = document.getElementById('job-labels-combobox');
+const jobLabelsComboboxListEl = document.getElementById('job-labels-combobox-list');
+const jobLabelsSelectedEl = document.getElementById('job-labels-selected');
+const jobLabelsFieldGroupEl = jobLabelsFieldEl ? jobLabelsFieldEl.closest('.field-group-job-labels') : null;
 const filenameInputEl = document.getElementById('filename-input');
 const archiveActionEl = document.getElementById('archive-action');
 const appNoticesEl = document.getElementById('app-notices');
@@ -325,6 +332,7 @@ let selectedJobStateSig = '';
 const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
 const selectedCategoryByJobId = new Map();
+const selectedLabelIdsByJobId = new Map();
 const archivedReviewDraftByJobId = new Map();
 const filenameByJobId = new Map();
 const filenameSaveTimerByJobId = new Map();
@@ -389,6 +397,12 @@ let chromeExtensionPingInFlight = false;
 let chromeExtensionOrganizationLookupInFlight = false;
 let chromeExtensionPayeeLookupInFlight = false;
 let chromeExtensionPresenceTimer = null;
+let jobLabelsOverlayOpen = false;
+let jobLabelsDropdownOpen = false;
+let jobLabelsFilterText = '';
+let jobLabelsActiveOptionIndex = -1;
+let jobLabelsRenderedOptions = [];
+let jobLabelsSummaryRenderFrame = null;
 
 jobListModeEl.value = currentJobListMode;
 
@@ -850,6 +864,536 @@ function setCategoryForJob(job) {
     }
   }
   categorySelectEl.value = '';
+}
+
+function normalizeSelectedLabelIds(input) {
+  const resolved = [];
+  const seen = new Set();
+  (Array.isArray(input) ? input : []).forEach((value) => {
+    const labelId = typeof value === 'string' ? value.trim() : '';
+    if (!labelId || seen.has(labelId)) {
+      return;
+    }
+    seen.add(labelId);
+    resolved.push(labelId);
+  });
+  return resolved;
+}
+
+function effectiveSelectedLabelIds(job) {
+  if (!job) {
+    return [];
+  }
+  if (selectedLabelIdsByJobId.has(job.id)) {
+    return normalizeSelectedLabelIds(selectedLabelIdsByJobId.get(job.id));
+  }
+  if (Array.isArray(job.selectedLabelIds)) {
+    return normalizeSelectedLabelIds(job.selectedLabelIds);
+  }
+  const autoResult = autoArchivingResultForJob(job);
+  if (autoResult && Array.isArray(autoResult.labels)) {
+    return normalizeSelectedLabelIds(autoResult.labels);
+  }
+  if (job.analysis && typeof job.analysis === 'object' && Array.isArray(job.analysis.labels)) {
+    return normalizeSelectedLabelIds(job.analysis.labels);
+  }
+  return [];
+}
+
+function selectedJobLabelsEditable(job) {
+  return !!job && job.status === 'ready' && job.archived !== true;
+}
+
+function currentSelectedJobLabelOptions() {
+  return categoryLabelOptions()
+    .map((option) => ({
+      value: typeof option.value === 'string' ? option.value.trim() : '',
+      label: typeof option.label === 'string' ? option.label.trim() : '',
+    }))
+    .filter((option) => option.value !== '' && option.label !== '')
+    .sort((left, right) => left.label.localeCompare(right.label, 'sv'));
+}
+
+function labelDisplayName(labelId) {
+  const normalizedId = typeof labelId === 'string' ? labelId.trim() : '';
+  if (!normalizedId) {
+    return '';
+  }
+  return filenameTemplateLabelNameById(normalizedId) || normalizedId;
+}
+
+function createJobLabelsSummaryChip(text, className = 'job-labels-summary-chip') {
+  const chipEl = document.createElement('span');
+  chipEl.className = className;
+  const textEl = document.createElement('span');
+  textEl.className = className === 'job-labels-summary-overflow'
+    ? ''
+    : 'job-labels-summary-chip-text';
+  textEl.textContent = text;
+  chipEl.appendChild(textEl);
+  return chipEl;
+}
+
+function renderJobLabelsSummary(labelIds) {
+  if (!(jobLabelsSummaryEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const labels = normalizeSelectedLabelIds(labelIds)
+    .map((labelId) => labelDisplayName(labelId))
+    .filter((labelName) => labelName !== '');
+
+  jobLabelsSummaryEl.replaceChildren();
+  jobLabelsSummaryEl.classList.toggle('is-empty', labels.length < 1);
+
+  if (labels.length < 1) {
+    jobLabelsSummaryEl.textContent = 'Inga etiketter';
+    return;
+  }
+
+  const renderVisibleCount = (visibleCount) => {
+    jobLabelsSummaryEl.replaceChildren();
+    labels.slice(0, visibleCount).forEach((labelName) => {
+      jobLabelsSummaryEl.appendChild(createJobLabelsSummaryChip(labelName));
+    });
+    if (visibleCount < labels.length) {
+      jobLabelsSummaryEl.appendChild(createJobLabelsSummaryChip(`+${labels.length - visibleCount}`, 'job-labels-summary-overflow'));
+    }
+  };
+
+  renderVisibleCount(labels.length);
+  const maxWidth = jobLabelsSummaryEl.clientWidth;
+  if (!(maxWidth > 0)) {
+    return;
+  }
+
+  let visibleCount = labels.length;
+  while (visibleCount > 0 && jobLabelsSummaryEl.scrollWidth > maxWidth + 1) {
+    visibleCount -= 1;
+    renderVisibleCount(visibleCount);
+  }
+  if (visibleCount === 0 && jobLabelsSummaryEl.scrollWidth > maxWidth + 1) {
+    renderVisibleCount(0);
+  }
+}
+
+function scheduleJobLabelsSummaryRender(job = findJobById(selectedJobId)) {
+  if (jobLabelsSummaryRenderFrame !== null) {
+    window.cancelAnimationFrame(jobLabelsSummaryRenderFrame);
+  }
+  jobLabelsSummaryRenderFrame = window.requestAnimationFrame(() => {
+    jobLabelsSummaryRenderFrame = null;
+    renderJobLabelsSummary(effectiveSelectedLabelIds(job));
+  });
+}
+
+function selectedJobLabelDropdownOptions(job = findJobById(selectedJobId)) {
+  const normalizedFilter = jobLabelsFilterText.trim().toLocaleLowerCase('sv');
+  const selectedSet = new Set(effectiveSelectedLabelIds(job));
+  const allOptions = currentSelectedJobLabelOptions();
+  const filteredOptions = allOptions.filter((option) => {
+    if (selectedSet.has(option.value)) {
+      return false;
+    }
+    if (normalizedFilter === '') {
+      return true;
+    }
+    return option.label.toLocaleLowerCase('sv').includes(normalizedFilter)
+      || option.value.toLocaleLowerCase('sv').includes(normalizedFilter);
+  });
+
+  const createLabelName = jobLabelsFilterText.trim();
+  const createLabelId = slugifyText(createLabelName, '-', '');
+  const hasExactMatch = createLabelName !== '' && allOptions.some((option) => {
+    return option.value === createLabelId
+      || option.label.trim().toLocaleLowerCase('sv') === createLabelName.toLocaleLowerCase('sv');
+  });
+
+  const options = filteredOptions.map((option) => ({
+    type: 'label',
+    value: option.value,
+    label: option.label,
+  }));
+
+  if (createLabelName !== '' && createLabelId !== '' && !hasExactMatch) {
+    options.push({
+      type: 'create',
+      value: createLabelId,
+      label: createLabelName,
+    });
+  }
+
+  return options;
+}
+
+function renderSelectedJobLabelsChips(job = findJobById(selectedJobId)) {
+  if (!(jobLabelsSelectedEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const labelIds = effectiveSelectedLabelIds(job);
+  const selectedLabels = labelIds
+    .map((labelId) => ({
+      id: labelId,
+      name: labelDisplayName(labelId),
+    }))
+    .filter((label) => label.name !== '');
+
+  jobLabelsSelectedEl.replaceChildren();
+  jobLabelsSelectedEl.classList.toggle('is-empty', selectedLabels.length < 1);
+
+  if (selectedLabels.length < 1) {
+    jobLabelsSelectedEl.textContent = 'Inga etiketter valda.';
+    return;
+  }
+
+  selectedLabels.forEach((label) => {
+    const chipEl = document.createElement('span');
+    chipEl.className = 'job-labels-selected-chip';
+
+    const textEl = document.createElement('span');
+    textEl.className = 'job-labels-selected-chip-text';
+    textEl.textContent = label.name;
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'job-labels-selected-chip-remove';
+    removeButton.setAttribute('aria-label', `Ta bort etiketten ${label.name}`);
+    removeButton.textContent = '✕';
+    removeButton.addEventListener('click', async (event) => {
+      event.preventDefault();
+      try {
+        await removeLabelFromSelectedJob(label.id);
+      } catch (error) {
+        alert(error.message || 'Kunde inte ta bort etiketten.');
+      }
+    });
+
+    chipEl.append(textEl, removeButton);
+    jobLabelsSelectedEl.appendChild(chipEl);
+  });
+}
+
+function renderJobLabelsComboboxOptions(job = findJobById(selectedJobId)) {
+  if (!(jobLabelsComboboxListEl instanceof HTMLElement)) {
+    return;
+  }
+
+  jobLabelsRenderedOptions = selectedJobLabelDropdownOptions(job);
+  if (jobLabelsRenderedOptions.length < 1) {
+    jobLabelsActiveOptionIndex = -1;
+  } else if (jobLabelsActiveOptionIndex < 0 || jobLabelsActiveOptionIndex >= jobLabelsRenderedOptions.length) {
+    jobLabelsActiveOptionIndex = 0;
+  }
+
+  jobLabelsComboboxListEl.replaceChildren();
+  jobLabelsComboboxListEl.classList.toggle('is-open', jobLabelsDropdownOpen);
+
+  if (jobLabelsRenderedOptions.length < 1) {
+    if (jobLabelsComboboxEl instanceof HTMLInputElement) {
+      jobLabelsComboboxEl.removeAttribute('aria-activedescendant');
+    }
+    const emptyEl = document.createElement('div');
+    emptyEl.className = 'job-labels-combobox-empty';
+    emptyEl.textContent = jobLabelsFilterText.trim() === '' ? 'Inga fler etiketter.' : 'Ingen träff.';
+    jobLabelsComboboxListEl.appendChild(emptyEl);
+    return;
+  }
+
+  jobLabelsRenderedOptions.forEach((option, index) => {
+    const optionButton = document.createElement('button');
+    optionButton.type = 'button';
+    optionButton.className = 'job-labels-combobox-option';
+    if (option.type === 'create') {
+      optionButton.classList.add('job-labels-combobox-option-create');
+      optionButton.textContent = `Skapa etikett: "${option.label}"`;
+    } else {
+      optionButton.textContent = option.label;
+    }
+    optionButton.setAttribute('role', 'option');
+    optionButton.id = `job-labels-option-${index}`;
+    optionButton.setAttribute('aria-selected', index === jobLabelsActiveOptionIndex ? 'true' : 'false');
+    optionButton.classList.toggle('is-active', index === jobLabelsActiveOptionIndex);
+    optionButton.tabIndex = -1;
+    optionButton.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+    optionButton.addEventListener('mouseenter', () => {
+      jobLabelsActiveOptionIndex = index;
+      syncJobLabelsActiveOptionState();
+    });
+    optionButton.addEventListener('click', async () => {
+      await commitJobLabelsComboboxOption(option);
+    });
+    jobLabelsComboboxListEl.appendChild(optionButton);
+  });
+
+  if (jobLabelsComboboxEl instanceof HTMLInputElement && jobLabelsActiveOptionIndex >= 0) {
+    jobLabelsComboboxEl.setAttribute('aria-activedescendant', `job-labels-option-${jobLabelsActiveOptionIndex}`);
+  }
+}
+
+function syncJobLabelsActiveOptionState() {
+  if (!(jobLabelsComboboxListEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const optionEls = Array.from(jobLabelsComboboxListEl.querySelectorAll('.job-labels-combobox-option'));
+  optionEls.forEach((optionEl, index) => {
+    const isActive = index === jobLabelsActiveOptionIndex;
+    optionEl.classList.toggle('is-active', isActive);
+    optionEl.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+
+  if (jobLabelsComboboxEl instanceof HTMLInputElement) {
+    if (jobLabelsActiveOptionIndex >= 0) {
+      jobLabelsComboboxEl.setAttribute('aria-activedescendant', `job-labels-option-${jobLabelsActiveOptionIndex}`);
+    } else {
+      jobLabelsComboboxEl.removeAttribute('aria-activedescendant');
+    }
+  }
+}
+
+function renderJobLabelsOverlay(job = findJobById(selectedJobId)) {
+  if (!(jobLabelsFieldEl instanceof HTMLButtonElement) || !(jobLabelsOverlayEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const editable = selectedJobLabelsEditable(job);
+  const overlayInteractive = jobLabelsOverlayOpen && editable;
+  jobLabelsFieldEl.disabled = !editable;
+  jobLabelsFieldEl.tabIndex = overlayInteractive ? -1 : 0;
+  jobLabelsFieldEl.setAttribute('aria-expanded', jobLabelsOverlayOpen ? 'true' : 'false');
+  jobLabelsOverlayEl.setAttribute('aria-hidden', jobLabelsOverlayOpen ? 'false' : 'true');
+  jobLabelsOverlayEl.classList.toggle('is-open', jobLabelsOverlayOpen);
+  if (overlayInteractive) {
+    jobLabelsOverlayEl.removeAttribute('inert');
+  } else {
+    jobLabelsOverlayEl.setAttribute('inert', '');
+  }
+  if (jobLabelsFieldGroupEl instanceof HTMLElement) {
+    jobLabelsFieldGroupEl.classList.toggle('is-open', jobLabelsOverlayOpen);
+  }
+
+  if (jobLabelsComboboxEl instanceof HTMLInputElement) {
+    jobLabelsComboboxEl.disabled = !overlayInteractive;
+    jobLabelsComboboxEl.value = jobLabelsFilterText;
+    jobLabelsComboboxEl.setAttribute('aria-expanded', overlayInteractive && jobLabelsDropdownOpen ? 'true' : 'false');
+  }
+  if (jobLabelsSelectedEl instanceof HTMLElement) {
+    jobLabelsSelectedEl.tabIndex = overlayInteractive ? 0 : -1;
+  }
+
+  if (overlayInteractive) {
+    renderJobLabelsComboboxOptions(job);
+    renderSelectedJobLabelsChips(job);
+  } else {
+    jobLabelsDropdownOpen = false;
+    jobLabelsRenderedOptions = [];
+    jobLabelsActiveOptionIndex = -1;
+    if (jobLabelsComboboxListEl instanceof HTMLElement) {
+      jobLabelsComboboxListEl.classList.remove('is-open');
+      jobLabelsComboboxListEl.replaceChildren();
+    }
+    if (jobLabelsComboboxEl instanceof HTMLInputElement) {
+      jobLabelsComboboxEl.removeAttribute('aria-activedescendant');
+      jobLabelsComboboxEl.value = '';
+    }
+  }
+
+  scheduleJobLabelsSummaryRender(job);
+}
+
+function closeJobLabelsOverlay(options = {}) {
+  if (!jobLabelsOverlayOpen) {
+    return;
+  }
+
+  jobLabelsOverlayOpen = false;
+  jobLabelsDropdownOpen = false;
+  jobLabelsFilterText = '';
+  jobLabelsActiveOptionIndex = -1;
+  renderJobLabelsOverlay(findJobById(selectedJobId));
+  if (options.restoreFocus === true && jobLabelsFieldEl instanceof HTMLButtonElement && !jobLabelsFieldEl.disabled) {
+    jobLabelsFieldEl.focus({ preventScroll: true });
+  }
+}
+
+function openJobLabelsOverlay() {
+  const job = findJobById(selectedJobId);
+  if (!selectedJobLabelsEditable(job)) {
+    return;
+  }
+
+  jobLabelsOverlayOpen = true;
+  jobLabelsDropdownOpen = false;
+  jobLabelsFilterText = '';
+  jobLabelsActiveOptionIndex = -1;
+  renderJobLabelsOverlay(job);
+  window.requestAnimationFrame(() => {
+    if (!(jobLabelsComboboxEl instanceof HTMLInputElement)) {
+      return;
+    }
+    jobLabelsComboboxEl.focus({ preventScroll: true });
+    jobLabelsComboboxEl.select();
+  });
+}
+
+function toggleJobLabelsOverlay() {
+  if (jobLabelsOverlayOpen) {
+    closeJobLabelsOverlay({ restoreFocus: true });
+    return;
+  }
+  openJobLabelsOverlay();
+}
+
+async function persistSelectedJobLabelIds(nextLabelIds) {
+  const job = findJobById(selectedJobId);
+  if (!selectedJobLabelsEditable(job)) {
+    return;
+  }
+
+  const normalizedNext = normalizeSelectedLabelIds(nextLabelIds);
+  const hadLocalValue = selectedLabelIdsByJobId.has(job.id);
+  const previousLocalValue = hadLocalValue ? normalizeSelectedLabelIds(selectedLabelIdsByJobId.get(job.id)) : null;
+
+  selectedLabelIdsByJobId.set(job.id, normalizedNext);
+  setLabelsForJob(findJobById(selectedJobId));
+  const currentJob = findJobById(selectedJobId);
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+
+  try {
+    await saveSelectedJobFields(job.id, { selectedLabelIds: normalizedNext });
+  } catch (error) {
+    if (hadLocalValue) {
+      selectedLabelIdsByJobId.set(job.id, previousLocalValue);
+    } else {
+      selectedLabelIdsByJobId.delete(job.id);
+    }
+    setLabelsForJob(findJobById(selectedJobId));
+    const rollbackJob = findJobById(selectedJobId);
+    syncFilenameField(rollbackJob);
+    updateArchiveAction(rollbackJob);
+    throw error;
+  }
+}
+
+async function applyLabelToSelectedJob(labelId) {
+  const job = findJobById(selectedJobId);
+  if (!selectedJobLabelsEditable(job)) {
+    return;
+  }
+
+  const currentIds = effectiveSelectedLabelIds(job);
+  if (currentIds.includes(labelId)) {
+    return;
+  }
+
+  await persistSelectedJobLabelIds([...currentIds, labelId]);
+  jobLabelsFilterText = '';
+  jobLabelsDropdownOpen = true;
+  jobLabelsActiveOptionIndex = 0;
+  renderJobLabelsOverlay(findJobById(selectedJobId));
+  if (jobLabelsComboboxEl instanceof HTMLInputElement) {
+    jobLabelsComboboxEl.focus({ preventScroll: true });
+  }
+}
+
+async function removeLabelFromSelectedJob(labelId) {
+  const job = findJobById(selectedJobId);
+  if (!selectedJobLabelsEditable(job)) {
+    return;
+  }
+
+  const currentIds = effectiveSelectedLabelIds(job);
+  await persistSelectedJobLabelIds(currentIds.filter((value) => value !== labelId));
+  renderJobLabelsOverlay(findJobById(selectedJobId));
+}
+
+async function createAndApplyLabelToSelectedJob(labelName) {
+  const normalizedName = typeof labelName === 'string' ? labelName.trim() : '';
+  const normalizedId = slugifyText(normalizedName, '-', '');
+  if (!normalizedName || !normalizedId) {
+    return;
+  }
+
+  const existingOption = currentSelectedJobLabelOptions().find((option) => option.value === normalizedId);
+  if (existingOption) {
+    await applyLabelToSelectedJob(existingOption.value);
+    return;
+  }
+
+  const previousLabelsDraft = JSON.parse(JSON.stringify(labelsDraft));
+  labelsDraft = [...labelsDraft, sanitizeLabel({
+    name: normalizedName,
+    minScore: 1,
+    rules: [],
+  })];
+
+  try {
+    await saveLabels();
+  } catch (error) {
+    labelsDraft = previousLabelsDraft.map(sanitizeLabel);
+    if (labelsListEl) {
+      renderLabelsEditor();
+    }
+    if (categoriesListEl) {
+      renderCategoriesEditor();
+    }
+    updateSettingsActionButtons();
+    renderJobLabelsOverlay(findJobById(selectedJobId));
+    throw error;
+  }
+
+  const createdOption = currentSelectedJobLabelOptions().find((option) => option.value === normalizedId);
+  if (!createdOption) {
+    throw new Error('Kunde inte skapa etiketten.');
+  }
+
+  await applyLabelToSelectedJob(createdOption.value);
+}
+
+async function commitJobLabelsComboboxOption(option = null) {
+  const resolvedOption = option || jobLabelsRenderedOptions[jobLabelsActiveOptionIndex] || jobLabelsRenderedOptions[0] || null;
+  if (!resolvedOption) {
+    return;
+  }
+
+  try {
+    if (resolvedOption.type === 'create') {
+      await createAndApplyLabelToSelectedJob(resolvedOption.label);
+      return;
+    }
+    await applyLabelToSelectedJob(resolvedOption.value);
+  } catch (error) {
+    alert(error.message || 'Kunde inte uppdatera etiketter.');
+  }
+}
+
+function setLabelsForJob(job) {
+  if (!(jobLabelsFieldEl instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (!job) {
+    closeJobLabelsOverlay();
+    jobLabelsFieldEl.disabled = true;
+    renderJobLabelsSummary([]);
+    if (jobLabelsSelectedEl instanceof HTMLElement) {
+      jobLabelsSelectedEl.replaceChildren();
+      jobLabelsSelectedEl.classList.add('is-empty');
+      jobLabelsSelectedEl.textContent = 'Inga etiketter valda.';
+    }
+    return;
+  }
+
+  if (!selectedJobLabelsEditable(job) && jobLabelsOverlayOpen) {
+    closeJobLabelsOverlay();
+  }
+
+  jobLabelsFieldEl.disabled = !selectedJobLabelsEditable(job);
+  renderJobLabelsOverlay(job);
 }
 
 function pdfUrlForJob(jobId) {
@@ -4386,7 +4930,6 @@ function buildFilenameFieldValues(job) {
   const extractionFields = job.analysis && typeof job.analysis === 'object' && job.analysis.extractionFields && typeof job.analysis.extractionFields === 'object'
     ? job.analysis.extractionFields
     : {};
-  const autoResult = autoArchivingResultForJob(job);
   const clientDirName = effectiveClientDirName(job);
   const sender = findSenderById(effectiveSenderId(job));
   const category = findFilenameTemplateCategoryById(effectiveCategoryId(job));
@@ -4441,9 +4984,7 @@ function buildFilenameFieldValues(job) {
     }
   });
 
-  const labelIds = Array.isArray(autoResult && autoResult.labels)
-    ? autoResult.labels
-    : (Array.isArray(job.analysis && job.analysis.labels) ? job.analysis.labels : []);
+  const labelIds = effectiveSelectedLabelIds(job);
   const labelNames = labelIds
     .map((labelId) => filenameTemplateLabelNameById(labelId))
     .filter((name) => typeof name === 'string' && name.trim() !== '');
@@ -4711,6 +5252,7 @@ function restoreSelectedJobEditorState() {
   setClientForJob(currentJob);
   setSenderForJob(currentJob);
   setCategoryForJob(currentJob);
+  setLabelsForJob(currentJob);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
 }
@@ -4771,6 +5313,7 @@ function renderSelectedJobPanel() {
     }
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
     renderSelectedJobSenderSection(null);
+    setLabelsForJob(null);
     selectedJobReprocessEl.disabled = true;
     selectedJobReprocessEl.title = 'Markera ett jobb först.';
     syncFilenameField(null);
@@ -6022,6 +6565,9 @@ function scrollOcrMatchIntoView(match) {
 
 function applySelectedJobId(jobId, options = {}) {
   const syncHash = options.syncHash !== false;
+  if (jobId !== selectedJobId) {
+    closeJobLabelsOverlay();
+  }
   const selectedJob = findJobById(jobId);
   selectedJobId = selectedJob ? selectedJob.id : '';
   syncReviewViewModeAvailability(selectedJob);
@@ -6032,6 +6578,7 @@ function applySelectedJobId(jobId, options = {}) {
   setClientForJob(selectedJob);
   setSenderForJob(selectedJob);
   setCategoryForJob(selectedJob);
+  setLabelsForJob(selectedJob);
   if (syncHash) {
     updateHashState();
   }
@@ -6098,6 +6645,7 @@ function refreshSelection() {
     setClientForJob(currentSelection);
     setSenderForJob(currentSelection);
     setCategoryForJob(currentSelection);
+    setLabelsForJob(currentSelection);
     syncFilenameField(currentSelection);
     updateArchiveAction(currentSelection);
     updateHashState();
@@ -6168,6 +6716,11 @@ function applyState(nextState) {
   Array.from(selectedCategoryByJobId.keys()).forEach((jobId) => {
     if (!validJobIds.has(jobId)) {
       selectedCategoryByJobId.delete(jobId);
+    }
+  });
+  Array.from(selectedLabelIdsByJobId.keys()).forEach((jobId) => {
+    if (!validJobIds.has(jobId)) {
+      selectedLabelIdsByJobId.delete(jobId);
     }
   });
   Array.from(filenameByJobId.keys()).forEach((jobId) => {
@@ -12883,6 +13436,11 @@ async function loadLabels(options = {}) {
     forceRender: true,
     expectedLocalRevision: requestLocalRevision
   });
+  const selectedJob = findJobById(selectedJobId);
+  if (selectedJob) {
+    setLabelsForJob(selectedJob);
+    syncFilenameField(selectedJob);
+  }
   renderLabelsEditor();
   if (categoriesListEl) {
     renderCategoriesEditor();
@@ -13067,6 +13625,11 @@ async function saveLabels() {
   labelsDraft = payload.labels.map(sanitizeLabel);
   systemLabelsDraft = sanitizeSystemLabels(payload.systemLabels);
   labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
+  const selectedJob = findJobById(selectedJobId);
+  if (selectedJob) {
+    setLabelsForJob(selectedJob);
+    syncFilenameField(selectedJob);
+  }
   renderLabelsEditor();
   if (categoriesListEl) {
     renderCategoriesEditor();
@@ -13390,6 +13953,101 @@ categorySelectEl.addEventListener('change', () => {
   });
 });
 
+if (jobLabelsFieldEl instanceof HTMLButtonElement) {
+  jobLabelsFieldEl.addEventListener('click', (event) => {
+    event.preventDefault();
+    toggleJobLabelsOverlay();
+  });
+}
+
+if (jobLabelsComboboxEl instanceof HTMLInputElement) {
+  jobLabelsComboboxEl.addEventListener('focus', () => {
+    if (!jobLabelsOverlayOpen) {
+      return;
+    }
+    jobLabelsDropdownOpen = true;
+    renderJobLabelsOverlay(findJobById(selectedJobId));
+  });
+
+  jobLabelsComboboxEl.addEventListener('blur', () => {
+    window.requestAnimationFrame(() => {
+      if (!jobLabelsOverlayOpen || document.activeElement === jobLabelsComboboxEl) {
+        return;
+      }
+      jobLabelsDropdownOpen = false;
+      renderJobLabelsOverlay(findJobById(selectedJobId));
+    });
+  });
+
+  jobLabelsComboboxEl.addEventListener('input', () => {
+    jobLabelsFilterText = jobLabelsComboboxEl.value;
+    jobLabelsDropdownOpen = true;
+    jobLabelsActiveOptionIndex = 0;
+    renderJobLabelsOverlay(findJobById(selectedJobId));
+  });
+
+  jobLabelsComboboxEl.addEventListener('keydown', async (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeJobLabelsOverlay({ restoreFocus: true });
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      if (jobLabelsRenderedOptions.length < 1) {
+        return;
+      }
+      event.preventDefault();
+      jobLabelsDropdownOpen = true;
+      jobLabelsActiveOptionIndex = jobLabelsActiveOptionIndex < 0
+        ? 0
+        : Math.min(jobLabelsActiveOptionIndex + 1, jobLabelsRenderedOptions.length - 1);
+      renderJobLabelsOverlay(findJobById(selectedJobId));
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      if (jobLabelsRenderedOptions.length < 1) {
+        return;
+      }
+      event.preventDefault();
+      jobLabelsDropdownOpen = true;
+      jobLabelsActiveOptionIndex = jobLabelsActiveOptionIndex < 0
+        ? jobLabelsRenderedOptions.length - 1
+        : Math.max(jobLabelsActiveOptionIndex - 1, 0);
+      renderJobLabelsOverlay(findJobById(selectedJobId));
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      await commitJobLabelsComboboxOption();
+    }
+  });
+}
+
+if (jobLabelsSelectedEl instanceof HTMLElement) {
+  jobLabelsSelectedEl.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeJobLabelsOverlay({ restoreFocus: true });
+    }
+  });
+}
+
+if (jobLabelsFieldGroupEl instanceof HTMLElement) {
+  jobLabelsFieldGroupEl.addEventListener('focusout', (event) => {
+    if (!jobLabelsOverlayOpen) {
+      return;
+    }
+    const nextFocusedElement = event.relatedTarget;
+    if (nextFocusedElement instanceof Node && jobLabelsFieldGroupEl.contains(nextFocusedElement)) {
+      return;
+    }
+    if (!(nextFocusedElement instanceof Node)) {
+      return;
+    }
+    closeJobLabelsOverlay();
+  });
+}
+
 filenameInputEl.addEventListener('input', () => {
   if (!selectedJobId) {
     return;
@@ -13436,6 +14094,7 @@ archiveActionEl.addEventListener('click', async () => {
         selectedClientDirName: effectiveClientDirName(selectedJob) || null,
         selectedSenderId: effectiveSenderId(selectedJob) || null,
         selectedCategoryId: effectiveCategoryId(selectedJob) || null,
+        selectedLabelIds: effectiveSelectedLabelIds(selectedJob),
         filename: filenameInputEl.value || displayedFilenameForJob(selectedJob),
       })
     });
@@ -13666,9 +14325,29 @@ settingsModalEl.addEventListener('click', (event) => {
   }
 });
 
+document.addEventListener('pointerdown', (event) => {
+  if (!jobLabelsOverlayOpen || !(jobLabelsFieldGroupEl instanceof HTMLElement)) {
+    return;
+  }
+  if (jobLabelsFieldGroupEl.contains(event.target)) {
+    return;
+  }
+  closeJobLabelsOverlay();
+});
+
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && jobLabelsOverlayOpen) {
+    event.preventDefault();
+    closeJobLabelsOverlay({ restoreFocus: true });
+    return;
+  }
+
   if (event.key === 'Escape' && !settingsModalEl.classList.contains('hidden')) {
     closeSettingsModal();
+    return;
+  }
+
+  if (jobLabelsOverlayOpen) {
     return;
   }
 
@@ -13696,6 +14375,10 @@ window.addEventListener('beforeunload', (event) => {
 
   event.preventDefault();
   event.returnValue = 'Du har osparade ändringar.';
+});
+
+window.addEventListener('resize', () => {
+  scheduleJobLabelsSummaryRender();
 });
 
 async function fetchState(options = {}) {
