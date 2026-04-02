@@ -11047,6 +11047,37 @@ function build_sender_payee_lookup_queue_state_payload(int $limit = 1): array
     ];
 }
 
+function build_sender_organization_lookup_queue_state_payload(int $limit = 1): array
+{
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        return [
+            'remainingCount' => 0,
+            'item' => null,
+        ];
+    }
+
+    try {
+        $items = $repository->listOrganizationNumbersMissingName($limit);
+        $remainingCount = $repository->countOrganizationNumbersMissingName();
+    } catch (Throwable $e) {
+        return [
+            'remainingCount' => 0,
+            'item' => null,
+        ];
+    }
+
+    $item = $items[0] ?? null;
+    if (!is_array($item)) {
+        $item = null;
+    }
+
+    return [
+        'remainingCount' => max(0, (int) $remainingCount),
+        'item' => $item,
+    ];
+}
+
 function build_job_state_entry(
     array $config,
     string $jobDir,

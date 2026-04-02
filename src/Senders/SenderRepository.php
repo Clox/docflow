@@ -348,6 +348,118 @@ final class SenderRepository
         return max(0, (int) $statement->fetchColumn());
     }
 
+    public function listOrganizationNumbersMissingName(int $limit = 10): array
+    {
+        $normalizedLimit = max(1, min(100, $limit));
+        $statement = $this->pdo->prepare(
+            'SELECT
+                o.id,
+                o.sender_id,
+                s.name AS sender_name,
+                o.organization_number,
+                o.organization_name,
+                o.source
+            FROM sender_organization_numbers o
+            LEFT JOIN senders s ON s.id = o.sender_id
+            WHERE o.organization_name IS NULL OR trim(o.organization_name) = \'\'
+            ORDER BY
+                CASE WHEN s.name IS NULL OR trim(s.name) = \'\' THEN 1 ELSE 0 END ASC,
+                s.name ASC,
+                o.organization_number ASC,
+                o.id ASC
+            LIMIT :limit'
+        );
+        $statement->bindValue(':limit', $normalizedLimit, PDO::PARAM_INT);
+        $statement->execute();
+
+        $rows = $statement->fetchAll();
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $items = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $organizationId = isset($row['id']) ? (int) $row['id'] : 0;
+            $senderId = isset($row['sender_id']) && (int) $row['sender_id'] > 0
+                ? (int) $row['sender_id']
+                : null;
+            if ($organizationId < 1) {
+                continue;
+            }
+
+            $normalizedNumber = is_string($row['organization_number'] ?? null)
+                ? trim((string) $row['organization_number'])
+                : '';
+            if ($normalizedNumber === '') {
+                continue;
+            }
+
+            $items[] = [
+                'organizationId' => $organizationId,
+                'senderId' => $senderId,
+                'senderName' => is_string($row['sender_name'] ?? null) ? trim((string) $row['sender_name']) : '',
+                'organizationNumber' => $this->formatOrganizationNumberForDisplay($normalizedNumber),
+                'normalizedOrganizationNumber' => $normalizedNumber,
+                'organizationName' => is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '',
+                'source' => is_string($row['source'] ?? null) ? trim((string) $row['source']) : '',
+            ];
+        }
+
+        return $items;
+    }
+
+    public function countOrganizationNumbersMissingName(): int
+    {
+        $statement = $this->pdo->query(
+            'SELECT COUNT(*)
+            FROM sender_organization_numbers o
+            WHERE o.organization_name IS NULL OR trim(o.organization_name) = \'\''
+        );
+        if ($statement === false) {
+            return 0;
+        }
+
+        return max(0, (int) $statement->fetchColumn());
+    }
+
+    public function updateOrganizationName(int $organizationId, ?string $organizationName): void
+    {
+        if ($organizationId < 1) {
+            throw new RuntimeException('Organization id is required.');
+        }
+
+        $normalizedOrganizationName = null;
+        if (is_string($organizationName)) {
+            $normalizedOrganizationName = trim($organizationName);
+            if ($normalizedOrganizationName === '') {
+                $normalizedOrganizationName = null;
+            }
+        }
+
+        $statement = $this->pdo->prepare(
+            'UPDATE sender_organization_numbers
+            SET organization_name = :organization_name,
+                updated_at = :updated_at
+            WHERE id = :id'
+        );
+        $statement->execute([
+            ':id' => $organizationId,
+            ':organization_name' => $normalizedOrganizationName,
+            ':updated_at' => date(DATE_ATOM),
+        ]);
+
+        if ($statement->rowCount() < 1) {
+            $exists = $this->pdo->prepare('SELECT 1 FROM sender_organization_numbers WHERE id = :id LIMIT 1');
+            $exists->execute([':id' => $organizationId]);
+            if ($exists->fetchColumn() === false) {
+                throw new RuntimeException('Organization number not found.');
+            }
+        }
+    }
+
     public function updatePaymentPayeeName(int $paymentId, ?string $payeeName, ?string $lookupStatus = null): void
     {
         if ($paymentId < 1) {

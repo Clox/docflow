@@ -49,6 +49,7 @@ try {
         'archivedJobs' => $jobsPayload['archivedJobs'],
         'failedJobs' => $jobsPayload['failedJobs'],
         'senderPayeeLookupQueue' => build_sender_payee_lookup_queue_state_payload(1),
+        'senderOrganizationLookupQueue' => build_sender_organization_lookup_queue_state_payload(1),
         'archivingRules' => build_archiving_rules_state_payload(
             $config,
             count(array_filter(
@@ -77,6 +78,10 @@ try {
         'archivedJobs' => [],
         'failedJobs' => [],
         'senderPayeeLookupQueue' => [
+            'remainingCount' => 0,
+            'item' => null,
+        ],
+        'senderOrganizationLookupQueue' => [
             'remainingCount' => 0,
             'item' => null,
         ],

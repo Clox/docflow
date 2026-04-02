@@ -20,7 +20,7 @@ function docflow_extension_manifest_payload(): array
     return [
         'manifest_version' => 3,
         'name' => 'Docflow Chrome Connector',
-        'description' => 'Första versionen av Docflows koppling till Swedbank och BG/PG-uppslag.',
+        'description' => 'Docflows koppling till Swedbank och allabolag.se för identifieraruppslag.',
         'version' => docflow_chrome_extension_version(),
         'key' => docflow_chrome_extension_manifest_key(),
         'background' => [
@@ -30,6 +30,7 @@ function docflow_extension_manifest_payload(): array
         'host_permissions' => [
             'https://online.swedbank.se/*',
             'https://www.swedbank.se/*',
+            'https://www.allabolag.se/*',
         ],
         'externally_connectable' => [
             'matches' => [$origin . '/*'],

@@ -161,6 +161,10 @@ let state = {
   readyJobs: [],
   archivedJobs: [],
   failedJobs: [],
+  senderOrganizationLookupQueue: {
+    remainingCount: 0,
+    item: null,
+  },
   senderPayeeLookupQueue: {
     remainingCount: 0,
     item: null,
@@ -372,13 +376,17 @@ let chromeExtensionRuntime = {
   status: 'unknown',
   version: '',
   lastError: '',
+  organizationLookupLastError: '',
   swedbankSessionAvailable: null,
   hasAnySwedbankTab: false,
+  hasAnyAllabolagTab: false,
   loginRequired: false,
   profileSelectionRequired: false,
+  missingOrganizationCount: 0,
   missingPayeeCount: 0,
 };
 let chromeExtensionPingInFlight = false;
+let chromeExtensionOrganizationLookupInFlight = false;
 let chromeExtensionPayeeLookupInFlight = false;
 let chromeExtensionPresenceTimer = null;
 
@@ -1809,6 +1817,58 @@ function normalizeSenderPayeeLookupQueue(input) {
   };
 }
 
+function normalizeSenderOrganizationLookupQueueItem(input) {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+
+  const organizationId = Number.parseInt(String(input.organizationId || ''), 10);
+  if (!Number.isInteger(organizationId) || organizationId < 1) {
+    return null;
+  }
+
+  const normalizedOrganizationNumber = String(input.normalizedOrganizationNumber || '').trim();
+  const organizationNumber = String(input.organizationNumber || '').trim();
+
+  return {
+    organizationId,
+    senderId: Number.isInteger(Number.parseInt(String(input.senderId || ''), 10))
+      ? Number.parseInt(String(input.senderId || ''), 10)
+      : null,
+    senderName: String(input.senderName || '').trim(),
+    organizationNumber,
+    normalizedOrganizationNumber: normalizedOrganizationNumber !== '' ? normalizedOrganizationNumber : organizationNumber,
+    organizationName: String(input.organizationName || '').trim(),
+    source: String(input.source || '').trim(),
+  };
+}
+
+function normalizeSenderOrganizationLookupQueue(input) {
+  const remainingCount = Number.parseInt(String(input && input.remainingCount || 0), 10) || 0;
+  return {
+    remainingCount: Math.max(0, remainingCount),
+    item: normalizeSenderOrganizationLookupQueueItem(input && input.item),
+  };
+}
+
+function currentSenderOrganizationLookupQueue() {
+  if (!state || !state.senderOrganizationLookupQueue || typeof state.senderOrganizationLookupQueue !== 'object') {
+    return {
+      remainingCount: 0,
+      item: null,
+    };
+  }
+  return state.senderOrganizationLookupQueue;
+}
+
+function currentSenderOrganizationLookupQueueItem() {
+  return currentSenderOrganizationLookupQueue().item;
+}
+
+function currentSenderOrganizationLookupRemainingCount() {
+  return Math.max(0, Number.parseInt(String(currentSenderOrganizationLookupQueue().remainingCount || 0), 10) || 0);
+}
+
 function currentSenderPayeeLookupQueue() {
   if (!state || !state.senderPayeeLookupQueue || typeof state.senderPayeeLookupQueue !== 'object') {
     return {
@@ -1847,6 +1907,7 @@ function setChromeExtensionRuntime(nextState = {}) {
   };
   console.info('[Docflow] chromeExtensionRuntime', {
     ...chromeExtensionRuntime,
+    senderOrganizationLookupQueue: currentSenderOrganizationLookupQueue(),
     senderPayeeLookupQueue: currentSenderPayeeLookupQueue(),
   });
   renderAppNotices();
@@ -1967,24 +2028,34 @@ async function pingChromeExtension(options = {}) {
     const hadUsableExtension = chromeExtensionIsUsable();
     const swedbankSessionAvailable = payload.swedbankSessionAvailable === true;
     const pendingPayeeLookups = currentSenderPayeeLookupRemainingCount();
+    const pendingOrganizationLookups = currentSenderOrganizationLookupRemainingCount();
+    const hasAnyAllabolagTab = payload.hasAnyAllabolagTab === true;
     setChromeExtensionRuntime({
       status: nextStatus,
       version: payload.version.trim(),
       lastError: '',
+      organizationLookupLastError: '',
       swedbankSessionAvailable,
       hasAnySwedbankTab: payload.hasAnySwedbankTab === true,
+      hasAnyAllabolagTab,
       loginRequired: swedbankSessionAvailable
         ? false
         : (chromeExtensionRuntime.loginRequired === true && pendingPayeeLookups > 0),
       profileSelectionRequired: swedbankSessionAvailable
         ? (chromeExtensionRuntime.profileSelectionRequired === true && pendingPayeeLookups > 0)
         : false,
+      missingOrganizationCount: pendingOrganizationLookups,
     });
 
     if (!hadUsableExtension && nextStatus === 'installed') {
+      maybeStartChromeExtensionOrganizationLookup();
       maybeStartChromeExtensionPayeeLookup();
     }
-    if (nextStatus === 'installed' && currentSenderPayeeLookupRemainingCount() < 1) {
+    if (
+      nextStatus === 'installed'
+      && currentSenderPayeeLookupRemainingCount() < 1
+      && currentSenderOrganizationLookupRemainingCount() < 1
+    ) {
       queueMicrotask(() => {
         fetchState({ force: true, syncTransport: false }).catch((error) => {
           console.error('[Docflow] fetchState after extension ping failed', error);
@@ -1996,8 +2067,10 @@ async function pingChromeExtension(options = {}) {
       status: 'missing',
       version: '',
       lastError: error instanceof Error ? error.message : String(error || 'Chrome-tillägget svarade inte.'),
+      organizationLookupLastError: '',
       swedbankSessionAvailable: null,
       hasAnySwedbankTab: false,
+      hasAnyAllabolagTab: false,
       profileSelectionRequired: false,
     });
   } finally {
@@ -2025,6 +2098,11 @@ function shouldRetrySwedbankLookupAfterLogin() {
   return chromeExtensionIsUsable()
     && (chromeExtensionRuntime.loginRequired === true || chromeExtensionRuntime.profileSelectionRequired === true)
     && currentSenderPayeeLookupRemainingCount() > 0;
+}
+
+function shouldRetryOrganizationLookupAfterOpen() {
+  return chromeExtensionIsUsable()
+    && currentSenderOrganizationLookupRemainingCount() > 0;
 }
 
 function scheduleChromeExtensionPresenceCheck(delay = 1500) {
@@ -2072,9 +2150,167 @@ function syncChromeExtensionPayeeQueueRuntimeFromState() {
 
   setChromeExtensionRuntime({
     missingPayeeCount: remainingCount,
-    loginRequired,
-    profileSelectionRequired,
+      loginRequired,
+      profileSelectionRequired,
   });
+}
+
+function syncChromeExtensionOrganizationQueueRuntimeFromState() {
+  const remainingCount = currentSenderOrganizationLookupRemainingCount();
+  if (chromeExtensionRuntime.missingOrganizationCount === remainingCount) {
+    return;
+  }
+
+  setChromeExtensionRuntime({
+      missingOrganizationCount: remainingCount,
+  });
+}
+
+function shouldShowAllabolagOpenNotice() {
+  return chromeExtensionRuntime.status === 'installed'
+    && currentSenderOrganizationLookupRemainingCount() > 0
+    && chromeExtensionRuntime.hasAnyAllabolagTab === false;
+}
+
+function maybeStartChromeExtensionOrganizationLookup() {
+  if (chromeExtensionOrganizationLookupInFlight || !chromeExtensionIsUsable()) {
+    return;
+  }
+
+  const remainingCount = currentSenderOrganizationLookupRemainingCount();
+  const item = currentSenderOrganizationLookupQueueItem();
+  if (remainingCount < 1 || !item) {
+    return;
+  }
+  if (chromeExtensionRuntime.hasAnyAllabolagTab === false) {
+    setChromeExtensionRuntime({
+      missingOrganizationCount: remainingCount,
+      organizationLookupLastError: '',
+    });
+    return;
+  }
+
+  processMissingOrganizationNames().catch((error) => {
+    setChromeExtensionRuntime({
+      missingOrganizationCount: remainingCount,
+      organizationLookupLastError: error instanceof Error ? error.message : String(error || 'Allabolag-uppslaget misslyckades.'),
+    });
+    console.error(error);
+  });
+}
+
+async function processMissingOrganizationNames() {
+  if (chromeExtensionOrganizationLookupInFlight || !chromeExtensionIsUsable()) {
+    return;
+  }
+
+  const queue = currentSenderOrganizationLookupQueue();
+  const remainingCount = Math.max(0, Number.parseInt(String(queue.remainingCount || 0), 10) || 0);
+  const item = queue.item && typeof queue.item === 'object' ? queue.item : null;
+  setChromeExtensionRuntime({
+    missingOrganizationCount: remainingCount,
+  });
+
+  if (!item) {
+    return;
+  }
+
+  if (chromeExtensionRuntime.hasAnyAllabolagTab === false) {
+    return;
+  }
+
+  chromeExtensionOrganizationLookupInFlight = true;
+  try {
+    const extensionPayload = await sendMessageToChromeExtension({
+      type: 'docflow.lookupOrganizationName',
+      organizationNumber: item.normalizedOrganizationNumber || item.organizationNumber,
+    });
+
+    if (!extensionPayload || extensionPayload.ok !== true) {
+      const openRequired = extensionPayload && extensionPayload.openRequired === true;
+      setChromeExtensionRuntime({
+        hasAnyAllabolagTab: openRequired ? false : chromeExtensionRuntime.hasAnyAllabolagTab,
+        missingOrganizationCount: remainingCount,
+        organizationLookupLastError: openRequired
+          ? ''
+          : (
+            extensionPayload && typeof extensionPayload.message === 'string'
+              ? extensionPayload.message
+              : 'Allabolag-uppslaget misslyckades.'
+          ),
+      });
+      return;
+    }
+
+    const resolvedOrganizationName = typeof extensionPayload.organizationName === 'string'
+      ? extensionPayload.organizationName.trim()
+      : '';
+    if (resolvedOrganizationName === '') {
+      setChromeExtensionRuntime({
+        missingOrganizationCount: remainingCount,
+        organizationLookupLastError: 'Allabolag svarade utan företagsnamn för organisationsnumret.',
+      });
+      return;
+    }
+
+    const saveResponse = await fetch('/api/save-sender-organization-name.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        organizationId: item.organizationId,
+        organizationName: resolvedOrganizationName,
+      }),
+    });
+    const savePayload = await saveResponse.json().catch(() => null);
+    if (!saveResponse.ok || !savePayload || savePayload.ok !== true) {
+      throw new Error(savePayload && typeof savePayload.error === 'string' ? savePayload.error : 'Kunde inte spara organizationName.');
+    }
+
+    setChromeExtensionRuntime({
+      hasAnyAllabolagTab: true,
+      missingOrganizationCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
+      organizationLookupLastError: '',
+    });
+    await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+  } catch (error) {
+    setChromeExtensionRuntime({
+      missingOrganizationCount: remainingCount,
+      organizationLookupLastError: error instanceof Error ? error.message : String(error || 'Allabolag-uppslaget misslyckades.'),
+    });
+    throw error;
+  } finally {
+    chromeExtensionOrganizationLookupInFlight = false;
+  }
+}
+
+async function openAllabolagLookupFlow() {
+  const item = currentSenderOrganizationLookupQueueItem();
+  if (!item) {
+    return;
+  }
+
+  try {
+    const payload = await sendMessageToChromeExtension({
+      type: 'docflow.openAllabolagSearch',
+      organizationNumber: item.normalizedOrganizationNumber || item.organizationNumber,
+    });
+    if (!payload || payload.ok !== true) {
+      throw new Error(payload && typeof payload.message === 'string' ? payload.message : 'Kunde inte öppna allabolag.se.');
+    }
+    setChromeExtensionRuntime({
+      hasAnyAllabolagTab: true,
+      organizationLookupLastError: '',
+    });
+    window.setTimeout(() => {
+      pingChromeExtension().finally(() => {
+        maybeStartChromeExtensionOrganizationLookup();
+      });
+    }, 1200);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : 'Kunde inte öppna allabolag.se.');
+  }
 }
 
 function maybeStartChromeExtensionPayeeLookup() {
@@ -2285,6 +2521,7 @@ function renderAppNotices() {
   appNoticesEl.replaceChildren();
   const notices = [];
   const pendingPayeeLookups = currentSenderPayeeLookupRemainingCount();
+  const pendingOrganizationLookups = currentSenderOrganizationLookupRemainingCount();
   const showSwedbankLoginNotice =
     chromeExtensionRuntime.status === 'installed'
     && pendingPayeeLookups > 0
@@ -2294,6 +2531,7 @@ function renderAppNotices() {
       chromeExtensionRuntime.loginRequired === true
       || chromeExtensionRuntime.hasAnySwedbankTab === false
     );
+  const showAllabolagOpenNotice = shouldShowAllabolagOpenNotice();
 
   if (state.archivingRules && state.archivingRules.hasUnpublishedChanges === true) {
     const notice = document.createElement('div');
@@ -2362,6 +2600,32 @@ function renderAppNotices() {
     notice.className = 'app-notice is-error';
     const text = document.createElement('span');
     text.textContent = `Swedbank-uppslaget misslyckades: ${chromeExtensionRuntime.lastError}`;
+    notice.append(text);
+    notices.push(notice);
+  }
+
+  if (showAllabolagOpenNotice) {
+    const notice = document.createElement('div');
+    notice.className = 'app-notice is-warning';
+    const text = document.createElement('span');
+    text.textContent = 'Allabolag.se behöver vara öppet för att hämta namn för organisationsnummer.';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Öppna allabolag.se';
+    button.addEventListener('click', () => {
+      openAllabolagLookupFlow();
+    });
+    notice.append(text, button);
+    notices.push(notice);
+  } else if (
+    chromeExtensionRuntime.status === 'installed'
+    && pendingOrganizationLookups > 0
+    && chromeExtensionRuntime.organizationLookupLastError
+  ) {
+    const notice = document.createElement('div');
+    notice.className = 'app-notice is-error';
+    const text = document.createElement('span');
+    text.textContent = `Allabolag-uppslaget misslyckades: ${chromeExtensionRuntime.organizationLookupLastError}`;
     notice.append(text);
     notices.push(notice);
   }
@@ -3866,6 +4130,11 @@ function senderObservationRowsForJob(job) {
 function selectedJobSenderObservationSpinnerPaused(observation) {
   if (!observation || typeof observation !== 'object') {
     return false;
+  }
+  const type = typeof observation.type === 'string' ? observation.type.trim().toLowerCase() : '';
+  if (type === 'organization_number') {
+    return currentSenderOrganizationLookupRemainingCount() > 0
+      && chromeExtensionRuntime.hasAnyAllabolagTab === false;
   }
   return (
     (chromeExtensionRuntime.loginRequired === true || chromeExtensionRuntime.profileSelectionRequired === true)
@@ -5851,8 +6120,12 @@ function applyState(nextState) {
   const shouldUpdateClients = Array.isArray(nextState.clients);
   const shouldUpdateSenders = Array.isArray(nextState.senders);
   const shouldUpdateCategories = Array.isArray(nextState.categories);
+  const shouldUpdateSenderOrganizationLookupQueue = nextState.senderOrganizationLookupQueue && typeof nextState.senderOrganizationLookupQueue === 'object';
   const shouldUpdateSenderPayeeLookupQueue = nextState.senderPayeeLookupQueue && typeof nextState.senderPayeeLookupQueue === 'object';
   const shouldUpdateArchivingRules = nextState.archivingRules && typeof nextState.archivingRules === 'object';
+  const nextSenderOrganizationLookupQueue = shouldUpdateSenderOrganizationLookupQueue
+    ? normalizeSenderOrganizationLookupQueue(nextState.senderOrganizationLookupQueue)
+    : state.senderOrganizationLookupQueue;
   const nextSenderPayeeLookupQueue = shouldUpdateSenderPayeeLookupQueue
     ? normalizeSenderPayeeLookupQueue(nextState.senderPayeeLookupQueue)
     : state.senderPayeeLookupQueue;
@@ -5865,12 +6138,14 @@ function applyState(nextState) {
     readyJobs: Array.isArray(nextState.readyJobs) ? nextState.readyJobs : state.readyJobs,
     archivedJobs: Array.isArray(nextState.archivedJobs) ? nextState.archivedJobs : state.archivedJobs,
     failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : state.failedJobs,
+    senderOrganizationLookupQueue: nextSenderOrganizationLookupQueue,
     senderPayeeLookupQueue: nextSenderPayeeLookupQueue,
     clients: shouldUpdateClients ? nextState.clients : state.clients,
     senders: shouldUpdateSenders ? nextState.senders : state.senders,
     categories: shouldUpdateCategories ? nextState.categories : state.categories,
     archivingRules: nextArchivingRules
   };
+  console.info('[Docflow] applyState senderOrganizationLookupQueue', state.senderOrganizationLookupQueue);
   console.info('[Docflow] applyState senderPayeeLookupQueue', state.senderPayeeLookupQueue);
 
   const validJobIds = new Set(
@@ -5930,6 +6205,7 @@ function applyState(nextState) {
     }
   });
   pruneReprocessWatchJobs();
+  syncChromeExtensionOrganizationQueueRuntimeFromState();
   syncChromeExtensionPayeeQueueRuntimeFromState();
 
   setProcessingInfo(state.processingJobs);
@@ -13467,6 +13743,10 @@ async function fetchState(options = {}) {
       throw new Error('Ogiltigt statussvar');
     }
     console.info(
+      '[Docflow] fetchState raw senderOrganizationLookupQueue',
+      JSON.stringify(nextState && nextState.senderOrganizationLookupQueue ? nextState.senderOrganizationLookupQueue : null)
+    );
+    console.info(
       '[Docflow] fetchState raw senderPayeeLookupQueue',
       JSON.stringify(nextState && nextState.senderPayeeLookupQueue ? nextState.senderPayeeLookupQueue : null)
     );
@@ -13492,6 +13772,9 @@ async function fetchState(options = {}) {
       readyJobs: nextState.readyJobs,
       archivedJobs: nextState.archivedJobs,
       failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : [],
+      senderOrganizationLookupQueue: nextState.senderOrganizationLookupQueue && typeof nextState.senderOrganizationLookupQueue === 'object'
+        ? nextState.senderOrganizationLookupQueue
+        : undefined,
       senderPayeeLookupQueue: nextState.senderPayeeLookupQueue && typeof nextState.senderPayeeLookupQueue === 'object'
         ? nextState.senderPayeeLookupQueue
         : undefined,
@@ -13540,6 +13823,7 @@ async function fetchState(options = {}) {
         fetchState(nextQueuedOptions);
       });
     } else if (chromeExtensionIsUsable()) {
+      maybeStartChromeExtensionOrganizationLookup();
       maybeStartChromeExtensionPayeeLookup();
     }
   }
@@ -13662,6 +13946,11 @@ document.addEventListener('visibilitychange', () => {
       maybeStartChromeExtensionPayeeLookup();
     });
   }
+  if (shouldRetryOrganizationLookupAfterOpen()) {
+    pingChromeExtension().finally(() => {
+      maybeStartChromeExtensionOrganizationLookup();
+    });
+  }
 });
 window.addEventListener('focus', () => {
   if (shouldMonitorChromeExtensionPresence()) {
@@ -13670,6 +13959,11 @@ window.addEventListener('focus', () => {
   if (shouldRetrySwedbankLookupAfterLogin()) {
     pingChromeExtension().finally(() => {
       maybeStartChromeExtensionPayeeLookup();
+    });
+  }
+  if (shouldRetryOrganizationLookupAfterOpen()) {
+    pingChromeExtension().finally(() => {
+      maybeStartChromeExtensionOrganizationLookup();
     });
   }
 });
@@ -13699,6 +13993,7 @@ Promise.all([
 ]).finally(() => {
   syncStateUpdateTransport();
   if (chromeExtensionIsUsable()) {
+    maybeStartChromeExtensionOrganizationLookup();
     maybeStartChromeExtensionPayeeLookup();
   }
 });
@@ -13710,13 +14005,25 @@ window.docflowExtensionDebug = {
   get queue() {
     return currentSenderPayeeLookupQueue();
   },
+  get organizationQueue() {
+    return currentSenderOrganizationLookupQueue();
+  },
   get stateQueue() {
     return state && state.senderPayeeLookupQueue ? { ...state.senderPayeeLookupQueue } : null;
+  },
+  get stateOrganizationQueue() {
+    return state && state.senderOrganizationLookupQueue ? { ...state.senderOrganizationLookupQueue } : null;
   },
   async fetchLiveQueue() {
     const response = await fetch('/api/get-state.php?includeSenders=1', { cache: 'no-store' });
     const payload = await response.json();
-    console.info('[Docflow] fetchLiveQueue payload', payload && payload.senderPayeeLookupQueue ? payload.senderPayeeLookupQueue : null);
-    return payload && payload.senderPayeeLookupQueue ? payload.senderPayeeLookupQueue : null;
+    console.info('[Docflow] fetchLiveQueue payload', {
+      senderPayeeLookupQueue: payload && payload.senderPayeeLookupQueue ? payload.senderPayeeLookupQueue : null,
+      senderOrganizationLookupQueue: payload && payload.senderOrganizationLookupQueue ? payload.senderOrganizationLookupQueue : null,
+    });
+    return {
+      senderPayeeLookupQueue: payload && payload.senderPayeeLookupQueue ? payload.senderPayeeLookupQueue : null,
+      senderOrganizationLookupQueue: payload && payload.senderOrganizationLookupQueue ? payload.senderOrganizationLookupQueue : null,
+    };
   },
 };
