@@ -676,6 +676,7 @@ try {
     json_response([
         'ok' => true,
         'senders' => $repository->listEditorRows(),
+        'unlinkedIdentifiers' => $repository->listUnlinkedIdentifierRows(),
     ]);
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {

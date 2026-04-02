@@ -310,29 +310,38 @@
     <h3>Avsändare</h3>
     <p>Redigera avsändare som lagras i databasen. Fälten här styr listan i väljaren för avsändare och vilka dokumentidentifierare som kan matchas mot avsändaren.</p>
     <p>Om du tar bort en avsändare här tas även dess kopplade betalnummer bort ur databasen.</p>
-    <div class="settings-group senders-toolbar">
-      <div class="senders-toolbar-group">
-        <label class="settings-label" for="senders-sort-order">Sortering</label>
-        <select id="senders-sort-order" class="settings-select">
-          <option value="name">Namn</option>
-          <option value="domain">Domän</option>
-          <option value="paymentCount">Antal betalnummer</option>
-          <option value="similarity">Misstänkt samma</option>
-        </select>
+    <div class="archive-subtabs senders-subtabs" role="tablist" aria-label="Avsändarvyer">
+      <button class="archive-subtab active" data-senders-panel-tab="senders" type="button" role="tab" aria-selected="true">Avsändare</button>
+      <button class="archive-subtab" data-senders-panel-tab="unlinked" type="button" role="tab" aria-selected="false">Okopplade uppgifter (0)</button>
+    </div>
+    <div id="senders-view-senders" class="archive-view">
+      <div class="settings-group senders-toolbar">
+        <div class="senders-toolbar-group">
+          <label class="settings-label" for="senders-sort-order">Sortering</label>
+          <select id="senders-sort-order" class="settings-select">
+            <option value="name">Namn</option>
+            <option value="domain">Domän</option>
+            <option value="paymentCount">Antal betalnummer</option>
+            <option value="similarity">Misstänkt samma</option>
+          </select>
+        </div>
+        <div class="senders-toolbar-actions">
+          <button id="senders-expand-all" type="button">Expandera alla</button>
+          <button id="senders-collapse-all" type="button">Kontrahera alla</button>
+        </div>
       </div>
-      <div class="senders-toolbar-actions">
-        <button id="senders-expand-all" type="button">Expandera alla</button>
-        <button id="senders-collapse-all" type="button">Kontrahera alla</button>
+      <div id="senders-list" class="categories-list"></div>
+      <div class="senders-selected-count-row">
+        <span id="senders-selected-count" class="senders-selected-count">Antal markerade avsändare: 0</span>
+        <button id="senders-clear-selection" class="senders-clear-selection" type="button">(Avmarkera alla)</button>
+      </div>
+      <div class="categories-actions senders-footer-actions">
+        <button id="senders-add-row" type="button">Lägg till avsändare</button>
+        <button id="senders-merge-selected" type="button" disabled>Slå ihop...</button>
       </div>
     </div>
-    <div id="senders-list" class="categories-list"></div>
-    <div class="senders-selected-count-row">
-      <span id="senders-selected-count" class="senders-selected-count">Antal markerade avsändare: 0</span>
-      <button id="senders-clear-selection" class="senders-clear-selection" type="button">(Avmarkera alla)</button>
-    </div>
-    <div class="categories-actions senders-footer-actions">
-      <button id="senders-add-row" type="button">Lägg till avsändare</button>
-      <button id="senders-merge-selected" type="button" disabled>Slå ihop...</button>
+    <div id="senders-view-unlinked" class="archive-view hidden">
+      <div id="senders-unlinked-list" class="categories-list senders-unlinked-list"></div>
     </div>
     <div id="sender-merge-overlay" class="modal-overlay hidden">
       <div class="settings-dialog sender-merge-dialog">

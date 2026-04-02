@@ -252,6 +252,121 @@ final class SenderRepository
         return array_values($sendersById);
     }
 
+    public function listUnlinkedIdentifierRows(): array
+    {
+        $items = [];
+
+        $organizationRows = $this->pdo->query(
+            'SELECT
+                id,
+                organization_number,
+                organization_name
+            FROM sender_organization_numbers
+            WHERE sender_id IS NULL
+            ORDER BY organization_number ASC, id ASC'
+        )->fetchAll();
+
+        if (is_array($organizationRows)) {
+            foreach ($organizationRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+
+                $organizationId = isset($row['id']) ? (int) $row['id'] : 0;
+                $normalizedNumber = is_string($row['organization_number'] ?? null)
+                    ? trim((string) $row['organization_number'])
+                    : '';
+                if ($organizationId < 1 || $normalizedNumber === '') {
+                    continue;
+                }
+
+                $items[] = [
+                    'key' => 'organization:' . $normalizedNumber,
+                    'kind' => 'organization',
+                    'id' => $organizationId,
+                    'typeLabel' => 'ORG.NR',
+                    'number' => $this->formatOrganizationNumberForDisplay($normalizedNumber),
+                    'normalizedNumber' => $normalizedNumber,
+                    'name' => is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '',
+                ];
+            }
+        }
+
+        $paymentRows = $this->pdo->query(
+            'SELECT
+                id,
+                type,
+                number,
+                payee_name
+            FROM sender_payment_numbers
+            WHERE sender_id IS NULL
+            ORDER BY type ASC, number ASC, id ASC'
+        )->fetchAll();
+
+        if (is_array($paymentRows)) {
+            foreach ($paymentRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+
+                $paymentId = isset($row['id']) ? (int) $row['id'] : 0;
+                $type = is_string($row['type'] ?? null) ? trim(strtolower((string) $row['type'])) : 'bankgiro';
+                $normalizedNumber = is_string($row['number'] ?? null) ? trim((string) $row['number']) : '';
+                if ($paymentId < 1 || $normalizedNumber === '') {
+                    continue;
+                }
+
+                $items[] = [
+                    'key' => 'payment:' . $type . ':' . $normalizedNumber,
+                    'kind' => 'payment',
+                    'id' => $paymentId,
+                    'typeLabel' => $type === 'plusgiro' ? 'PG' : 'BG',
+                    'paymentType' => $type,
+                    'number' => $this->formatPaymentNumberForDisplay($type, $normalizedNumber),
+                    'normalizedNumber' => $normalizedNumber,
+                    'name' => is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '',
+                ];
+            }
+        }
+
+        usort(
+            $items,
+            static function (array $left, array $right): int {
+                $leftName = trim((string) ($left['name'] ?? ''));
+                $rightName = trim((string) ($right['name'] ?? ''));
+                $leftHasName = $leftName !== '';
+                $rightHasName = $rightName !== '';
+
+                if ($leftHasName !== $rightHasName) {
+                    return $leftHasName ? -1 : 1;
+                }
+
+                if ($leftName !== '' || $rightName !== '') {
+                    $nameCompare = strcmp(strtolower($leftName), strtolower($rightName));
+                    if ($nameCompare !== 0) {
+                        return $nameCompare;
+                    }
+                }
+
+                $leftType = (string) ($left['typeLabel'] ?? '');
+                $rightType = (string) ($right['typeLabel'] ?? '');
+                if ($leftType !== $rightType) {
+                    return strcmp($leftType, $rightType);
+                }
+
+                $leftNumber = (string) ($left['normalizedNumber'] ?? '');
+                $rightNumber = (string) ($right['normalizedNumber'] ?? '');
+                if ($leftNumber !== $rightNumber) {
+                    return strcmp($leftNumber, $rightNumber);
+                }
+
+                return ((int) ($left['id'] ?? 0)) <=> ((int) ($right['id'] ?? 0));
+            }
+        );
+
+        return $items;
+    }
+
     public function findEditorRowById(int $senderId): ?array
     {
         if ($senderId < 1) {

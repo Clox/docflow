@@ -11,10 +11,12 @@ try {
 
     json_response([
         'senders' => $repository->listEditorRows(),
+        'unlinkedIdentifiers' => $repository->listUnlinkedIdentifierRows(),
     ]);
 } catch (Throwable $e) {
     json_response([
         'senders' => [],
+        'unlinkedIdentifiers' => [],
         'error' => $e->getMessage(),
     ], 500);
 }

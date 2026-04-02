@@ -80,12 +80,16 @@ let clientsAddRowEl = null;
 let clientsCancelEl = null;
 let clientsApplyEl = null;
 let sendersListEl = null;
+let sendersUnlinkedListEl = null;
 let sendersAddRowEl = null;
 let sendersCancelEl = null;
 let sendersApplyEl = null;
 let sendersSortOrderEl = null;
 let sendersExpandAllEl = null;
 let sendersCollapseAllEl = null;
+let sendersPanelTabEls = [];
+let sendersViewSendersEl = null;
+let sendersViewUnlinkedEl = null;
 let sendersSelectedCountEl = null;
 let sendersClearSelectionEl = null;
 let sendersMergeSelectedEl = null;
@@ -278,6 +282,7 @@ let systemLabelsDraft = createDefaultSystemLabels();
 let labelsBuiltInCollapsed = true;
 let labelsCustomCollapsed = false;
 let sendersDraft = [];
+let sendersUnlinkedIdentifiers = [];
 let matchingDraft = [];
 let ocrSkipExistingTextBaseline = true;
 let ocrOptimizeLevelBaseline = 1;
@@ -293,6 +298,7 @@ let clientsBaselineJson = '[]';
 let clientDraftUiKeySeq = 1;
 let sendersBaselineJson = '[]';
 let sendersSortOrder = 'name';
+let activeSendersPanelTabId = 'senders';
 let senderDraftUiKeySeq = 1;
 let matchingBaselineJson = JSON.stringify({
   replacements: []
@@ -7128,12 +7134,16 @@ function bindSettingsPanelRefs(tabId) {
     });
   } else if (tabId === 'senders') {
     sendersListEl = document.getElementById('senders-list');
+    sendersUnlinkedListEl = document.getElementById('senders-unlinked-list');
     sendersAddRowEl = document.getElementById('senders-add-row');
     sendersCancelEl = document.getElementById('senders-cancel');
     sendersApplyEl = document.getElementById('senders-apply');
     sendersSortOrderEl = document.getElementById('senders-sort-order');
     sendersExpandAllEl = document.getElementById('senders-expand-all');
     sendersCollapseAllEl = document.getElementById('senders-collapse-all');
+    sendersPanelTabEls = Array.from(document.querySelectorAll('[data-senders-panel-tab]'));
+    sendersViewSendersEl = document.getElementById('senders-view-senders');
+    sendersViewUnlinkedEl = document.getElementById('senders-view-unlinked');
     sendersSelectedCountEl = document.getElementById('senders-selected-count');
     sendersClearSelectionEl = document.getElementById('senders-clear-selection');
     sendersMergeSelectedEl = document.getElementById('senders-merge-selected');
@@ -7145,6 +7155,12 @@ function bindSettingsPanelRefs(tabId) {
     if (String(sendersSortOrderEl.value || '') !== sendersSortOrder) {
       sendersSortOrder = String(sendersSortOrderEl.value || 'name');
     }
+    sendersPanelTabEls.forEach((button) => {
+      button.addEventListener('click', () => {
+        setSendersPanelTab(button.dataset.sendersPanelTab || 'senders');
+      });
+    });
+    setSendersPanelTab(activeSendersPanelTabId);
     sendersAddRowEl.addEventListener('click', () => {
       sendersDraft.push(defaultSenderDraft());
       renderSendersEditor();
@@ -7716,19 +7732,24 @@ async function openSendersSettingsDirect() {
 
   openSettingsModal();
   setSettingsTab('senders');
+  activeSendersPanelTabId = 'senders';
 
   try {
     await ensureSettingsPanelReady('senders');
   } catch (error) {
     alert('Kunde inte ladda avsändare.');
     sendersDraft = [];
+    sendersUnlinkedIdentifiers = [];
     sendersBaselineJson = normalizedSendersJson(sendersDraft);
     renderSendersEditor();
+    setSendersPanelTab(activeSendersPanelTabId);
     updateSettingsActionButtons();
     return false;
   }
 
-  sendersAddRowEl.focus();
+  if (sendersAddRowEl) {
+    sendersAddRowEl.focus();
+  }
   updateSettingsActionButtons();
   return true;
 }
@@ -8382,6 +8403,248 @@ function sanitizeSenderPaymentDraft(row) {
     number: typeof input.number === 'string' ? input.number : '',
     payeeName: typeof input.payeeName === 'string' ? input.payeeName : '',
   };
+}
+
+function sanitizeUnlinkedSenderIdentifier(row) {
+  const input = row && typeof row === 'object' ? row : {};
+  const kind = String(input.kind || '').trim().toLowerCase() === 'organization' ? 'organization' : 'payment';
+  const idValue = input.id;
+  const id = Number.isInteger(idValue) && idValue > 0
+    ? idValue
+    : null;
+  const normalizedNumber = typeof input.normalizedNumber === 'string'
+    ? digitsOnly(input.normalizedNumber)
+    : '';
+  const paymentType = kind === 'payment' && String(input.paymentType || '').trim().toLowerCase() === 'plusgiro'
+    ? 'plusgiro'
+    : 'bankgiro';
+  const typeLabel = kind === 'organization'
+    ? 'ORG.NR'
+    : (paymentType === 'plusgiro' ? 'PG' : 'BG');
+  const key = kind === 'organization'
+    ? `organization:${normalizedNumber}`
+    : `payment:${paymentType}:${normalizedNumber}`;
+  return {
+    key,
+    kind,
+    id,
+    typeLabel,
+    paymentType: kind === 'payment' ? paymentType : '',
+    number: typeof input.number === 'string' ? input.number : '',
+    normalizedNumber,
+    name: typeof input.name === 'string' ? input.name : '',
+  };
+}
+
+function sortSenderLinkOptions(rows) {
+  return [...rows].sort((left, right) => {
+    const leftName = String(left && left.name || '').trim().toLowerCase();
+    const rightName = String(right && right.name || '').trim().toLowerCase();
+    if (leftName !== rightName) {
+      if (leftName === '') {
+        return 1;
+      }
+      if (rightName === '') {
+        return -1;
+      }
+      return leftName.localeCompare(rightName, 'sv');
+    }
+    return 0;
+  });
+}
+
+function senderLinkOptions() {
+  return sortSenderLinkOptions(
+    sendersDraft
+      .map((row) => sanitizeSenderDraft(row))
+      .filter((row) => String(row.name || '').trim() !== '')
+      .map((row) => ({
+        value: senderUiKey(row),
+        label: row.name,
+      }))
+  );
+}
+
+function senderLinkOptionsForIdentifier(identifier) {
+  const options = senderLinkOptions();
+  const identifierName = String(identifier && identifier.name || '').trim();
+  if (identifierName === '') {
+    return options;
+  }
+
+  return [...options].sort((left, right) => {
+    const leftScore = senderNameSimilarity(identifierName, left.label);
+    const rightScore = senderNameSimilarity(identifierName, right.label);
+    if (leftScore !== rightScore) {
+      return rightScore - leftScore;
+    }
+    return left.label.localeCompare(right.label, 'sv');
+  });
+}
+
+function claimedSenderIdentifierKeys() {
+  const keys = new Set();
+
+  sendersDraft.forEach((sender) => {
+    const organizations = Array.isArray(sender && sender.organizationNumbers) ? sender.organizationNumbers : [];
+    organizations.forEach((organization) => {
+      const normalizedNumber = digitsOnly(organization && organization.organizationNumber);
+      if (normalizedNumber !== '') {
+        keys.add(`organization:${normalizedNumber}`);
+      }
+    });
+
+    const payments = Array.isArray(sender && sender.paymentNumbers) ? sender.paymentNumbers : [];
+    payments.forEach((payment) => {
+      const type = String(payment && payment.type || '').trim().toLowerCase() === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+      const normalizedNumber = digitsOnly(payment && payment.number);
+      if (normalizedNumber !== '') {
+        keys.add(`payment:${type}:${normalizedNumber}`);
+      }
+    });
+  });
+
+  return keys;
+}
+
+function visibleUnlinkedSenderIdentifiers() {
+  const claimedKeys = claimedSenderIdentifierKeys();
+  return sendersUnlinkedIdentifiers.filter((row) => !claimedKeys.has(row.key));
+}
+
+function setSendersPanelTab(tabId) {
+  activeSendersPanelTabId = tabId === 'unlinked' ? 'unlinked' : 'senders';
+  if (Array.isArray(sendersPanelTabEls)) {
+    sendersPanelTabEls.forEach((button) => {
+      const isActive = button.dataset.sendersPanelTab === activeSendersPanelTabId;
+      button.classList.toggle('active', isActive);
+      button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+  }
+  if (sendersViewSendersEl) {
+    sendersViewSendersEl.classList.toggle('hidden', activeSendersPanelTabId !== 'senders');
+  }
+  if (sendersViewUnlinkedEl) {
+    sendersViewUnlinkedEl.classList.toggle('hidden', activeSendersPanelTabId !== 'unlinked');
+  }
+}
+
+function applyUnlinkedIdentifierToSenderDraft(senderDraft, identifier) {
+  if (!senderDraft || typeof senderDraft !== 'object' || !identifier || typeof identifier !== 'object') {
+    return;
+  }
+
+  if (identifier.kind === 'organization') {
+    const existingRow = Array.isArray(senderDraft.organizationNumbers)
+      ? senderDraft.organizationNumbers.find((row) => digitsOnly(row && row.organizationNumber) === identifier.normalizedNumber)
+      : null;
+    if (existingRow) {
+      if (!Number.isInteger(existingRow.id) && Number.isInteger(identifier.id)) {
+        existingRow.id = identifier.id;
+      }
+      if (String(existingRow.organizationNumber || '').trim() === '') {
+        existingRow.organizationNumber = identifier.number;
+      }
+      if (String(existingRow.organizationName || '').trim() === '' && String(identifier.name || '').trim() !== '') {
+        existingRow.organizationName = identifier.name;
+      }
+      return;
+    }
+    senderDraft.organizationNumbers.push(sanitizeSenderOrganizationDraft({
+      id: identifier.id,
+      organizationNumber: identifier.number,
+      organizationName: identifier.name,
+    }));
+    return;
+  }
+
+  const existingPayment = Array.isArray(senderDraft.paymentNumbers)
+    ? senderDraft.paymentNumbers.find((row) => {
+      const rowType = String(row && row.type || '').trim().toLowerCase() === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+      return rowType === identifier.paymentType && digitsOnly(row && row.number) === identifier.normalizedNumber;
+    })
+    : null;
+  if (existingPayment) {
+    if (!Number.isInteger(existingPayment.id) && Number.isInteger(identifier.id)) {
+      existingPayment.id = identifier.id;
+    }
+    if (String(existingPayment.number || '').trim() === '') {
+      existingPayment.number = identifier.number;
+    }
+    if (String(existingPayment.payeeName || '').trim() === '' && String(identifier.name || '').trim() !== '') {
+      existingPayment.payeeName = identifier.name;
+    }
+    return;
+  }
+
+  senderDraft.paymentNumbers.push(sanitizeSenderPaymentDraft({
+    id: identifier.id,
+    type: identifier.paymentType,
+    number: identifier.number,
+    payeeName: identifier.name,
+  }));
+}
+
+function focusSenderDraftRow(senderUiKeyValue) {
+  if (!sendersListEl || typeof senderUiKeyValue !== 'string' || senderUiKeyValue.trim() === '') {
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    const senderNode = sendersListEl.querySelector(`[data-sender-ui-key="${CSS.escape(senderUiKeyValue)}"]`);
+    if (!(senderNode instanceof HTMLElement)) {
+      return;
+    }
+    const nameInput = senderNode.querySelector('.sender-summary-fields input[type="text"]');
+    if (nameInput instanceof HTMLElement) {
+      nameInput.focus();
+      if ('select' in nameInput && typeof nameInput.select === 'function') {
+        nameInput.select();
+      }
+      return;
+    }
+    senderNode.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function createSenderDraftFromUnlinkedIdentifier(identifier) {
+  const draft = defaultSenderDraft();
+  if (String(identifier && identifier.name || '').trim() !== '') {
+    draft.name = String(identifier.name);
+  }
+  applyUnlinkedIdentifierToSenderDraft(draft, identifier);
+  return draft;
+}
+
+function linkUnlinkedIdentifierToSender(identifierKey, senderUiKeyValue) {
+  const identifier = visibleUnlinkedSenderIdentifiers().find((row) => row.key === identifierKey);
+  if (!identifier) {
+    return;
+  }
+  const senderIndex = sendersDraft.findIndex((row) => senderUiKey(row) === senderUiKeyValue);
+  if (senderIndex < 0) {
+    return;
+  }
+
+  applyUnlinkedIdentifierToSenderDraft(sendersDraft[senderIndex], identifier);
+  renderSendersEditor();
+  renderUnlinkedSenderIdentifiers();
+  updateSettingsActionButtons();
+}
+
+function createSenderFromUnlinkedIdentifier(identifierKey) {
+  const identifier = visibleUnlinkedSenderIdentifiers().find((row) => row.key === identifierKey);
+  if (!identifier) {
+    return;
+  }
+
+  const draft = createSenderDraftFromUnlinkedIdentifier(identifier);
+  sendersDraft.unshift(draft);
+  setSendersPanelTab('senders');
+  renderSendersEditor();
+  renderUnlinkedSenderIdentifiers();
+  updateSettingsActionButtons();
+  focusSenderDraftRow(senderUiKey(draft));
 }
 
 function senderSortFieldValue(row, field) {
@@ -9975,7 +10238,129 @@ function buildSimilarityGroupNode(group) {
   return wrapper;
 }
 
+function renderUnlinkedSenderIdentifiers() {
+  if (!sendersUnlinkedListEl) {
+    return;
+  }
+
+  const visibleRows = visibleUnlinkedSenderIdentifiers();
+  const unlinkedTabButton = Array.isArray(sendersPanelTabEls)
+    ? sendersPanelTabEls.find((button) => button.dataset.sendersPanelTab === 'unlinked')
+    : null;
+  if (unlinkedTabButton) {
+    unlinkedTabButton.textContent = `Okopplade uppgifter (${visibleRows.length})`;
+  }
+
+  const fragment = document.createDocumentFragment();
+
+  if (visibleRows.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Det finns inga okopplade uppgifter.';
+    fragment.appendChild(empty);
+    sendersUnlinkedListEl.replaceChildren(fragment);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'senders-unlinked-table';
+
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['Typ', 'Nummer', 'Namn', 'Åtgärd'].forEach((label) => {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+
+  visibleRows.forEach((row) => {
+    const tr = document.createElement('tr');
+
+    const typeCell = document.createElement('td');
+    typeCell.className = 'senders-unlinked-type-cell';
+    typeCell.textContent = row.typeLabel;
+
+    const numberCell = document.createElement('td');
+    numberCell.className = 'senders-unlinked-number-cell';
+    numberCell.textContent = row.number;
+
+    const nameCell = document.createElement('td');
+    nameCell.className = 'senders-unlinked-name-cell';
+    nameCell.textContent = String(row.name || '').trim() !== '' ? row.name : '—';
+
+    const actionCell = document.createElement('td');
+    actionCell.className = 'senders-unlinked-action-cell';
+
+    const actionWrap = document.createElement('div');
+    actionWrap.className = 'senders-unlinked-actions';
+
+    const select = document.createElement('select');
+    select.className = 'settings-select senders-unlinked-link-select';
+    select.setAttribute('aria-label', `Koppla ${row.typeLabel} ${row.number}`);
+
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = '';
+    placeholderOption.hidden = true;
+    placeholderOption.textContent = 'Koppla';
+    select.appendChild(placeholderOption);
+
+    const createOption = document.createElement('option');
+    createOption.value = '__create_sender__';
+    createOption.textContent = '+ Skapa ny avsändare';
+    select.appendChild(createOption);
+
+    const separatorOption = document.createElement('option');
+    separatorOption.value = '';
+    separatorOption.disabled = true;
+    separatorOption.textContent = '────────';
+    select.appendChild(separatorOption);
+
+    senderLinkOptionsForIdentifier(row).forEach((optionData) => {
+      const option = document.createElement('option');
+      option.value = optionData.value;
+      option.textContent = optionData.label;
+      select.appendChild(option);
+    });
+
+    select.value = '';
+    select.addEventListener('change', () => {
+      const value = String(select.value || '').trim();
+      select.value = '';
+      if (value === '') {
+        return;
+      }
+      if (value === '__create_sender__') {
+        createSenderFromUnlinkedIdentifier(row.key);
+        return;
+      }
+      linkUnlinkedIdentifierToSender(row.key, value);
+    });
+
+    actionWrap.appendChild(select);
+    actionCell.appendChild(actionWrap);
+
+    tr.appendChild(typeCell);
+    tr.appendChild(numberCell);
+    tr.appendChild(nameCell);
+    tr.appendChild(actionCell);
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  fragment.appendChild(table);
+  sendersUnlinkedListEl.replaceChildren(fragment);
+}
+
 function renderSendersEditor() {
+  if (!sendersListEl) {
+    return;
+  }
+
   const fragment = document.createDocumentFragment();
 
   if (sendersDraft.length === 0) {
@@ -9985,6 +10370,7 @@ function renderSendersEditor() {
     fragment.appendChild(empty);
     sendersListEl.replaceChildren(fragment);
     updateSendersSelectionSummary();
+    renderUnlinkedSenderIdentifiers();
     return;
   }
 
@@ -9999,6 +10385,7 @@ function renderSendersEditor() {
   }
 
   sendersListEl.replaceChildren(fragment);
+  renderUnlinkedSenderIdentifiers();
   updateSettingsActionButtons();
   updateSendersSelectionSummary();
 }
@@ -13299,15 +13686,17 @@ async function loadSendersSettings() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.senders)) {
+  if (!payload || !Array.isArray(payload.senders) || !Array.isArray(payload.unlinkedIdentifiers)) {
     throw new Error('Ogiltigt svar för avsändare');
   }
 
   sendersDraft = payload.senders.map(sanitizeSenderDraft);
+  sendersUnlinkedIdentifiers = payload.unlinkedIdentifiers.map(sanitizeUnlinkedSenderIdentifier);
   sendersBaselineJson = normalizedSendersJson(sendersDraft);
   clearSenderSelections();
   closeSenderMergeOverlay();
   renderSendersEditor();
+  setSendersPanelTab(activeSendersPanelTabId);
   updateSettingsActionButtons();
 }
 
@@ -13513,7 +13902,7 @@ async function saveSendersSettings() {
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.senders)) {
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.senders) || !Array.isArray(payload.unlinkedIdentifiers)) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara avsändare';
@@ -13521,10 +13910,12 @@ async function saveSendersSettings() {
   }
 
   sendersDraft = payload.senders.map(sanitizeSenderDraft);
+  sendersUnlinkedIdentifiers = payload.unlinkedIdentifiers.map(sanitizeUnlinkedSenderIdentifier);
   sendersBaselineJson = normalizedSendersJson(sendersDraft);
   clearSenderSelections();
   closeSenderMergeOverlay();
   renderSendersEditor();
+  setSendersPanelTab(activeSendersPanelTabId);
   updateSettingsActionButtons();
   await fetchState({ refreshSenders: true });
 }
