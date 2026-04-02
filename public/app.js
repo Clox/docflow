@@ -49,6 +49,7 @@ const archivingReviewSettingsTabEl = document.querySelector('[data-settings-tab=
 const settingsPanelActionsHostEl = document.getElementById('settings-panel-actions-host');
 const settingsCloseEl = document.getElementById('settings-close');
 const selectedJobPanelEl = document.getElementById('selected-job-panel');
+const selectedJobActionsPanelEl = document.getElementById('selected-job-actions-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
 const selectedJobMetaEl = document.getElementById('selected-job-meta');
 const selectedJobSenderInfoEl = document.getElementById('selected-job-sender-info');
@@ -347,6 +348,7 @@ const SIDEBAR_LIST_SIZE_STORAGE_KEY = 'docflow.sidebar.listSizePercent';
 const DEFAULT_SIDEBAR_LIST_SIZE_PERCENT = 35;
 const MIN_SIDEBAR_LIST_SIZE_PERCENT = 20;
 const MAX_SIDEBAR_LIST_SIZE_PERCENT = 80;
+const MIN_DETAIL_PANEL_HEIGHT_PX = 220;
 
 let senderMergeState = null;
 let currentJobListMode = 'ready';
@@ -649,7 +651,24 @@ function clampSidebarListSizePercent(value) {
   if (!Number.isFinite(numeric)) {
     return DEFAULT_SIDEBAR_LIST_SIZE_PERCENT;
   }
-  return Math.max(MIN_SIDEBAR_LIST_SIZE_PERCENT, Math.min(MAX_SIDEBAR_LIST_SIZE_PERCENT, numeric));
+
+  let dynamicMax = MAX_SIDEBAR_LIST_SIZE_PERCENT;
+  if (sidebarEl instanceof HTMLElement) {
+    const rect = sidebarEl.getBoundingClientRect();
+    const splitterHeight = sidebarSplitterEl instanceof HTMLElement
+      ? sidebarSplitterEl.getBoundingClientRect().height
+      : 14;
+    const computedStyles = window.getComputedStyle(sidebarEl);
+    const actionsHeight = selectedJobActionsPanelEl instanceof HTMLElement && selectedJobActionsPanelEl.getBoundingClientRect().height > 0
+      ? selectedJobActionsPanelEl.getBoundingClientRect().height
+      : (Number.parseFloat(computedStyles.getPropertyValue('--sidebar-actions-height')) || 0);
+    if (rect.height > 0) {
+      dynamicMax = ((rect.height - splitterHeight - actionsHeight - MIN_DETAIL_PANEL_HEIGHT_PX) / rect.height) * 100;
+    }
+  }
+
+  const boundedMax = Math.max(MIN_SIDEBAR_LIST_SIZE_PERCENT, Math.min(MAX_SIDEBAR_LIST_SIZE_PERCENT, dynamicMax));
+  return Math.max(MIN_SIDEBAR_LIST_SIZE_PERCENT, Math.min(boundedMax, numeric));
 }
 
 function applySidebarListSizePercent(value, persist = true) {
@@ -3876,7 +3895,7 @@ function ensureSelectedJobSenderObservationTable() {
 
   const subtitle = document.createElement('div');
   subtitle.className = 'selected-job-sender-subtitle';
-  subtitle.textContent = 'Nya uppgifter';
+  subtitle.textContent = 'Okopplade uppgifter';
 
   const table = document.createElement('table');
   table.className = 'selected-job-sender-table';

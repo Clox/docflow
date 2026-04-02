@@ -33,9 +33,9 @@
         id="sidebar-splitter"
         class="sidebar-splitter"
         role="separator"
-        aria-label="Ändra höjd mellan jobblistan och panelen för markerat jobb"
+        aria-label="Ändra höjd mellan dokumentlistan och detaljpanelen"
         aria-orientation="horizontal"
-        title="Dra upp eller ner för att ändra höjd mellan jobblistan och panelen för markerat jobb"
+        title="Dra upp eller ner för att ändra höjd mellan dokumentlistan och detaljpanelen"
       ></div>
       <section id="selected-job-panel" class="selected-job-panel">
         <div class="selected-job-panel-body">
@@ -51,7 +51,15 @@
               Ingen avsändarinformation tillgänglig ännu.
             </div>
           </div>
-          <div class="selected-job-panel-section selected-job-fields">
+        </div>
+      </section>
+      <div class="sidebar-divider" aria-hidden="true"></div>
+      <section id="selected-job-actions-panel" class="selected-job-actions-panel">
+        <div class="selected-job-actions-panel-body">
+          <div class="selected-job-panel-header-row selected-job-actions-panel-header-row">
+            <div class="selected-job-panel-header">Åtgärder</div>
+          </div>
+          <div class="selected-job-panel-section selected-job-fields selected-job-actions-fields">
             <div class="selected-job-panel-section-title">Arkivering</div>
             <div class="field-group">
               <label class="floating-label" for="client-select">Huvudman</label>
@@ -75,11 +83,9 @@
               <label class="floating-label" for="filename-input">Filnamn</label>
               <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">
             </div>
+            <button id="selected-job-reprocess" type="button" disabled>Analysera igen</button>
+            <button id="archive-action" type="button" disabled title="Markera ett jobb först.">Arkivera</button>
           </div>
-        </div>
-        <div class="selected-job-panel-footer">
-          <button id="selected-job-reprocess" type="button" disabled>Analysera igen</button>
-          <button id="archive-action" type="button" disabled title="Markera ett jobb först.">Arkivera</button>
         </div>
       </section>
     </aside>
