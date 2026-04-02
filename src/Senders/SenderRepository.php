@@ -49,6 +49,70 @@ final class SenderRepository
         return $this->findByPaymentNumber('plusgiro', $plusgiro);
     }
 
+    public function findObservedOrganizationNumberRow(string $organizationNumber): ?array
+    {
+        $normalized = IdentifierNormalizer::normalizeOrgNumber($organizationNumber);
+        if ($normalized === null) {
+            return null;
+        }
+
+        $statement = $this->pdo->prepare(
+            'SELECT
+                id,
+                organization_number,
+                organization_name,
+                sender_id,
+                source,
+                created_at,
+                updated_at
+            FROM sender_organization_numbers
+            WHERE organization_number = :organization_number
+            LIMIT 1'
+        );
+        $statement->execute([':organization_number' => $normalized]);
+        $row = $statement->fetch();
+
+        return is_array($row) ? $row : null;
+    }
+
+    public function findObservedPaymentNumberRow(string $type, string $number): ?array
+    {
+        $normalizedType = trim(strtolower($type));
+        $normalizedNumber = $normalizedType === 'bankgiro'
+            ? IdentifierNormalizer::normalizeBankgiro($number)
+            : IdentifierNormalizer::normalizePlusgiro($number);
+
+        if ($normalizedNumber === null) {
+            return null;
+        }
+
+        $statement = $this->pdo->prepare(
+            'SELECT
+                id,
+                sender_id,
+                type,
+                number,
+                original_number,
+                payee_name,
+                payee_lookup_status,
+                source,
+                confidence,
+                created_at,
+                updated_at
+            FROM sender_payment_numbers
+            WHERE type = :type
+              AND number = :number
+            LIMIT 1'
+        );
+        $statement->execute([
+            ':type' => $normalizedType,
+            ':number' => $normalizedNumber,
+        ]);
+        $row = $statement->fetch();
+
+        return is_array($row) ? $row : null;
+    }
+
     public function listAll(): array
     {
         $statement = $this->pdo->query(
@@ -534,7 +598,11 @@ final class SenderRepository
         ]);
     }
 
-    public function observeOrganizationNumber(string $organizationNumber, ?string $organizationName = null): int
+    public function observeOrganizationNumber(
+        string $organizationNumber,
+        ?string $organizationName = null,
+        ?string $source = 'document_auto'
+    ): int
     {
         $normalizedNumber = IdentifierNormalizer::normalizeOrgNumber($organizationNumber);
         if ($normalizedNumber === null) {
@@ -545,9 +613,13 @@ final class SenderRepository
         if ($normalizedName === '') {
             $normalizedName = null;
         }
+        $normalizedSource = is_string($source) ? trim($source) : '';
+        if ($normalizedSource === '') {
+            $normalizedSource = null;
+        }
 
         $select = $this->pdo->prepare(
-            'SELECT id, organization_name
+            'SELECT id, organization_name, source
             FROM sender_organization_numbers
             WHERE organization_number = :organization_number
             LIMIT 1'
@@ -565,17 +637,22 @@ final class SenderRepository
             $currentName = is_string($existing['organization_name'] ?? null)
                 ? trim((string) $existing['organization_name'])
                 : '';
+            $currentSource = is_string($existing['source'] ?? null)
+                ? trim((string) $existing['source'])
+                : '';
             $resolvedName = $currentName !== '' ? $currentName : $normalizedName;
 
             $update = $this->pdo->prepare(
                 'UPDATE sender_organization_numbers
                 SET organization_name = :organization_name,
+                    source = :source,
                     updated_at = :updated_at
                 WHERE id = :id'
             );
             $update->execute([
                 ':id' => $organizationId,
                 ':organization_name' => $resolvedName !== '' ? $resolvedName : null,
+                ':source' => $currentSource !== '' ? $currentSource : $normalizedSource,
                 ':updated_at' => $timestamp,
             ]);
 
@@ -587,12 +664,14 @@ final class SenderRepository
                 organization_number,
                 organization_name,
                 sender_id,
+                source,
                 created_at,
                 updated_at
             ) VALUES (
                 :organization_number,
                 :organization_name,
                 NULL,
+                :source,
                 :created_at,
                 :updated_at
             )'
@@ -600,6 +679,7 @@ final class SenderRepository
         $insert->execute([
             ':organization_number' => $normalizedNumber,
             ':organization_name' => $normalizedName,
+            ':source' => $normalizedSource,
             ':created_at' => $timestamp,
             ':updated_at' => $timestamp,
         ]);

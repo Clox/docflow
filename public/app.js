@@ -160,6 +160,10 @@ let state = {
   readyJobs: [],
   archivedJobs: [],
   failedJobs: [],
+  senderPayeeLookupQueue: {
+    remainingCount: 0,
+    item: null,
+  },
   clients: [],
   senders: [],
   categories: [],
@@ -369,10 +373,10 @@ let chromeExtensionRuntime = {
   swedbankSessionAvailable: null,
   hasAnySwedbankTab: false,
   loginRequired: false,
+  profileSelectionRequired: false,
   missingPayeeCount: 0,
 };
 let chromeExtensionPingInFlight = false;
-let chromeExtensionPayeeLookupTimer = null;
 let chromeExtensionPayeeLookupInFlight = false;
 let chromeExtensionPresenceTimer = null;
 
@@ -1750,6 +1754,60 @@ function chromeExtensionIsUsable() {
   return chromeExtensionRuntime.status === 'installed' && chromeExtensionIsCurrentVersion(chromeExtensionRuntime.version);
 }
 
+function normalizeSenderPayeeLookupQueueItem(input) {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+
+  const paymentId = Number.parseInt(String(input.paymentId || ''), 10);
+  if (!Number.isInteger(paymentId) || paymentId < 1) {
+    return null;
+  }
+
+  const type = String(input.type || '').trim().toLowerCase() === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+  const normalizedNumber = String(input.normalizedNumber || '').trim();
+  const number = String(input.number || '').trim();
+
+  return {
+    paymentId,
+    senderId: Number.isInteger(Number.parseInt(String(input.senderId || ''), 10))
+      ? Number.parseInt(String(input.senderId || ''), 10)
+      : null,
+    senderName: String(input.senderName || '').trim(),
+    type,
+    number,
+    normalizedNumber: normalizedNumber !== '' ? normalizedNumber : number,
+    payeeName: String(input.payeeName || '').trim(),
+    payeeLookupStatus: String(input.payeeLookupStatus || '').trim(),
+  };
+}
+
+function normalizeSenderPayeeLookupQueue(input) {
+  const remainingCount = Number.parseInt(String(input && input.remainingCount || 0), 10) || 0;
+  return {
+    remainingCount: Math.max(0, remainingCount),
+    item: normalizeSenderPayeeLookupQueueItem(input && input.item),
+  };
+}
+
+function currentSenderPayeeLookupQueue() {
+  if (!state || !state.senderPayeeLookupQueue || typeof state.senderPayeeLookupQueue !== 'object') {
+    return {
+      remainingCount: 0,
+      item: null,
+    };
+  }
+  return state.senderPayeeLookupQueue;
+}
+
+function currentSenderPayeeLookupQueueItem() {
+  return currentSenderPayeeLookupQueue().item;
+}
+
+function currentSenderPayeeLookupRemainingCount() {
+  return Math.max(0, Number.parseInt(String(currentSenderPayeeLookupQueue().remainingCount || 0), 10) || 0);
+}
+
 function applyChromeExtensionConfigPayload(payload) {
   if (!payload || typeof payload !== 'object') {
     return;
@@ -1768,9 +1826,14 @@ function setChromeExtensionRuntime(nextState = {}) {
     ...chromeExtensionRuntime,
     ...(nextState && typeof nextState === 'object' ? nextState : {}),
   };
+  console.info('[Docflow] chromeExtensionRuntime', {
+    ...chromeExtensionRuntime,
+    senderPayeeLookupQueue: currentSenderPayeeLookupQueue(),
+  });
   renderAppNotices();
   renderSystemChromeExtensionStatus();
   syncChromeExtensionPresencePolling();
+  syncSelectedJobSenderObservationRuntimeState();
 }
 
 async function loadChromeExtensionConfig() {
@@ -1884,6 +1947,7 @@ async function pingChromeExtension(options = {}) {
     const nextStatus = chromeExtensionIsCurrentVersion(payload.version) ? 'installed' : 'outdated';
     const hadUsableExtension = chromeExtensionIsUsable();
     const swedbankSessionAvailable = payload.swedbankSessionAvailable === true;
+    const pendingPayeeLookups = currentSenderPayeeLookupRemainingCount();
     setChromeExtensionRuntime({
       status: nextStatus,
       version: payload.version.trim(),
@@ -1892,11 +1956,21 @@ async function pingChromeExtension(options = {}) {
       hasAnySwedbankTab: payload.hasAnySwedbankTab === true,
       loginRequired: swedbankSessionAvailable
         ? false
-        : (chromeExtensionRuntime.loginRequired === true && chromeExtensionRuntime.missingPayeeCount > 0),
+        : (chromeExtensionRuntime.loginRequired === true && pendingPayeeLookups > 0),
+      profileSelectionRequired: swedbankSessionAvailable
+        ? (chromeExtensionRuntime.profileSelectionRequired === true && pendingPayeeLookups > 0)
+        : false,
     });
 
     if (!hadUsableExtension && nextStatus === 'installed') {
-      scheduleChromeExtensionPayeeLookup(100);
+      maybeStartChromeExtensionPayeeLookup();
+    }
+    if (nextStatus === 'installed' && currentSenderPayeeLookupRemainingCount() < 1) {
+      queueMicrotask(() => {
+        fetchState({ force: true, syncTransport: false }).catch((error) => {
+          console.error('[Docflow] fetchState after extension ping failed', error);
+        });
+      });
     }
   } catch (error) {
     setChromeExtensionRuntime({
@@ -1905,19 +1979,13 @@ async function pingChromeExtension(options = {}) {
       lastError: error instanceof Error ? error.message : String(error || 'Chrome-tillägget svarade inte.'),
       swedbankSessionAvailable: null,
       hasAnySwedbankTab: false,
+      profileSelectionRequired: false,
     });
   } finally {
     chromeExtensionPingInFlight = false;
   }
 
   return chromeExtensionRuntime;
-}
-
-function clearChromeExtensionPayeeLookupTimer() {
-  if (chromeExtensionPayeeLookupTimer !== null) {
-    window.clearTimeout(chromeExtensionPayeeLookupTimer);
-    chromeExtensionPayeeLookupTimer = null;
-  }
 }
 
 function clearChromeExtensionPresenceTimer() {
@@ -1936,8 +2004,8 @@ function shouldMonitorChromeExtensionPresence() {
 
 function shouldRetrySwedbankLookupAfterLogin() {
   return chromeExtensionIsUsable()
-    && chromeExtensionRuntime.loginRequired === true
-    && chromeExtensionRuntime.missingPayeeCount > 0;
+    && (chromeExtensionRuntime.loginRequired === true || chromeExtensionRuntime.profileSelectionRequired === true)
+    && currentSenderPayeeLookupRemainingCount() > 0;
 }
 
 function scheduleChromeExtensionPresenceCheck(delay = 1500) {
@@ -1971,14 +2039,49 @@ function syncChromeExtensionPresencePolling() {
   clearChromeExtensionPresenceTimer();
 }
 
-function scheduleChromeExtensionPayeeLookup(delay = 1500) {
-  clearChromeExtensionPayeeLookupTimer();
-  chromeExtensionPayeeLookupTimer = window.setTimeout(() => {
-    chromeExtensionPayeeLookupTimer = null;
-    processMissingPayeeNames().catch((error) => {
-      console.error(error);
+function syncChromeExtensionPayeeQueueRuntimeFromState() {
+  const remainingCount = currentSenderPayeeLookupRemainingCount();
+  const loginRequired = chromeExtensionRuntime.loginRequired === true && remainingCount > 0;
+  const profileSelectionRequired = chromeExtensionRuntime.profileSelectionRequired === true && remainingCount > 0;
+  if (
+    chromeExtensionRuntime.missingPayeeCount === remainingCount
+    && chromeExtensionRuntime.loginRequired === loginRequired
+    && chromeExtensionRuntime.profileSelectionRequired === profileSelectionRequired
+  ) {
+    return;
+  }
+
+  setChromeExtensionRuntime({
+    missingPayeeCount: remainingCount,
+    loginRequired,
+    profileSelectionRequired,
+  });
+}
+
+function maybeStartChromeExtensionPayeeLookup() {
+  if (chromeExtensionPayeeLookupInFlight || !chromeExtensionIsUsable()) {
+    return;
+  }
+
+  const remainingCount = currentSenderPayeeLookupRemainingCount();
+  const item = currentSenderPayeeLookupQueueItem();
+  if (remainingCount < 1 || !item) {
+    return;
+  }
+  if (chromeExtensionRuntime.loginRequired === true) {
+    return;
+  }
+
+  processMissingPayeeNames().catch((error) => {
+    const remainingCount = currentSenderPayeeLookupRemainingCount();
+    setChromeExtensionRuntime({
+      missingPayeeCount: remainingCount,
+      loginRequired: remainingCount > 0 && chromeExtensionRuntime.hasAnySwedbankTab === false,
+      profileSelectionRequired: false,
+      lastError: error instanceof Error ? error.message : String(error || 'Swedbank-uppslaget misslyckades.'),
     });
-  }, delay);
+    console.error(error);
+  });
 }
 
 async function processMissingPayeeNames() {
@@ -1986,25 +2089,21 @@ async function processMissingPayeeNames() {
     return;
   }
 
+  const queue = currentSenderPayeeLookupQueue();
+  const remainingCount = Math.max(0, Number.parseInt(String(queue.remainingCount || 0), 10) || 0);
+  const item = queue.item && typeof queue.item === 'object' ? queue.item : null;
+  setChromeExtensionRuntime({
+    missingPayeeCount: remainingCount,
+    loginRequired: chromeExtensionRuntime.loginRequired === true && remainingCount > 0,
+    profileSelectionRequired: chromeExtensionRuntime.profileSelectionRequired === true && remainingCount > 0,
+  });
+
+  if (!item) {
+    return;
+  }
+
   chromeExtensionPayeeLookupInFlight = true;
   try {
-    const response = await fetch('/api/get-missing-sender-payment-payees.php?limit=1', { cache: 'no-store' });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.items)) {
-      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte läsa betalnummer utan payeeName.');
-    }
-
-    const remainingCount = Number.parseInt(String(payload.remainingCount || 0), 10) || 0;
-    setChromeExtensionRuntime({
-      missingPayeeCount: remainingCount,
-      loginRequired: chromeExtensionRuntime.loginRequired === true && remainingCount > 0,
-    });
-
-    const item = payload.items[0] || null;
-    if (!item || typeof item !== 'object') {
-      return;
-    }
-
     const extensionPayload = await sendMessageToChromeExtension({
       type: 'docflow.lookupPayee',
       lookupType: item.type,
@@ -2033,29 +2132,27 @@ async function processMissingPayeeNames() {
         setChromeExtensionRuntime({
           swedbankSessionAvailable: true,
           loginRequired: false,
+          profileSelectionRequired: false,
           missingPayeeCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
           lastError: '',
         });
-
-        if ((Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0) > 0) {
-          scheduleChromeExtensionPayeeLookup(400);
-        }
+        await fetchState({ refreshSenders: true, force: true, syncTransport: false });
         return;
       }
 
       const loginRequired = extensionPayload && extensionPayload.loginRequired === true;
+      const profileSelectionRequired = extensionPayload && extensionPayload.profileSelectionRequired === true;
       setChromeExtensionRuntime({
-        swedbankSessionAvailable: loginRequired ? false : chromeExtensionRuntime.swedbankSessionAvailable,
+        swedbankSessionAvailable: profileSelectionRequired
+          ? true
+          : (loginRequired ? false : chromeExtensionRuntime.swedbankSessionAvailable),
         loginRequired,
+        profileSelectionRequired,
         missingPayeeCount: remainingCount,
         lastError: extensionPayload && typeof extensionPayload.message === 'string'
           ? extensionPayload.message
           : 'Swedbank-uppslaget misslyckades.',
       });
-      if (loginRequired) {
-        return;
-      }
-      scheduleChromeExtensionPayeeLookup(10000);
       return;
     }
 
@@ -2066,10 +2163,10 @@ async function processMissingPayeeNames() {
       setChromeExtensionRuntime({
         swedbankSessionAvailable: true,
         loginRequired: false,
+        profileSelectionRequired: false,
         missingPayeeCount: remainingCount,
         lastError: 'Swedbank svarade utan payeeName för betalnumret.',
       });
-      scheduleChromeExtensionPayeeLookup(30000);
       return;
     }
 
@@ -2091,14 +2188,22 @@ async function processMissingPayeeNames() {
     setChromeExtensionRuntime({
       swedbankSessionAvailable: true,
       loginRequired: false,
+      profileSelectionRequired: false,
       missingPayeeCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
       lastError: '',
     });
     await fetchState({ refreshSenders: true, force: true, syncTransport: false });
-
-    if ((Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0) > 0) {
-      scheduleChromeExtensionPayeeLookup(400);
-    }
+  } catch (error) {
+    setChromeExtensionRuntime({
+      missingPayeeCount: remainingCount,
+      loginRequired: remainingCount > 0 && (
+        chromeExtensionRuntime.loginRequired === true
+        || chromeExtensionRuntime.hasAnySwedbankTab === false
+      ),
+      profileSelectionRequired: false,
+      lastError: error instanceof Error ? error.message : String(error || 'Swedbank-uppslaget misslyckades.'),
+    });
+    throw error;
   } finally {
     chromeExtensionPayeeLookupInFlight = false;
   }
@@ -2112,11 +2217,12 @@ async function openSwedbankLoginFlow() {
     }
     setChromeExtensionRuntime({
       loginRequired: false,
+      profileSelectionRequired: false,
       lastError: '',
     });
     window.setTimeout(() => {
       pingChromeExtension().finally(() => {
-        scheduleChromeExtensionPayeeLookup(1200);
+        maybeStartChromeExtensionPayeeLookup();
       });
     }, 1200);
   } catch (error) {
@@ -2140,7 +2246,7 @@ async function extensionTest() {
           : 'Tillägget svarade inte.'
     );
     if (chromeExtensionIsUsable()) {
-      scheduleChromeExtensionPayeeLookup(100);
+      maybeStartChromeExtensionPayeeLookup();
     }
     return runtime;
   } catch (error) {
@@ -2159,6 +2265,16 @@ function renderAppNotices() {
 
   appNoticesEl.replaceChildren();
   const notices = [];
+  const pendingPayeeLookups = currentSenderPayeeLookupRemainingCount();
+  const showSwedbankLoginNotice =
+    chromeExtensionRuntime.status === 'installed'
+    && pendingPayeeLookups > 0
+    && (
+      chromeExtensionRuntime.profileSelectionRequired === true
+      ||
+      chromeExtensionRuntime.loginRequired === true
+      || chromeExtensionRuntime.hasAnySwedbankTab === false
+    );
 
   if (state.archivingRules && state.archivingRules.hasUnpublishedChanges === true) {
     const notice = document.createElement('div');
@@ -2203,14 +2319,16 @@ function renderAppNotices() {
     notices.push(notice);
   }
 
-  if (chromeExtensionRuntime.loginRequired === true && chromeExtensionRuntime.missingPayeeCount > 0) {
+  if (showSwedbankLoginNotice) {
     const notice = document.createElement('div');
     notice.className = 'app-notice is-error';
     const text = document.createElement('span');
-    text.textContent = 'Swedbank är inte tillgängligt just nu. Logga in för att hämta namn för betalnummer.';
+    text.textContent = chromeExtensionRuntime.profileSelectionRequired === true
+      ? 'Swedbank kräver att du väljer profil för att hämta namn för betalnummer.'
+      : 'Swedbank är inte tillgängligt just nu. Logga in för att hämta namn för betalnummer.';
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = 'Logga in';
+    button.textContent = chromeExtensionRuntime.profileSelectionRequired === true ? 'Välj profil' : 'Logga in';
     button.addEventListener('click', () => {
       openSwedbankLoginFlow();
     });
@@ -2218,7 +2336,7 @@ function renderAppNotices() {
     notices.push(notice);
   } else if (
     chromeExtensionRuntime.status === 'installed'
-    && chromeExtensionRuntime.missingPayeeCount > 0
+    && pendingPayeeLookups > 0
     && chromeExtensionRuntime.lastError
   ) {
     const notice = document.createElement('div');
@@ -3719,31 +3837,163 @@ function senderSummaryForJob(job) {
     : null;
 }
 
-function appendSelectedJobSenderRow(fragment, label, value, options = {}) {
-  if (!(fragment instanceof DocumentFragment)) {
+function senderObservationRowsForJob(job) {
+  const summary = senderSummaryForJob(job);
+  return summary && Array.isArray(summary.observations)
+    ? summary.observations.filter((row) => row && typeof row === 'object')
+    : [];
+}
+
+function selectedJobSenderObservationSpinnerPaused(observation) {
+  if (!observation || typeof observation !== 'object') {
+    return false;
+  }
+  return (
+    (chromeExtensionRuntime.loginRequired === true || chromeExtensionRuntime.profileSelectionRequired === true)
+    && chromeExtensionRuntime.missingPayeeCount > 0
+  );
+}
+
+function clearSelectedJobSenderSectionMessage(message) {
+  if (!(selectedJobSenderInfoEl instanceof HTMLElement)) {
+    return;
+  }
+  delete selectedJobSenderInfoEl._observationTableBody;
+  delete selectedJobSenderInfoEl._observationRows;
+  selectedJobSenderInfoEl.textContent = message;
+}
+
+function ensureSelectedJobSenderObservationTable() {
+  if (!(selectedJobSenderInfoEl instanceof HTMLElement)) {
+    return null;
+  }
+  if (selectedJobSenderInfoEl._observationTableBody instanceof HTMLElement && selectedJobSenderInfoEl._observationRows instanceof Map) {
+    return {
+      tbody: selectedJobSenderInfoEl._observationTableBody,
+      rows: selectedJobSenderInfoEl._observationRows,
+    };
+  }
+
+  const subtitle = document.createElement('div');
+  subtitle.className = 'selected-job-sender-subtitle';
+  subtitle.textContent = 'Nya uppgifter';
+
+  const table = document.createElement('table');
+  table.className = 'selected-job-sender-table';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  const itemHeader = document.createElement('th');
+  itemHeader.scope = 'col';
+  itemHeader.textContent = 'Uppgift';
+  const nameHeader = document.createElement('th');
+  nameHeader.scope = 'col';
+  nameHeader.textContent = 'Namn';
+  headerRow.append(itemHeader, nameHeader);
+  thead.appendChild(headerRow);
+
+  const tbody = document.createElement('tbody');
+  table.append(thead, tbody);
+
+  selectedJobSenderInfoEl.replaceChildren(subtitle, table);
+  selectedJobSenderInfoEl._observationTableBody = tbody;
+  selectedJobSenderInfoEl._observationRows = new Map();
+
+  return {
+    tbody,
+    rows: selectedJobSenderInfoEl._observationRows,
+  };
+}
+
+function createSelectedJobSenderObservationRow(observation) {
+  const row = document.createElement('tr');
+  row.className = 'selected-job-sender-observation-row';
+
+  const itemCell = document.createElement('td');
+  itemCell.className = 'selected-job-sender-observation-item-cell';
+  const itemWrap = document.createElement('div');
+  itemWrap.className = 'selected-job-sender-observation-item';
+  const itemLabel = document.createElement('span');
+  itemLabel.className = 'selected-job-sender-observation-label';
+  const itemValue = document.createElement('span');
+  itemValue.className = 'selected-job-sender-observation-value';
+  itemWrap.append(itemLabel, itemValue);
+  itemCell.appendChild(itemWrap);
+
+  const nameCell = document.createElement('td');
+  nameCell.className = 'selected-job-sender-observation-name-cell';
+  const nameWrap = document.createElement('div');
+  nameWrap.className = 'selected-job-sender-observation-name-wrap';
+  const nameText = document.createElement('span');
+  nameText.className = 'selected-job-sender-observation-name';
+  const spinner = document.createElement('span');
+  spinner.className = 'spinner selected-job-sender-observation-spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+  nameWrap.append(nameText, spinner);
+  nameCell.appendChild(nameWrap);
+
+  row.append(itemCell, nameCell);
+  row._itemLabelEl = itemLabel;
+  row._itemValueEl = itemValue;
+  row._nameWrapEl = nameWrap;
+  row._nameTextEl = nameText;
+  row._spinnerEl = spinner;
+
+  updateSelectedJobSenderObservationRow(row, observation);
+  return row;
+}
+
+function updateSelectedJobSenderObservationRow(row, observation) {
+  if (!(row instanceof HTMLElement) || !observation || typeof observation !== 'object') {
     return;
   }
 
-  const normalizedValue = typeof value === 'string' ? value.trim() : '';
-  if (normalizedValue === '' && options.allowEmpty !== true) {
+  const itemLabel = typeof observation.itemLabel === 'string' ? observation.itemLabel.trim() : '';
+  const itemValue = typeof observation.itemValue === 'string' ? observation.itemValue.trim() : '';
+  const name = typeof observation.name === 'string' ? observation.name.trim() : '';
+  const status = typeof observation.status === 'string' ? observation.status.trim() : 'pending';
+  const paused = status === 'pending' && selectedJobSenderObservationSpinnerPaused(observation);
+
+  row.dataset.observationKey = typeof observation.key === 'string' ? observation.key : '';
+  row.dataset.observationType = typeof observation.type === 'string' ? observation.type : '';
+  row._observation = observation;
+
+  row._itemLabelEl.textContent = itemLabel;
+  row._itemValueEl.textContent = itemValue;
+
+  row._nameTextEl.classList.remove('is-muted');
+  row._nameTextEl.hidden = false;
+  row._spinnerEl.hidden = true;
+  row._spinnerEl.classList.toggle('is-paused', paused);
+  row._nameWrapEl.classList.remove('is-loading');
+
+  if (status === 'resolved' && name !== '') {
+    row._nameTextEl.textContent = name;
     return;
   }
 
-  const row = document.createElement('div');
-  row.className = 'selected-job-sender-row';
-  const labelEl = document.createElement('div');
-  labelEl.className = 'selected-job-sender-label';
-  labelEl.textContent = label;
-  const valueEl = document.createElement('div');
-  valueEl.className = 'selected-job-sender-value';
-  if (normalizedValue === '') {
-    valueEl.classList.add('is-muted');
-    valueEl.textContent = options.emptyText || 'Saknas';
-  } else {
-    valueEl.textContent = normalizedValue;
+  if (status === 'not_found') {
+    row._nameTextEl.textContent = 'Ingen träff';
+    row._nameTextEl.classList.add('is-muted');
+    return;
   }
-  row.append(labelEl, valueEl);
-  fragment.appendChild(row);
+
+  row._nameTextEl.textContent = '';
+  row._nameTextEl.hidden = true;
+  row._spinnerEl.hidden = false;
+  row._nameWrapEl.classList.add('is-loading');
+}
+
+function syncSelectedJobSenderObservationRuntimeState() {
+  if (!(selectedJobSenderInfoEl instanceof HTMLElement) || !(selectedJobSenderInfoEl._observationRows instanceof Map)) {
+    return;
+  }
+
+  selectedJobSenderInfoEl._observationRows.forEach((row) => {
+    if (row instanceof HTMLElement && row._observation) {
+      updateSelectedJobSenderObservationRow(row, row._observation);
+    }
+  });
 }
 
 function renderSelectedJobSenderSection(job) {
@@ -3752,27 +4002,48 @@ function renderSelectedJobSenderSection(job) {
   }
 
   if (!job) {
-    selectedJobSenderInfoEl.textContent = 'Ingen avsändarinformation tillgänglig ännu.';
+    clearSelectedJobSenderSectionMessage('Ingen avsändarinformation tillgänglig ännu.');
     return;
   }
 
-  const summary = senderSummaryForJob(job);
-
-  const fragment = document.createDocumentFragment();
-  appendSelectedJobSenderRow(fragment, 'Org.nr', summary && typeof summary.orgNumber === 'string' ? summary.orgNumber : '');
-  appendSelectedJobSenderRow(fragment, 'Bankgiro', summary && typeof summary.bankgiro === 'string' ? summary.bankgiro : '');
-  appendSelectedJobSenderRow(fragment, 'Plusgiro', summary && typeof summary.plusgiro === 'string' ? summary.plusgiro : '');
-  appendSelectedJobSenderRow(fragment, 'IBAN', summary && typeof summary.iban === 'string' ? summary.iban : '');
-  appendSelectedJobSenderRow(fragment, 'SWIFT', summary && typeof summary.swift === 'string' ? summary.swift : '');
-  appendSelectedJobSenderRow(fragment, 'Betalningsmottagare', summary && typeof summary.paymentReceiver === 'string' ? summary.paymentReceiver : '');
-  appendSelectedJobSenderRow(fragment, 'Leverantör', summary && typeof summary.supplier === 'string' ? summary.supplier : '');
-
-  if (!fragment.hasChildNodes()) {
-    selectedJobSenderInfoEl.textContent = 'Ingen avsändarinformation tillgänglig ännu.';
+  const observations = senderObservationRowsForJob(job);
+  if (observations.length < 1) {
+    clearSelectedJobSenderSectionMessage('Ingen avsändarinformation tillgänglig ännu.');
     return;
   }
 
-  selectedJobSenderInfoEl.replaceChildren(fragment);
+  const tableState = ensureSelectedJobSenderObservationTable();
+  if (!tableState) {
+    return;
+  }
+
+  const desiredKeys = new Set();
+  observations.forEach((observation) => {
+    const observationKey = typeof observation.key === 'string' && observation.key.trim() !== ''
+      ? observation.key.trim()
+      : `${observation.type || 'observation'}:${observation.itemValue || ''}`;
+    desiredKeys.add(observationKey);
+    let row = tableState.rows.get(observationKey) || null;
+    if (!(row instanceof HTMLElement)) {
+      row = createSelectedJobSenderObservationRow(observation);
+      tableState.rows.set(observationKey, row);
+    } else {
+      updateSelectedJobSenderObservationRow(row, observation);
+    }
+    tableState.tbody.appendChild(row);
+  });
+
+  Array.from(tableState.rows.entries()).forEach(([key, row]) => {
+    if (desiredKeys.has(key)) {
+      return;
+    }
+    if (row instanceof HTMLElement && row.parentNode === tableState.tbody) {
+      tableState.tbody.removeChild(row);
+    }
+    tableState.rows.delete(key);
+  });
+
+  syncSelectedJobSenderObservationRuntimeState();
 }
 
 function effectiveCategoryId(job) {
@@ -5561,7 +5832,11 @@ function applyState(nextState) {
   const shouldUpdateClients = Array.isArray(nextState.clients);
   const shouldUpdateSenders = Array.isArray(nextState.senders);
   const shouldUpdateCategories = Array.isArray(nextState.categories);
+  const shouldUpdateSenderPayeeLookupQueue = nextState.senderPayeeLookupQueue && typeof nextState.senderPayeeLookupQueue === 'object';
   const shouldUpdateArchivingRules = nextState.archivingRules && typeof nextState.archivingRules === 'object';
+  const nextSenderPayeeLookupQueue = shouldUpdateSenderPayeeLookupQueue
+    ? normalizeSenderPayeeLookupQueue(nextState.senderPayeeLookupQueue)
+    : state.senderPayeeLookupQueue;
   const nextArchivingRules = shouldUpdateArchivingRules
     ? normalizeArchivingRulesStatePayload(nextState.archivingRules, state.archivingRules)
     : state.archivingRules;
@@ -5571,11 +5846,13 @@ function applyState(nextState) {
     readyJobs: Array.isArray(nextState.readyJobs) ? nextState.readyJobs : state.readyJobs,
     archivedJobs: Array.isArray(nextState.archivedJobs) ? nextState.archivedJobs : state.archivedJobs,
     failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : state.failedJobs,
+    senderPayeeLookupQueue: nextSenderPayeeLookupQueue,
     clients: shouldUpdateClients ? nextState.clients : state.clients,
     senders: shouldUpdateSenders ? nextState.senders : state.senders,
     categories: shouldUpdateCategories ? nextState.categories : state.categories,
     archivingRules: nextArchivingRules
   };
+  console.info('[Docflow] applyState senderPayeeLookupQueue', state.senderPayeeLookupQueue);
 
   const validJobIds = new Set(
     []
@@ -5634,6 +5911,7 @@ function applyState(nextState) {
     }
   });
   pruneReprocessWatchJobs();
+  syncChromeExtensionPayeeQueueRuntimeFromState();
 
   setProcessingInfo(state.processingJobs);
   notifyFailedJobs(state.failedJobs);
@@ -5645,9 +5923,6 @@ function applyState(nextState) {
   }
   if (shouldUpdateSenders) {
     renderSenderSelect(state.senders);
-    if (chromeExtensionIsUsable()) {
-      scheduleChromeExtensionPayeeLookup(500);
-    }
   }
   if (shouldUpdateCategories) {
     renderCategorySelect(state.categories);
@@ -13172,6 +13447,10 @@ async function fetchState(options = {}) {
     if (!nextState || !Array.isArray(nextState.readyJobs) || !Array.isArray(nextState.archivedJobs)) {
       throw new Error('Ogiltigt statussvar');
     }
+    console.info(
+      '[Docflow] fetchState raw senderPayeeLookupQueue',
+      JSON.stringify(nextState && nextState.senderPayeeLookupQueue ? nextState.senderPayeeLookupQueue : null)
+    );
 
     stateUpdateTransport = sanitizeStateUpdateTransport(
       nextState.stateUpdateTransport,
@@ -13194,6 +13473,9 @@ async function fetchState(options = {}) {
       readyJobs: nextState.readyJobs,
       archivedJobs: nextState.archivedJobs,
       failedJobs: Array.isArray(nextState.failedJobs) ? nextState.failedJobs : [],
+      senderPayeeLookupQueue: nextState.senderPayeeLookupQueue && typeof nextState.senderPayeeLookupQueue === 'object'
+        ? nextState.senderPayeeLookupQueue
+        : undefined,
       archivingRules: shouldApplyArchivingRules && nextState.archivingRules && typeof nextState.archivingRules === 'object'
         ? nextState.archivingRules
         : undefined,
@@ -13238,6 +13520,8 @@ async function fetchState(options = {}) {
       queueMicrotask(() => {
         fetchState(nextQueuedOptions);
       });
+    } else if (chromeExtensionIsUsable()) {
+      maybeStartChromeExtensionPayeeLookup();
     }
   }
 }
@@ -13356,7 +13640,7 @@ document.addEventListener('visibilitychange', () => {
   }
   if (shouldRetrySwedbankLookupAfterLogin()) {
     pingChromeExtension().finally(() => {
-      scheduleChromeExtensionPayeeLookup(100);
+      maybeStartChromeExtensionPayeeLookup();
     });
   }
 });
@@ -13366,7 +13650,7 @@ window.addEventListener('focus', () => {
   }
   if (shouldRetrySwedbankLookupAfterLogin()) {
     pingChromeExtension().finally(() => {
-      scheduleChromeExtensionPayeeLookup(100);
+      maybeStartChromeExtensionPayeeLookup();
     });
   }
 });
@@ -13396,6 +13680,24 @@ Promise.all([
 ]).finally(() => {
   syncStateUpdateTransport();
   if (chromeExtensionIsUsable()) {
-    scheduleChromeExtensionPayeeLookup(1200);
+    maybeStartChromeExtensionPayeeLookup();
   }
 });
+
+window.docflowExtensionDebug = {
+  get runtime() {
+    return { ...chromeExtensionRuntime };
+  },
+  get queue() {
+    return currentSenderPayeeLookupQueue();
+  },
+  get stateQueue() {
+    return state && state.senderPayeeLookupQueue ? { ...state.senderPayeeLookupQueue } : null;
+  },
+  async fetchLiveQueue() {
+    const response = await fetch('/api/get-state.php?includeSenders=1', { cache: 'no-store' });
+    const payload = await response.json();
+    console.info('[Docflow] fetchLiveQueue payload', payload && payload.senderPayeeLookupQueue ? payload.senderPayeeLookupQueue : null);
+    return payload && payload.senderPayeeLookupQueue ? payload.senderPayeeLookupQueue : null;
+  },
+};

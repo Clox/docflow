@@ -6,12 +6,55 @@ const DOCFLOW_SWEDBANK_FALLBACK_PATTERNS = [
   'https://www.swedbank.se/*'
 ];
 
+const DOCFLOW_LOG_PREFIX = '[Docflow Chrome Connector]';
+
+function logInfo(message, details) {
+  if (details === undefined) {
+    console.info(`${DOCFLOW_LOG_PREFIX} ${message}`);
+    return;
+  }
+  console.info(`${DOCFLOW_LOG_PREFIX} ${message}`, details);
+}
+
+function logWarn(message, details) {
+  if (details === undefined) {
+    console.warn(`${DOCFLOW_LOG_PREFIX} ${message}`);
+    return;
+  }
+  console.warn(`${DOCFLOW_LOG_PREFIX} ${message}`, details);
+}
+
+function logError(message, details) {
+  if (details === undefined) {
+    console.error(`${DOCFLOW_LOG_PREFIX} ${message}`);
+    return;
+  }
+  console.error(`${DOCFLOW_LOG_PREFIX} ${message}`, details);
+}
+
 function normalizeTabUrl(tab) {
   return typeof tab?.url === 'string' ? tab.url : '';
 }
 
 function isSwedbankLoginUrl(url) {
   return typeof url === 'string' && url.includes('/logga-in');
+}
+
+function isSwedbankProfileSelectionUrl(url) {
+  return typeof url === 'string' && url.includes('/logga-in/valj-profil');
+}
+
+function isUsableSwedbankAppUrl(url) {
+  if (typeof url !== 'string' || url === '') {
+    return false;
+  }
+  if (!url.startsWith('https://online.swedbank.se/app')) {
+    return false;
+  }
+  if (isSwedbankProfileSelectionUrl(url)) {
+    return true;
+  }
+  return !isSwedbankLoginUrl(url);
 }
 
 function firstNonEmptyString(values) {
@@ -56,23 +99,34 @@ async function queryTabs(urlPatterns) {
 async function findSwedbankSessionTab() {
   const appTabs = await queryTabs(DOCFLOW_SWEDBANK_APP_PATTERNS);
   const candidateAppTabs = appTabs.filter((tab) => typeof tab.id === 'number' && tab.id > 0);
-  const usableAppTab = candidateAppTabs.find((tab) => !isSwedbankLoginUrl(normalizeTabUrl(tab))) || null;
+  const usableSessionTabs = candidateAppTabs.filter((tab) => isUsableSwedbankAppUrl(normalizeTabUrl(tab)));
+  const loginTabs = candidateAppTabs.filter((tab) => !isUsableSwedbankAppUrl(normalizeTabUrl(tab)));
+  const usableAppTab = usableSessionTabs[0] || null;
   if (usableAppTab) {
+    logInfo('found usable Swedbank app tabs', {
+      sessionTabIds: usableSessionTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
+      loginTabIds: loginTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
+      urls: usableSessionTabs.map((tab) => normalizeTabUrl(tab)),
+    });
     return {
       tab: usableAppTab,
       sessionAvailable: true,
-      sessionTabs: candidateAppTabs.filter((tab) => !isSwedbankLoginUrl(normalizeTabUrl(tab))),
-      loginTabs: candidateAppTabs.filter((tab) => isSwedbankLoginUrl(normalizeTabUrl(tab))),
+      sessionTabs: usableSessionTabs,
+      loginTabs,
     };
   }
 
-  const loginTab = candidateAppTabs.find((tab) => isSwedbankLoginUrl(normalizeTabUrl(tab))) || null;
+  const loginTab = loginTabs[0] || null;
   if (loginTab) {
+    logWarn('only non-usable Swedbank login tabs found', {
+      loginTabIds: loginTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
+      urls: loginTabs.map((tab) => normalizeTabUrl(tab)),
+    });
     return {
       tab: loginTab,
       sessionAvailable: false,
       sessionTabs: [],
-      loginTabs: [loginTab],
+      loginTabs,
     };
   }
 
@@ -86,10 +140,18 @@ async function executeLookupInTab(tabId, payload) {
     target: { tabId },
     world: 'MAIN',
     func: async ({ type, number }) => {
+      const prefix = '[Docflow Chrome Connector]';
       const normalizedType = String(type || '').trim().toLowerCase() === 'plusgiro' ? 'PGACCOUNT' : 'BGACCOUNT';
       const normalizedNumber = String(number || '').trim();
       const url = `https://online.swedbank.se/TDE_DAP_Portal_REST_WEB/api/v5/payment/payee/${normalizedType}/${encodeURIComponent(normalizedNumber)}`;
       try {
+        console.info(`${prefix} injected lookup start`, {
+          type,
+          normalizedType,
+          number: normalizedNumber,
+          url,
+          href: window.location.href,
+        });
         const response = await fetch(url, {
           method: 'GET',
           credentials: 'include',
@@ -104,6 +166,13 @@ async function executeLookupInTab(tabId, payload) {
         } catch (_error) {
           data = null;
         }
+
+        console.info(`${prefix} injected lookup response`, {
+          ok: response.ok,
+          status: response.status,
+          responseUrl: response.url,
+          hasJson: !!data,
+        });
 
         return {
           ok: response.ok,
@@ -144,8 +213,13 @@ function normalizeLookupResponse(type, number, result) {
     && swedbankError.field === 'accountNumber'
     && /ingen mottagare/i.test(swedbankError.fieldMessage);
 
+  const profileSelectionRequired =
+    swedbankError.code === 'AUTHORIZATION_FAILED'
+    && /no target selected/i.test(swedbankError.message);
+
   const loginRequired =
     swedbankError.code === 'STRONGER_AUTHENTICATION_NEEDED'
+    || (swedbankError.code === 'AUTHORIZATION_FAILED' && !profileSelectionRequired)
     || responseUrl.includes('/logga-in')
     || /logga\s*in/i.test(rawText)
     || ((status === 401 || status === 403) && swedbankError.code === '');
@@ -156,13 +230,20 @@ function normalizeLookupResponse(type, number, result) {
       errorCode: notFound
         ? 'PAYEE_NOT_FOUND'
         : (
+          profileSelectionRequired
+            ? 'PROFILE_SELECTION_REQUIRED'
+            : (
           loginRequired
             ? 'NO_SESSION'
             : (swedbankError.code || 'LOOKUP_FAILED')
+            )
         ),
       message: notFound
         ? (swedbankError.fieldMessage || 'Det finns ingen mottagare med det här numret.')
         : (
+          profileSelectionRequired
+            ? 'Swedbank kräver att du väljer profil för att hämta namn för betalnummer.'
+            : (
           loginRequired
             ? 'Swedbank kräver att du loggar in igen för att hämta namn för betalnummer.'
             : (
@@ -171,9 +252,11 @@ function normalizeLookupResponse(type, number, result) {
               || result?.scriptError
               || `Swedbank lookup failed with status ${status || 0}.`
             )
+            )
         ),
       status,
-      loginRequired: notFound ? false : loginRequired,
+      loginRequired: notFound || profileSelectionRequired ? false : loginRequired,
+      profileSelectionRequired: notFound ? false : profileSelectionRequired,
       notFound,
     };
   }
@@ -207,6 +290,8 @@ function normalizeLookupResponse(type, number, result) {
     payeeName,
     accountNumber,
     referenceOCR,
+    loginRequired: false,
+    profileSelectionRequired: false,
     raw: payload,
   };
 }
@@ -214,7 +299,7 @@ function normalizeLookupResponse(type, number, result) {
 async function handlePing() {
   const manifest = chrome.runtime.getManifest();
   const swedbank = await findSwedbankSessionTab();
-  return {
+  const payload = {
     ok: true,
     type: 'docflow.pong',
     version: String(manifest.version || ''),
@@ -222,6 +307,8 @@ async function handlePing() {
     swedbankSessionAvailable: swedbank.sessionAvailable === true,
     hasAnySwedbankTab: !!swedbank.tab,
   };
+  logInfo('ping', payload);
+  return payload;
 }
 
 async function handleLookupPayee(message) {
@@ -237,13 +324,22 @@ async function handleLookupPayee(message) {
 
   const swedbank = await findSwedbankSessionTab();
   const sessionTabs = Array.isArray(swedbank.sessionTabs) ? swedbank.sessionTabs : [];
+  logInfo('lookup requested', {
+    type,
+    number,
+    sessionAvailable: swedbank.sessionAvailable === true,
+    hasAnySwedbankTab: !!swedbank.tab,
+    sessionTabIds: sessionTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
+  });
   if (sessionTabs.length < 1) {
-    return {
+    const payload = {
       ok: false,
       errorCode: 'NO_SESSION',
       message: 'Ingen användbar Swedbank-session hittades.',
       loginRequired: true,
     };
+    logWarn('lookup aborted: no usable Swedbank session', payload);
+    return payload;
   }
 
   let firstNonSessionError = null;
@@ -254,6 +350,15 @@ async function handleLookupPayee(message) {
 
     const result = await executeLookupInTab(tab.id, { type, number });
     const normalized = normalizeLookupResponse(type, number, result);
+    logInfo('lookup tab result', {
+      tabId: tab.id,
+      ok: normalized.ok === true,
+      status: normalized.status || 0,
+      errorCode: normalized.errorCode || '',
+      loginRequired: normalized.loginRequired === true,
+      message: normalized.message || '',
+      payeeName: normalized.payeeName || '',
+    });
     if (normalized.ok === true) {
       return normalized;
     }
@@ -266,15 +371,18 @@ async function handleLookupPayee(message) {
   }
 
   if (firstNonSessionError) {
+    logWarn('lookup finished with non-session error', firstNonSessionError);
     return firstNonSessionError;
   }
 
-  return {
+  const payload = {
     ok: false,
     errorCode: 'NO_SESSION',
     message: 'Ingen användbar Swedbank-session hittades.',
     loginRequired: true,
   };
+  logWarn('lookup finished without usable session across candidate tabs', payload);
+  return payload;
 }
 
 async function handleOpenLogin() {
@@ -294,6 +402,7 @@ async function handleOpenLogin() {
 chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) => {
   (async () => {
     const type = String(message?.type || '').trim();
+    logInfo('received external message', { type });
     if (type === 'docflow.ping') {
       return handlePing();
     }
@@ -311,6 +420,7 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
   })()
     .then((payload) => sendResponse(payload))
     .catch((error) => {
+      logError('unexpected external message failure', error instanceof Error ? error.message : String(error || 'Unknown error'));
       sendResponse({
         ok: false,
         errorCode: 'UNEXPECTED_ERROR',
@@ -320,3 +430,11 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
 
   return true;
 });
+
+(() => {
+  const manifest = chrome.runtime.getManifest();
+  logInfo('service worker loaded', {
+    extensionId: chrome.runtime.id,
+    version: String(manifest.version || ''),
+  });
+})();

@@ -10832,23 +10832,129 @@ function build_job_sender_summary(?array $extracted, ?int $matchedSenderId, ?int
         return null;
     }
 
-    $summary = [
-        'orgNumber' => extracted_field_scalar_value($extracted, 'organisationsnummer') ?? '',
-        'bankgiro' => extracted_field_scalar_value($extracted, 'bankgiro') ?? '',
-        'plusgiro' => extracted_field_scalar_value($extracted, 'plusgiro') ?? '',
-        'iban' => extracted_field_scalar_value($extracted, 'iban') ?? '',
-        'swift' => extracted_field_scalar_value($extracted, 'swift') ?? '',
-        'paymentReceiver' => extracted_field_scalar_value($extracted, 'payment_receiver') ?? '',
-        'supplier' => extracted_field_scalar_value($extracted, 'supplier') ?? '',
-    ];
+    $organizationNumber = extracted_field_scalar_value($extracted, 'organisationsnummer') ?? '';
+    $bankgiro = extracted_field_scalar_value($extracted, 'bankgiro') ?? '';
+    $plusgiro = extracted_field_scalar_value($extracted, 'plusgiro') ?? '';
 
-    foreach ($summary as $value) {
-        if ($value !== '') {
-            return $summary;
-        }
+    $observations = [];
+
+    if ($organizationNumber !== '') {
+        $observedRow = observed_sender_organization_summary_row($organizationNumber);
+        $observations[] = [
+            'key' => 'organization_number:' . (is_string($observedRow['organizationNumber'] ?? null) ? $observedRow['organizationNumber'] : $organizationNumber),
+            'type' => 'organization_number',
+            'itemLabel' => 'Org.nr',
+            'itemValue' => $organizationNumber,
+            'name' => is_string($observedRow['organizationName'] ?? null) ? trim((string) $observedRow['organizationName']) : '',
+            'status' => (is_string($observedRow['organizationName'] ?? null) && trim((string) $observedRow['organizationName']) !== '') ? 'resolved' : 'pending',
+        ];
     }
 
-    return null;
+    if ($bankgiro !== '') {
+        $observedRow = observed_sender_payment_summary_row('bankgiro', $bankgiro);
+        $resolvedName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
+        $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
+        $observations[] = [
+            'key' => 'bankgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : $bankgiro),
+            'type' => 'bankgiro',
+            'itemLabel' => 'Bankgiro',
+            'itemValue' => $bankgiro,
+            'name' => $resolvedName,
+            'status' => $resolvedName !== '' ? 'resolved' : ($lookupStatus === 'not_found' ? 'not_found' : 'pending'),
+        ];
+    }
+
+    if ($plusgiro !== '') {
+        $observedRow = observed_sender_payment_summary_row('plusgiro', $plusgiro);
+        $resolvedName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
+        $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
+        $observations[] = [
+            'key' => 'plusgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : $plusgiro),
+            'type' => 'plusgiro',
+            'itemLabel' => 'Plusgiro',
+            'itemValue' => $plusgiro,
+            'name' => $resolvedName,
+            'status' => $resolvedName !== '' ? 'resolved' : ($lookupStatus === 'not_found' ? 'not_found' : 'pending'),
+        ];
+    }
+
+    return $observations !== []
+        ? ['observations' => $observations]
+        : null;
+}
+
+function observed_sender_organization_summary_row(string $organizationNumber): array
+{
+    static $cache = [];
+
+    $normalized = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($organizationNumber);
+    if ($normalized === null) {
+        return [];
+    }
+    if (array_key_exists($normalized, $cache)) {
+        return $cache[$normalized];
+    }
+
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        $cache[$normalized] = [];
+        return [];
+    }
+
+    try {
+        $row = $repository->findObservedOrganizationNumberRow($normalized);
+    } catch (Throwable $e) {
+        $row = null;
+    }
+
+    $cache[$normalized] = is_array($row) ? [
+        'organizationNumber' => is_string($row['organization_number'] ?? null) ? trim((string) $row['organization_number']) : $normalized,
+        'organizationName' => is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '',
+        'senderId' => isset($row['sender_id']) ? (int) $row['sender_id'] : null,
+        'source' => is_string($row['source'] ?? null) ? trim((string) $row['source']) : '',
+    ] : [];
+
+    return $cache[$normalized];
+}
+
+function observed_sender_payment_summary_row(string $type, string $number): array
+{
+    static $cache = [];
+
+    $normalizedType = trim(strtolower($type)) === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+    $normalizedNumber = $normalizedType === 'plusgiro'
+        ? \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($number)
+        : \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($number);
+    if ($normalizedNumber === null) {
+        return [];
+    }
+
+    $cacheKey = $normalizedType . ':' . $normalizedNumber;
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        $cache[$cacheKey] = [];
+        return [];
+    }
+
+    try {
+        $row = $repository->findObservedPaymentNumberRow($normalizedType, $normalizedNumber);
+    } catch (Throwable $e) {
+        $row = null;
+    }
+
+    $cache[$cacheKey] = is_array($row) ? [
+        'type' => is_string($row['type'] ?? null) ? trim((string) $row['type']) : $normalizedType,
+        'number' => is_string($row['number'] ?? null) ? trim((string) $row['number']) : $normalizedNumber,
+        'payeeName' => is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '',
+        'payeeLookupStatus' => is_string($row['payee_lookup_status'] ?? null) ? trim((string) $row['payee_lookup_status']) : '',
+        'senderId' => isset($row['sender_id']) ? (int) $row['sender_id'] : null,
+    ] : [];
+
+    return $cache[$cacheKey];
 }
 
 function extraction_field_result_string(array $results, string $key, string $property = 'value'): ?string
@@ -10889,7 +10995,7 @@ function observe_extracted_sender_identifiers(array $fieldResults): void
 
     if ($organizationNumber !== null) {
         try {
-            $repository->observeOrganizationNumber($organizationNumber, $organizationName);
+            $repository->observeOrganizationNumber($organizationNumber, $organizationName, 'document_auto');
         } catch (Throwable $e) {
             // Best effort only. Identifier observation should not fail the document analysis pipeline.
         }
@@ -10908,6 +11014,37 @@ function observe_extracted_sender_identifiers(array $fieldResults): void
             // Best effort only. Identifier observation should not fail the document analysis pipeline.
         }
     }
+}
+
+function build_sender_payee_lookup_queue_state_payload(int $limit = 1): array
+{
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        return [
+            'remainingCount' => 0,
+            'item' => null,
+        ];
+    }
+
+    try {
+        $items = $repository->listPaymentNumbersMissingPayeeName($limit);
+        $remainingCount = $repository->countPaymentNumbersMissingPayeeName();
+    } catch (Throwable $e) {
+        return [
+            'remainingCount' => 0,
+            'item' => null,
+        ];
+    }
+
+    $item = $items[0] ?? null;
+    if (!is_array($item)) {
+        $item = null;
+    }
+
+    return [
+        'remainingCount' => max(0, (int) $remainingCount),
+        'item' => $item,
+    ];
 }
 
 function build_job_state_entry(
