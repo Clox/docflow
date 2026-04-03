@@ -62,6 +62,7 @@ const selectedJobMetaEl = document.getElementById('selected-job-meta');
 const selectedJobSenderInfoEl = document.getElementById('selected-job-sender-info');
 const selectedJobStatusEl = document.getElementById('selected-job-status');
 const selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
+const selectedJobActionsWarningEl = document.getElementById('selected-job-actions-warning');
 const settingsPanelTemplateIds = {
   clients: 'settings-template-clients',
   senders: 'settings-template-senders',
@@ -2463,7 +2464,7 @@ function setChromeExtensionRuntime(nextState = {}) {
   renderAppNotices();
   renderSystemChromeExtensionStatus();
   syncChromeExtensionPresencePolling();
-  syncSelectedJobSenderObservationRuntimeState();
+  renderSelectedJobSenderSection(findJobById(selectedJobId));
 }
 
 async function loadChromeExtensionConfig() {
@@ -2811,6 +2812,7 @@ async function processMissingOrganizationNames() {
       body: JSON.stringify({
         organizationId: item.organizationId,
         organizationName: resolvedOrganizationName,
+        currentSelectedJobId: selectedJobId || null,
       }),
     });
     const savePayload = await saveResponse.json().catch(() => null);
@@ -2927,6 +2929,7 @@ async function processMissingPayeeNames() {
             paymentId: item.paymentId,
             payeeName: null,
             lookupStatus: 'not_found',
+            currentSelectedJobId: selectedJobId || null,
           }),
         });
         const savePayload = await saveResponse.json().catch(() => null);
@@ -2983,6 +2986,7 @@ async function processMissingPayeeNames() {
       body: JSON.stringify({
         paymentId: item.paymentId,
         payeeName: resolvedPayeeName,
+        currentSelectedJobId: selectedJobId || null,
       }),
     });
     const savePayload = await saveResponse.json().catch(() => null);
@@ -4670,10 +4674,17 @@ function senderSummaryForJob(job) {
     : null;
 }
 
-function senderObservationRowsForJob(job) {
+function senderUnknownObservationRowsForJob(job) {
   const summary = senderSummaryForJob(job);
-  return summary && Array.isArray(summary.observations)
-    ? summary.observations.filter((row) => row && typeof row === 'object')
+  return summary && Array.isArray(summary.unknownObservations)
+    ? summary.unknownObservations.filter((row) => row && typeof row === 'object')
+    : [];
+}
+
+function senderLinkedRowsForJob(job) {
+  const summary = senderSummaryForJob(job);
+  return summary && Array.isArray(summary.senders)
+    ? summary.senders.filter((row) => row && typeof row === 'object')
     : [];
 }
 
@@ -4696,142 +4707,7 @@ function clearSelectedJobSenderSectionMessage(message) {
   if (!(selectedJobSenderInfoEl instanceof HTMLElement)) {
     return;
   }
-  delete selectedJobSenderInfoEl._observationTableBody;
-  delete selectedJobSenderInfoEl._observationRows;
   selectedJobSenderInfoEl.textContent = message;
-}
-
-function ensureSelectedJobSenderObservationTable() {
-  if (!(selectedJobSenderInfoEl instanceof HTMLElement)) {
-    return null;
-  }
-  if (selectedJobSenderInfoEl._observationTableBody instanceof HTMLElement && selectedJobSenderInfoEl._observationRows instanceof Map) {
-    return {
-      tbody: selectedJobSenderInfoEl._observationTableBody,
-      rows: selectedJobSenderInfoEl._observationRows,
-    };
-  }
-
-  const subtitle = document.createElement('div');
-  subtitle.className = 'selected-job-sender-subtitle';
-  subtitle.textContent = 'Okopplade uppgifter';
-
-  const table = document.createElement('table');
-  table.className = 'selected-job-sender-table';
-
-  const thead = document.createElement('thead');
-  const headerRow = document.createElement('tr');
-  const itemHeader = document.createElement('th');
-  itemHeader.scope = 'col';
-  itemHeader.textContent = 'Uppgift';
-  const nameHeader = document.createElement('th');
-  nameHeader.scope = 'col';
-  nameHeader.textContent = 'Namn';
-  headerRow.append(itemHeader, nameHeader);
-  thead.appendChild(headerRow);
-
-  const tbody = document.createElement('tbody');
-  table.append(thead, tbody);
-
-  selectedJobSenderInfoEl.replaceChildren(subtitle, table);
-  selectedJobSenderInfoEl._observationTableBody = tbody;
-  selectedJobSenderInfoEl._observationRows = new Map();
-
-  return {
-    tbody,
-    rows: selectedJobSenderInfoEl._observationRows,
-  };
-}
-
-function createSelectedJobSenderObservationRow(observation) {
-  const row = document.createElement('tr');
-  row.className = 'selected-job-sender-observation-row';
-
-  const itemCell = document.createElement('td');
-  itemCell.className = 'selected-job-sender-observation-item-cell';
-  const itemWrap = document.createElement('div');
-  itemWrap.className = 'selected-job-sender-observation-item';
-  const itemLabel = document.createElement('span');
-  itemLabel.className = 'selected-job-sender-observation-label';
-  const itemValue = document.createElement('span');
-  itemValue.className = 'selected-job-sender-observation-value';
-  itemWrap.append(itemLabel, itemValue);
-  itemCell.appendChild(itemWrap);
-
-  const nameCell = document.createElement('td');
-  nameCell.className = 'selected-job-sender-observation-name-cell';
-  const nameWrap = document.createElement('div');
-  nameWrap.className = 'selected-job-sender-observation-name-wrap';
-  const nameText = document.createElement('span');
-  nameText.className = 'selected-job-sender-observation-name';
-  const spinner = document.createElement('span');
-  spinner.className = 'spinner selected-job-sender-observation-spinner';
-  spinner.setAttribute('aria-hidden', 'true');
-  nameWrap.append(nameText, spinner);
-  nameCell.appendChild(nameWrap);
-
-  row.append(itemCell, nameCell);
-  row._itemLabelEl = itemLabel;
-  row._itemValueEl = itemValue;
-  row._nameWrapEl = nameWrap;
-  row._nameTextEl = nameText;
-  row._spinnerEl = spinner;
-
-  updateSelectedJobSenderObservationRow(row, observation);
-  return row;
-}
-
-function updateSelectedJobSenderObservationRow(row, observation) {
-  if (!(row instanceof HTMLElement) || !observation || typeof observation !== 'object') {
-    return;
-  }
-
-  const itemLabel = typeof observation.itemLabel === 'string' ? observation.itemLabel.trim() : '';
-  const itemValue = typeof observation.itemValue === 'string' ? observation.itemValue.trim() : '';
-  const name = typeof observation.name === 'string' ? observation.name.trim() : '';
-  const status = typeof observation.status === 'string' ? observation.status.trim() : 'pending';
-  const paused = status === 'pending' && selectedJobSenderObservationSpinnerPaused(observation);
-
-  row.dataset.observationKey = typeof observation.key === 'string' ? observation.key : '';
-  row.dataset.observationType = typeof observation.type === 'string' ? observation.type : '';
-  row._observation = observation;
-
-  row._itemLabelEl.textContent = itemLabel;
-  row._itemValueEl.textContent = itemValue;
-
-  row._nameTextEl.classList.remove('is-muted');
-  row._nameTextEl.hidden = false;
-  row._spinnerEl.hidden = true;
-  row._spinnerEl.classList.toggle('is-paused', paused);
-  row._nameWrapEl.classList.remove('is-loading');
-
-  if (status === 'resolved' && name !== '') {
-    row._nameTextEl.textContent = name;
-    return;
-  }
-
-  if (status === 'not_found') {
-    row._nameTextEl.textContent = 'Ingen träff';
-    row._nameTextEl.classList.add('is-muted');
-    return;
-  }
-
-  row._nameTextEl.textContent = '';
-  row._nameTextEl.hidden = true;
-  row._spinnerEl.hidden = false;
-  row._nameWrapEl.classList.add('is-loading');
-}
-
-function syncSelectedJobSenderObservationRuntimeState() {
-  if (!(selectedJobSenderInfoEl instanceof HTMLElement) || !(selectedJobSenderInfoEl._observationRows instanceof Map)) {
-    return;
-  }
-
-  selectedJobSenderInfoEl._observationRows.forEach((row) => {
-    if (row instanceof HTMLElement && row._observation) {
-      updateSelectedJobSenderObservationRow(row, row._observation);
-    }
-  });
 }
 
 function renderSelectedJobSenderSection(job) {
@@ -4844,44 +4720,125 @@ function renderSelectedJobSenderSection(job) {
     return;
   }
 
-  const observations = senderObservationRowsForJob(job);
-  if (observations.length < 1) {
+  const observations = senderUnknownObservationRowsForJob(job);
+  const senders = senderLinkedRowsForJob(job);
+  if (observations.length < 1 && senders.length < 1) {
     clearSelectedJobSenderSectionMessage('Ingen avsändarinformation tillgänglig ännu.');
     return;
   }
 
-  const tableState = ensureSelectedJobSenderObservationTable();
-  if (!tableState) {
-    return;
+  const fragment = document.createDocumentFragment();
+
+  if (observations.length > 0) {
+    const unknownSubtitle = document.createElement('div');
+    unknownSubtitle.className = 'selected-job-sender-subtitle';
+    unknownSubtitle.textContent = 'Okända uppgifter';
+    fragment.appendChild(unknownSubtitle);
+
+    const unknownList = document.createElement('ul');
+    unknownList.className = 'selected-job-sender-unknown-list';
+    observations.forEach((observation) => {
+      const item = document.createElement('li');
+      item.className = 'selected-job-sender-unknown-item';
+
+      const text = document.createElement('span');
+      text.className = 'selected-job-sender-unknown-text';
+      const itemLabel = typeof observation.itemLabel === 'string' ? observation.itemLabel.trim() : '';
+      const itemValue = typeof observation.itemValue === 'string' ? observation.itemValue.trim() : '';
+      text.textContent = `${itemLabel} ${itemValue}`.trim();
+      item.appendChild(text);
+
+      const status = typeof observation.status === 'string' ? observation.status.trim() : 'pending';
+      if (status === 'pending') {
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner selected-job-sender-observation-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        spinner.classList.toggle('is-paused', selectedJobSenderObservationSpinnerPaused(observation));
+        item.appendChild(spinner);
+      }
+
+      unknownList.appendChild(item);
+    });
+    fragment.appendChild(unknownList);
   }
 
-  const desiredKeys = new Set();
-  observations.forEach((observation) => {
-    const observationKey = typeof observation.key === 'string' && observation.key.trim() !== ''
-      ? observation.key.trim()
-      : `${observation.type || 'observation'}:${observation.itemValue || ''}`;
-    desiredKeys.add(observationKey);
-    let row = tableState.rows.get(observationKey) || null;
-    if (!(row instanceof HTMLElement)) {
-      row = createSelectedJobSenderObservationRow(observation);
-      tableState.rows.set(observationKey, row);
-    } else {
-      updateSelectedJobSenderObservationRow(row, observation);
-    }
-    tableState.tbody.appendChild(row);
-  });
+  if (senders.length > 0) {
+    const senderList = document.createElement('ul');
+    senderList.className = 'selected-job-sender-linked-list';
+    senders.forEach((senderRow) => {
+      const item = document.createElement('li');
+      item.className = 'selected-job-sender-linked-item';
 
-  Array.from(tableState.rows.entries()).forEach(([key, row]) => {
-    if (desiredKeys.has(key)) {
-      return;
-    }
-    if (row instanceof HTMLElement && row.parentNode === tableState.tbody) {
-      tableState.tbody.removeChild(row);
-    }
-    tableState.rows.delete(key);
-  });
+      const header = document.createElement('div');
+      header.className = `selected-job-sender-linked-header ${senderRow.nameFound === true ? 'is-found' : 'is-missing'}`;
 
-  syncSelectedJobSenderObservationRuntimeState();
+      const headerMarker = document.createElement('span');
+      headerMarker.className = 'selected-job-sender-linked-header-marker';
+      headerMarker.textContent = senderRow.nameFound === true ? '✓' : '';
+      header.appendChild(headerMarker);
+
+      const headerName = document.createElement('div');
+      headerName.className = 'selected-job-sender-linked-title';
+      headerName.textContent = typeof senderRow.name === 'string' ? senderRow.name : '';
+      header.appendChild(headerName);
+
+      const openButton = document.createElement('button');
+      openButton.type = 'button';
+      openButton.className = 'selected-job-sender-open';
+      openButton.textContent = '↗';
+      openButton.title = 'Öppna i avsändarregister';
+      openButton.setAttribute('aria-label', 'Öppna i avsändarregister');
+      openButton.addEventListener('click', () => {
+        openSenderInRegister(Number.parseInt(String(senderRow.senderId || 0), 10) || 0);
+      });
+      header.appendChild(openButton);
+
+      const components = document.createElement('div');
+      components.className = 'selected-job-sender-components';
+
+      const appendComponentRow = (text, found) => {
+        const row = document.createElement('div');
+        row.className = `selected-job-sender-component-row ${found ? 'is-found' : 'is-missing'}`;
+
+        const marker = document.createElement('span');
+        marker.className = 'selected-job-sender-component-marker';
+        marker.textContent = found ? '✓' : '';
+
+        const value = document.createElement('span');
+        value.className = 'selected-job-sender-component-text';
+        value.textContent = text;
+
+        row.append(marker, value);
+        components.appendChild(row);
+      };
+
+      if (senderRow.organizationNumber && typeof senderRow.organizationNumber === 'object') {
+        appendComponentRow(
+          `Org.nr ${senderRow.organizationNumber.value || ''}`.trim(),
+          senderRow.organizationNumber.found === true
+        );
+      }
+
+      const paymentParts = Array.isArray(senderRow.paymentNumbers) ? senderRow.paymentNumbers : [];
+      paymentParts.forEach((payment) => {
+        appendComponentRow(
+          `${payment && payment.label ? payment.label : ''} ${payment && payment.value ? payment.value : ''}`.trim(),
+          payment && payment.found === true
+        );
+      });
+
+      item.append(header, components);
+      senderList.appendChild(item);
+    });
+    fragment.appendChild(senderList);
+  } else {
+    const emptySenders = document.createElement('div');
+    emptySenders.className = 'selected-job-sender-empty';
+    emptySenders.textContent = 'Inga avsändare kopplade ännu.';
+    fragment.appendChild(emptySenders);
+  }
+
+  selectedJobSenderInfoEl.replaceChildren(fragment);
 }
 
 function effectiveCategoryId(job) {
@@ -5191,6 +5148,33 @@ function syncFilenameField(job) {
   filenameInputEl.title = job ? filenameTooltipForJob(job, filenameInputEl.value) : '';
 }
 
+function selectedJobAnalysisOutdated(job) {
+  return !!(job && job.status === 'ready' && job.archived !== true && job.analysisOutdated === true);
+}
+
+function syncSelectedJobActionsWarning(job) {
+  if (!(selectedJobActionsWarningEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const textEl = selectedJobActionsWarningEl.querySelector('.selected-job-actions-warning-text');
+  if (!(textEl instanceof HTMLElement) || !selectedJobAnalysisOutdated(job)) {
+    selectedJobActionsWarningEl.classList.add('hidden');
+    selectedJobActionsWarningEl.classList.remove('is-marquee');
+    return;
+  }
+
+  selectedJobActionsWarningEl.classList.remove('hidden');
+  requestAnimationFrame(() => {
+    if (!(selectedJobActionsWarningEl instanceof HTMLElement) || !(textEl instanceof HTMLElement)) {
+      return;
+    }
+    selectedJobActionsWarningEl.style.setProperty('--warning-visible-width', `${selectedJobActionsWarningEl.clientWidth}px`);
+    const shouldMarquee = textEl.scrollWidth > selectedJobActionsWarningEl.clientWidth + 2;
+    selectedJobActionsWarningEl.classList.toggle('is-marquee', shouldMarquee);
+  });
+}
+
 function updateArchiveAction(job) {
   if (!archiveActionEl) {
     return;
@@ -5233,6 +5217,67 @@ function updateArchiveAction(job) {
       ? 'Jobbet måste vara klart innan det kan arkiveras.'
       : `Fyll i ${missingFields.join(', ')} innan jobbet kan arkiveras.`)
     : 'Flyttar review.pdf till vald huvudmans arkivmapp med angivet filnamn.';
+}
+
+function showAnalysisOutdatedArchiveDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'analysis-warning-dialog-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'analysis-warning-dialog';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Analys inaktuell';
+
+    const message = document.createElement('p');
+    message.textContent = 'Nya relevanta avsändaruppgifter har tillkommit sedan senaste analysen. Dokumentet kan få ett annat analysresultat om analysen körs igen.';
+
+    const actions = document.createElement('div');
+    actions.className = 'analysis-warning-dialog-actions';
+
+    const reprocessButton = document.createElement('button');
+    reprocessButton.type = 'button';
+    reprocessButton.textContent = 'Analysera igen';
+
+    const archiveAnywayButton = document.createElement('button');
+    archiveAnywayButton.type = 'button';
+    archiveAnywayButton.textContent = 'Arkivera ändå';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = 'Avbryt';
+
+    actions.append(reprocessButton, archiveAnywayButton, cancelButton);
+    dialog.append(title, message, actions);
+    overlay.appendChild(dialog);
+
+    const finish = (choice) => {
+      document.removeEventListener('keydown', onKeyDown);
+      overlay.remove();
+      resolve(choice);
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish('cancel');
+      }
+    };
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        finish('cancel');
+      }
+    });
+    reprocessButton.addEventListener('click', () => finish('reprocess'));
+    archiveAnywayButton.addEventListener('click', () => finish('archive'));
+    cancelButton.addEventListener('click', () => finish('cancel'));
+
+    document.addEventListener('keydown', onKeyDown);
+    document.body.appendChild(overlay);
+    reprocessButton.focus();
+  });
 }
 
 let saveSelectedJobFieldsSeq = 0;
@@ -5319,6 +5364,7 @@ function renderSelectedJobPanel() {
     }
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
     renderSelectedJobSenderSection(null);
+    syncSelectedJobActionsWarning(null);
     setLabelsForJob(null);
     selectedJobReprocessEl.disabled = true;
     selectedJobReprocessEl.title = 'Markera ett jobb först.';
@@ -5360,6 +5406,7 @@ function renderSelectedJobPanel() {
 
   selectedJobMetaEl.replaceChildren(...metaLines);
   renderSelectedJobSenderSection(selectedJob);
+  syncSelectedJobActionsWarning(selectedJob);
   selectedJobReprocessEl.disabled = selectedJob.status === 'processing'
     || selectedJob.archived === true
     || (!selectedJob.hasReviewPdf && !selectedJob.hasSourcePdf);
@@ -6995,7 +7042,9 @@ function applyOptimisticReprocess(jobId, mode = 'post-ocr', options = {}) {
     status: 'processing',
     error: null,
     reprocessMode: mode === 'full' ? 'full' : 'post-ocr',
-    forceOcr: options.forceOcr === true
+    forceOcr: options.forceOcr === true,
+    analysisOutdated: false,
+    analysisAutoReprocessQueued: false,
   };
 
   applyState({
@@ -7752,6 +7801,25 @@ async function openSendersSettingsDirect() {
   }
   updateSettingsActionButtons();
   return true;
+}
+
+async function openSenderInRegister(senderId) {
+  if (!Number.isInteger(senderId) || senderId < 1) {
+    return;
+  }
+
+  const opened = await openSendersSettingsDirect();
+  if (opened === false) {
+    return;
+  }
+
+  setSendersPanelTab('senders');
+  renderSendersEditor();
+  const senderRow = sendersDraft.find((row) => Number.isInteger(row && row.id) && row.id === senderId) || null;
+  if (!senderRow) {
+    return;
+  }
+  focusSenderDraftRow(senderUiKey(senderRow));
 }
 
 async function openCategoriesSettingsDirect() {
@@ -14467,6 +14535,16 @@ archiveActionEl.addEventListener('click', async () => {
   }
 
   const action = selectedJob.archived === true ? 'restore' : 'archive';
+  if (action === 'archive' && selectedJobAnalysisOutdated(selectedJob)) {
+    const choice = await showAnalysisOutdatedArchiveDialog();
+    if (choice === 'cancel') {
+      return;
+    }
+    if (choice === 'reprocess') {
+      await handleSelectedJobReprocess('post-ocr');
+      return;
+    }
+  }
   const filenameTimer = filenameSaveTimerByJobId.get(selectedJob.id);
   if (filenameTimer) {
     window.clearTimeout(filenameTimer);

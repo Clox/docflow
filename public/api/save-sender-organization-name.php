@@ -34,18 +34,41 @@ if ($organizationName !== null && !is_string($organizationName)) {
     exit;
 }
 
+$currentSelectedJobId = is_string($payload['currentSelectedJobId'] ?? null)
+    ? trim((string) $payload['currentSelectedJobId'])
+    : null;
+if ($currentSelectedJobId === '') {
+    $currentSelectedJobId = null;
+}
+
 try {
     $repository = sender_repository_instance();
     if ($repository === null) {
         throw new RuntimeException('Sender repository is unavailable.');
     }
 
-    $repository->updateOrganizationName($organizationId, $organizationName);
+    $resolved = $repository->resolveOrganizationName($organizationId, $organizationName);
+    $config = load_config();
+    $followup = [
+        'affectedJobIds' => [],
+        'markedOutdatedJobIds' => [],
+        'autoReprocessedJobIds' => [],
+    ];
+    if (($resolved['senderId'] ?? null) !== null && ($resolved['linkChanged'] ?? false) === true) {
+        $followup = handle_resolved_sender_identifier_followups(
+            $config,
+            'organization_number',
+            (string) ($resolved['organizationNumber'] ?? ''),
+            $currentSelectedJobId
+        );
+    }
 
     json_response([
         'ok' => true,
         'organizationId' => $organizationId,
         'organizationName' => is_string($organizationName) ? trim($organizationName) : null,
+        'senderId' => isset($resolved['senderId']) ? $resolved['senderId'] : null,
+        'followup' => $followup,
         'remainingCount' => $repository->countOrganizationNumbersMissingName(),
     ]);
 } catch (Throwable $e) {

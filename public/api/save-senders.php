@@ -121,7 +121,7 @@ foreach ($payload['senders'] as $row) {
         $organizationNumbers[] = [
             'id' => $organizationId,
             'organizationNumber' => $organizationNumber,
-            'organizationName' => $organizationNameRaw !== '' ? $organizationNameRaw : null,
+            'organizationName' => $organizationNameRaw !== '' ? $organizationNameRaw : $name,
         ];
     }
 
@@ -288,12 +288,17 @@ try {
 
     $detachPayment = $pdo->prepare(
         'UPDATE sender_payment_numbers
-        SET sender_id = NULL, updated_at = :updated_at
+        SET sender_id = NULL,
+            payee_name = NULL,
+            payee_lookup_status = NULL,
+            updated_at = :updated_at
         WHERE id = :id'
     );
     $detachOrganization = $pdo->prepare(
         'UPDATE sender_organization_numbers
-        SET sender_id = NULL, updated_at = :updated_at
+        SET sender_id = NULL,
+            organization_name = NULL,
+            updated_at = :updated_at
         WHERE id = :id'
     );
     $deleteRemovedSender = $pdo->prepare('DELETE FROM senders WHERE id = :id');
@@ -365,6 +370,7 @@ try {
             number,
             original_number,
             requires_ocr,
+            payee_name,
             source,
             confidence,
             created_at,
@@ -375,6 +381,7 @@ try {
             :number,
             :original_number,
             0,
+            :payee_name,
             :source,
             1,
             :created_at,
@@ -391,14 +398,8 @@ try {
             requires_ocr = 0,
             source = :source,
             confidence = 1,
-            payee_name = CASE
-                WHEN type <> :type OR number <> :number THEN NULL
-                ELSE payee_name
-            END,
-            payee_lookup_status = CASE
-                WHEN type <> :type OR number <> :number THEN NULL
-                ELSE payee_lookup_status
-            END,
+            payee_name = :payee_name,
+            payee_lookup_status = NULL,
             updated_at = :updated_at
         WHERE id = :id'
     );
@@ -591,6 +592,7 @@ try {
                     ':sender_id' => $senderId,
                     ':type' => $paymentRow['type'],
                     ':number' => $paymentRow['number'],
+                    ':payee_name' => $row['name'],
                     ':source' => 'docflow_editor',
                     ':updated_at' => $paymentTimestamp,
                 ]);
@@ -615,6 +617,7 @@ try {
                         ':sender_id' => $senderId,
                         ':type' => $paymentRow['type'],
                         ':number' => $paymentRow['number'],
+                        ':payee_name' => $row['name'],
                         ':source' => 'docflow_editor',
                         ':updated_at' => $paymentTimestamp,
                     ]);
@@ -624,6 +627,7 @@ try {
                         ':type' => $paymentRow['type'],
                         ':number' => $paymentRow['number'],
                         ':original_number' => null,
+                        ':payee_name' => $row['name'],
                         ':source' => 'docflow_editor',
                         ':created_at' => $paymentTimestamp,
                         ':updated_at' => $paymentTimestamp,

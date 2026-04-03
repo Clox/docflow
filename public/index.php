@@ -58,6 +58,9 @@
         <div class="selected-job-actions-panel-body">
           <div class="selected-job-panel-header-row selected-job-actions-panel-header-row">
             <div class="selected-job-panel-header">Åtgärder</div>
+            <div id="selected-job-actions-warning" class="selected-job-actions-warning hidden" aria-live="polite">
+              <span class="selected-job-actions-warning-text">Analys inaktuell - analysera igen</span>
+            </div>
           </div>
           <div class="selected-job-panel-section selected-job-fields selected-job-actions-fields">
             <div class="selected-job-panel-section-title">Arkivering</div>

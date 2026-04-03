@@ -40,19 +40,42 @@ if ($lookupStatus !== null && !is_string($lookupStatus)) {
     exit;
 }
 
+$currentSelectedJobId = is_string($payload['currentSelectedJobId'] ?? null)
+    ? trim((string) $payload['currentSelectedJobId'])
+    : null;
+if ($currentSelectedJobId === '') {
+    $currentSelectedJobId = null;
+}
+
 try {
     $repository = sender_repository_instance();
     if ($repository === null) {
         throw new RuntimeException('Sender repository is unavailable.');
     }
 
-    $repository->updatePaymentPayeeName($paymentId, $payeeName, $lookupStatus);
+    $resolved = $repository->resolvePaymentPayeeName($paymentId, $payeeName, $lookupStatus);
+    $config = load_config();
+    $followup = [
+        'affectedJobIds' => [],
+        'markedOutdatedJobIds' => [],
+        'autoReprocessedJobIds' => [],
+    ];
+    if (($resolved['senderId'] ?? null) !== null && ($resolved['linkChanged'] ?? false) === true) {
+        $followup = handle_resolved_sender_identifier_followups(
+            $config,
+            (string) ($resolved['type'] ?? ''),
+            (string) ($resolved['number'] ?? ''),
+            $currentSelectedJobId
+        );
+    }
 
     json_response([
         'ok' => true,
         'paymentId' => $paymentId,
         'payeeName' => is_string($payeeName) ? trim($payeeName) : null,
         'lookupStatus' => is_string($lookupStatus) ? trim(strtolower($lookupStatus)) : null,
+        'senderId' => isset($resolved['senderId']) ? $resolved['senderId'] : null,
+        'followup' => $followup,
         'remainingCount' => $repository->countPaymentNumbersMissingPayeeName(),
     ]);
 } catch (Throwable $e) {

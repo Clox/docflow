@@ -10697,6 +10697,7 @@ function process_job_by_id(
 
         $jobData['status'] = 'ready';
         $jobData['updatedAt'] = now_iso();
+        unset($jobData['analysisOutdated'], $jobData['analysisAutoReprocessQueued']);
         unset($jobData['error'], $jobData['reprocessMode'], $jobData['forceOcr']);
         write_json_file($jobJsonPath, $jobData);
         queue_job_upsert_event($config, $jobId);
@@ -10704,6 +10705,7 @@ function process_job_by_id(
         $jobData['status'] = 'failed';
         $jobData['updatedAt'] = now_iso();
         $jobData['error'] = $e->getMessage();
+        unset($jobData['analysisOutdated'], $jobData['analysisAutoReprocessQueued']);
         unset($jobData['reprocessMode'], $jobData['forceOcr']);
         write_json_file($jobJsonPath, $jobData);
         queue_job_upsert_event($config, $jobId);
@@ -10912,62 +10914,247 @@ function extracted_field_scalar_value(array $extracted, string $fieldKey): ?stri
     return null;
 }
 
-function build_job_sender_summary(?array $extracted, ?int $matchedSenderId, ?int $selectedSenderId): ?array
+function sync_named_sender_identifier_links(): void
 {
-    unset($matchedSenderId, $selectedSenderId);
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
 
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        return;
+    }
+
+    try {
+        $repository->resolveUnlinkedNamedIdentifiers();
+    } catch (Throwable $e) {
+        // Best effort only. State rendering should still work if link sync fails.
+    }
+}
+
+function cached_sender_editor_rows_by_id(): array
+{
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
+
+    $cache = [];
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        return $cache;
+    }
+
+    try {
+        $rows = $repository->listEditorRows();
+    } catch (Throwable $e) {
+        return $cache;
+    }
+
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $senderId = isset($row['id']) ? (int) $row['id'] : 0;
+        if ($senderId < 1) {
+            continue;
+        }
+        $cache[$senderId] = $row;
+    }
+
+    return $cache;
+}
+
+function normalized_sender_summary_search_text(string $value): string
+{
+    $lowered = function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
+    $collapsed = preg_replace('/\s+/u', ' ', $lowered);
+    return is_string($collapsed) ? trim($collapsed) : trim($lowered);
+}
+
+function sender_summary_document_text(string $jobDir): string
+{
+    static $cache = [];
+    if (array_key_exists($jobDir, $cache)) {
+        return $cache[$jobDir];
+    }
+
+    $path = rtrim($jobDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'merged_objects.txt';
+    $text = is_file($path) ? file_get_contents($path) : '';
+    if (!is_string($text) || $text === '') {
+        $cache[$jobDir] = '';
+        return '';
+    }
+
+    $cache[$jobDir] = normalized_sender_summary_search_text($text);
+    return $cache[$jobDir];
+}
+
+function sender_summary_text_contains(string $haystack, string $needle): bool
+{
+    $normalizedNeedle = normalized_sender_summary_search_text($needle);
+    if ($normalizedNeedle === '' || $haystack === '') {
+        return false;
+    }
+
+    return str_contains($haystack, $normalizedNeedle);
+}
+
+function build_job_sender_summary(?array $extracted, string $jobDir, ?int $matchedSenderId, ?int $selectedSenderId): ?array
+{
     if (!is_array($extracted)) {
         return null;
     }
 
+    sync_named_sender_identifier_links();
+
     $organizationNumber = extracted_field_scalar_value($extracted, 'organisationsnummer') ?? '';
     $bankgiro = extracted_field_scalar_value($extracted, 'bankgiro') ?? '';
     $plusgiro = extracted_field_scalar_value($extracted, 'plusgiro') ?? '';
+    $documentText = sender_summary_document_text($jobDir);
+    $senderRowsById = cached_sender_editor_rows_by_id();
+
+    $normalizedOrganizationNumber = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($organizationNumber);
+    $normalizedBankgiro = \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($bankgiro);
+    $normalizedPlusgiro = \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($plusgiro);
 
     $observations = [];
+    $senderIds = [];
 
     if ($organizationNumber !== '') {
         $observedRow = observed_sender_organization_summary_row($organizationNumber);
-        $observations[] = [
-            'key' => 'organization_number:' . (is_string($observedRow['organizationNumber'] ?? null) ? $observedRow['organizationNumber'] : $organizationNumber),
-            'type' => 'organization_number',
-            'itemLabel' => 'Org.nr',
-            'itemValue' => $organizationNumber,
-            'name' => is_string($observedRow['organizationName'] ?? null) ? trim((string) $observedRow['organizationName']) : '',
-            'status' => (is_string($observedRow['organizationName'] ?? null) && trim((string) $observedRow['organizationName']) !== '') ? 'resolved' : 'pending',
-        ];
+        $observedSenderId = isset($observedRow['senderId']) && (int) $observedRow['senderId'] > 0 ? (int) $observedRow['senderId'] : null;
+        if ($observedSenderId !== null) {
+            $senderIds[$observedSenderId] = true;
+        } else {
+            $observations[] = [
+                'key' => 'organization_number:' . (is_string($observedRow['organizationNumber'] ?? null) ? $observedRow['organizationNumber'] : ($normalizedOrganizationNumber ?? $organizationNumber)),
+                'type' => 'organization_number',
+                'itemLabel' => 'ORG.NR',
+                'itemValue' => $normalizedOrganizationNumber ?? preg_replace('/\D+/', '', $organizationNumber) ?? $organizationNumber,
+                'status' => 'pending',
+            ];
+        }
     }
 
     if ($bankgiro !== '') {
         $observedRow = observed_sender_payment_summary_row('bankgiro', $bankgiro);
-        $resolvedName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
+        $observedSenderId = isset($observedRow['senderId']) && (int) $observedRow['senderId'] > 0 ? (int) $observedRow['senderId'] : null;
         $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
-        $observations[] = [
-            'key' => 'bankgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : $bankgiro),
-            'type' => 'bankgiro',
-            'itemLabel' => 'Bankgiro',
-            'itemValue' => $bankgiro,
-            'name' => $resolvedName,
-            'status' => $resolvedName !== '' ? 'resolved' : ($lookupStatus === 'not_found' ? 'not_found' : 'pending'),
-        ];
+        if ($observedSenderId !== null) {
+            $senderIds[$observedSenderId] = true;
+        } else {
+            $observations[] = [
+                'key' => 'bankgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : ($normalizedBankgiro ?? $bankgiro)),
+                'type' => 'bankgiro',
+                'itemLabel' => 'BANKGIRO',
+                'itemValue' => $bankgiro,
+                'status' => $lookupStatus === 'not_found' ? 'not_found' : 'pending',
+            ];
+        }
     }
 
     if ($plusgiro !== '') {
         $observedRow = observed_sender_payment_summary_row('plusgiro', $plusgiro);
-        $resolvedName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
+        $observedSenderId = isset($observedRow['senderId']) && (int) $observedRow['senderId'] > 0 ? (int) $observedRow['senderId'] : null;
         $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
-        $observations[] = [
-            'key' => 'plusgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : $plusgiro),
-            'type' => 'plusgiro',
-            'itemLabel' => 'Plusgiro',
-            'itemValue' => $plusgiro,
-            'name' => $resolvedName,
-            'status' => $resolvedName !== '' ? 'resolved' : ($lookupStatus === 'not_found' ? 'not_found' : 'pending'),
+        if ($observedSenderId !== null) {
+            $senderIds[$observedSenderId] = true;
+        } else {
+            $observations[] = [
+                'key' => 'plusgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : ($normalizedPlusgiro ?? $plusgiro)),
+                'type' => 'plusgiro',
+                'itemLabel' => 'PLUSGIRO',
+                'itemValue' => $plusgiro,
+                'status' => $lookupStatus === 'not_found' ? 'not_found' : 'pending',
+            ];
+        }
+    }
+
+    foreach ([$matchedSenderId, $selectedSenderId] as $senderId) {
+        if ($senderId !== null && $senderId > 0) {
+            $senderIds[$senderId] = true;
+        }
+    }
+
+    $senders = [];
+    foreach (array_keys($senderIds) as $senderId) {
+        $senderRow = $senderRowsById[$senderId] ?? null;
+        if (!is_array($senderRow)) {
+            continue;
+        }
+
+        $name = is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '';
+        if ($name === '') {
+            continue;
+        }
+
+        $organizationEntry = null;
+        $organizationRows = is_array($senderRow['organizationNumbers'] ?? null) ? $senderRow['organizationNumbers'] : [];
+        $firstOrganizationRow = $organizationRows[0] ?? null;
+        if (is_array($firstOrganizationRow)) {
+            $rawNumber = is_string($firstOrganizationRow['organizationNumber'] ?? null) ? trim((string) $firstOrganizationRow['organizationNumber']) : '';
+            $normalizedNumber = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($rawNumber);
+            if ($normalizedNumber !== null) {
+                $organizationEntry = [
+                    'label' => 'Org.nr',
+                    'value' => $normalizedNumber,
+                    'found' => $normalizedOrganizationNumber !== null && $normalizedOrganizationNumber === $normalizedNumber,
+                ];
+            }
+        }
+
+        $paymentEntries = [];
+        $paymentRows = is_array($senderRow['paymentNumbers'] ?? null) ? $senderRow['paymentNumbers'] : [];
+        foreach ($paymentRows as $paymentRow) {
+            if (!is_array($paymentRow)) {
+                continue;
+            }
+            $paymentType = is_string($paymentRow['type'] ?? null) ? trim(strtolower((string) $paymentRow['type'])) : 'bankgiro';
+            $rawNumber = is_string($paymentRow['number'] ?? null) ? trim((string) $paymentRow['number']) : '';
+            $normalizedNumber = $paymentType === 'plusgiro'
+                ? \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($rawNumber)
+                : \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($rawNumber);
+            if ($normalizedNumber === null) {
+                continue;
+            }
+
+            $paymentEntries[] = [
+                'label' => $paymentType === 'plusgiro' ? 'PG' : 'BG',
+                'value' => $rawNumber,
+                'found' => $paymentType === 'plusgiro'
+                    ? ($normalizedPlusgiro !== null && $normalizedPlusgiro === $normalizedNumber)
+                    : ($normalizedBankgiro !== null && $normalizedBankgiro === $normalizedNumber),
+            ];
+        }
+
+        $senders[] = [
+            'key' => 'sender:' . $senderId,
+            'senderId' => $senderId,
+            'name' => $name,
+            'nameFound' => sender_summary_text_contains($documentText, $name),
+            'organizationNumber' => $organizationEntry,
+            'paymentNumbers' => $paymentEntries,
         ];
     }
 
-    return $observations !== []
-        ? ['observations' => $observations]
+    usort(
+        $senders,
+        static function (array $left, array $right): int {
+            return strcmp(
+                strtolower((string) ($left['name'] ?? '')),
+                strtolower((string) ($right['name'] ?? ''))
+            );
+        }
+    );
+
+    return $observations !== [] || $senders !== []
+        ? [
+            'unknownObservations' => $observations,
+            'senders' => $senders,
+        ]
         : null;
 }
 
@@ -11075,7 +11262,6 @@ function observe_extracted_sender_identifiers(array $fieldResults): void
     }
 
     $organizationNumber = extraction_field_result_string($fieldResults, 'organisationsnummer');
-    $organizationName = extraction_field_result_string($fieldResults, 'supplier');
     $bankgiro = extraction_field_result_string($fieldResults, 'bankgiro');
     $bankgiroRaw = extraction_field_result_string($fieldResults, 'bankgiro', 'raw');
     $plusgiro = extraction_field_result_string($fieldResults, 'plusgiro');
@@ -11083,7 +11269,7 @@ function observe_extracted_sender_identifiers(array $fieldResults): void
 
     if ($organizationNumber !== null) {
         try {
-            $repository->observeOrganizationNumber($organizationNumber, $organizationName, 'document_auto');
+            $repository->observeOrganizationNumber($organizationNumber, null, 'document_auto');
         } catch (Throwable $e) {
             // Best effort only. Identifier observation should not fail the document analysis pipeline.
         }
@@ -11106,6 +11292,8 @@ function observe_extracted_sender_identifiers(array $fieldResults): void
 
 function build_sender_payee_lookup_queue_state_payload(int $limit = 1): array
 {
+    sync_named_sender_identifier_links();
+
     $repository = sender_repository_instance();
     if ($repository === null) {
         return [
@@ -11137,6 +11325,8 @@ function build_sender_payee_lookup_queue_state_payload(int $limit = 1): array
 
 function build_sender_organization_lookup_queue_state_payload(int $limit = 1): array
 {
+    sync_named_sender_identifier_links();
+
     $repository = sender_repository_instance();
     if ($repository === null) {
         return [
@@ -11163,6 +11353,161 @@ function build_sender_organization_lookup_queue_state_payload(int $limit = 1): a
     return [
         'remainingCount' => max(0, (int) $remainingCount),
         'item' => $item,
+    ];
+}
+
+function job_extracted_contains_sender_identifier(array $extracted, string $identifierType, string $normalizedValue): bool
+{
+    if ($normalizedValue === '') {
+        return false;
+    }
+
+    if ($identifierType === 'organization_number') {
+        $value = extracted_field_scalar_value($extracted, 'organisationsnummer');
+        return $value !== null
+            && \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($value) === $normalizedValue;
+    }
+
+    if ($identifierType === 'bankgiro') {
+        $value = extracted_field_scalar_value($extracted, 'bankgiro');
+        return $value !== null
+            && \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($value) === $normalizedValue;
+    }
+
+    if ($identifierType === 'plusgiro') {
+        $value = extracted_field_scalar_value($extracted, 'plusgiro');
+        return $value !== null
+            && \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($value) === $normalizedValue;
+    }
+
+    return false;
+}
+
+function ready_job_ids_affected_by_sender_identifier(array $config, string $identifierType, string $normalizedValue): array
+{
+    $jobsDir = $config['jobsDirectory'] ?? '';
+    if (!is_string($jobsDir) || trim($jobsDir) === '' || !is_dir($jobsDir)) {
+        return [];
+    }
+
+    $affectedJobIds = [];
+    $entries = scandir($jobsDir);
+    if (!is_array($entries)) {
+        return [];
+    }
+
+    foreach ($entries as $entry) {
+        if (!is_valid_job_id($entry)) {
+            continue;
+        }
+
+        $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $entry;
+        if (!is_dir($jobDir)) {
+            continue;
+        }
+
+        $job = load_json_file($jobDir . '/job.json');
+        if (!is_array($job)) {
+            continue;
+        }
+        if (($job['status'] ?? '') !== 'ready' || ($job['archived'] ?? false) === true) {
+            continue;
+        }
+
+        $extracted = load_json_file($jobDir . '/extracted.json');
+        if (!is_array($extracted)) {
+            continue;
+        }
+
+        if (job_extracted_contains_sender_identifier($extracted, $identifierType, $normalizedValue)) {
+            $affectedJobIds[] = $entry;
+        }
+    }
+
+    sort($affectedJobIds, SORT_STRING);
+    return $affectedJobIds;
+}
+
+function set_job_analysis_outdated_flag(array $config, string $jobId, bool $isOutdated): bool
+{
+    if (!is_valid_job_id($jobId)) {
+        return false;
+    }
+
+    $jobPath = rtrim((string) $config['jobsDirectory'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $jobId . DIRECTORY_SEPARATOR . 'job.json';
+    $job = load_json_file($jobPath);
+    if (!is_array($job)) {
+        return false;
+    }
+
+    $current = ($job['analysisOutdated'] ?? false) === true;
+    if ($current === $isOutdated) {
+        return false;
+    }
+
+    if ($isOutdated) {
+        $job['analysisOutdated'] = true;
+    } else {
+        unset($job['analysisOutdated']);
+    }
+    $job['updatedAt'] = now_iso();
+    write_json_file($jobPath, $job);
+    queue_job_upsert_event($config, $jobId);
+    return true;
+}
+
+function maybe_queue_sender_auto_reprocess(array $config, string $jobId): bool
+{
+    if (!is_valid_job_id($jobId)) {
+        return false;
+    }
+
+    $jobPath = rtrim((string) $config['jobsDirectory'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $jobId . DIRECTORY_SEPARATOR . 'job.json';
+    $job = load_json_file($jobPath);
+    if (!is_array($job)) {
+        return false;
+    }
+    if (($job['status'] ?? '') !== 'ready' || ($job['archived'] ?? false) === true) {
+        return false;
+    }
+    if (($job['analysisAutoReprocessQueued'] ?? false) === true) {
+        return false;
+    }
+
+    reprocess_job_by_id($config, $jobId, 'post-ocr', false, true);
+    return true;
+}
+
+function handle_resolved_sender_identifier_followups(
+    array $config,
+    string $identifierType,
+    string $normalizedValue,
+    ?string $currentSelectedJobId = null
+): array {
+    $affectedJobIds = ready_job_ids_affected_by_sender_identifier($config, $identifierType, $normalizedValue);
+    $markedOutdatedJobIds = [];
+    $autoReprocessedJobIds = [];
+    $selectedJobId = is_string($currentSelectedJobId) && is_valid_job_id($currentSelectedJobId)
+        ? $currentSelectedJobId
+        : null;
+
+    foreach ($affectedJobIds as $affectedJobId) {
+        if ($selectedJobId !== null && $affectedJobId === $selectedJobId) {
+            if (set_job_analysis_outdated_flag($config, $affectedJobId, true)) {
+                $markedOutdatedJobIds[] = $affectedJobId;
+            }
+            continue;
+        }
+
+        if (maybe_queue_sender_auto_reprocess($config, $affectedJobId)) {
+            $autoReprocessedJobIds[] = $affectedJobId;
+        }
+    }
+
+    return [
+        'affectedJobIds' => $affectedJobIds,
+        'markedOutdatedJobIds' => $markedOutdatedJobIds,
+        'autoReprocessedJobIds' => $autoReprocessedJobIds,
     ];
 }
 
@@ -11216,7 +11561,9 @@ function build_job_state_entry(
     $archivedAt = is_string($job['archivedAt'] ?? null) ? trim((string) $job['archivedAt']) : null;
     $archivedPdfPath = is_string($job['archivedPdfPath'] ?? null) ? trim((string) $job['archivedPdfPath']) : null;
     $extracted = load_json_file($jobDir . '/extracted.json');
-    $senderSummary = build_job_sender_summary($extracted, null, $selectedSenderId);
+    $senderSummary = build_job_sender_summary($extracted, $jobDir, null, $selectedSenderId);
+    $analysisOutdated = ($job['analysisOutdated'] ?? false) === true;
+    $analysisAutoReprocessQueued = ($job['analysisAutoReprocessQueued'] ?? false) === true;
 
     if ($status === 'processing') {
         return [
@@ -11239,6 +11586,8 @@ function build_job_state_entry(
                 'selectedLabelIds' => $selectedLabelIds,
                 'filename' => $filename,
                 'senderSummary' => $senderSummary,
+                'analysisOutdated' => $analysisOutdated,
+                'analysisAutoReprocessQueued' => $analysisAutoReprocessQueued,
                 'needsRuleReview' => $needsRuleReview,
                 'archived' => $isArchived,
                 'archivedAt' => $archivedAt,
@@ -11268,6 +11617,8 @@ function build_job_state_entry(
                 'selectedLabelIds' => $selectedLabelIds,
                 'filename' => $filename,
                 'senderSummary' => $senderSummary,
+                'analysisOutdated' => $analysisOutdated,
+                'analysisAutoReprocessQueued' => $analysisAutoReprocessQueued,
                 'needsRuleReview' => $needsRuleReview,
                 'archived' => $isArchived,
                 'archivedAt' => $archivedAt,
@@ -11339,7 +11690,7 @@ function build_job_state_entry(
         }
     }
 
-    $senderSummary = build_job_sender_summary($extracted, $matchedSenderId, $selectedSenderId);
+    $senderSummary = build_job_sender_summary($extracted, $jobDir, $matchedSenderId, $selectedSenderId);
 
     $readyPayload = [
         'id' => $id,
@@ -11364,6 +11715,8 @@ function build_job_state_entry(
         'selectedLabelIds' => $selectedLabelIds,
         'filename' => $filename,
         'senderSummary' => $senderSummary,
+        'analysisOutdated' => $analysisOutdated,
+        'analysisAutoReprocessQueued' => $analysisAutoReprocessQueued,
         'needsRuleReview' => $needsRuleReview,
         'archived' => $isArchived,
         'archivedAt' => $archivedAt,
@@ -11799,7 +12152,7 @@ function reset_job_by_id(array $config, string $jobId): array
     ];
 }
 
-function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-ocr', bool $forceOcr = false): array
+function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-ocr', bool $forceOcr = false, bool $autoQueued = false): array
 {
     if (!is_valid_job_id($jobId)) {
         throw new RuntimeException('Invalid job id');
@@ -11895,6 +12248,12 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         $job['ruleReviewProposedValue'],
         $job['ruleReviewDiff']
     );
+    unset($job['analysisOutdated']);
+    if ($autoQueued) {
+        $job['analysisAutoReprocessQueued'] = true;
+    } else {
+        unset($job['analysisAutoReprocessQueued']);
+    }
     $job['status'] = 'processing';
     $job['updatedAt'] = now_iso();
     $job['reprocessMode'] = $normalizedMode;

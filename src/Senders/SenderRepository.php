@@ -113,6 +113,26 @@ final class SenderRepository
         return is_array($row) ? $row : null;
     }
 
+    public function findByNameCaseInsensitive(string $name): ?array
+    {
+        $normalized = trim($name);
+        if ($normalized === '') {
+            return null;
+        }
+
+        $statement = $this->pdo->prepare(
+            'SELECT *
+            FROM senders
+            WHERE lower(trim(name)) = lower(:name)
+            ORDER BY id ASC
+            LIMIT 1'
+        );
+        $statement->execute([':name' => $normalized]);
+        $row = $statement->fetch();
+
+        return is_array($row) ? $row : null;
+    }
+
     public function listAll(): array
     {
         $statement = $this->pdo->query(
@@ -540,6 +560,132 @@ final class SenderRepository
         return max(0, (int) $statement->fetchColumn());
     }
 
+    public function resolveUnlinkedNamedIdentifiers(): void
+    {
+        $organizationRows = $this->pdo->query(
+            'SELECT id, organization_name
+            FROM sender_organization_numbers
+            WHERE sender_id IS NULL
+              AND organization_name IS NOT NULL
+              AND trim(organization_name) <> \'\'
+            ORDER BY id ASC'
+        )->fetchAll();
+        if (is_array($organizationRows)) {
+            foreach ($organizationRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $organizationId = isset($row['id']) ? (int) $row['id'] : 0;
+                $organizationName = is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '';
+                if ($organizationId < 1 || $organizationName === '') {
+                    continue;
+                }
+                $this->resolveOrganizationName($organizationId, $organizationName);
+            }
+        }
+
+        $paymentRows = $this->pdo->query(
+            'SELECT id, payee_name
+            FROM sender_payment_numbers
+            WHERE sender_id IS NULL
+              AND payee_name IS NOT NULL
+              AND trim(payee_name) <> \'\'
+            ORDER BY id ASC'
+        )->fetchAll();
+        if (is_array($paymentRows)) {
+            foreach ($paymentRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $paymentId = isset($row['id']) ? (int) $row['id'] : 0;
+                $payeeName = is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '';
+                if ($paymentId < 1 || $payeeName === '') {
+                    continue;
+                }
+                $this->resolvePaymentPayeeName($paymentId, $payeeName, null);
+            }
+        }
+    }
+
+    public function resolveOrganizationName(int $organizationId, ?string $organizationName): array
+    {
+        if ($organizationId < 1) {
+            throw new RuntimeException('Organization id is required.');
+        }
+
+        $normalizedOrganizationName = is_string($organizationName) ? trim($organizationName) : '';
+        if ($normalizedOrganizationName === '') {
+            $normalizedOrganizationName = null;
+        }
+
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) {
+            $this->pdo->beginTransaction();
+        }
+
+        try {
+            $select = $this->pdo->prepare(
+                'SELECT id, organization_number, organization_name, sender_id
+                FROM sender_organization_numbers
+                WHERE id = :id
+                LIMIT 1'
+            );
+            $select->execute([':id' => $organizationId]);
+            $row = $select->fetch();
+            if (!is_array($row)) {
+                throw new RuntimeException('Organization number not found.');
+            }
+
+            $previousSenderId = isset($row['sender_id']) && (int) $row['sender_id'] > 0
+                ? (int) $row['sender_id']
+                : null;
+            $resolvedSenderId = null;
+            if ($normalizedOrganizationName !== null) {
+                $resolvedSenderId = $this->ensureSenderIdForCanonicalName($normalizedOrganizationName);
+            }
+
+            $timestamp = date(DATE_ATOM);
+            $update = $this->pdo->prepare(
+                'UPDATE sender_organization_numbers
+                SET organization_name = :organization_name,
+                    sender_id = :sender_id,
+                    updated_at = :updated_at
+                WHERE id = :id'
+            );
+            $update->execute([
+                ':id' => $organizationId,
+                ':organization_name' => $normalizedOrganizationName,
+                ':sender_id' => $resolvedSenderId,
+                ':updated_at' => $timestamp,
+            ]);
+
+            if ($resolvedSenderId !== null) {
+                $this->touchSenderMatchingUpdatedAt($resolvedSenderId, $timestamp);
+            }
+            if ($previousSenderId !== null && $previousSenderId !== $resolvedSenderId) {
+                $this->touchSenderMatchingUpdatedAt($previousSenderId, $timestamp);
+            }
+
+            if ($ownsTransaction) {
+                $this->pdo->commit();
+            }
+
+            return [
+                'organizationId' => $organizationId,
+                'organizationNumber' => is_string($row['organization_number'] ?? null) ? trim((string) $row['organization_number']) : '',
+                'organizationName' => $normalizedOrganizationName,
+                'previousSenderId' => $previousSenderId,
+                'senderId' => $resolvedSenderId,
+                'linkChanged' => $previousSenderId !== $resolvedSenderId,
+            ];
+        } catch (\Throwable $e) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
     public function updateOrganizationName(int $organizationId, ?string $organizationName): void
     {
         if ($organizationId < 1) {
@@ -572,6 +718,100 @@ final class SenderRepository
             if ($exists->fetchColumn() === false) {
                 throw new RuntimeException('Organization number not found.');
             }
+        }
+    }
+
+    public function resolvePaymentPayeeName(int $paymentId, ?string $payeeName, ?string $lookupStatus = null): array
+    {
+        if ($paymentId < 1) {
+            throw new RuntimeException('Payment id is required.');
+        }
+
+        $normalizedPayeeName = is_string($payeeName) ? trim($payeeName) : '';
+        if ($normalizedPayeeName === '') {
+            $normalizedPayeeName = null;
+        }
+
+        $normalizedLookupStatus = is_string($lookupStatus) ? trim(strtolower($lookupStatus)) : '';
+        if ($normalizedLookupStatus === '') {
+            $normalizedLookupStatus = null;
+        }
+        if ($normalizedLookupStatus !== null && $normalizedLookupStatus !== 'not_found') {
+            throw new RuntimeException('Unsupported payee lookup status.');
+        }
+        if ($normalizedPayeeName !== null) {
+            $normalizedLookupStatus = null;
+        }
+
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) {
+            $this->pdo->beginTransaction();
+        }
+
+        try {
+            $select = $this->pdo->prepare(
+                'SELECT id, type, number, sender_id
+                FROM sender_payment_numbers
+                WHERE id = :id
+                LIMIT 1'
+            );
+            $select->execute([':id' => $paymentId]);
+            $row = $select->fetch();
+            if (!is_array($row)) {
+                throw new RuntimeException('Payment number not found.');
+            }
+
+            $previousSenderId = isset($row['sender_id']) && (int) $row['sender_id'] > 0
+                ? (int) $row['sender_id']
+                : null;
+            $resolvedSenderId = null;
+            if ($normalizedPayeeName !== null) {
+                $resolvedSenderId = $this->ensureSenderIdForCanonicalName($normalizedPayeeName);
+            }
+
+            $timestamp = date(DATE_ATOM);
+            $update = $this->pdo->prepare(
+                'UPDATE sender_payment_numbers
+                SET payee_name = :payee_name,
+                    payee_lookup_status = :payee_lookup_status,
+                    sender_id = :sender_id,
+                    updated_at = :updated_at
+                WHERE id = :id'
+            );
+            $update->execute([
+                ':id' => $paymentId,
+                ':payee_name' => $normalizedPayeeName,
+                ':payee_lookup_status' => $normalizedLookupStatus,
+                ':sender_id' => $resolvedSenderId,
+                ':updated_at' => $timestamp,
+            ]);
+
+            if ($resolvedSenderId !== null) {
+                $this->touchSenderMatchingUpdatedAt($resolvedSenderId, $timestamp);
+            }
+            if ($previousSenderId !== null && $previousSenderId !== $resolvedSenderId) {
+                $this->touchSenderMatchingUpdatedAt($previousSenderId, $timestamp);
+            }
+
+            if ($ownsTransaction) {
+                $this->pdo->commit();
+            }
+
+            return [
+                'paymentId' => $paymentId,
+                'type' => is_string($row['type'] ?? null) ? trim((string) $row['type']) : '',
+                'number' => is_string($row['number'] ?? null) ? trim((string) $row['number']) : '',
+                'payeeName' => $normalizedPayeeName,
+                'lookupStatus' => $normalizedLookupStatus,
+                'previousSenderId' => $previousSenderId,
+                'senderId' => $resolvedSenderId,
+                'linkChanged' => $previousSenderId !== $resolvedSenderId,
+            ];
+        } catch (\Throwable $e) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
         }
     }
 
@@ -1093,5 +1333,41 @@ final class SenderRepository
         }
 
         return substr($digits, 0, 6) . '-' . substr($digits, 6);
+    }
+
+    private function ensureSenderIdForCanonicalName(string $name): int
+    {
+        $normalized = trim($name);
+        if ($normalized === '') {
+            throw new RuntimeException('Sender name is required.');
+        }
+
+        $existing = $this->findByNameCaseInsensitive($normalized);
+        if (is_array($existing) && (int) ($existing['id'] ?? 0) > 0) {
+            return (int) $existing['id'];
+        }
+
+        return $this->createSender($normalized);
+    }
+
+    private function touchSenderMatchingUpdatedAt(int $senderId, string $timestamp): void
+    {
+        if ($senderId < 1) {
+            return;
+        }
+
+        $statement = $this->pdo->prepare(
+            'UPDATE senders
+            SET matching_updated_at = :matching_updated_at,
+                updated_at = CASE
+                    WHEN updated_at > :matching_updated_at THEN updated_at
+                    ELSE :matching_updated_at
+                END
+            WHERE id = :id'
+        );
+        $statement->execute([
+            ':id' => $senderId,
+            ':matching_updated_at' => $timestamp,
+        ]);
     }
 }
