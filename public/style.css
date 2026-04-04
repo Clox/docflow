@@ -3475,7 +3475,9 @@ body.is-resizing-sidebar {
 .category-fields select,
 .rule-fields select,
 .rule-fields input[type="text"],
-.rule-fields input[type="number"] {
+.rule-fields input[type="number"],
+.extraction-field-rule-set-fields input,
+.extraction-field-rule-set-fields select {
   width: 100%;
   font: inherit;
   padding: 6px 8px;
@@ -3610,6 +3612,39 @@ body.is-resizing-sidebar {
   grid-template-columns: minmax(150px, 210px) minmax(180px, 1fr);
   gap: 6px;
   align-items: start;
+}
+
+.extraction-field-rule-set-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.extraction-field-rule-set-toggle-field {
+  margin-top: 0;
+}
+
+.extraction-field-rule-set-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.extraction-field-rule-set-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.extraction-field-normalization-field {
+  min-width: 0;
 }
 
 .extraction-field-normalization-select {
