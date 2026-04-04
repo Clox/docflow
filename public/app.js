@@ -2796,6 +2796,11 @@ async function processMissingOrganizationNames() {
     const resolvedOrganizationName = typeof extensionPayload.organizationName === 'string'
       ? extensionPayload.organizationName.trim()
       : '';
+    const resolvedAlternativeNames = Array.isArray(extensionPayload.alternativeNames)
+      ? extensionPayload.alternativeNames
+          .map((value) => typeof value === 'string' ? value.trim() : '')
+          .filter((value) => value !== '')
+      : [];
     if (resolvedOrganizationName === '') {
       setChromeExtensionRuntime({
         missingOrganizationCount: remainingCount,
@@ -2812,6 +2817,7 @@ async function processMissingOrganizationNames() {
       body: JSON.stringify({
         organizationId: item.organizationId,
         organizationName: resolvedOrganizationName,
+        alternativeNames: resolvedAlternativeNames,
         currentSelectedJobId: selectedJobId || null,
       }),
     });
@@ -4811,6 +4817,11 @@ function renderSelectedJobSenderSection(job) {
         row.append(marker, value);
         components.appendChild(row);
       };
+
+      const matchedAlias = typeof senderRow.matchedAlias === 'string' ? senderRow.matchedAlias.trim() : '';
+      if (matchedAlias !== '') {
+        appendComponentRow(`Alias: ${matchedAlias}`, true);
+      }
 
       if (senderRow.organizationNumber && typeof senderRow.organizationNumber === 'object') {
         appendComponentRow(

@@ -10254,6 +10254,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
         'analysis' => [
             'preselectedClient' => null,
             'preselectedSender' => null,
+            'senderMatches' => [],
             'extractionFields' => new stdClass(),
             'extractionFieldMeta' => new stdClass(),
             'labels' => [],
@@ -10449,6 +10450,41 @@ function process_claimed_job(
         $replacementMap
     );
 
+    observe_extracted_sender_identifiers($analysisPayload['extractionFieldResults']);
+
+    $senderLinkSync = [
+        'merged' => false,
+        'merges' => [],
+        'components' => [],
+    ];
+    $config = null;
+    if ($jobId !== null) {
+        $config = load_config();
+        $senderLinkSync = sync_job_sender_document_links($config, $jobId);
+        foreach (is_array($senderLinkSync['merges'] ?? null) ? $senderLinkSync['merges'] : [] as $merge) {
+            if (!is_array($merge)) {
+                continue;
+            }
+            foreach (is_array($merge['movedOrganizationNumbers'] ?? null) ? $merge['movedOrganizationNumbers'] : [] as $organizationNumber) {
+                if (!is_string($organizationNumber) || trim($organizationNumber) === '') {
+                    continue;
+                }
+                handle_resolved_sender_identifier_followups($config, 'organization_number', $organizationNumber, $jobId);
+            }
+            foreach (is_array($merge['movedPaymentNumbers'] ?? null) ? $merge['movedPaymentNumbers'] : [] as $payment) {
+                if (!is_array($payment)) {
+                    continue;
+                }
+                $paymentType = is_string($payment['type'] ?? null) ? trim((string) $payment['type']) : '';
+                $paymentNumber = is_string($payment['number'] ?? null) ? trim((string) $payment['number']) : '';
+                if ($paymentType === '' || $paymentNumber === '') {
+                    continue;
+                }
+                handle_resolved_sender_identifier_followups($config, $paymentType, $paymentNumber, $jobId);
+            }
+        }
+    }
+
     $extractedData = [
         'matchedClientDirName' => $analysisPayload['matchedClientDirName'],
         'categoryMatches' => $analysisPayload['categoryMatches'],
@@ -10457,7 +10493,42 @@ function process_claimed_job(
         'labels' => $analysisPayload['labels'],
         'extractionFields' => $analysisPayload['extractionFieldResults'],
         'preselectedClient' => $analysisPayload['preselectedClient'],
+        'preselectedSender' => null,
+        'autoArchivingResult' => $analysisPayload['autoArchivingResult'],
+    ];
+
+    $senderSummary = build_job_sender_summary($extractedData, $jobDir, null, null);
+    $senderSelection = single_preselected_sender_from_summary($senderSummary);
+    $analysisPayload['matchedSenderId'] = isset($senderSelection['matchedSenderId']) ? (int) ($senderSelection['matchedSenderId'] ?? 0) : null;
+    if ($analysisPayload['matchedSenderId'] !== null && $analysisPayload['matchedSenderId'] < 1) {
+        $analysisPayload['matchedSenderId'] = null;
+    }
+    $analysisPayload['preselectedSender'] = is_array($senderSelection['preselectedSender'] ?? null)
+        ? $senderSelection['preselectedSender']
+        : null;
+    $analysisPayload['senderMatches'] = is_array($senderSelection['senderMatches'] ?? null)
+        ? $senderSelection['senderMatches']
+        : [];
+    $analysisPayload['autoArchivingResult']['senderId'] = $analysisPayload['matchedSenderId'];
+    $analysisPayload['autoArchivingResult'] = normalize_auto_archiving_result($analysisPayload['autoArchivingResult']);
+    $analysisPayload['autoArchivingResult']['filename'] = generate_auto_archiving_filename(
+        $jobContext,
+        $analysisPayload['autoArchivingResult'],
+        $activeRules,
+        load_senders()
+    );
+
+    $extractedData = [
+        'matchedClientDirName' => $analysisPayload['matchedClientDirName'],
+        'matchedSenderId' => $analysisPayload['matchedSenderId'],
+        'categoryMatches' => $analysisPayload['categoryMatches'],
+        'systemLabelMatches' => $analysisPayload['systemLabelMatches'],
+        'labelMatches' => $analysisPayload['labelMatches'],
+        'labels' => $analysisPayload['labels'],
+        'extractionFields' => $analysisPayload['extractionFieldResults'],
+        'preselectedClient' => $analysisPayload['preselectedClient'],
         'preselectedSender' => $analysisPayload['preselectedSender'],
+        'senderMatches' => $analysisPayload['senderMatches'],
         'autoArchivingResult' => $analysisPayload['autoArchivingResult'],
     ];
 
@@ -10468,13 +10539,13 @@ function process_claimed_job(
     if (is_string($jobId) && $jobId !== '') {
         sync_job_analysis_snapshot($jobId, $analysisPayload['autoArchivingResult'], $analyzedAt);
     }
-    observe_extracted_sender_identifiers($analysisPayload['extractionFieldResults']);
 
     return [
         'extractedData' => $extractedData,
         'analysis' => [
             'preselectedClient' => $analysisPayload['preselectedClient'],
             'preselectedSender' => $analysisPayload['preselectedSender'],
+            'senderMatches' => $analysisPayload['senderMatches'],
             'extractionFields' => $analysisPayload['extractionFieldValues'],
             'extractionFieldMeta' => $analysisPayload['extractionFieldMeta'] !== [] ? $analysisPayload['extractionFieldMeta'] : new stdClass(),
             'labels' => $analysisPayload['labels'],
@@ -11022,12 +11093,17 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
 
     $observations = [];
     $senderIds = [];
+    $documentComponentNamesBySenderId = [];
 
     if ($organizationNumber !== '') {
         $observedRow = observed_sender_organization_summary_row($organizationNumber);
         $observedSenderId = isset($observedRow['senderId']) && (int) $observedRow['senderId'] > 0 ? (int) $observedRow['senderId'] : null;
         if ($observedSenderId !== null) {
             $senderIds[$observedSenderId] = true;
+            $observedName = is_string($observedRow['organizationName'] ?? null) ? trim((string) $observedRow['organizationName']) : '';
+            if ($observedName !== '') {
+                $documentComponentNamesBySenderId[$observedSenderId][] = $observedName;
+            }
         } else {
             $observations[] = [
                 'key' => 'organization_number:' . (is_string($observedRow['organizationNumber'] ?? null) ? $observedRow['organizationNumber'] : ($normalizedOrganizationNumber ?? $organizationNumber)),
@@ -11045,6 +11121,10 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
         if ($observedSenderId !== null) {
             $senderIds[$observedSenderId] = true;
+            $observedName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
+            if ($observedName !== '') {
+                $documentComponentNamesBySenderId[$observedSenderId][] = $observedName;
+            }
         } else {
             $observations[] = [
                 'key' => 'bankgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : ($normalizedBankgiro ?? $bankgiro)),
@@ -11062,6 +11142,10 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
         if ($observedSenderId !== null) {
             $senderIds[$observedSenderId] = true;
+            $observedName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
+            if ($observedName !== '') {
+                $documentComponentNamesBySenderId[$observedSenderId][] = $observedName;
+            }
         } else {
             $observations[] = [
                 'key' => 'plusgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : ($normalizedPlusgiro ?? $plusgiro)),
@@ -11090,6 +11174,8 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         if ($name === '') {
             continue;
         }
+
+        $nameFound = sender_summary_text_contains($documentText, $name);
 
         $organizationEntry = null;
         $organizationRows = is_array($senderRow['organizationNumbers'] ?? null) ? $senderRow['organizationNumbers'] : [];
@@ -11130,11 +11216,63 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
             ];
         }
 
+        $normalizedAlternativeNames = [];
+        foreach (is_array($senderRow['alternativeNames'] ?? null) ? $senderRow['alternativeNames'] : [] as $alternativeName) {
+            if (!is_string($alternativeName)) {
+                continue;
+            }
+            $trimmedAlternativeName = trim($alternativeName);
+            if ($trimmedAlternativeName === '') {
+                continue;
+            }
+            $normalizedAlternativeName = normalized_sender_summary_search_text($trimmedAlternativeName);
+            if ($normalizedAlternativeName === '' || isset($normalizedAlternativeNames[$normalizedAlternativeName])) {
+                continue;
+            }
+            $normalizedAlternativeNames[$normalizedAlternativeName] = $trimmedAlternativeName;
+        }
+
+        $matchedAlias = null;
+        foreach ($documentComponentNamesBySenderId[$senderId] ?? [] as $documentComponentName) {
+            if (!is_string($documentComponentName)) {
+                continue;
+            }
+            $normalizedComponentName = normalized_sender_summary_search_text($documentComponentName);
+            if ($normalizedComponentName === '' || !isset($normalizedAlternativeNames[$normalizedComponentName])) {
+                continue;
+            }
+            $matchedAlias = $normalizedAlternativeNames[$normalizedComponentName];
+            break;
+        }
+
+        $matchKinds = [];
+        if ($nameFound) {
+            $matchKinds[] = 'primary_name';
+        }
+        if ($matchedAlias !== null) {
+            $matchKinds[] = 'alternative_name';
+        }
+        if (is_array($organizationEntry) && ($organizationEntry['found'] ?? false) === true) {
+            $matchKinds[] = 'organization_number';
+        }
+        foreach ($paymentEntries as $paymentEntry) {
+            if (($paymentEntry['found'] ?? false) === true) {
+                $matchKinds[] = 'payment_number';
+                break;
+            }
+        }
+        $matchKinds = array_values(array_unique($matchKinds));
+        $matchedBy = count($matchKinds) > 1
+            ? 'kombination'
+            : ($matchKinds[0] ?? null);
+
         $senders[] = [
             'key' => 'sender:' . $senderId,
             'senderId' => $senderId,
             'name' => $name,
-            'nameFound' => sender_summary_text_contains($documentText, $name),
+            'nameFound' => $nameFound,
+            'matchedBy' => $matchedBy,
+            'matchedAlias' => $matchedAlias,
             'organizationNumber' => $organizationEntry,
             'paymentNumbers' => $paymentEntries,
         ];
@@ -11288,6 +11426,110 @@ function observe_extracted_sender_identifiers(array $fieldResults): void
             // Best effort only. Identifier observation should not fail the document analysis pipeline.
         }
     }
+}
+
+function sync_job_sender_document_links(array $config, string $jobId): array
+{
+    if (!is_valid_job_id($jobId)) {
+        return [
+            'merged' => false,
+            'merges' => [],
+            'components' => [],
+        ];
+    }
+
+    $jobDir = rtrim((string) $config['jobsDirectory'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $jobId;
+    $extracted = load_json_file($jobDir . '/extracted.json');
+    if (!is_array($extracted)) {
+        return [
+            'merged' => false,
+            'merges' => [],
+            'components' => [],
+        ];
+    }
+
+    $organizationNumber = extracted_field_scalar_value($extracted, 'organisationsnummer');
+    $bankgiro = extracted_field_scalar_value($extracted, 'bankgiro');
+    $plusgiro = extracted_field_scalar_value($extracted, 'plusgiro');
+
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        return [
+            'merged' => false,
+            'merges' => [],
+            'components' => [],
+        ];
+    }
+
+    try {
+        return $repository->resolveDocumentSenderLinks($organizationNumber, $bankgiro, $plusgiro);
+    } catch (Throwable $e) {
+        return [
+            'merged' => false,
+            'merges' => [],
+            'components' => [],
+            'error' => $e->getMessage(),
+        ];
+    }
+}
+
+function sender_analysis_matches_from_summary(?array $senderSummary): array
+{
+    if (!is_array($senderSummary) || !is_array($senderSummary['senders'] ?? null)) {
+        return [];
+    }
+
+    $items = [];
+    foreach ($senderSummary['senders'] as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $senderId = isset($row['senderId']) ? (int) $row['senderId'] : 0;
+        if ($senderId < 1) {
+            continue;
+        }
+        $items[] = [
+            'senderId' => $senderId,
+            'senderName' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
+            'matchedBy' => is_string($row['matchedBy'] ?? null) ? trim((string) $row['matchedBy']) : null,
+            'matchedAlias' => is_string($row['matchedAlias'] ?? null) ? trim((string) $row['matchedAlias']) : null,
+        ];
+    }
+
+    return $items;
+}
+
+function single_preselected_sender_from_summary(?array $senderSummary): array
+{
+    $matches = sender_analysis_matches_from_summary($senderSummary);
+    if (count($matches) !== 1) {
+        return [
+            'matchedSenderId' => null,
+            'preselectedSender' => null,
+            'senderMatches' => $matches,
+        ];
+    }
+
+    $match = $matches[0];
+    $senderId = isset($match['senderId']) ? (int) $match['senderId'] : 0;
+    if ($senderId < 1) {
+        return [
+            'matchedSenderId' => null,
+            'preselectedSender' => null,
+            'senderMatches' => $matches,
+        ];
+    }
+
+    return [
+        'matchedSenderId' => $senderId,
+        'preselectedSender' => [
+            'id' => $senderId,
+            'name' => is_string($match['senderName'] ?? null) ? trim((string) $match['senderName']) : '',
+            'matchedBy' => is_string($match['matchedBy'] ?? null) ? trim((string) $match['matchedBy']) : null,
+            'matchedAlias' => is_string($match['matchedAlias'] ?? null) ? trim((string) $match['matchedAlias']) : null,
+        ],
+        'senderMatches' => $matches,
+    ];
 }
 
 function build_sender_payee_lookup_queue_state_payload(int $limit = 1): array
@@ -11492,6 +11734,8 @@ function handle_resolved_sender_identifier_followups(
         : null;
 
     foreach ($affectedJobIds as $affectedJobId) {
+        sync_job_sender_document_links($config, $affectedJobId);
+
         if ($selectedJobId !== null && $affectedJobId === $selectedJobId) {
             if (set_job_analysis_outdated_flag($config, $affectedJobId, true)) {
                 $markedOutdatedJobIds[] = $affectedJobId;

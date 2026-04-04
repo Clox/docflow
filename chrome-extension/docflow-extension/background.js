@@ -271,6 +271,13 @@ async function executeOrganizationLookupInTab(tabId, payload) {
         const nextDataEl = await waitForNextData();
         const nextData = JSON.parse(nextDataEl.innerHTML);
         const companyInformation = nextData?.props?.pageProps?.hydrationData?.searchStore?.companies?.companies?.[0] || null;
+        const alternativeNamesRaw = Array.isArray(nextData?.props?.pageProps?.company?.alternativeNames)
+          ? nextData.props.pageProps.company.alternativeNames
+          : (
+            Array.isArray(companyInformation?.alternativeNames)
+              ? companyInformation.alternativeNames
+              : []
+          );
         const matchedOrganizationNumber = String(companyInformation?.orgnr || '').replace(/\D+/g, '');
         if (matchedOrganizationNumber !== normalizedOrganizationNumber) {
           throw new Error(
@@ -284,17 +291,27 @@ async function executeOrganizationLookupInTab(tabId, payload) {
         if (organizationName === '') {
           throw new Error('Allabolag returnerade inget företagsnamn.');
         }
+        const alternativeNames = alternativeNamesRaw
+          .map((item) => {
+            if (!item || typeof item !== 'object') {
+              return '';
+            }
+            return String(item.name || '').trim();
+          })
+          .filter((value) => value !== '');
 
         console.info(`${prefix} injected organization lookup result`, {
           organizationNumber: normalizedOrganizationNumber,
           matchedOrganizationNumber,
           organizationName,
+          alternativeNames,
         });
 
         return {
           ok: true,
           organizationNumber: matchedOrganizationNumber,
           organizationName,
+          alternativeNames,
           raw: companyInformation,
         };
       } catch (error) {
@@ -453,6 +470,11 @@ function normalizeOrganizationLookupResponse(organizationNumber, result) {
     ok: true,
     organizationNumber: normalizedOrganizationNumber,
     organizationName,
+    alternativeNames: Array.isArray(result.alternativeNames)
+      ? result.alternativeNames
+          .map((value) => typeof value === 'string' ? value.trim() : '')
+          .filter((value) => value !== '')
+      : [],
     raw: result.raw && typeof result.raw === 'object' ? result.raw : null,
   };
 }

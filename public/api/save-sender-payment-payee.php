@@ -60,7 +60,7 @@ try {
         'markedOutdatedJobIds' => [],
         'autoReprocessedJobIds' => [],
     ];
-    if (($resolved['senderId'] ?? null) !== null && ($resolved['linkChanged'] ?? false) === true) {
+    if (($resolved['senderId'] ?? null) !== null && is_string($resolved['payeeName'] ?? null) && trim((string) $resolved['payeeName']) !== '') {
         $followup = handle_resolved_sender_identifier_followups(
             $config,
             (string) ($resolved['type'] ?? ''),

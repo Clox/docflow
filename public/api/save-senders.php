@@ -195,12 +195,17 @@ try {
     $repository = new SenderRepository($pdo);
     $pdo->beginTransaction();
 
-    $existingSenderRows = $pdo->query('SELECT id FROM senders')->fetchAll(PDO::FETCH_COLUMN);
+    $existingSenderRows = $pdo->query('SELECT id, name FROM senders')->fetchAll(PDO::FETCH_ASSOC);
     $existingSenderIds = [];
-    foreach ($existingSenderRows as $value) {
-        $senderId = (int) $value;
+    $existingSenderNamesById = [];
+    foreach ($existingSenderRows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $senderId = isset($row['id']) ? (int) $row['id'] : 0;
         if ($senderId > 0) {
             $existingSenderIds[$senderId] = true;
+            $existingSenderNamesById[$senderId] = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
         }
     }
 
@@ -302,6 +307,39 @@ try {
         WHERE id = :id'
     );
     $deleteRemovedSender = $pdo->prepare('DELETE FROM senders WHERE id = :id');
+    $insertAlternativeName = $pdo->prepare(
+        'INSERT OR IGNORE INTO sender_alternative_names (
+            sender_id,
+            name,
+            created_at,
+            updated_at
+        ) VALUES (
+            :sender_id,
+            :name,
+            :created_at,
+            :updated_at
+        )'
+    );
+    $copyAlternativeNamesToTarget = $pdo->prepare(
+        'INSERT OR IGNORE INTO sender_alternative_names (
+            sender_id,
+            name,
+            created_at,
+            updated_at
+        )
+        SELECT
+            :target_sender_id,
+            name,
+            :created_at,
+            :updated_at
+        FROM sender_alternative_names
+        WHERE sender_id = :source_sender_id
+          AND lower(trim(name)) <> lower(:target_name)'
+    );
+    $deleteSourceAlternativeNames = $pdo->prepare(
+        'DELETE FROM sender_alternative_names
+        WHERE sender_id = :sender_id'
+    );
     $insertSender = $pdo->prepare(
         'INSERT INTO senders (
             name,
@@ -671,6 +709,29 @@ try {
             if ($sourceSenderId < 1 || $sourceSenderId === $senderId) {
                 continue;
             }
+            $sourceName = is_string($existingSenderNamesById[$sourceSenderId] ?? null)
+                ? trim((string) $existingSenderNamesById[$sourceSenderId])
+                : '';
+            if ($sourceName !== '' && strcasecmp($sourceName, $row['name']) !== 0) {
+                $timestamp = date(DATE_ATOM);
+                $insertAlternativeName->execute([
+                    ':sender_id' => $senderId,
+                    ':name' => $sourceName,
+                    ':created_at' => $timestamp,
+                    ':updated_at' => $timestamp,
+                ]);
+            }
+            $timestamp = date(DATE_ATOM);
+            $copyAlternativeNamesToTarget->execute([
+                ':target_sender_id' => $senderId,
+                ':source_sender_id' => $sourceSenderId,
+                ':target_name' => $row['name'],
+                ':created_at' => $timestamp,
+                ':updated_at' => $timestamp,
+            ]);
+            $deleteSourceAlternativeNames->execute([
+                ':sender_id' => $sourceSenderId,
+            ]);
             $deleteRemovedSender->execute([':id' => $sourceSenderId]);
         }
     }

@@ -34,6 +34,21 @@ if ($organizationName !== null && !is_string($organizationName)) {
     exit;
 }
 
+$alternativeNames = [];
+if (array_key_exists('alternativeNames', $payload)) {
+    if (!is_array($payload['alternativeNames'])) {
+        json_response(['error' => 'alternativeNames must be an array when provided'], 400);
+        exit;
+    }
+    foreach ($payload['alternativeNames'] as $value) {
+        if (!is_string($value)) {
+            json_response(['error' => 'alternativeNames must only contain strings'], 400);
+            exit;
+        }
+        $alternativeNames[] = trim($value);
+    }
+}
+
 $currentSelectedJobId = is_string($payload['currentSelectedJobId'] ?? null)
     ? trim((string) $payload['currentSelectedJobId'])
     : null;
@@ -47,14 +62,14 @@ try {
         throw new RuntimeException('Sender repository is unavailable.');
     }
 
-    $resolved = $repository->resolveOrganizationName($organizationId, $organizationName);
+    $resolved = $repository->resolveOrganizationName($organizationId, $organizationName, $alternativeNames);
     $config = load_config();
     $followup = [
         'affectedJobIds' => [],
         'markedOutdatedJobIds' => [],
         'autoReprocessedJobIds' => [],
     ];
-    if (($resolved['senderId'] ?? null) !== null && ($resolved['linkChanged'] ?? false) === true) {
+    if (($resolved['senderId'] ?? null) !== null) {
         $followup = handle_resolved_sender_identifier_followups(
             $config,
             'organization_number',
@@ -67,6 +82,7 @@ try {
         'ok' => true,
         'organizationId' => $organizationId,
         'organizationName' => is_string($organizationName) ? trim($organizationName) : null,
+        'alternativeNames' => array_values(array_filter($alternativeNames, static fn (string $name): bool => $name !== '')),
         'senderId' => isset($resolved['senderId']) ? $resolved['senderId'] : null,
         'followup' => $followup,
         'remainingCount' => $repository->countOrganizationNumbersMissingName(),
