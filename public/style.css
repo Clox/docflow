@@ -410,6 +410,14 @@ body.is-resizing-sidebar {
   min-width: 0;
 }
 
+.selected-job-sender-linked-header-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .selected-job-sender-linked-header-marker {
   flex: 0 0 14px;
   width: 14px;
@@ -433,7 +441,7 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-sender-linked-title {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -488,6 +496,7 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-sender-component-text {
+  flex: 0 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
 }

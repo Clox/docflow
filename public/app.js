@@ -4924,15 +4924,18 @@ function renderSelectedJobSenderSection(job) {
       const header = document.createElement('div');
       header.className = `selected-job-sender-linked-header ${senderRow.nameFound === true ? 'is-found' : 'is-missing'}`;
 
+      const headerMain = document.createElement('div');
+      headerMain.className = 'selected-job-sender-linked-header-main';
+
       const headerMarker = document.createElement('span');
       headerMarker.className = 'selected-job-sender-linked-header-marker';
       headerMarker.textContent = senderRow.nameFound === true ? '✓' : '';
-      header.appendChild(headerMarker);
 
       const headerName = document.createElement('div');
       headerName.className = 'selected-job-sender-linked-title';
       headerName.textContent = typeof senderRow.name === 'string' ? senderRow.name : '';
-      header.appendChild(headerName);
+      headerMain.append(headerName, headerMarker);
+      header.appendChild(headerMain);
 
       const openButton = document.createElement('button');
       openButton.type = 'button';
@@ -4960,7 +4963,7 @@ function renderSelectedJobSenderSection(job) {
         value.className = 'selected-job-sender-component-text';
         value.textContent = text;
 
-        row.append(marker, value);
+        row.append(value, marker);
         components.appendChild(row);
       };
 
