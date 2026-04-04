@@ -7571,6 +7571,7 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
             'value' => $value,
             'raw' => $raw,
             'start' => $offsetBase + $valueStart,
+            'matchType' => 'pattern',
         ];
     }
 
@@ -7822,6 +7823,252 @@ function empty_extraction_field_result(): array
     ];
 }
 
+function extraction_field_match_storage_key(int $lineIndex, int $start, mixed $value, ?string $raw): string
+{
+    $encodedValue = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encodedValue)) {
+        $encodedValue = is_scalar($value) ? (string) $value : '';
+    }
+
+    return $lineIndex . '|' . $start . '|' . $encodedValue . '|' . ($raw ?? '');
+}
+
+function add_extraction_field_match(
+    array &$matchesByKey,
+    int $lineIndex,
+    int $start,
+    mixed $value,
+    ?string $raw,
+    string $source,
+    float $confidence,
+    ?string $matchType = null,
+    ?string $searchTerm = null,
+    ?float $score = null
+): void {
+    if ($lineIndex < 0 || $start < 0 || $value === null) {
+        return;
+    }
+
+    $key = extraction_field_match_storage_key($lineIndex, $start, $value, $raw);
+    $candidate = [
+        'value' => $value,
+        'confidence' => clamp_confidence($confidence),
+        'lineIndex' => $lineIndex,
+        'source' => $source,
+        'raw' => $raw,
+        'start' => $start,
+    ];
+    if (is_string($matchType) && trim($matchType) !== '') {
+        $candidate['matchType'] = trim($matchType);
+    }
+    if (is_string($searchTerm) && trim($searchTerm) !== '') {
+        $candidate['searchTerm'] = trim($searchTerm);
+    }
+    if (is_numeric($score)) {
+        $candidate['score'] = (float) $score;
+    }
+
+    if (!isset($matchesByKey[$key]) || (float) ($matchesByKey[$key]['confidence'] ?? 0.0) < $candidate['confidence']) {
+        $matchesByKey[$key] = $candidate;
+    }
+}
+
+function sort_extraction_field_matches(array $matches): array
+{
+    usort($matches, static function (array $left, array $right): int {
+        $lineCompare = ((int) ($left['lineIndex'] ?? 0)) <=> ((int) ($right['lineIndex'] ?? 0));
+        if ($lineCompare !== 0) {
+            return $lineCompare;
+        }
+
+        $startCompare = ((int) ($left['start'] ?? 0)) <=> ((int) ($right['start'] ?? 0));
+        if ($startCompare !== 0) {
+            return $startCompare;
+        }
+
+        $confidenceCompare = ((float) ($right['confidence'] ?? 0.0)) <=> ((float) ($left['confidence'] ?? 0.0));
+        if ($confidenceCompare !== 0) {
+            return $confidenceCompare;
+        }
+
+        return strcmp((string) ($left['source'] ?? ''), (string) ($right['source'] ?? ''));
+    });
+
+    return array_values($matches);
+}
+
+function collect_labeled_candidate_matches(array $lines, array $labels, array $replacementMap, callable $candidateExtractor, int $nearbyDistance = 1): array
+{
+    $matchesByKey = [];
+
+    $hits = find_label_hits($lines, $labels, $replacementMap);
+    foreach ($hits as $hit) {
+        $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
+        $pattern = is_string($hit['pattern'] ?? null) ? (string) $hit['pattern'] : '';
+        $label = is_string($hit['label'] ?? null) ? trim((string) $hit['label']) : '';
+        $hitIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : -1;
+        $labelEnd = is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : 0;
+        if ($line === '' || $hitIndex < 0) {
+            continue;
+        }
+
+        $tailInfo = extract_label_tail_info_from_line($line, $pattern);
+        $tailText = is_string($tailInfo['text'] ?? null) ? (string) $tailInfo['text'] : '';
+        $tailOffset = is_int($tailInfo['offset'] ?? null) ? (int) $tailInfo['offset'] : 0;
+        if ($tailText !== '') {
+            $tailCandidates = $candidateExtractor($tailText, $tailOffset);
+            if (is_array($tailCandidates)) {
+                foreach ($tailCandidates as $candidate) {
+                    if (!is_array($candidate)) {
+                        continue;
+                    }
+
+                    $value = $candidate['value'] ?? null;
+                    $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+                    $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+                    if ($start < 0 || $value === null) {
+                        continue;
+                    }
+
+                    add_extraction_field_match(
+                        $matchesByKey,
+                        $hitIndex,
+                        $start,
+                        $value,
+                        $raw,
+                        'tail',
+                        candidate_confidence_score($hit, $line, $start, $hitIndex, 'tail'),
+                        is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
+                        $label !== '' ? $label : null
+                    );
+                }
+            }
+        }
+
+        $lineCandidates = $candidateExtractor($line, 0);
+        if (is_array($lineCandidates)) {
+            foreach ($lineCandidates as $candidate) {
+                if (!is_array($candidate)) {
+                    continue;
+                }
+
+                $value = $candidate['value'] ?? null;
+                $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+                $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+                if ($start < $labelEnd || $value === null) {
+                    continue;
+                }
+
+                add_extraction_field_match(
+                    $matchesByKey,
+                    $hitIndex,
+                    $start,
+                    $value,
+                    $raw,
+                    'line',
+                    candidate_confidence_score($hit, $line, $start, $hitIndex, 'line'),
+                    is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
+                    $label !== '' ? $label : null
+                );
+            }
+        }
+
+        $nearIndexes = nearby_line_indexes($lines, $hitIndex, $nearbyDistance);
+        foreach ($nearIndexes as $nearIndex) {
+            $nearLine = is_string($lines[$nearIndex] ?? null) ? (string) $lines[$nearIndex] : '';
+            if ($nearLine === '') {
+                continue;
+            }
+
+            $nearCandidates = $candidateExtractor($nearLine, 0);
+            if (!is_array($nearCandidates)) {
+                continue;
+            }
+
+            foreach ($nearCandidates as $candidate) {
+                if (!is_array($candidate)) {
+                    continue;
+                }
+
+                $value = $candidate['value'] ?? null;
+                $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+                $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+                if ($start < 0 || $value === null) {
+                    continue;
+                }
+
+                add_extraction_field_match(
+                    $matchesByKey,
+                    (int) $nearIndex,
+                    $start,
+                    $value,
+                    $raw,
+                    'nearby',
+                    candidate_confidence_score($hit, $nearLine, $start, (int) $nearIndex, 'nearby'),
+                    is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
+                    $label !== '' ? $label : null
+                );
+            }
+        }
+    }
+
+    return sort_extraction_field_matches(array_values($matchesByKey));
+}
+
+function document_date_result_matches(array $result): array
+{
+    $matchesByKey = [];
+    $candidates = is_array($result['candidates'] ?? null) ? $result['candidates'] : [];
+    foreach ($candidates as $candidate) {
+        if (!is_array($candidate) || ($candidate['excluded'] ?? false) === true) {
+            continue;
+        }
+
+        $value = $candidate['value'] ?? null;
+        $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
+        $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+        $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+        if ($lineIndex < 0 || $start < 0 || $value === null) {
+            continue;
+        }
+
+        add_extraction_field_match(
+            $matchesByKey,
+            $lineIndex,
+            $start,
+            $value,
+            $raw,
+            'document_date_heuristic',
+            clamp_confidence(((int) ($candidate['score'] ?? 0)) / 180),
+            'document_date_heuristic',
+            null,
+            (float) ((int) ($candidate['score'] ?? 0))
+        );
+    }
+
+    if ($matchesByKey === [] && ($result['value'] ?? null) !== null) {
+        $lineIndex = is_int($result['lineIndex'] ?? null) ? (int) $result['lineIndex'] : -1;
+        if ($lineIndex >= 0) {
+            add_extraction_field_match(
+                $matchesByKey,
+                $lineIndex,
+                0,
+                $result['value'],
+                is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
+                is_string($result['source'] ?? null) ? (string) $result['source'] : 'document_date_heuristic',
+                isset($result['confidence']) ? (float) $result['confidence'] : 0.0,
+                'document_date_heuristic',
+                null,
+                is_numeric($result['selectedCandidate']['score'] ?? null)
+                    ? (float) $result['selectedCandidate']['score']
+                    : null
+            );
+        }
+    }
+
+    return sort_extraction_field_matches(array_values($matchesByKey));
+}
+
 function extract_ocr_number_field_result(array $lines, array $replacementMap): array
 {
     $result = select_best_labeled_candidate($lines, ['ocr-nummer', 'ocr nummer', 'ocr'], $replacementMap, 'ocr_number_candidates_from_text', 1);
@@ -7941,6 +8188,40 @@ function extract_generic_text_field_result(
     return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
+function extract_generic_text_field_matches(
+    array $lines,
+    array $aliases,
+    string $searchString,
+    bool $isRegex,
+    array $replacementMap
+): array {
+    $resolvedAliases = normalize_extraction_field_aliases($aliases);
+    if ($resolvedAliases === []) {
+        return [];
+    }
+
+    $pattern = trim($searchString);
+    if ($pattern === '') {
+        return collect_labeled_candidate_matches(
+            $lines,
+            $resolvedAliases,
+            $replacementMap,
+            'generic_text_segment_candidates_from_text',
+            1
+        );
+    }
+
+    return collect_labeled_candidate_matches(
+        $lines,
+        $resolvedAliases,
+        $replacementMap,
+        static function (string $text, int $offsetBase) use ($pattern, $isRegex): array {
+            return extraction_field_pattern_candidates_from_text($text, $pattern, $isRegex, $offsetBase);
+        },
+        1
+    );
+}
+
 function extract_unlabeled_pattern_field_result(array $lines, string $pattern): array
 {
     $resolvedPattern = trim($pattern);
@@ -7976,6 +8257,69 @@ function extract_unlabeled_pattern_field_result(array $lines, string $pattern): 
     }
 
     return empty_extraction_field_result();
+}
+
+function extract_unlabeled_pattern_field_matches(array $lines, string $pattern): array
+{
+    $resolvedPattern = trim($pattern);
+    if ($resolvedPattern === '') {
+        return [];
+    }
+
+    $matchesByKey = [];
+    foreach ($lines as $lineIndex => $line) {
+        $resolvedLine = is_string($line) ? $line : '';
+        if ($resolvedLine === '' || !is_int($lineIndex)) {
+            continue;
+        }
+
+        $candidates = extraction_field_pattern_candidates_from_text($resolvedLine, $resolvedPattern, true, 0);
+        foreach ($candidates as $candidate) {
+            if (!is_array($candidate)) {
+                continue;
+            }
+
+            $value = $candidate['value'] ?? null;
+            $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+            $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+            if ($value === null || $start < 0) {
+                continue;
+            }
+
+            add_extraction_field_match(
+                $matchesByKey,
+                $lineIndex,
+                $start,
+                $value,
+                $raw,
+                'pattern',
+                0.55,
+                is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern'
+            );
+        }
+    }
+
+    return sort_extraction_field_matches(array_values($matchesByKey));
+}
+
+function extract_configured_rule_set_field_matches(array $lines, array $replacementMap, array $ruleSet): array
+{
+    $requiresSearchTerms = !array_key_exists('requiresSearchTerms', $ruleSet)
+        || $ruleSet['requiresSearchTerms'] === true
+        || $ruleSet['requiresSearchTerms'] === 1
+        || $ruleSet['requiresSearchTerms'] === '1';
+    $searchTerms = normalize_extraction_field_aliases($ruleSet['searchTerms'] ?? null);
+    $valuePattern = is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '';
+
+    if (!$requiresSearchTerms) {
+        return extract_unlabeled_pattern_field_matches($lines, $valuePattern);
+    }
+
+    if ($searchTerms === []) {
+        return [];
+    }
+
+    return extract_generic_text_field_matches($lines, $searchTerms, $valuePattern, true, $replacementMap);
 }
 
 function extract_configured_rule_set_field_result(array $lines, array $replacementMap, array $ruleSet): array
@@ -8019,9 +8363,11 @@ function extract_configured_text_field_results(array $lines, array $replacementM
 
         $matchedRuleSetIndex = null;
         $matchedRuleSet = default_extraction_field_rule_set();
+        $matches = [];
         if ($extractor === 'document_date') {
             $result = extract_document_date_field_result($lines);
             $ruleSets = [];
+            $matches = document_date_result_matches($result);
         } else {
             $result = empty_extraction_field_result();
             foreach ($ruleSets as $ruleSetIndex => $ruleSet) {
@@ -8029,12 +8375,15 @@ function extract_configured_text_field_results(array $lines, array $replacementM
                     continue;
                 }
 
-                $candidate = extract_configured_rule_set_field_result($lines, $replacementMap, $ruleSet);
-                if (($candidate['value'] ?? null) === null) {
+                $candidateMatches = extract_configured_rule_set_field_matches($lines, $replacementMap, $ruleSet);
+                if ($candidateMatches === []) {
                     continue;
                 }
 
-                $result = $candidate;
+                $result = is_array($candidateMatches[0] ?? null)
+                    ? $candidateMatches[0]
+                    : empty_extraction_field_result();
+                $matches = $candidateMatches;
                 $matchedRuleSetIndex = $ruleSetIndex;
                 $matchedRuleSet = $ruleSet;
                 break;
@@ -8045,42 +8394,58 @@ function extract_configured_text_field_results(array $lines, array $replacementM
             ($result['value'] ?? null) === null
             && !array_key_exists('selectedValue', $result)
             && !is_array($result['candidates'] ?? null)
+            && $matches === []
         ) {
             $result = empty_extraction_field_result();
         }
 
-        $resolvedValue = $result['value'] ?? null;
-        if (is_string($resolvedValue)) {
-            $resolvedValue = apply_extraction_field_normalization(
-                $resolvedValue,
-                is_string($matchedRuleSet['normalizationType'] ?? null) ? (string) $matchedRuleSet['normalizationType'] : 'none',
-                is_string($matchedRuleSet['normalizationChars'] ?? null) ? (string) $matchedRuleSet['normalizationChars'] : ''
-            );
-            if (!is_string($resolvedValue) || $resolvedValue === '') {
-                $resolvedValue = null;
+        $resolvedMatches = [];
+        foreach ($matches as $match) {
+            if (!is_array($match)) {
+                continue;
             }
+
+            $resolvedValue = $match['value'] ?? null;
+            if (is_string($resolvedValue)) {
+                $resolvedValue = apply_extraction_field_normalization(
+                    $resolvedValue,
+                    is_string($matchedRuleSet['normalizationType'] ?? null) ? (string) $matchedRuleSet['normalizationType'] : 'none',
+                    is_string($matchedRuleSet['normalizationChars'] ?? null) ? (string) $matchedRuleSet['normalizationChars'] : ''
+                );
+            }
+
+            $resolvedValue = normalize_auto_archiving_field_value_item($resolvedValue);
+            if ($resolvedValue === null) {
+                continue;
+            }
+
+            $resolvedMatch = $match;
+            $resolvedMatch['value'] = $resolvedValue;
+            $resolvedMatches[] = $resolvedMatch;
         }
+
+        $resolvedValues = array_values(array_map(
+            static fn (array $match): mixed => $match['value'] ?? null,
+            $resolvedMatches
+        ));
+        $primaryMatch = is_array($resolvedMatches[0] ?? null) ? $resolvedMatches[0] : null;
 
         $results[$key] = [
             'key' => $key,
             'name' => $name,
             'ruleSets' => $ruleSets,
             'extractor' => $extractor,
-            'value' => match (true) {
-                is_string($resolvedValue) => $resolvedValue,
-                is_int($resolvedValue), is_float($resolvedValue) => $resolvedValue + 0,
-                is_bool($resolvedValue) => (bool) $resolvedValue,
-                default => null,
-            },
-            'confidence' => isset($result['confidence']) ? clamp_confidence((float) $result['confidence']) : 0.0,
-            'lineIndex' => is_int($result['lineIndex'] ?? null) ? (int) $result['lineIndex'] : null,
-            'source' => is_string($result['source'] ?? null) ? (string) $result['source'] : 'none',
-            'raw' => is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
+            'value' => $primaryMatch['value'] ?? null,
+            'values' => $resolvedValues,
+            'confidence' => is_array($primaryMatch) && isset($primaryMatch['confidence'])
+                ? clamp_confidence((float) $primaryMatch['confidence'])
+                : 0.0,
+            'lineIndex' => is_array($primaryMatch) && is_int($primaryMatch['lineIndex'] ?? null) ? (int) $primaryMatch['lineIndex'] : null,
+            'source' => is_array($primaryMatch) && is_string($primaryMatch['source'] ?? null) ? (string) $primaryMatch['source'] : 'none',
+            'raw' => is_array($primaryMatch) && is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null,
             'matchedRuleSetIndex' => $matchedRuleSetIndex,
+            'matches' => $resolvedMatches,
         ];
-        if (array_key_exists('selectedValue', $result)) {
-            $results[$key]['selectedValue'] = $result['selectedValue'];
-        }
         if (is_array($result['selectedCandidate'] ?? null)) {
             $results[$key]['selectedCandidate'] = $result['selectedCandidate'];
         }
@@ -8103,18 +8468,16 @@ function simplify_extraction_field_values(array $results): array
             continue;
         }
 
-        $value = is_array($result) ? ($result['value'] ?? null) : null;
-        if ($value === null) {
+        $valueList = normalize_auto_archiving_field_value_list(
+            is_array($result) && is_array($result['values'] ?? null)
+                ? $result['values']
+                : (is_array($result) && array_key_exists('value', $result) ? [$result['value']] : [])
+        );
+        if ($valueList === []) {
             continue;
         }
-        if (is_string($value)) {
-            $value = trim($value);
-            if ($value === '') {
-                continue;
-            }
-        }
 
-        $values[$resolvedKey] = $value;
+        $values[$resolvedKey] = $valueList;
     }
 
     return $values;
@@ -8131,15 +8494,33 @@ function simplify_extraction_field_meta(array $results): array
             continue;
         }
 
-        $fieldMeta = [];
-        if (array_key_exists('selectedValue', $result)) {
-            $fieldMeta['selectedValue'] = $result['selectedValue'];
+        $fieldMeta = [
+            'key' => is_string($result['key'] ?? null) ? trim((string) $result['key']) : $resolvedKey,
+            'name' => is_string($result['name'] ?? null) ? trim((string) $result['name']) : $resolvedKey,
+        ];
+        if (is_string($result['extractor'] ?? null) && trim((string) $result['extractor']) !== '') {
+            $fieldMeta['extractor'] = trim((string) $result['extractor']);
         }
-        if (is_array($result['selectedCandidate'] ?? null)) {
-            $fieldMeta['selectedCandidate'] = $result['selectedCandidate'];
+        if (array_key_exists('matchedRuleSetIndex', $result) && is_int($result['matchedRuleSetIndex'])) {
+            $fieldMeta['matchedRuleSetIndex'] = (int) $result['matchedRuleSetIndex'];
         }
-        if (is_array($result['candidates'] ?? null)) {
-            $fieldMeta['candidates'] = $result['candidates'];
+        if (is_array($result['matches'] ?? null)) {
+            $fieldMeta['matches'] = array_values(array_map(
+                static function (array $match): array {
+                    return [
+                        'value' => $match['value'] ?? null,
+                        'raw' => is_string($match['raw'] ?? null) ? (string) $match['raw'] : null,
+                        'source' => is_string($match['source'] ?? null) ? (string) $match['source'] : null,
+                        'confidence' => isset($match['confidence']) ? clamp_confidence((float) $match['confidence']) : 0.0,
+                        'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : null,
+                        'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : null,
+                        'matchType' => is_string($match['matchType'] ?? null) ? trim((string) $match['matchType']) : null,
+                        'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : null,
+                        'score' => is_numeric($match['score'] ?? null) ? (float) $match['score'] : null,
+                    ];
+                },
+                array_values(array_filter($result['matches'], static fn ($match): bool => is_array($match)))
+            ));
         }
 
         if ($fieldMeta !== []) {
@@ -8225,7 +8606,7 @@ function partition_archiving_field_values(array $values, array $rules): array
     $systemFields = [];
     foreach ($values as $key => $value) {
         $resolvedKey = is_string($key) ? trim($key) : '';
-        if ($resolvedKey === '' || $value === null) {
+        if ($resolvedKey === '' || $value === null || (is_array($value) && $value === [])) {
             continue;
         }
         if (isset($systemFieldKeys[$resolvedKey])) {
@@ -8264,8 +8645,9 @@ function evaluate_filename_template_parts_backend(array $parts, array $fieldValu
             $rawValue = $key !== '' && array_key_exists($key, $fieldValues)
                 ? $fieldValues[$key]
                 : null;
-            $value = is_scalar($rawValue) || $rawValue === null
-                ? trim((string) $rawValue)
+            $firstValue = first_auto_archiving_field_value($rawValue);
+            $value = is_scalar($firstValue) || $firstValue === null
+                ? trim((string) $firstValue)
                 : '';
             if ($value === '') {
                 continue;
@@ -8419,7 +8801,7 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
     $setValue($values, 'sender', is_array($sender) ? ($sender['name'] ?? null) : null);
 
     if (array_key_exists('amount', $allFields)) {
-        $amount = $allFields['amount'];
+        $amount = first_auto_archiving_field_value($allFields['amount']);
         if (is_numeric($amount)) {
             $setValue($values, 'amount', number_format((float) $amount, 2, ',', ' '));
         } else {
@@ -8439,11 +8821,11 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
     ] as $fieldKey) {
         $lookupKey = $fieldKey === 'date' ? 'due_date' : $fieldKey;
         if (array_key_exists($lookupKey, $allFields)) {
-            $setValue($values, $fieldKey, $allFields[$lookupKey]);
+            $setValue($values, $fieldKey, first_auto_archiving_field_value($allFields[$lookupKey]));
         }
     }
     if (array_key_exists('payment_receiver', $allFields)) {
-        $setValue($values, 'payee', $allFields['payment_receiver']);
+        $setValue($values, 'payee', first_auto_archiving_field_value($allFields['payment_receiver']));
     }
 
     foreach ($allFields as $fieldKey => $fieldValue) {
@@ -8451,7 +8833,7 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
         if ($resolvedKey === '') {
             continue;
         }
-        $setValue($values, $resolvedKey, $fieldValue);
+        $setValue($values, $resolvedKey, first_auto_archiving_field_value($fieldValue));
     }
 
     $labelNames = build_auto_archiving_filename_label_names($autoResult, $rules);
@@ -8504,8 +8886,8 @@ function normalize_auto_archiving_result(array $result): array
     $fields = [];
     foreach (is_array($result['fields'] ?? null) ? $result['fields'] : [] as $key => $value) {
         $resolvedKey = is_string($key) ? trim($key) : '';
-        $normalizedValue = normalize_auto_archiving_field_value($value);
-        if ($resolvedKey === '' || $normalizedValue === null) {
+        $normalizedValue = normalize_auto_archiving_field_value_list($value);
+        if ($resolvedKey === '' || $normalizedValue === []) {
             continue;
         }
         $fields[$resolvedKey] = $normalizedValue;
@@ -8514,8 +8896,8 @@ function normalize_auto_archiving_result(array $result): array
     $systemFields = [];
     foreach (is_array($result['systemFields'] ?? null) ? $result['systemFields'] : [] as $key => $value) {
         $resolvedKey = is_string($key) ? trim($key) : '';
-        $normalizedValue = normalize_auto_archiving_field_value($value);
-        if ($resolvedKey === '' || $normalizedValue === null) {
+        $normalizedValue = normalize_auto_archiving_field_value_list($value);
+        if ($resolvedKey === '' || $normalizedValue === []) {
             continue;
         }
         $systemFields[$resolvedKey] = $normalizedValue;
@@ -8597,7 +8979,7 @@ function job_analysis_payload(array $job): array
     return $analysis;
 }
 
-function normalize_auto_archiving_field_value(mixed $value): mixed
+function normalize_auto_archiving_field_value_item(mixed $value): mixed
 {
     if ($value === null) {
         return null;
@@ -8622,6 +9004,38 @@ function normalize_auto_archiving_field_value(mixed $value): mixed
     }
 
     return $value;
+}
+
+function normalize_auto_archiving_field_value_list(mixed $value): array
+{
+    if (is_array($value)) {
+        if (array_key_exists('values', $value) && is_array($value['values'])) {
+            $items = array_values($value['values']);
+        } elseif (array_key_exists('value', $value)) {
+            $items = [$value['value']];
+        } else {
+            $items = array_values($value);
+        }
+    } else {
+        $items = [$value];
+    }
+    $normalized = [];
+
+    foreach ($items as $item) {
+        $normalizedItem = normalize_auto_archiving_field_value_item($item);
+        if ($normalizedItem === null) {
+            continue;
+        }
+        $normalized[] = $normalizedItem;
+    }
+
+    return $normalized;
+}
+
+function first_auto_archiving_field_value(mixed $value): mixed
+{
+    $values = normalize_auto_archiving_field_value_list($value);
+    return $values[0] ?? null;
 }
 
 function calculate_auto_archiving_result_from_text(
@@ -8954,6 +9368,10 @@ function archiving_review_display_value(string $key, mixed $value, array $displa
 {
     if (archiving_review_value_is_empty($value)) {
         return '—';
+    }
+
+    if (is_array($value)) {
+        $value = first_auto_archiving_field_value($value);
     }
 
     if ($key === 'clientId') {
@@ -10207,8 +10625,8 @@ function normalize_review_field_values(mixed $input, array $allowedKeys): array
         if ($resolvedKey === '' || !isset($allowedKeys[$resolvedKey])) {
             continue;
         }
-        $normalizedValue = normalize_auto_archiving_field_value($value);
-        if ($normalizedValue === null) {
+        $normalizedValue = normalize_auto_archiving_field_value_list($value);
+        if ($normalizedValue === []) {
             continue;
         }
         $values[$resolvedKey] = $normalizedValue;
@@ -10652,7 +11070,8 @@ function process_claimed_job(
         'systemLabelMatches' => $analysisPayload['systemLabelMatches'],
         'labelMatches' => $analysisPayload['labelMatches'],
         'labels' => $analysisPayload['labels'],
-        'extractionFields' => $analysisPayload['extractionFieldResults'],
+        'extractionFields' => $analysisPayload['extractionFieldValues'],
+        'extractionFieldMeta' => $analysisPayload['extractionFieldMeta'] !== [] ? $analysisPayload['extractionFieldMeta'] : new stdClass(),
         'preselectedClient' => $analysisPayload['preselectedClient'],
         'preselectedSender' => null,
         'autoArchivingResult' => $analysisPayload['autoArchivingResult'],
@@ -10686,7 +11105,8 @@ function process_claimed_job(
         'systemLabelMatches' => $analysisPayload['systemLabelMatches'],
         'labelMatches' => $analysisPayload['labelMatches'],
         'labels' => $analysisPayload['labels'],
-        'extractionFields' => $analysisPayload['extractionFieldResults'],
+        'extractionFields' => $analysisPayload['extractionFieldValues'],
+        'extractionFieldMeta' => $analysisPayload['extractionFieldMeta'] !== [] ? $analysisPayload['extractionFieldMeta'] : new stdClass(),
         'preselectedClient' => $analysisPayload['preselectedClient'],
         'preselectedSender' => $analysisPayload['preselectedSender'],
         'senderMatches' => $analysisPayload['senderMatches'],
@@ -11124,14 +11544,7 @@ function build_job_state_category_indexes(): array
 
 function extracted_field_scalar_value(array $extracted, string $fieldKey): ?string
 {
-    $field = is_array($extracted['extractionFields'][$fieldKey] ?? null)
-        ? $extracted['extractionFields'][$fieldKey]
-        : null;
-    if (!is_array($field)) {
-        return null;
-    }
-
-    $value = $field['value'] ?? null;
+    $value = first_auto_archiving_field_value($extracted['extractionFields'][$fieldKey] ?? null);
     if ($value === null) {
         return null;
     }
@@ -11144,6 +11557,26 @@ function extracted_field_scalar_value(array $extracted, string $fieldKey): ?stri
     }
 
     return null;
+}
+
+function extracted_field_string_values(array $extracted, string $fieldKey): array
+{
+    $values = normalize_auto_archiving_field_value_list($extracted['extractionFields'][$fieldKey] ?? null);
+    $strings = [];
+    foreach ($values as $value) {
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            if ($trimmed !== '') {
+                $strings[] = $trimmed;
+            }
+            continue;
+        }
+        if (is_numeric($value)) {
+            $strings[] = trim((string) $value);
+        }
+    }
+
+    return $strings;
 }
 
 function sync_named_sender_identifier_links(): void
@@ -11553,6 +11986,35 @@ function extraction_field_result_string(array $results, string $key, string $pro
     return null;
 }
 
+function extraction_field_result_matches(array $results, string $key): array
+{
+    $result = $results[$key] ?? null;
+    if (!is_array($result)) {
+        return [];
+    }
+
+    $matches = is_array($result['matches'] ?? null) ? $result['matches'] : [];
+    if ($matches !== []) {
+        return array_values(array_filter($matches, static fn ($match): bool => is_array($match)));
+    }
+
+    $value = $result['value'] ?? null;
+    if ($value === null) {
+        return [];
+    }
+
+    return [[
+        'value' => $value,
+        'raw' => is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
+        'source' => is_string($result['source'] ?? null) ? (string) $result['source'] : 'none',
+        'confidence' => isset($result['confidence']) ? clamp_confidence((float) $result['confidence']) : 0.0,
+        'lineIndex' => is_int($result['lineIndex'] ?? null) ? (int) $result['lineIndex'] : null,
+        'start' => null,
+        'matchType' => is_string($result['matchType'] ?? null) ? trim((string) $result['matchType']) : null,
+        'searchTerm' => is_string($result['searchTerm'] ?? null) ? trim((string) $result['searchTerm']) : null,
+    ]];
+}
+
 function observe_extracted_sender_identifiers(array $fieldResults): void
 {
     $repository = sender_repository_instance();
@@ -11560,33 +12022,46 @@ function observe_extracted_sender_identifiers(array $fieldResults): void
         return;
     }
 
-    $organizationNumber = extraction_field_result_string($fieldResults, 'organisationsnummer');
-    $bankgiro = extraction_field_result_string($fieldResults, 'bankgiro');
-    $bankgiroRaw = extraction_field_result_string($fieldResults, 'bankgiro', 'raw');
-    $plusgiro = extraction_field_result_string($fieldResults, 'plusgiro');
-    $plusgiroRaw = extraction_field_result_string($fieldResults, 'plusgiro', 'raw');
+    $seenOrganizationNumbers = [];
+    foreach (extraction_field_result_matches($fieldResults, 'organisationsnummer') as $match) {
+        $organizationNumber = is_string($match['value'] ?? null) ? trim((string) $match['value']) : '';
+        if ($organizationNumber === '' || isset($seenOrganizationNumbers[$organizationNumber])) {
+            continue;
+        }
+        $seenOrganizationNumbers[$organizationNumber] = true;
 
-    if ($organizationNumber !== null) {
         try {
             $repository->observeOrganizationNumber($organizationNumber, null, 'document_auto');
         } catch (Throwable $e) {
             // Best effort only. Identifier observation should not fail the document analysis pipeline.
         }
     }
-    if ($bankgiro !== null) {
-        try {
-            $repository->observePaymentNumber('bankgiro', $bankgiro, $bankgiroRaw, 'document_auto', 1.0);
-        } catch (Throwable $e) {
-            // Best effort only. Identifier observation should not fail the document analysis pipeline.
+
+    $observePaymentMatches = static function (string $type) use ($repository, $fieldResults): void {
+        $seen = [];
+        foreach (extraction_field_result_matches($fieldResults, $type) as $match) {
+            $number = is_string($match['value'] ?? null) ? trim((string) $match['value']) : '';
+            if ($number === '' || isset($seen[$number])) {
+                continue;
+            }
+            $seen[$number] = true;
+
+            try {
+                $repository->observePaymentNumber(
+                    $type,
+                    $number,
+                    is_string($match['raw'] ?? null) ? (string) $match['raw'] : null,
+                    'document_auto',
+                    1.0
+                );
+            } catch (Throwable $e) {
+                // Best effort only. Identifier observation should not fail the document analysis pipeline.
+            }
         }
-    }
-    if ($plusgiro !== null) {
-        try {
-            $repository->observePaymentNumber('plusgiro', $plusgiro, $plusgiroRaw, 'document_auto', 1.0);
-        } catch (Throwable $e) {
-            // Best effort only. Identifier observation should not fail the document analysis pipeline.
-        }
-    }
+    };
+
+    $observePaymentMatches('bankgiro');
+    $observePaymentMatches('plusgiro');
 }
 
 function sync_job_sender_document_links(array $config, string $jobId): array
@@ -11766,21 +12241,30 @@ function job_extracted_contains_sender_identifier(array $extracted, string $iden
     }
 
     if ($identifierType === 'organization_number') {
-        $value = extracted_field_scalar_value($extracted, 'organisationsnummer');
-        return $value !== null
-            && \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($value) === $normalizedValue;
+        foreach (extracted_field_string_values($extracted, 'organisationsnummer') as $value) {
+            if (\Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($value) === $normalizedValue) {
+                return true;
+            }
+        }
+        return false;
     }
 
     if ($identifierType === 'bankgiro') {
-        $value = extracted_field_scalar_value($extracted, 'bankgiro');
-        return $value !== null
-            && \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($value) === $normalizedValue;
+        foreach (extracted_field_string_values($extracted, 'bankgiro') as $value) {
+            if (\Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($value) === $normalizedValue) {
+                return true;
+            }
+        }
+        return false;
     }
 
     if ($identifierType === 'plusgiro') {
-        $value = extracted_field_scalar_value($extracted, 'plusgiro');
-        return $value !== null
-            && \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($value) === $normalizedValue;
+        foreach (extracted_field_string_values($extracted, 'plusgiro') as $value) {
+            if (\Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($value) === $normalizedValue) {
+                return true;
+            }
+        }
+        return false;
     }
 
     return false;

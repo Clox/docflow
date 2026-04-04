@@ -2070,15 +2070,15 @@ body.is-resizing-sidebar {
 }
 
 .matches-table-wrap {
-  border: 1px solid #ddd;
   border-radius: 6px;
-  background: #fff;
+  background: transparent;
   overflow: auto;
 }
 
 .matches-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 .matches-table th,
@@ -2089,6 +2089,30 @@ body.is-resizing-sidebar {
   line-height: 1.35;
   text-align: left;
   vertical-align: top;
+  background: #fff;
+}
+
+.matches-table thead th {
+  border-top: 1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+}
+
+.matches-table thead th:first-child,
+.matches-table tbody tr:not(.matches-group-separator) > :first-child:not(.matches-group-detail-start) {
+  border-left: 1px solid #ddd;
+}
+
+.matches-table thead th:last-child,
+.matches-table tbody tr:not(.matches-group-separator) > :last-child {
+  border-right: 1px solid #ddd;
+}
+
+.matches-table thead th:first-child {
+  border-top-left-radius: 6px;
+}
+
+.matches-table thead th:last-child {
+  border-top-right-radius: 6px;
 }
 
 .matches-table th {
@@ -2099,8 +2123,47 @@ body.is-resizing-sidebar {
   z-index: 1;
 }
 
-.matches-table tbody tr:last-child td {
+.matches-table tbody tr.matches-group-start td {
+  vertical-align: top;
+}
+
+.matches-table tbody tr.matches-group-rowspan-continuation > :first-child:not(.matches-group-detail-start) {
+  border-left: 0;
+}
+
+.matches-table th.matches-group-detail-start,
+.matches-table td.matches-group-detail-start {
+  border-left: 1px solid #eee;
+}
+
+.matches-table tbody tr.matches-group-end td {
   border-bottom: 0;
+}
+
+.matches-table tbody tr:last-child td {
+  border-bottom: 1px solid #ddd;
+}
+
+.matches-table tbody tr:last-child > :first-child {
+  border-bottom-left-radius: 6px;
+}
+
+.matches-table tbody tr:last-child > :last-child {
+  border-bottom-right-radius: 6px;
+}
+
+.matches-table tbody tr.matches-group-separator td {
+  padding: 0;
+  height: 8px;
+  border-top: 1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+  border-left: 0;
+  border-right: 0;
+  background: #fafafa;
+}
+
+.matches-field-name-cell {
+  white-space: nowrap;
 }
 
 .matches-table .is-numeric {

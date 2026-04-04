@@ -1913,6 +1913,9 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
     if (label === 'Regelpoäng' || label === 'Totalpoäng' || label === 'Minpoäng') {
       th.className = 'is-numeric';
     }
+    if (label === 'Regeltext') {
+      th.classList.add('matches-group-detail-start');
+    }
     headerRow.appendChild(th);
   });
   thead.appendChild(headerRow);
@@ -1920,7 +1923,17 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
 
   const tbody = document.createElement('tbody');
 
-  categories.forEach((category) => {
+  categories.forEach((category, categoryIndex) => {
+    if (categoryIndex > 0) {
+      const separatorRow = document.createElement('tr');
+      separatorRow.className = 'matches-group-separator';
+      const separatorCell = document.createElement('td');
+      separatorCell.colSpan = 6;
+      separatorCell.textContent = '';
+      separatorRow.appendChild(separatorCell);
+      tbody.appendChild(separatorRow);
+    }
+
     const name = category && typeof category.name === 'string' && category.name !== ''
       ? category.name
       : 'Namnlös kategori';
@@ -1934,6 +1947,7 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
     const rules = category && Array.isArray(category.matchedRules) ? category.matchedRules : [];
     if (rules.length === 0) {
       const tr = document.createElement('tr');
+      tr.classList.add('matches-group-start', 'matches-group-end');
 
       const categoryCell = document.createElement('td');
       categoryCell.textContent = name;
@@ -1950,6 +1964,7 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
       tr.appendChild(minCell);
 
       const ruleCell = document.createElement('td');
+      ruleCell.className = 'matches-group-detail-start';
       ruleCell.textContent = '(Inga ord matchade)';
       tr.appendChild(ruleCell);
 
@@ -1974,6 +1989,15 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
       const ruleScore = rule && Number.isFinite(Number(rule.score)) ? Number(rule.score) : 0;
 
       const tr = document.createElement('tr');
+      if (ruleIndex === 0) {
+        tr.classList.add('matches-group-start');
+      }
+      if (ruleIndex === rules.length - 1) {
+        tr.classList.add('matches-group-end');
+      }
+      if (ruleIndex > 0) {
+        tr.classList.add('matches-group-rowspan-continuation');
+      }
 
       if (ruleIndex === 0) {
         const categoryCell = document.createElement('td');
@@ -1995,6 +2019,7 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
       }
 
       const ruleCell = document.createElement('td');
+      ruleCell.className = 'matches-group-detail-start';
       ruleCell.textContent = text;
       tr.appendChild(ruleCell);
 
@@ -2022,29 +2047,77 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
   header.textContent = title;
   container.appendChild(header);
 
-  const fields = fieldsByKey && typeof fieldsByKey === 'object'
+  const fieldGroups = fieldsByKey && typeof fieldsByKey === 'object'
     ? Object.entries(fieldsByKey)
       .map(([fieldKey, field]) => {
         if (!field || typeof field !== 'object') {
           return null;
         }
-        const rawValue = Object.prototype.hasOwnProperty.call(field, 'value') ? field.value : null;
-        if (rawValue === null || rawValue === undefined || rawValue === '') {
+        const matches = Array.isArray(field.matches)
+          ? field.matches
+            .map((match) => {
+              if (!match || typeof match !== 'object') {
+                return null;
+              }
+              const rawValue = Object.prototype.hasOwnProperty.call(match, 'value') ? match.value : null;
+              if (rawValue === null || rawValue === undefined || rawValue === '') {
+                return null;
+              }
+              return {
+                value: rawValue,
+                raw: typeof match.raw === 'string' ? match.raw : '',
+                source: typeof match.source === 'string' ? match.source : '',
+                searchTerm: typeof match.searchTerm === 'string' ? match.searchTerm : '',
+                confidence: Number.isFinite(Number(match.confidence)) ? Number(match.confidence) : null,
+                score: Number.isFinite(Number(match.score)) ? Number(match.score) : null,
+                matchType: typeof match.matchType === 'string' ? match.matchType : '',
+                lineIndex: Number.isInteger(match.lineIndex) ? match.lineIndex : Number.MAX_SAFE_INTEGER,
+                start: Number.isInteger(match.start) ? match.start : Number.MAX_SAFE_INTEGER,
+              };
+            })
+            .filter(Boolean)
+          : [];
+        const fallbackValue = Object.prototype.hasOwnProperty.call(field, 'value') ? field.value : null;
+        const rows = matches.length > 0
+          ? matches
+          : (fallbackValue === null || fallbackValue === undefined || fallbackValue === ''
+            ? []
+            : [{
+              value: fallbackValue,
+              raw: typeof field.raw === 'string' ? field.raw : '',
+              source: typeof field.source === 'string' ? field.source : '',
+              searchTerm: '',
+              confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
+              score: Number.isFinite(Number(field.score)) ? Number(field.score) : null,
+              matchType: typeof field.matchType === 'string' ? field.matchType : '',
+              lineIndex: Number.MAX_SAFE_INTEGER,
+              start: Number.MAX_SAFE_INTEGER,
+            }]);
+        if (rows.length === 0) {
           return null;
         }
         return {
           key: typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : fieldKey,
           name: typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : fieldKey,
-          value: rawValue,
-          raw: typeof field.raw === 'string' ? field.raw : '',
-          source: typeof field.source === 'string' ? field.source : '',
-          confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
+          rows: rows
+            .slice()
+            .sort((left, right) => {
+              const leftConfidence = typeof left.confidence === 'number' ? left.confidence : -1;
+              const rightConfidence = typeof right.confidence === 'number' ? right.confidence : -1;
+              if (leftConfidence !== rightConfidence) {
+                return rightConfidence - leftConfidence;
+              }
+              if (left.lineIndex !== right.lineIndex) {
+                return left.lineIndex - right.lineIndex;
+              }
+              return left.start - right.start;
+            }),
         };
       })
       .filter(Boolean)
     : [];
 
-  if (fields.length === 0) {
+  if (fieldGroups.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
     empty.textContent = emptyText;
@@ -2059,11 +2132,14 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Datafält', 'Värde', 'Källa', 'Råtext', 'Säkerhet'].forEach((label) => {
+  ['Datafält', 'Värde', 'Källa', 'Sökord', 'Råtext', 'Säkerhet'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Säkerhet') {
       th.className = 'is-numeric';
+    }
+    if (label === 'Värde') {
+      th.classList.add('matches-group-detail-start');
     }
     headerRow.appendChild(th);
   });
@@ -2071,32 +2147,80 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
+  const formatMatchConfidence = (row) => {
+    if (row && row.matchType === 'document_date_heuristic') {
+      if (typeof row.score === 'number' && Number.isFinite(row.score) && row.score > 0) {
+        const hasFraction = Math.abs(row.score % 1) > 0.000001;
+        return `${row.score.toLocaleString('sv-SE', {
+          minimumFractionDigits: hasFraction ? 2 : 0,
+          maximumFractionDigits: hasFraction ? 2 : 0,
+        })} poäng`;
+      }
+      return '';
+    }
 
-  fields.forEach((field) => {
-    const tr = document.createElement('tr');
+    if (typeof row?.confidence === 'number' && Number.isFinite(row.confidence)) {
+      return `${(row.confidence * 100).toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+    }
 
-    const nameCell = document.createElement('td');
-    nameCell.textContent = field.name || field.key || 'Namnlöst datafält';
-    tr.appendChild(nameCell);
+    return '';
+  };
 
-    const valueCell = document.createElement('td');
-    valueCell.textContent = String(field.value);
-    tr.appendChild(valueCell);
+  fieldGroups.forEach((fieldGroup, groupIndex) => {
+    if (groupIndex > 0) {
+      const separatorRow = document.createElement('tr');
+      separatorRow.className = 'matches-group-separator';
+      const separatorCell = document.createElement('td');
+      separatorCell.colSpan = 6;
+      separatorCell.textContent = '';
+      separatorRow.appendChild(separatorCell);
+      tbody.appendChild(separatorRow);
+    }
 
-    const sourceCell = document.createElement('td');
-    sourceCell.textContent = field.source || '';
-    tr.appendChild(sourceCell);
+    fieldGroup.rows.forEach((row, rowIndex) => {
+      const tr = document.createElement('tr');
+      if (rowIndex === 0) {
+        tr.classList.add('matches-group-start');
+      }
+      if (rowIndex === fieldGroup.rows.length - 1) {
+        tr.classList.add('matches-group-end');
+      }
+      if (rowIndex > 0) {
+        tr.classList.add('matches-group-rowspan-continuation');
+      }
 
-    const rawCell = document.createElement('td');
-    rawCell.textContent = field.raw || '';
-    tr.appendChild(rawCell);
+      if (rowIndex === 0) {
+        const nameCell = document.createElement('td');
+        nameCell.className = 'matches-field-name-cell';
+        nameCell.textContent = fieldGroup.name || fieldGroup.key || 'Namnlöst datafält';
+        nameCell.rowSpan = fieldGroup.rows.length;
+        tr.appendChild(nameCell);
+      }
 
-    const confidenceCell = document.createElement('td');
-    confidenceCell.className = 'is-numeric';
-    confidenceCell.textContent = field.confidence === null ? '' : String(field.confidence);
-    tr.appendChild(confidenceCell);
+      const valueCell = document.createElement('td');
+      valueCell.className = 'matches-group-detail-start';
+      valueCell.textContent = String(row.value);
+      tr.appendChild(valueCell);
 
-    tbody.appendChild(tr);
+      const sourceCell = document.createElement('td');
+      sourceCell.textContent = row.source || '';
+      tr.appendChild(sourceCell);
+
+      const searchTermCell = document.createElement('td');
+      searchTermCell.textContent = row.searchTerm || '';
+      tr.appendChild(searchTermCell);
+
+      const rawCell = document.createElement('td');
+      rawCell.textContent = row.raw || '';
+      tr.appendChild(rawCell);
+
+      const confidenceCell = document.createElement('td');
+      confidenceCell.className = 'is-numeric';
+      confidenceCell.textContent = formatMatchConfidence(row);
+      tr.appendChild(confidenceCell);
+
+      tbody.appendChild(tr);
+    });
   });
 
   table.appendChild(tbody);
@@ -3476,8 +3600,14 @@ function renderArchivedReviewFieldRows(container, values, definitions, editable,
     name.textContent = typeof field.name === 'string' ? field.name : field.key;
     const input = document.createElement('input');
     input.type = 'text';
-    input.value = values && Object.prototype.hasOwnProperty.call(values, field.key) && values[field.key] !== null
-      ? String(values[field.key])
+    const rawValue = values && Object.prototype.hasOwnProperty.call(values, field.key)
+      ? values[field.key]
+      : null;
+    const displayValue = Array.isArray(rawValue)
+      ? (rawValue[0] ?? '')
+      : rawValue;
+    input.value = displayValue !== null && displayValue !== undefined
+      ? String(displayValue)
       : '';
     input.disabled = !editable;
     if (editable) {
@@ -3834,7 +3964,7 @@ function renderArchivedReviewPanel() {
     if (!value.trim()) {
       delete draft.fields[key];
     } else {
-      draft.fields[key] = value;
+      draft.fields[key] = [value];
     }
   });
   proposedFieldsSection.appendChild(proposedFieldsWrap);
@@ -3856,7 +3986,7 @@ function renderArchivedReviewPanel() {
     if (!value.trim()) {
       delete draft.systemFields[key];
     } else {
-      draft.systemFields[key] = value;
+      draft.systemFields[key] = [value];
     }
   });
   proposedSystemFieldsSection.appendChild(proposedSystemFieldsWrap);
@@ -4924,8 +5054,18 @@ function buildFilenameFieldValues(job) {
   setValue('main_client', clientDirName);
   setValue('sender', sender && sender.name);
 
+  const firstFieldValue = (value) => {
+    if (Array.isArray(value)) {
+      return value.length > 0 ? value[0] : null;
+    }
+    return value;
+  };
+
   const extractionFieldValue = (key) => {
     const field = extractionFields && typeof extractionFields === 'object' ? extractionFields[key] : null;
+    if (Array.isArray(field)) {
+      return firstFieldValue(field);
+    }
     if (field && typeof field === 'object' && Object.prototype.hasOwnProperty.call(field, 'value')) {
       return field.value;
     }
@@ -4949,7 +5089,7 @@ function buildFilenameFieldValues(job) {
     const key = entry && typeof entry.key === 'string'
       ? entry.key.trim()
       : (typeof fieldKey === 'string' ? fieldKey.trim() : '');
-    const rawValue = entry ? entry.value : field;
+    const rawValue = entry ? entry.value : firstFieldValue(field);
     const value = typeof rawValue === 'string'
       ? rawValue.trim()
       : (rawValue === null || rawValue === undefined ? '' : String(rawValue).trim());
