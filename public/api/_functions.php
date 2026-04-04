@@ -11919,6 +11919,28 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
     usort(
         $senders,
         static function (array $left, array $right): int {
+            $countFoundMarks = static function (array $row): int {
+                $count = ($row['nameFound'] ?? false) === true ? 1 : 0;
+                if (is_string($row['matchedAlias'] ?? null) && trim((string) $row['matchedAlias']) !== '') {
+                    $count++;
+                }
+                if (is_array($row['organizationNumber'] ?? null) && (($row['organizationNumber']['found'] ?? false) === true)) {
+                    $count++;
+                }
+                foreach (is_array($row['paymentNumbers'] ?? null) ? $row['paymentNumbers'] : [] as $paymentEntry) {
+                    if (is_array($paymentEntry) && (($paymentEntry['found'] ?? false) === true)) {
+                        $count++;
+                    }
+                }
+                return $count;
+            };
+
+            $leftFoundCount = $countFoundMarks($left);
+            $rightFoundCount = $countFoundMarks($right);
+            if ($leftFoundCount !== $rightFoundCount) {
+                return $rightFoundCount <=> $leftFoundCount;
+            }
+
             return strcmp(
                 strtolower((string) ($left['name'] ?? '')),
                 strtolower((string) ($right['name'] ?? ''))
@@ -12182,7 +12204,7 @@ function sender_analysis_matches_from_summary(?array $senderSummary): array
 function single_preselected_sender_from_summary(?array $senderSummary): array
 {
     $matches = sender_analysis_matches_from_summary($senderSummary);
-    if (count($matches) !== 1) {
+    if ($matches === []) {
         return [
             'matchedSenderId' => null,
             'preselectedSender' => null,

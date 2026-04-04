@@ -4791,18 +4791,16 @@ function effectiveSenderId(job) {
   if (Number.isInteger(job.selectedSenderId) && job.selectedSenderId > 0 && isKnownSender(job.selectedSenderId)) {
     return String(job.selectedSenderId);
   }
-  const autoResult = autoArchivingResultForJob(job);
-  if (autoResult && Number.isInteger(Number(autoResult.senderId)) && Number(autoResult.senderId) > 0 && isKnownSender(autoResult.senderId)) {
-    return String(autoResult.senderId);
-  }
-  const preselectedSender = job.analysis && typeof job.analysis === 'object' && job.analysis.preselectedSender && typeof job.analysis.preselectedSender === 'object'
-    ? job.analysis.preselectedSender
-    : null;
-  if (preselectedSender && Number.isInteger(Number(preselectedSender.id)) && Number(preselectedSender.id) > 0 && isKnownSender(preselectedSender.id)) {
-    return String(preselectedSender.id);
-  }
-  if (Number.isInteger(job.matchedSenderId) && job.matchedSenderId > 0 && isKnownSender(job.matchedSenderId)) {
-    return String(job.matchedSenderId);
+
+  const senderRows = senderLinkedRowsForJob(job);
+  const firstSummarySender = senderRows.find((row) => {
+    return row
+      && Number.isInteger(Number(row.senderId))
+      && Number(row.senderId) > 0
+      && isKnownSender(row.senderId);
+  }) || null;
+  if (firstSummarySender) {
+    return String(firstSummarySender.senderId);
   }
   return '';
 }
@@ -4865,6 +4863,39 @@ function clearSelectedJobSenderSectionMessage(message) {
   }
 }
 
+function applySelectedSenderValue(value) {
+  if (!selectedJobId) {
+    return;
+  }
+
+  const selectedJob = findJobById(selectedJobId);
+  if (selectedJob && selectedJob.archived === true) {
+    setSenderForJob(selectedJob);
+    renderSelectedJobSenderSection(selectedJob);
+    return;
+  }
+
+  if (!value) {
+    selectedSenderByJobId.delete(selectedJobId);
+  } else {
+    selectedSenderByJobId.set(selectedJobId, value);
+  }
+
+  if (senderSelectEl instanceof HTMLSelectElement && senderSelectEl.value !== value) {
+    senderSelectEl.value = value;
+  }
+
+  const currentJob = findJobById(selectedJobId);
+  renderSelectedJobSenderSection(currentJob);
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+  saveSelectedJobFields(selectedJobId, { selectedSenderId: value || null }).catch((error) => {
+    restoreSelectedJobEditorState();
+    renderSelectedJobSenderSection(findJobById(selectedJobId));
+    alert(error.message || 'Kunde inte spara avsändare.');
+  });
+}
+
 function renderSelectedJobSenderSection(job) {
   if (!(selectedJobSenderLinkedInfoEl instanceof HTMLElement) || !(selectedJobSenderUnknownInfoEl instanceof HTMLElement)) {
     return;
@@ -4917,9 +4948,27 @@ function renderSelectedJobSenderSection(job) {
   if (senders.length > 0) {
     const senderList = document.createElement('ul');
     senderList.className = 'selected-job-sender-linked-list';
+    const resolvedSelectedSenderId = effectiveSenderId(job);
     senders.forEach((senderRow) => {
       const item = document.createElement('li');
       item.className = 'selected-job-sender-linked-item';
+
+      const senderChoice = document.createElement('input');
+      senderChoice.type = 'radio';
+      senderChoice.name = 'selected-job-sender-choice';
+      senderChoice.className = 'selected-job-sender-radio';
+      senderChoice.value = String(senderRow.senderId || '');
+      senderChoice.checked = senderChoice.value !== '' && senderChoice.value === resolvedSelectedSenderId;
+      senderChoice.disabled = !job || job.status !== 'ready' || job.archived === true;
+      senderChoice.addEventListener('change', () => {
+        if (!senderChoice.checked) {
+          return;
+        }
+        applySelectedSenderValue(senderChoice.value);
+      });
+
+      const body = document.createElement('div');
+      body.className = 'selected-job-sender-linked-body';
 
       const header = document.createElement('div');
       header.className = `selected-job-sender-linked-header ${senderRow.nameFound === true ? 'is-found' : 'is-missing'}`;
@@ -4987,7 +5036,8 @@ function renderSelectedJobSenderSection(job) {
         );
       });
 
-      item.append(header, components);
+      body.append(header, components);
+      item.append(senderChoice, body);
       senderList.appendChild(item);
     });
     selectedJobSenderLinkedInfoEl.replaceChildren(senderList);
@@ -14684,22 +14734,12 @@ senderSelectEl.addEventListener('change', () => {
   const selectedJob = findJobById(selectedJobId);
   if (selectedJob && selectedJob.archived === true) {
     setSenderForJob(selectedJob);
+    renderSelectedJobSenderSection(selectedJob);
     return;
   }
 
   const value = senderSelectEl.value;
-  if (!value) {
-    selectedSenderByJobId.delete(selectedJobId);
-  } else {
-    selectedSenderByJobId.set(selectedJobId, value);
-  }
-  const currentJob = findJobById(selectedJobId);
-  syncFilenameField(currentJob);
-  updateArchiveAction(currentJob);
-  saveSelectedJobFields(selectedJobId, { selectedSenderId: value || null }).catch((error) => {
-    restoreSelectedJobEditorState();
-    alert(error.message || 'Kunde inte spara avsändare.');
-  });
+  applySelectedSenderValue(value);
 });
 
 categorySelectEl.addEventListener('change', () => {
