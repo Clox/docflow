@@ -45,9 +45,13 @@
           </div>
           <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
           <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
-          <div class="selected-job-panel-section">
+          <div id="selected-job-sender-unknown-section" class="selected-job-panel-section" hidden>
+            <div class="selected-job-panel-section-title">Okända avsändaruppgifter</div>
+            <div id="selected-job-sender-unknown-info" class="selected-job-sender-info"></div>
+          </div>
+          <div id="selected-job-senders-section" class="selected-job-panel-section">
             <div class="selected-job-panel-section-title">Avsändare</div>
-            <div id="selected-job-sender-info" class="selected-job-sender-info">
+            <div id="selected-job-sender-linked-info" class="selected-job-sender-info">
               Ingen avsändarinformation tillgänglig ännu.
             </div>
           </div>

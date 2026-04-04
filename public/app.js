@@ -59,7 +59,10 @@ const selectedJobPanelEl = document.getElementById('selected-job-panel');
 const selectedJobActionsPanelEl = document.getElementById('selected-job-actions-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
 const selectedJobMetaEl = document.getElementById('selected-job-meta');
-const selectedJobSenderInfoEl = document.getElementById('selected-job-sender-info');
+const selectedJobSendersSectionEl = document.getElementById('selected-job-senders-section');
+const selectedJobSenderLinkedInfoEl = document.getElementById('selected-job-sender-linked-info');
+const selectedJobSenderUnknownSectionEl = document.getElementById('selected-job-sender-unknown-section');
+const selectedJobSenderUnknownInfoEl = document.getElementById('selected-job-sender-unknown-info');
 const selectedJobStatusEl = document.getElementById('selected-job-status');
 const selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
 const selectedJobActionsWarningEl = document.getElementById('selected-job-actions-warning');
@@ -4839,15 +4842,31 @@ function selectedJobSenderObservationSpinnerPaused(observation) {
   );
 }
 
-function clearSelectedJobSenderSectionMessage(message) {
-  if (!(selectedJobSenderInfoEl instanceof HTMLElement)) {
+function setSelectedJobSenderSectionVisibility(sectionEl, visible) {
+  if (!(sectionEl instanceof HTMLElement)) {
     return;
   }
-  selectedJobSenderInfoEl.textContent = message;
+  if (visible) {
+    sectionEl.removeAttribute('hidden');
+    return;
+  }
+  sectionEl.setAttribute('hidden', '');
+}
+
+function clearSelectedJobSenderSectionMessage(message) {
+  if (!(selectedJobSenderLinkedInfoEl instanceof HTMLElement)) {
+    return;
+  }
+  setSelectedJobSenderSectionVisibility(selectedJobSendersSectionEl, true);
+  setSelectedJobSenderSectionVisibility(selectedJobSenderUnknownSectionEl, false);
+  selectedJobSenderLinkedInfoEl.textContent = message;
+  if (selectedJobSenderUnknownInfoEl instanceof HTMLElement) {
+    selectedJobSenderUnknownInfoEl.replaceChildren();
+  }
 }
 
 function renderSelectedJobSenderSection(job) {
-  if (!(selectedJobSenderInfoEl instanceof HTMLElement)) {
+  if (!(selectedJobSenderLinkedInfoEl instanceof HTMLElement) || !(selectedJobSenderUnknownInfoEl instanceof HTMLElement)) {
     return;
   }
 
@@ -4863,14 +4882,7 @@ function renderSelectedJobSenderSection(job) {
     return;
   }
 
-  const fragment = document.createDocumentFragment();
-
   if (observations.length > 0) {
-    const unknownSubtitle = document.createElement('div');
-    unknownSubtitle.className = 'selected-job-sender-subtitle';
-    unknownSubtitle.textContent = 'Okända uppgifter';
-    fragment.appendChild(unknownSubtitle);
-
     const unknownList = document.createElement('ul');
     unknownList.className = 'selected-job-sender-unknown-list';
     observations.forEach((observation) => {
@@ -4895,7 +4907,11 @@ function renderSelectedJobSenderSection(job) {
 
       unknownList.appendChild(item);
     });
-    fragment.appendChild(unknownList);
+    selectedJobSenderUnknownInfoEl.replaceChildren(unknownList);
+    setSelectedJobSenderSectionVisibility(selectedJobSenderUnknownSectionEl, true);
+  } else {
+    selectedJobSenderUnknownInfoEl.replaceChildren();
+    setSelectedJobSenderSectionVisibility(selectedJobSenderUnknownSectionEl, false);
   }
 
   if (senders.length > 0) {
@@ -4971,15 +4987,20 @@ function renderSelectedJobSenderSection(job) {
       item.append(header, components);
       senderList.appendChild(item);
     });
-    fragment.appendChild(senderList);
+    selectedJobSenderLinkedInfoEl.replaceChildren(senderList);
+    setSelectedJobSenderSectionVisibility(selectedJobSendersSectionEl, true);
   } else {
-    const emptySenders = document.createElement('div');
-    emptySenders.className = 'selected-job-sender-empty';
-    emptySenders.textContent = 'Inga avsändare kopplade ännu.';
-    fragment.appendChild(emptySenders);
+    if (observations.length > 0) {
+      selectedJobSenderLinkedInfoEl.replaceChildren();
+      setSelectedJobSenderSectionVisibility(selectedJobSendersSectionEl, false);
+    } else {
+      const emptySenders = document.createElement('div');
+      emptySenders.className = 'selected-job-sender-empty';
+      emptySenders.textContent = 'Inga avsändare kopplade ännu.';
+      selectedJobSenderLinkedInfoEl.replaceChildren(emptySenders);
+      setSelectedJobSenderSectionVisibility(selectedJobSendersSectionEl, true);
+    }
   }
-
-  selectedJobSenderInfoEl.replaceChildren(fragment);
 }
 
 function effectiveCategoryId(job) {

@@ -1520,11 +1520,11 @@ final class SenderRepository
         }
     }
 
-    public function resolveDocumentSenderLinks(?string $orgNumber, ?string $bankgiro, ?string $plusgiro): array
+    public function resolveDocumentSenderLinks(array $orgNumbers, array $bankgiros, array $plusgiros): array
     {
         $this->resolveUnlinkedNamedIdentifiers();
 
-        $components = $this->loadDocumentSenderComponents($orgNumber, $bankgiro, $plusgiro);
+        $components = $this->loadDocumentSenderComponents($orgNumbers, $bankgiros, $plusgiros);
         $senderIds = array_values(array_unique(array_filter(
             array_map(
                 static fn (array $component): int => isset($component['senderId']) ? (int) $component['senderId'] : 0,
@@ -1629,7 +1629,7 @@ final class SenderRepository
         return [
             'merged' => $merges !== [],
             'merges' => $merges,
-            'components' => $this->loadDocumentSenderComponents($orgNumber, $bankgiro, $plusgiro),
+            'components' => $this->loadDocumentSenderComponents($orgNumbers, $bankgiros, $plusgiros),
         ];
     }
 
@@ -1669,12 +1669,24 @@ final class SenderRepository
         return is_array($sender) ? $sender : null;
     }
 
-    private function loadDocumentSenderComponents(?string $orgNumber, ?string $bankgiro, ?string $plusgiro): array
+    private function loadDocumentSenderComponents(array $orgNumbers, array $bankgiros, array $plusgiros): array
     {
         $components = [];
+        $seenComponentKeys = [];
 
-        $normalizedOrganizationNumber = is_string($orgNumber) ? IdentifierNormalizer::normalizeOrgNumber($orgNumber) : null;
-        if ($normalizedOrganizationNumber !== null) {
+        foreach ($orgNumbers as $orgNumber) {
+            if (!is_string($orgNumber)) {
+                continue;
+            }
+            $normalizedOrganizationNumber = IdentifierNormalizer::normalizeOrgNumber($orgNumber);
+            if ($normalizedOrganizationNumber === null) {
+                continue;
+            }
+            $componentKey = 'organization_number:' . $normalizedOrganizationNumber;
+            if (isset($seenComponentKeys[$componentKey])) {
+                continue;
+            }
+            $seenComponentKeys[$componentKey] = true;
             $row = $this->findObservedOrganizationNumberRow($normalizedOrganizationNumber);
             $components[] = [
                 'type' => 'organization_number',
@@ -1684,8 +1696,19 @@ final class SenderRepository
             ];
         }
 
-        $normalizedBankgiro = is_string($bankgiro) ? IdentifierNormalizer::normalizeBankgiro($bankgiro) : null;
-        if ($normalizedBankgiro !== null) {
+        foreach ($bankgiros as $bankgiro) {
+            if (!is_string($bankgiro)) {
+                continue;
+            }
+            $normalizedBankgiro = IdentifierNormalizer::normalizeBankgiro($bankgiro);
+            if ($normalizedBankgiro === null) {
+                continue;
+            }
+            $componentKey = 'bankgiro:' . $normalizedBankgiro;
+            if (isset($seenComponentKeys[$componentKey])) {
+                continue;
+            }
+            $seenComponentKeys[$componentKey] = true;
             $row = $this->findObservedPaymentNumberRow('bankgiro', $normalizedBankgiro);
             $components[] = [
                 'type' => 'bankgiro',
@@ -1695,8 +1718,19 @@ final class SenderRepository
             ];
         }
 
-        $normalizedPlusgiro = is_string($plusgiro) ? IdentifierNormalizer::normalizePlusgiro($plusgiro) : null;
-        if ($normalizedPlusgiro !== null) {
+        foreach ($plusgiros as $plusgiro) {
+            if (!is_string($plusgiro)) {
+                continue;
+            }
+            $normalizedPlusgiro = IdentifierNormalizer::normalizePlusgiro($plusgiro);
+            if ($normalizedPlusgiro === null) {
+                continue;
+            }
+            $componentKey = 'plusgiro:' . $normalizedPlusgiro;
+            if (isset($seenComponentKeys[$componentKey])) {
+                continue;
+            }
+            $seenComponentKeys[$componentKey] = true;
             $row = $this->findObservedPaymentNumberRow('plusgiro', $normalizedPlusgiro);
             $components[] = [
                 'type' => 'plusgiro',

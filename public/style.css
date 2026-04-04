@@ -293,6 +293,10 @@ body.is-resizing-sidebar {
   background: #fff;
 }
 
+.selected-job-panel-section[hidden] {
+  display: none;
+}
+
 .selected-job-panel-section-title {
   position: absolute;
   top: 0;

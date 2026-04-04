@@ -11675,21 +11675,42 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
 
     sync_named_sender_identifier_links();
 
-    $organizationNumber = extracted_field_scalar_value($extracted, 'organisationsnummer') ?? '';
-    $bankgiro = extracted_field_scalar_value($extracted, 'bankgiro') ?? '';
-    $plusgiro = extracted_field_scalar_value($extracted, 'plusgiro') ?? '';
+    $organizationNumbers = extracted_field_string_values($extracted, 'organisationsnummer');
+    $bankgiroValues = extracted_field_string_values($extracted, 'bankgiro');
+    $plusgiroValues = extracted_field_string_values($extracted, 'plusgiro');
     $documentText = sender_summary_document_text($jobDir);
     $senderRowsById = cached_sender_editor_rows_by_id();
 
-    $normalizedOrganizationNumber = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($organizationNumber);
-    $normalizedBankgiro = \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($bankgiro);
-    $normalizedPlusgiro = \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($plusgiro);
+    $normalizedOrganizationNumbers = [];
+    foreach ($organizationNumbers as $organizationNumber) {
+        $normalized = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($organizationNumber);
+        if ($normalized !== null) {
+            $normalizedOrganizationNumbers[$normalized] = true;
+        }
+    }
+
+    $normalizedBankgiroValues = [];
+    foreach ($bankgiroValues as $bankgiro) {
+        $normalized = \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($bankgiro);
+        if ($normalized !== null) {
+            $normalizedBankgiroValues[$normalized] = true;
+        }
+    }
+
+    $normalizedPlusgiroValues = [];
+    foreach ($plusgiroValues as $plusgiro) {
+        $normalized = \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($plusgiro);
+        if ($normalized !== null) {
+            $normalizedPlusgiroValues[$normalized] = true;
+        }
+    }
 
     $observations = [];
+    $observationKeys = [];
     $senderIds = [];
     $documentComponentNamesBySenderId = [];
 
-    if ($organizationNumber !== '') {
+    foreach ($organizationNumbers as $organizationNumber) {
         $observedRow = observed_sender_organization_summary_row($organizationNumber);
         $observedSenderId = isset($observedRow['senderId']) && (int) $observedRow['senderId'] > 0 ? (int) $observedRow['senderId'] : null;
         if ($observedSenderId !== null) {
@@ -11699,17 +11720,26 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 $documentComponentNamesBySenderId[$observedSenderId][] = $observedName;
             }
         } else {
+            $observationKey = 'organization_number:' . (is_string($observedRow['organizationNumber'] ?? null)
+                ? $observedRow['organizationNumber']
+                : (\Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($organizationNumber) ?? $organizationNumber));
+            if (isset($observationKeys[$observationKey])) {
+                continue;
+            }
+            $observationKeys[$observationKey] = true;
             $observations[] = [
-                'key' => 'organization_number:' . (is_string($observedRow['organizationNumber'] ?? null) ? $observedRow['organizationNumber'] : ($normalizedOrganizationNumber ?? $organizationNumber)),
+                'key' => $observationKey,
                 'type' => 'organization_number',
                 'itemLabel' => 'ORG.NR',
-                'itemValue' => $normalizedOrganizationNumber ?? preg_replace('/\D+/', '', $organizationNumber) ?? $organizationNumber,
+                'itemValue' => \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($organizationNumber)
+                    ?? preg_replace('/\D+/', '', $organizationNumber)
+                    ?? $organizationNumber,
                 'status' => 'pending',
             ];
         }
     }
 
-    if ($bankgiro !== '') {
+    foreach ($bankgiroValues as $bankgiro) {
         $observedRow = observed_sender_payment_summary_row('bankgiro', $bankgiro);
         $observedSenderId = isset($observedRow['senderId']) && (int) $observedRow['senderId'] > 0 ? (int) $observedRow['senderId'] : null;
         $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
@@ -11720,8 +11750,15 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 $documentComponentNamesBySenderId[$observedSenderId][] = $observedName;
             }
         } else {
+            $observationKey = 'bankgiro:' . (is_string($observedRow['number'] ?? null)
+                ? $observedRow['number']
+                : (\Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($bankgiro) ?? $bankgiro));
+            if (isset($observationKeys[$observationKey])) {
+                continue;
+            }
+            $observationKeys[$observationKey] = true;
             $observations[] = [
-                'key' => 'bankgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : ($normalizedBankgiro ?? $bankgiro)),
+                'key' => $observationKey,
                 'type' => 'bankgiro',
                 'itemLabel' => 'BANKGIRO',
                 'itemValue' => $bankgiro,
@@ -11730,7 +11767,7 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         }
     }
 
-    if ($plusgiro !== '') {
+    foreach ($plusgiroValues as $plusgiro) {
         $observedRow = observed_sender_payment_summary_row('plusgiro', $plusgiro);
         $observedSenderId = isset($observedRow['senderId']) && (int) $observedRow['senderId'] > 0 ? (int) $observedRow['senderId'] : null;
         $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
@@ -11741,8 +11778,15 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 $documentComponentNamesBySenderId[$observedSenderId][] = $observedName;
             }
         } else {
+            $observationKey = 'plusgiro:' . (is_string($observedRow['number'] ?? null)
+                ? $observedRow['number']
+                : (\Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($plusgiro) ?? $plusgiro));
+            if (isset($observationKeys[$observationKey])) {
+                continue;
+            }
+            $observationKeys[$observationKey] = true;
             $observations[] = [
-                'key' => 'plusgiro:' . (is_string($observedRow['number'] ?? null) ? $observedRow['number'] : ($normalizedPlusgiro ?? $plusgiro)),
+                'key' => $observationKey,
                 'type' => 'plusgiro',
                 'itemLabel' => 'PLUSGIRO',
                 'itemValue' => $plusgiro,
@@ -11781,7 +11825,7 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 $organizationEntry = [
                     'label' => 'Org.nr',
                     'value' => $normalizedNumber,
-                    'found' => $normalizedOrganizationNumber !== null && $normalizedOrganizationNumber === $normalizedNumber,
+                    'found' => isset($normalizedOrganizationNumbers[$normalizedNumber]),
                 ];
             }
         }
@@ -11805,8 +11849,8 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 'label' => $paymentType === 'plusgiro' ? 'PG' : 'BG',
                 'value' => $rawNumber,
                 'found' => $paymentType === 'plusgiro'
-                    ? ($normalizedPlusgiro !== null && $normalizedPlusgiro === $normalizedNumber)
-                    : ($normalizedBankgiro !== null && $normalizedBankgiro === $normalizedNumber),
+                    ? isset($normalizedPlusgiroValues[$normalizedNumber])
+                    : isset($normalizedBankgiroValues[$normalizedNumber]),
             ];
         }
 
@@ -12084,9 +12128,9 @@ function sync_job_sender_document_links(array $config, string $jobId): array
         ];
     }
 
-    $organizationNumber = extracted_field_scalar_value($extracted, 'organisationsnummer');
-    $bankgiro = extracted_field_scalar_value($extracted, 'bankgiro');
-    $plusgiro = extracted_field_scalar_value($extracted, 'plusgiro');
+    $organizationNumbers = extracted_field_string_values($extracted, 'organisationsnummer');
+    $bankgiroValues = extracted_field_string_values($extracted, 'bankgiro');
+    $plusgiroValues = extracted_field_string_values($extracted, 'plusgiro');
 
     $repository = sender_repository_instance();
     if ($repository === null) {
@@ -12098,7 +12142,7 @@ function sync_job_sender_document_links(array $config, string $jobId): array
     }
 
     try {
-        return $repository->resolveDocumentSenderLinks($organizationNumber, $bankgiro, $plusgiro);
+        return $repository->resolveDocumentSenderLinks($organizationNumbers, $bankgiroValues, $plusgiroValues);
     } catch (Throwable $e) {
         return [
             'merged' => false,
