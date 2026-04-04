@@ -2224,6 +2224,13 @@ body.is-resizing-sidebar {
   font-weight: 600;
 }
 
+.matches-penalty-link {
+  color: #0f4c81;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  cursor: help;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -2892,16 +2899,33 @@ body.is-resizing-sidebar {
   margin: 0 0 10px;
 }
 
+.matching-threshold-section h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #111827;
+}
+
 .matching-threshold-section p {
   margin: 0 0 6px;
 }
 
 .matching-threshold-row {
-  margin: 0;
+  margin: 0 0 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
 }
 
 .matching-threshold-field {
-  max-width: 210px;
+  max-width: none;
+}
+
+.matching-percent-field {
+  width: 100%;
+  max-width: 220px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .matching-threshold-field input {
@@ -2910,6 +2934,11 @@ body.is-resizing-sidebar {
   padding: 6px 8px;
   border: 1px solid #ccc;
   border-radius: 4px;
+}
+
+.matching-percent-field span {
+  color: #4b5563;
+  font-size: 14px;
 }
 
 .matching-row {

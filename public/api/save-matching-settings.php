@@ -38,14 +38,25 @@ foreach ($payload['replacements'] as $row) {
     ];
 }
 
+if (array_key_exists('positionAdjustment', $payload) && !is_array($payload['positionAdjustment'])) {
+    json_response(['error' => 'Invalid position adjustment payload'], 400);
+    exit;
+}
+
+$positionAdjustment = normalize_matching_position_adjustment_settings(
+    is_array($payload['positionAdjustment'] ?? null) ? $payload['positionAdjustment'] : []
+);
+
 try {
     write_json_file(DATA_DIR . '/matching.json', [
         'replacements' => $normalized,
+        'positionAdjustment' => $positionAdjustment,
     ]);
 
     json_response([
         'ok' => true,
         'replacements' => $normalized,
+        'positionAdjustment' => $positionAdjustment,
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

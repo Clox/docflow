@@ -373,6 +373,34 @@
 
   <template id="settings-template-matching">
     <h3>Textmatchning</h3>
+    <div class="matching-threshold-section">
+      <h4>Positionsbaserad säkerhetsjustering</h4>
+      <p>Hur säkerheten justeras utifrån brus mellan nyckel och värde samt deras riktning i dokumentet.</p>
+      <div class="matching-threshold-row">
+        <div class="matching-threshold-field">
+          <label class="settings-label" for="matching-noise-penalty">Straff per brus-tecken</label>
+          <div class="matching-percent-field">
+            <input id="matching-noise-penalty" type="number" min="0" max="100" step="0.1" inputmode="decimal">
+            <span>%</span>
+          </div>
+        </div>
+        <div class="matching-threshold-field">
+          <label class="settings-label" for="matching-down-right-penalty">Straff diagonalt nedåt åt höger</label>
+          <div class="matching-percent-field">
+            <input id="matching-down-right-penalty" type="number" min="0" step="0.1" inputmode="decimal">
+            <span>%</span>
+          </div>
+        </div>
+        <div class="matching-threshold-field">
+          <label class="settings-label" for="matching-up-left-penalty">Straff diagonalt uppåt åt vänster</label>
+          <div class="matching-percent-field">
+            <input id="matching-up-left-penalty" type="number" min="0" step="0.1" inputmode="decimal">
+            <span>%</span>
+          </div>
+        </div>
+      </div>
+      <p>Rakt åt höger och rakt nedåt ger alltid 0 % straff. Andra riktningar interpoleras mellan diagonalt nedåt åt höger och diagonalt uppåt åt vänster.</p>
+    </div>
     <div class="matching-replacements-section">
       <p>Definiera teckenersättningar för OCR-text före matchning.</p>
       <p>Exempel: mappa <code>é</code> till <code>ö</code> så att <code>Férfallodatum</code> kan matcha <code>Förfallodatum</code>.</p>

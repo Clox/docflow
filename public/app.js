@@ -105,6 +105,9 @@ let matchingListEl = null;
 let matchingAddRowEl = null;
 let matchingCancelEl = null;
 let matchingApplyEl = null;
+let matchingNoisePenaltyEl = null;
+let matchingDownRightPenaltyEl = null;
+let matchingUpLeftPenaltyEl = null;
 let ocrSkipExistingTextEl = null;
 let ocrOptimizeLevelEl = null;
 let ocrTextExtractionMethodEl = null;
@@ -288,6 +291,7 @@ let labelsCustomCollapsed = false;
 let sendersDraft = [];
 let sendersUnlinkedIdentifiers = [];
 let matchingDraft = [];
+let matchingPositionAdjustmentDraft = defaultMatchingPositionAdjustmentSettings();
 let ocrSkipExistingTextBaseline = true;
 let ocrOptimizeLevelBaseline = 1;
 let ocrTextExtractionMethodBaseline = 'layout';
@@ -305,7 +309,8 @@ let sendersSortOrder = 'name';
 let activeSendersPanelTabId = 'senders';
 let senderDraftUiKeySeq = 1;
 let matchingBaselineJson = JSON.stringify({
-  replacements: []
+  replacements: [],
+  positionAdjustment: defaultMatchingPositionAdjustmentSettings()
 });
 let pathsBaselineValue = '';
 let categoriesBaselineJson = JSON.stringify([]);
@@ -2072,6 +2077,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
                 source: typeof match.source === 'string' ? match.source : '',
                 searchTerm: typeof match.searchTerm === 'string' ? match.searchTerm : '',
                 confidence: Number.isFinite(Number(match.confidence)) ? Number(match.confidence) : null,
+                noisePenalty: Number.isFinite(Number(match.noisePenalty)) ? Number(match.noisePenalty) : null,
+                directionPenalty: Number.isFinite(Number(match.directionPenalty)) ? Number(match.directionPenalty) : null,
+                noiseText: typeof match.noiseText === 'string' ? match.noiseText : '',
                 score: Number.isFinite(Number(match.score)) ? Number(match.score) : null,
                 matchType: typeof match.matchType === 'string' ? match.matchType : '',
                 lineIndex: Number.isInteger(match.lineIndex) ? match.lineIndex : Number.MAX_SAFE_INTEGER,
@@ -2091,6 +2099,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
               source: typeof field.source === 'string' ? field.source : '',
               searchTerm: '',
               confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
+              noisePenalty: Number.isFinite(Number(field.noisePenalty)) ? Number(field.noisePenalty) : null,
+              directionPenalty: Number.isFinite(Number(field.directionPenalty)) ? Number(field.directionPenalty) : null,
+              noiseText: typeof field.noiseText === 'string' ? field.noiseText : '',
               score: Number.isFinite(Number(field.score)) ? Number(field.score) : null,
               matchType: typeof field.matchType === 'string' ? field.matchType : '',
               lineIndex: Number.MAX_SAFE_INTEGER,
@@ -2135,7 +2146,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Datafält', 'Värde', 'Källa', 'Sökord', 'Råtext', 'Säkerhet'].forEach((label) => {
+  ['Datafält', 'Värde', 'Sökord', 'Råtext', 'Straff', 'Säkerhet'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Säkerhet') {
@@ -2168,17 +2179,53 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
 
     return '';
   };
+  const buildNoisePenaltyTooltip = (noiseText) => {
+    if (typeof noiseText !== 'string' || noiseText === '') {
+      return 'Inget brussegment sparat.';
+    }
+    const visibleNoiseText = noiseText.replace(/ /gu, '·').replace(/\t/gu, '\\t').replace(/\n/gu, '\\n');
+    const noiseCharacters = Array.from(noiseText.matchAll(/\S/gu), (match) => match[0]);
+    const noiseCharactersLabel = noiseCharacters.length > 0 ? noiseCharacters.join(' ') : 'Inga';
+    return `Brussegment: ${visibleNoiseText}\nRäknade tecken: ${noiseCharactersLabel}`;
+  };
+  const appendMatchPenalties = (cell, row) => {
+    const parts = [];
+    if (typeof row?.noisePenalty === 'number' && Number.isFinite(row.noisePenalty) && row.noisePenalty > 0) {
+      const noiseEl = document.createElement('span');
+      noiseEl.className = 'matches-penalty-link';
+      noiseEl.textContent = `Brus -${(row.noisePenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
+      noiseEl.title = buildNoisePenaltyTooltip(row.noiseText);
+      parts.push(noiseEl);
+    }
+    if (typeof row?.directionPenalty === 'number' && Number.isFinite(row.directionPenalty) && row.directionPenalty > 0) {
+      const directionEl = document.createElement('span');
+      directionEl.textContent = `Riktning -${(row.directionPenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
+      parts.push(directionEl);
+    }
+
+    if (parts.length === 0) {
+      cell.textContent = '–';
+      return;
+    }
+
+    parts.forEach((part, index) => {
+      if (index > 0) {
+        cell.appendChild(document.createTextNode(', '));
+      }
+      cell.appendChild(part);
+    });
+  };
 
   fieldGroups.forEach((fieldGroup, groupIndex) => {
-    if (groupIndex > 0) {
-      const separatorRow = document.createElement('tr');
-      separatorRow.className = 'matches-group-separator';
-      const separatorCell = document.createElement('td');
+      if (groupIndex > 0) {
+        const separatorRow = document.createElement('tr');
+        separatorRow.className = 'matches-group-separator';
+        const separatorCell = document.createElement('td');
       separatorCell.colSpan = 6;
-      separatorCell.textContent = '';
-      separatorRow.appendChild(separatorCell);
-      tbody.appendChild(separatorRow);
-    }
+        separatorCell.textContent = '';
+        separatorRow.appendChild(separatorCell);
+        tbody.appendChild(separatorRow);
+      }
 
     fieldGroup.rows.forEach((row, rowIndex) => {
       const tr = document.createElement('tr');
@@ -2205,10 +2252,6 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
       valueCell.textContent = String(row.value);
       tr.appendChild(valueCell);
 
-      const sourceCell = document.createElement('td');
-      sourceCell.textContent = row.source || '';
-      tr.appendChild(sourceCell);
-
       const searchTermCell = document.createElement('td');
       searchTermCell.textContent = row.searchTerm || '';
       tr.appendChild(searchTermCell);
@@ -2216,6 +2259,10 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
       const rawCell = document.createElement('td');
       rawCell.textContent = row.raw || '';
       tr.appendChild(rawCell);
+
+      const penaltiesCell = document.createElement('td');
+      appendMatchPenalties(penaltiesCell, row);
+      tr.appendChild(penaltiesCell);
 
       const confidenceCell = document.createElement('td');
       confidenceCell.className = 'is-numeric';
@@ -7516,6 +7563,26 @@ function bindSettingsPanelRefs(tabId) {
     matchingAddRowEl = document.getElementById('matching-add-row');
     matchingCancelEl = document.getElementById('matching-cancel');
     matchingApplyEl = document.getElementById('matching-apply');
+    matchingNoisePenaltyEl = document.getElementById('matching-noise-penalty');
+    matchingDownRightPenaltyEl = document.getElementById('matching-down-right-penalty');
+    matchingUpLeftPenaltyEl = document.getElementById('matching-up-left-penalty');
+    const bindMatchingPenaltyInput = (inputEl, key) => {
+      if (!(inputEl instanceof HTMLInputElement)) {
+        return;
+      }
+      inputEl.addEventListener('input', () => {
+        const maxDecimal = key === 'noisePenaltyPerCharacter' ? 1 : null;
+        matchingPositionAdjustmentDraft[key] = sanitizeMatchingPercentInput(
+          inputEl.value,
+          matchingPositionAdjustmentDraft[key],
+          maxDecimal
+        );
+        updateSettingsActionButtons();
+      });
+    };
+    bindMatchingPenaltyInput(matchingNoisePenaltyEl, 'noisePenaltyPerCharacter');
+    bindMatchingPenaltyInput(matchingDownRightPenaltyEl, 'downRightPenalty');
+    bindMatchingPenaltyInput(matchingUpLeftPenaltyEl, 'upLeftPenalty');
     matchingAddRowEl.addEventListener('click', () => {
       matchingDraft.push(defaultReplacement());
       renderMatchingEditor();
@@ -7530,6 +7597,7 @@ function bindSettingsPanelRefs(tabId) {
       }
       const replacements = Array.isArray(parsed.replacements) ? parsed.replacements : [];
       matchingDraft = replacements.map(sanitizeReplacement);
+      matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(parsed.positionAdjustment);
       if (matchingDraft.length === 0) {
         matchingDraft = [defaultReplacement()];
       }
@@ -8158,9 +8226,10 @@ function sanitizeOcrTextExtractionMethod(value, fallback = 'layout') {
   return fallback;
 }
 
-function normalizedMatchingJson(replacements) {
+function normalizedMatchingJson(replacements, positionAdjustment = matchingPositionAdjustmentDraft) {
   return JSON.stringify({
-    replacements: replacements.map(sanitizeReplacement)
+    replacements: replacements.map(sanitizeReplacement),
+    positionAdjustment: sanitizeMatchingPositionAdjustmentSettings(positionAdjustment)
   });
 }
 
@@ -8568,6 +8637,55 @@ function defaultReplacement() {
   return {
     from: '',
     to: ''
+  };
+}
+
+function defaultMatchingPositionAdjustmentSettings() {
+  return {
+    noisePenaltyPerCharacter: 0.01,
+    downRightPenalty: 0.25,
+    upLeftPenalty: 1
+  };
+}
+
+function clampMatchingDecimal(value, fallback = 0, max = 1) {
+  const parsed = Number.parseFloat(String(value).replace(',', '.'));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  if (parsed < 0) {
+    return 0;
+  }
+  if (typeof max === 'number' && Number.isFinite(max) && parsed > max) {
+    return max;
+  }
+  return parsed;
+}
+
+function sanitizeMatchingPercentInput(value, fallbackDecimal, maxDecimal = 1) {
+  const parsed = Number.parseFloat(String(value).replace(',', '.'));
+  if (!Number.isFinite(parsed)) {
+    return fallbackDecimal;
+  }
+  return clampMatchingDecimal(parsed / 100, fallbackDecimal, maxDecimal);
+}
+
+function formatMatchingPercentInput(value, maxDecimal = 1) {
+  const decimal = clampMatchingDecimal(value, 0, maxDecimal);
+  const percent = decimal * 100;
+  if (Number.isInteger(percent)) {
+    return String(percent);
+  }
+  return percent.toFixed(2).replace(/0+$/u, '').replace(/\.$/u, '');
+}
+
+function sanitizeMatchingPositionAdjustmentSettings(value) {
+  const input = value && typeof value === 'object' ? value : {};
+  const defaults = defaultMatchingPositionAdjustmentSettings();
+  return {
+    noisePenaltyPerCharacter: clampMatchingDecimal(input.noisePenaltyPerCharacter, defaults.noisePenaltyPerCharacter, 1),
+    downRightPenalty: clampMatchingDecimal(input.downRightPenalty, defaults.downRightPenalty, null),
+    upLeftPenalty: clampMatchingDecimal(input.upLeftPenalty, defaults.upLeftPenalty, null)
   };
 }
 
@@ -10221,6 +10339,7 @@ function focusFirstClientsField() {
 
 function renderMatchingEditor() {
   matchingListEl.innerHTML = '';
+  syncMatchingPositionAdjustmentInputs();
 
   if (matchingDraft.length === 0) {
     const empty = document.createElement('div');
@@ -10279,6 +10398,18 @@ function renderMatchingEditor() {
   });
 
   updateSettingsActionButtons();
+}
+
+function syncMatchingPositionAdjustmentInputs() {
+  if (matchingNoisePenaltyEl) {
+    matchingNoisePenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.noisePenaltyPerCharacter, 1);
+  }
+  if (matchingDownRightPenaltyEl) {
+    matchingDownRightPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.downRightPenalty, null);
+  }
+  if (matchingUpLeftPenaltyEl) {
+    matchingUpLeftPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.upLeftPenalty, null);
+  }
 }
 
 function buildSenderEditorNode(row, rowIndex) {
@@ -14115,15 +14246,16 @@ async function loadMatchingSettings() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.replacements)) {
+  if (!payload || !Array.isArray(payload.replacements) || !payload.positionAdjustment || typeof payload.positionAdjustment !== 'object') {
     throw new Error('Ogiltigt svar för matchningsinställningar');
   }
 
   matchingDraft = payload.replacements.map(sanitizeReplacement);
+  matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(payload.positionAdjustment);
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -14371,18 +14503,20 @@ async function saveSendersSettings() {
 
 async function saveMatchingSettings() {
   const normalized = matchingDraft.map(sanitizeReplacement);
+  const positionAdjustment = sanitizeMatchingPositionAdjustmentSettings(matchingPositionAdjustmentDraft);
   const response = await fetch('/api/save-matching-settings.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      replacements: normalized
+      replacements: normalized,
+      positionAdjustment
     })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.replacements)) {
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.replacements) || !payload.positionAdjustment || typeof payload.positionAdjustment !== 'object') {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara matchningsinställningar';
@@ -14390,10 +14524,11 @@ async function saveMatchingSettings() {
   }
 
   matchingDraft = payload.replacements.map(sanitizeReplacement);
+  matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(payload.positionAdjustment);
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -14990,7 +15125,8 @@ settingsTabEls.forEach((tabButton) => {
       } else if (tabId === 'matching') {
         alert('Kunde inte ladda matchningsinställningar.');
         matchingDraft = [defaultReplacement()];
-        matchingBaselineJson = normalizedMatchingJson(matchingDraft);
+        matchingPositionAdjustmentDraft = defaultMatchingPositionAdjustmentSettings();
+        matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft);
         renderMatchingEditor();
       } else if (tabId === 'ocr-processing') {
         alert('Kunde inte ladda OCR-inställningar.');

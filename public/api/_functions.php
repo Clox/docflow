@@ -2627,8 +2627,10 @@ function normalize_archive_category(array $input, array &$usedCategoryIds = [], 
 
 function load_matching_settings_payload(): array
 {
+    $defaultPositionAdjustment = default_matching_position_adjustment_settings();
     $defaultPayload = [
         'replacements' => [],
+        'positionAdjustment' => $defaultPositionAdjustment,
     ];
 
     $path = DATA_DIR . '/matching.json';
@@ -2669,8 +2671,13 @@ function load_matching_settings_payload(): array
         ];
     }
 
+    $positionAdjustment = normalize_matching_position_adjustment_settings(
+        is_array($decoded['positionAdjustment'] ?? null) ? $decoded['positionAdjustment'] : $decoded
+    );
+
     return [
         'replacements' => $replacements,
+        'positionAdjustment' => $positionAdjustment,
     ];
 }
 
@@ -2679,6 +2686,66 @@ function load_matching_settings(): array
     $payload = load_matching_settings_payload();
     $rows = $payload['replacements'] ?? [];
     return is_array($rows) ? $rows : [];
+}
+
+function default_matching_position_adjustment_settings(): array
+{
+    return [
+        'noisePenaltyPerCharacter' => 0.01,
+        'downRightPenalty' => 0.25,
+        'upLeftPenalty' => 1.0,
+    ];
+}
+
+function normalize_matching_decimal_setting(mixed $value, float $fallback, ?float $max = 1.0): float
+{
+    if (is_string($value)) {
+        $value = str_replace(',', '.', trim($value));
+    }
+
+    if (!is_numeric($value)) {
+        $resolvedFallback = (float) $fallback;
+        if ($resolvedFallback < 0.0) {
+            $resolvedFallback = 0.0;
+        }
+        if ($max !== null && $resolvedFallback > $max) {
+            $resolvedFallback = $max;
+        }
+        return $resolvedFallback;
+    }
+
+    $resolved = (float) $value;
+    if ($resolved < 0.0) {
+        $resolved = 0.0;
+    }
+    if ($max !== null && $resolved > $max) {
+        $resolved = $max;
+    }
+
+    return $resolved;
+}
+
+function normalize_matching_position_adjustment_settings(?array $input): array
+{
+    $defaults = default_matching_position_adjustment_settings();
+    $source = is_array($input) ? $input : [];
+
+    return [
+        'noisePenaltyPerCharacter' => normalize_matching_decimal_setting(
+            $source['noisePenaltyPerCharacter'] ?? $source['noise_penalty_per_character'] ?? null,
+            $defaults['noisePenaltyPerCharacter']
+        ),
+        'downRightPenalty' => normalize_matching_decimal_setting(
+            $source['downRightPenalty'] ?? $source['down_right_penalty'] ?? null,
+            $defaults['downRightPenalty'],
+            null
+        ),
+        'upLeftPenalty' => normalize_matching_decimal_setting(
+            $source['upLeftPenalty'] ?? $source['up_left_penalty'] ?? null,
+            $defaults['upLeftPenalty'],
+            null
+        ),
+    ];
 }
 
 function ensure_directory(string $path): void
@@ -4369,10 +4436,10 @@ function ocr_layout_group_words_into_rows(array $words): array
     return $normalizedRows;
 }
 
-function render_grid_text_from_debug_words(array $words): string
+function build_grid_text_lines_from_debug_words(array $words): array
 {
     if ($words === []) {
-        return '';
+        return [];
     }
 
     $normalized = [];
@@ -4414,7 +4481,7 @@ function render_grid_text_from_debug_words(array $words): string
     }
 
     if ($normalized === []) {
-        return '';
+        return [];
     }
 
     $charWidth = median_float($wordWidths, 18.0);
@@ -4423,10 +4490,11 @@ function render_grid_text_from_debug_words(array $words): string
     $rowTops = [];
 
     if ($rows === []) {
-        return '';
+        return [];
     }
 
     $grid = [];
+    $gridSegments = [];
     foreach ($rows as $rowWords) {
         $wordTop = min(array_map(static fn(array $word): float => (float) ($word['y0'] ?? 0.0), $rowWords));
         $candidateRow = (int) round($wordTop / max($lineHeight, 1.0));
@@ -4434,25 +4502,40 @@ function render_grid_text_from_debug_words(array $words): string
             $candidateRow++;
         }
         if (!isset($grid[$candidateRow])) {
-            $grid[$candidateRow] = [];
+            $grid[$candidateRow] = '';
+            $gridSegments[$candidateRow] = [];
             $rowTops[$candidateRow] = $wordTop;
         }
-        $buffer = [];
+        $buffer = '';
         $cursor = 0;
+        $segments = [];
         foreach ($rowWords as $word) {
             $targetCol = (int) round(((float) ($word['x0'] ?? 0.0)) / max($charWidth, 1.0));
             if ($targetCol <= $cursor) {
                 $targetCol = $cursor > 0 ? $cursor + 1 : 0;
             }
-            while (count($buffer) < $targetCol) {
-                $buffer[] = ' ';
+            while ($cursor < $targetCol) {
+                $buffer .= ' ';
+                $cursor++;
             }
-            foreach (utf8_chars((string) ($word['text'] ?? '')) as $char) {
-                $buffer[] = $char;
-            }
-            $cursor = count($buffer);
+            $start = strlen($buffer);
+            $text = (string) ($word['text'] ?? '');
+            $buffer .= $text;
+            $cursor += utf8_strlen_safe($text);
+            $segments[] = [
+                'start' => $start,
+                'end' => strlen($buffer),
+                'text' => $text,
+                'bbox' => [
+                    'x0' => (float) ($word['x0'] ?? 0.0),
+                    'y0' => (float) ($word['y0'] ?? 0.0),
+                    'x1' => (float) ($word['x1'] ?? 0.0),
+                    'y1' => (float) ($word['y1'] ?? 0.0),
+                ],
+            ];
         }
         $grid[$candidateRow] = $buffer;
+        $gridSegments[$candidateRow] = $segments;
     }
 
     $pageLines = [];
@@ -4462,14 +4545,37 @@ function render_grid_text_from_debug_words(array $words): string
         if ($previousRow !== null) {
             $gap = max(0, $rowIndex - $previousRow - 1);
             for ($i = 0; $i < $gap; $i++) {
-                $pageLines[] = '';
+                $pageLines[] = [
+                    'text' => '',
+                    'segments' => [],
+                ];
             }
         }
-        $pageLines[] = rtrim(implode('', $buffer));
+        $pageLines[] = [
+            'text' => rtrim($buffer),
+            'segments' => array_values(array_filter(
+                is_array($gridSegments[$rowIndex] ?? null) ? $gridSegments[$rowIndex] : [],
+                static fn($segment): bool => is_array($segment)
+            )),
+        ];
         $previousRow = $rowIndex;
     }
 
-    return rtrim(implode("\n", $pageLines));
+    return $pageLines;
+}
+
+function render_grid_text_from_debug_words(array $words): string
+{
+    $pageLines = build_grid_text_lines_from_debug_words($words);
+    if ($pageLines === []) {
+        return '';
+    }
+
+    $lines = array_map(static function (array $line): string {
+        return is_string($line['text'] ?? null) ? (string) $line['text'] : '';
+    }, $pageLines);
+
+    return rtrim(implode("\n", $lines));
 }
 
 function render_grid_text_from_debug_payload(array $payload): string
@@ -6267,76 +6373,559 @@ function count_pattern_matches(string $pattern, string $text): int
     return is_int($count) && $count > 0 ? $count : 0;
 }
 
-function candidate_confidence_score(array $hit, string $candidateLine, int $candidateStart, int $candidateLineIndex, string $scope): float
+function build_matching_line_geometries_for_job(array $job, string $ocrText = ''): array
 {
-    $hitIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : 0;
-    $labelStart = is_int($hit['labelStart'] ?? null) ? (int) $hit['labelStart'] : 0;
-    $labelEnd = is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : 0;
-    $alignment = abs($candidateStart - $labelStart);
-
-    $base = 0.68;
-    if ($scope === 'tail') {
-        $base = 1.00;
-    } elseif ($scope === 'line') {
-        $base = 0.86;
+    $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+    if ($jobId === '') {
+        return [];
     }
 
-    $distance = abs($candidateLineIndex - $hitIndex);
-    if ($distance > 0) {
-        $base -= min(0.24, 0.08 * $distance);
-    }
-    if ($candidateLineIndex < $hitIndex) {
-        $base -= 0.10;
+    $pages = stored_merged_objects_pages($jobId);
+    if ($pages === []) {
+        return [];
     }
 
-    $betweenText = '';
-    if ($scope === 'tail' || $scope === 'line') {
-        $hitLine = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
-        $betweenLength = max(0, $candidateStart - $labelEnd);
-        if ($betweenLength > 0) {
-            $segment = substr($hitLine, $labelEnd, $betweenLength);
-            $betweenText = is_string($segment) ? $segment : '';
-        }
-    } else {
-        // For nearby-line extraction, measure noise relative to the label column,
-        // not from start-of-line, to avoid punishing unrelated table columns.
-        $segmentStart = max(0, $labelStart - 1);
-        $segmentLength = max(0, $candidateStart - $segmentStart);
-        if ($segmentLength > 0) {
-            $segment = substr($candidateLine, $segmentStart, $segmentLength);
-            $betweenText = is_string($segment) ? $segment : '';
+    $lineEntries = [];
+    foreach ($pages as $pageIndex => $page) {
+        if (!is_array($page)) {
+            continue;
         }
 
-        if ($candidateLineIndex > $hitIndex && $alignment <= 2) {
-            $base = max($base, 0.98);
-        } elseif ($candidateLineIndex > $hitIndex && $alignment <= 8) {
-            $base = max($base, 0.94);
-        } else {
-            $base -= min(0.16, $alignment * 0.0035);
+        $pageNumber = is_numeric($page['pageNumber'] ?? null) ? (int) $page['pageNumber'] : ($pageIndex + 1);
+        if ($pageNumber <= 0) {
+            $pageNumber = $pageIndex + 1;
         }
 
-        if ($candidateStart < ($labelStart - 2)) {
-            $base -= 0.16;
+        $lineEntries[] = [
+            'text' => '=== PAGE ' . $pageNumber . ' ===',
+            'segments' => [],
+            'pageNumber' => $pageNumber,
+        ];
+
+        $wordLines = build_grid_text_lines_from_debug_words(
+            is_array($page['words'] ?? null) ? $page['words'] : []
+        );
+        $pageText = is_string($page['text'] ?? null) ? rtrim((string) $page['text'], "\r\n") : '';
+        $renderedWordText = $wordLines !== []
+            ? implode("\n", array_map(
+                static fn(array $line): string => is_string($line['text'] ?? null) ? (string) $line['text'] : '',
+                $wordLines
+            ))
+            : '';
+
+        if ($pageText !== '' && $renderedWordText !== '' && $pageText !== $renderedWordText) {
+            foreach (ocr_text_lines($pageText) as $textLine) {
+                $lineEntries[] = [
+                    'text' => is_string($textLine) ? $textLine : '',
+                    'segments' => [],
+                    'pageNumber' => $pageNumber,
+                ];
+            }
+            continue;
+        }
+
+        if ($wordLines !== []) {
+            foreach ($wordLines as $line) {
+                $lineEntries[] = [
+                    'text' => is_string($line['text'] ?? null) ? (string) $line['text'] : '',
+                    'segments' => is_array($line['segments'] ?? null) ? $line['segments'] : [],
+                    'pageNumber' => $pageNumber,
+                ];
+            }
+            continue;
+        }
+
+        foreach (ocr_text_lines($pageText) as $textLine) {
+            $lineEntries[] = [
+                'text' => is_string($textLine) ? $textLine : '',
+                'segments' => [],
+                'pageNumber' => $pageNumber,
+            ];
+        }
+
+        if ($pageIndex < (count($pages) - 1)) {
+            $lineEntries[] = [
+                'text' => '',
+                'segments' => [],
+                'pageNumber' => $pageNumber,
+            ];
         }
     }
 
-    $nonWhitespace = count_pattern_matches('/\S/u', $betweenText);
-    $letters = count_pattern_matches('/\pL/u', $betweenText);
-    $digits = count_pattern_matches('/\d/u', $betweenText);
-    $noisePenalty = min(0.38, ($letters * 0.004) + ($nonWhitespace * 0.002) + ($digits * 0.0015));
-    if ($scope === 'nearby' && $candidateLineIndex > $hitIndex && $alignment <= 8) {
-        $noisePenalty *= 0.25;
+    if ($ocrText !== '') {
+        if (preg_match('/\R\z/u', $ocrText) === 1) {
+            $lineEntries[] = [
+                'text' => '',
+                'segments' => [],
+                'pageNumber' => is_numeric($pages[count($pages) - 1]['pageNumber'] ?? null)
+                    ? (int) $pages[count($pages) - 1]['pageNumber']
+                    : count($pages),
+            ];
+        }
+        $ocrLines = split_lines_for_matching($ocrText);
+        $geometryTexts = array_map(
+            static fn(array $entry): string => is_string($entry['text'] ?? null) ? (string) $entry['text'] : '',
+            $lineEntries
+        );
+        if ($ocrLines !== $geometryTexts) {
+            return [];
+        }
     }
-    $base -= $noisePenalty;
 
-    if (@preg_match('/(https?:\/\/|www\.|@[A-Za-z0-9._-]+)/iu', $betweenText) === 1) {
-        $base -= 0.15;
-    }
-
-    return clamp_confidence($base);
+    return $lineEntries;
 }
 
-function select_best_labeled_candidate(array $lines, array $labels, array $replacementMap, callable $candidateExtractor, int $nearbyDistance = 1): array
+function line_geometry_span_bbox(?array $lineGeometry, int $start, int $end): ?array
+{
+    if (!is_array($lineGeometry) || $start < 0 || $end <= $start) {
+        return null;
+    }
+
+    $segments = is_array($lineGeometry['segments'] ?? null) ? $lineGeometry['segments'] : [];
+    $bbox = null;
+    foreach ($segments as $segment) {
+        if (!is_array($segment)) {
+            continue;
+        }
+
+        $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+        $segmentEnd = is_int($segment['end'] ?? null) ? (int) $segment['end'] : -1;
+        $segmentBbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+        if ($segmentStart < 0 || $segmentEnd <= $segmentStart || $segmentBbox === null) {
+            continue;
+        }
+
+        if ($segmentEnd <= $start || $segmentStart >= $end) {
+            continue;
+        }
+
+        if ($bbox === null) {
+            $bbox = $segmentBbox;
+            continue;
+        }
+
+        $bbox = [
+            'x0' => min($bbox['x0'], $segmentBbox['x0']),
+            'y0' => min($bbox['y0'], $segmentBbox['y0']),
+            'x1' => max($bbox['x1'], $segmentBbox['x1']),
+            'y1' => max($bbox['y1'], $segmentBbox['y1']),
+        ];
+    }
+
+    return $bbox;
+}
+
+function bbox_axis_overlap_ratio(array $left, array $right, string $startKey, string $endKey): float
+{
+    $overlap = max(
+        0.0,
+        min((float) ($left[$endKey] ?? 0.0), (float) ($right[$endKey] ?? 0.0))
+        - max((float) ($left[$startKey] ?? 0.0), (float) ($right[$startKey] ?? 0.0))
+    );
+
+    $leftSize = max(0.0, (float) ($left[$endKey] ?? 0.0) - (float) ($left[$startKey] ?? 0.0));
+    $rightSize = max(0.0, (float) ($right[$endKey] ?? 0.0) - (float) ($right[$startKey] ?? 0.0));
+    $referenceSize = max(1.0, min($leftSize, $rightSize));
+
+    return max(0.0, min(1.0, $overlap / $referenceSize));
+}
+
+function bbox_direction_vector(array $labelBbox, array $candidateBbox): array
+{
+    $labelCenterX = ($labelBbox['x0'] + $labelBbox['x1']) / 2.0;
+    $labelCenterY = ($labelBbox['y0'] + $labelBbox['y1']) / 2.0;
+    $candidateCenterX = ($candidateBbox['x0'] + $candidateBbox['x1']) / 2.0;
+    $candidateCenterY = ($candidateBbox['y0'] + $candidateBbox['y1']) / 2.0;
+
+    $verticalOverlapRatio = bbox_axis_overlap_ratio($labelBbox, $candidateBbox, 'y0', 'y1');
+    $horizontalOverlapRatio = bbox_axis_overlap_ratio($labelBbox, $candidateBbox, 'x0', 'x1');
+
+    if ($candidateBbox['x0'] >= $labelBbox['x1']) {
+        $dx = (float) $candidateBbox['x0'] - (float) $labelBbox['x1'];
+    } elseif ($candidateBbox['x1'] <= $labelBbox['x0']) {
+        $dx = (float) $candidateBbox['x1'] - (float) $labelBbox['x0'];
+    } else {
+        $dx = 0.0;
+        if ($horizontalOverlapRatio < 0.2) {
+            $dx = $candidateCenterX - $labelCenterX;
+        }
+    }
+
+    $rawDy = $candidateCenterY - $labelCenterY;
+    $dy = $rawDy * (1.0 - $verticalOverlapRatio);
+
+    return [
+        'dx' => (float) $dx,
+        'dy' => (float) $dy,
+        'rawDy' => (float) $rawDy,
+        'verticalOverlapRatio' => $verticalOverlapRatio,
+        'horizontalOverlapRatio' => $horizontalOverlapRatio,
+    ];
+}
+
+function bbox_center_point(array $bbox): array
+{
+    return [
+        'x' => ((float) ($bbox['x0'] ?? 0.0) + (float) ($bbox['x1'] ?? 0.0)) / 2.0,
+        'y' => ((float) ($bbox['y0'] ?? 0.0) + (float) ($bbox['y1'] ?? 0.0)) / 2.0,
+    ];
+}
+
+function clamp_float_range(float $value, float $min, float $max): float
+{
+    if ($value < $min) {
+        return $min;
+    }
+    if ($value > $max) {
+        return $max;
+    }
+    return $value;
+}
+
+function closest_point_on_bbox_to_point(array $bbox, float $x, float $y): array
+{
+    return [
+        'x' => clamp_float_range($x, (float) ($bbox['x0'] ?? 0.0), (float) ($bbox['x1'] ?? 0.0)),
+        'y' => clamp_float_range($y, (float) ($bbox['y0'] ?? 0.0), (float) ($bbox['y1'] ?? 0.0)),
+    ];
+}
+
+function connector_points_between_bboxes(array $labelBbox, array $candidateBbox): array
+{
+    $labelCenter = bbox_center_point($labelBbox);
+    $candidateCenter = bbox_center_point($candidateBbox);
+
+    return [
+        'start' => closest_point_on_bbox_to_point($labelBbox, (float) $candidateCenter['x'], (float) $candidateCenter['y']),
+        'end' => closest_point_on_bbox_to_point($candidateBbox, (float) $labelCenter['x'], (float) $labelCenter['y']),
+    ];
+}
+
+function bboxes_overlap(array $left, array $right): bool
+{
+    $overlapX = min((float) ($left['x1'] ?? 0.0), (float) ($right['x1'] ?? 0.0))
+        - max((float) ($left['x0'] ?? 0.0), (float) ($right['x0'] ?? 0.0));
+    $overlapY = min((float) ($left['y1'] ?? 0.0), (float) ($right['y1'] ?? 0.0))
+        - max((float) ($left['y0'] ?? 0.0), (float) ($right['y0'] ?? 0.0));
+
+    return $overlapX > 0.0 && $overlapY > 0.0;
+}
+
+function line_segment_intersects_bbox(array $start, array $end, array $bbox): bool
+{
+    $x0 = (float) ($start['x'] ?? 0.0);
+    $y0 = (float) ($start['y'] ?? 0.0);
+    $x1 = (float) ($end['x'] ?? 0.0);
+    $y1 = (float) ($end['y'] ?? 0.0);
+
+    $minX = (float) ($bbox['x0'] ?? 0.0);
+    $minY = (float) ($bbox['y0'] ?? 0.0);
+    $maxX = (float) ($bbox['x1'] ?? 0.0);
+    $maxY = (float) ($bbox['y1'] ?? 0.0);
+
+    $dx = $x1 - $x0;
+    $dy = $y1 - $y0;
+    $t0 = 0.0;
+    $t1 = 1.0;
+
+    $clip = static function (float $p, float $q, float &$t0, float &$t1): bool {
+        if (abs($p) < 0.0000001) {
+            return $q >= 0.0;
+        }
+
+        $r = $q / $p;
+        if ($p < 0.0) {
+            if ($r > $t1) {
+                return false;
+            }
+            if ($r > $t0) {
+                $t0 = $r;
+            }
+            return true;
+        }
+
+        if ($r < $t0) {
+            return false;
+        }
+        if ($r < $t1) {
+            $t1 = $r;
+        }
+        return true;
+    };
+
+    return $clip(-$dx, $x0 - $minX, $t0, $t1)
+        && $clip($dx, $maxX - $x0, $t0, $t1)
+        && $clip(-$dy, $y0 - $minY, $t0, $t1)
+        && $clip($dy, $maxY - $y0, $t0, $t1);
+}
+
+function resolve_candidate_geometry_relation(
+    array $hit,
+    int $candidateStart,
+    int $candidateLineIndex,
+    ?string $candidateSpanText,
+    array $lineGeometries
+): ?array {
+    $hitIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : -1;
+    $labelStart = is_int($hit['labelStart'] ?? null) ? (int) $hit['labelStart'] : -1;
+    $labelEnd = is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : -1;
+    if ($hitIndex < 0 || $candidateLineIndex < 0 || $labelStart < 0 || $labelEnd <= $labelStart) {
+        return null;
+    }
+
+    $hitGeometry = is_array($lineGeometries[$hitIndex] ?? null) ? $lineGeometries[$hitIndex] : null;
+    $candidateGeometry = is_array($lineGeometries[$candidateLineIndex] ?? null) ? $lineGeometries[$candidateLineIndex] : null;
+    if ($hitGeometry === null || $candidateGeometry === null) {
+        return null;
+    }
+
+    $labelBbox = line_geometry_span_bbox($hitGeometry, $labelStart, $labelEnd);
+    $candidateLength = is_string($candidateSpanText) && $candidateSpanText !== ''
+        ? strlen($candidateSpanText)
+        : 1;
+    $candidateBbox = line_geometry_span_bbox($candidateGeometry, $candidateStart, $candidateStart + max(1, $candidateLength));
+    if ($labelBbox === null || $candidateBbox === null) {
+        return null;
+    }
+
+    $labelPageNumber = is_numeric($hitGeometry['pageNumber'] ?? null) ? (int) $hitGeometry['pageNumber'] : null;
+    $candidatePageNumber = is_numeric($candidateGeometry['pageNumber'] ?? null) ? (int) $candidateGeometry['pageNumber'] : null;
+    if ($labelPageNumber !== null && $candidatePageNumber !== null && $labelPageNumber !== $candidatePageNumber) {
+        return null;
+    }
+
+    return [
+        'labelBbox' => $labelBbox,
+        'candidateBbox' => $candidateBbox,
+        'pageNumber' => $labelPageNumber ?? $candidatePageNumber,
+        'connector' => connector_points_between_bboxes($labelBbox, $candidateBbox),
+    ];
+}
+
+function candidate_noise_details(
+    array $hit,
+    int $candidateStart,
+    int $candidateLineIndex,
+    ?string $candidateSpanText,
+    array $lineGeometries
+): array {
+    $relation = resolve_candidate_geometry_relation($hit, $candidateStart, $candidateLineIndex, $candidateSpanText, $lineGeometries);
+    if (!is_array($relation)) {
+        return [
+            'characterCount' => 0,
+            'text' => '',
+            'connector' => null,
+        ];
+    }
+
+    $labelBbox = is_array($relation['labelBbox'] ?? null) ? $relation['labelBbox'] : null;
+    $candidateBbox = is_array($relation['candidateBbox'] ?? null) ? $relation['candidateBbox'] : null;
+    $connector = is_array($relation['connector'] ?? null) ? $relation['connector'] : null;
+    $pageNumber = is_numeric($relation['pageNumber'] ?? null) ? (int) $relation['pageNumber'] : null;
+    if ($labelBbox === null || $candidateBbox === null || $connector === null) {
+        return [
+            'characterCount' => 0,
+            'text' => '',
+            'connector' => null,
+        ];
+    }
+
+    $noiseTexts = [];
+    $noiseCharacters = 0;
+    foreach ($lineGeometries as $lineGeometry) {
+        if (!is_array($lineGeometry)) {
+            continue;
+        }
+        if ($pageNumber !== null) {
+            $linePageNumber = is_numeric($lineGeometry['pageNumber'] ?? null) ? (int) $lineGeometry['pageNumber'] : null;
+            if ($linePageNumber !== $pageNumber) {
+                continue;
+            }
+        }
+
+        $segments = is_array($lineGeometry['segments'] ?? null) ? $lineGeometry['segments'] : [];
+        foreach ($segments as $segment) {
+            if (!is_array($segment)) {
+                continue;
+            }
+
+            $segmentText = is_string($segment['text'] ?? null) ? (string) $segment['text'] : '';
+            if (trim($segmentText) === '') {
+                continue;
+            }
+
+            $segmentBbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+            if ($segmentBbox === null) {
+                continue;
+            }
+            if (bboxes_overlap($segmentBbox, $labelBbox) || bboxes_overlap($segmentBbox, $candidateBbox)) {
+                continue;
+            }
+            if (!line_segment_intersects_bbox(
+                is_array($connector['start'] ?? null) ? $connector['start'] : [],
+                is_array($connector['end'] ?? null) ? $connector['end'] : [],
+                $segmentBbox
+            )) {
+                continue;
+            }
+
+            $noiseTexts[] = $segmentText;
+            $noiseCharacters += count_pattern_matches('/\S/u', $segmentText);
+        }
+    }
+
+    return [
+        'characterCount' => $noiseCharacters,
+        'text' => implode(' ', $noiseTexts),
+        'connector' => $connector,
+    ];
+}
+
+function angle_to_direction_penalty(float $angle, array $positionSettings): float
+{
+    $settings = normalize_matching_position_adjustment_settings($positionSettings);
+    $normalizedAngle = fmod($angle, 360.0);
+    if ($normalizedAngle < 0.0) {
+        $normalizedAngle += 360.0;
+    }
+
+    $references = [
+        ['angle' => 0.0, 'penalty' => 0.0],
+        ['angle' => 90.0, 'penalty' => 0.0],
+        ['angle' => 135.0, 'penalty' => (float) $settings['downRightPenalty']],
+        ['angle' => 225.0, 'penalty' => (float) $settings['upLeftPenalty']],
+        ['angle' => 360.0, 'penalty' => 0.0],
+    ];
+
+    for ($i = 0, $count = count($references) - 1; $i < $count; $i++) {
+        $start = $references[$i];
+        $end = $references[$i + 1];
+        if ($normalizedAngle < (float) $start['angle'] || $normalizedAngle > (float) $end['angle']) {
+            continue;
+        }
+
+        $range = (float) $end['angle'] - (float) $start['angle'];
+        if ($range <= 0.0) {
+            return max(0.0, (float) $start['penalty']);
+        }
+
+        $progress = ($normalizedAngle - (float) $start['angle']) / $range;
+        $penalty = (float) $start['penalty'] + (((float) $end['penalty'] - (float) $start['penalty']) * $progress);
+        return max(0.0, $penalty);
+    }
+
+    return 0.0;
+}
+
+function candidate_direction_penalty(
+    array $hit,
+    int $candidateStart,
+    int $candidateLineIndex,
+    ?string $candidateSpanText,
+    array $lineGeometries,
+    array $positionSettings
+): float {
+    $relation = resolve_candidate_geometry_relation($hit, $candidateStart, $candidateLineIndex, $candidateSpanText, $lineGeometries);
+    if (!is_array($relation)) {
+        return 0.0;
+    }
+
+    $labelBbox = is_array($relation['labelBbox'] ?? null) ? $relation['labelBbox'] : null;
+    $candidateBbox = is_array($relation['candidateBbox'] ?? null) ? $relation['candidateBbox'] : null;
+    if ($labelBbox === null || $candidateBbox === null) {
+        return 0.0;
+    }
+
+    $vector = bbox_direction_vector($labelBbox, $candidateBbox);
+    $dx = (float) ($vector['dx'] ?? 0.0);
+    $dy = (float) ($vector['dy'] ?? 0.0);
+    if (abs($dx) < 0.001 && abs($dy) < 0.001) {
+        return 0.0;
+    }
+
+    $angle = rad2deg(atan2($dy, $dx));
+    if ($angle < 0.0) {
+        $angle += 360.0;
+    }
+
+    return angle_to_direction_penalty($angle, $positionSettings);
+}
+
+function candidate_confidence_score(
+    array $components
+): float
+{
+    $base = isset($components['base']) && is_numeric($components['base']) ? (float) $components['base'] : 1.0;
+    $noisePenalty = isset($components['noisePenalty']) && is_numeric($components['noisePenalty']) ? (float) $components['noisePenalty'] : 0.0;
+    $directionPenalty = isset($components['directionPenalty']) && is_numeric($components['directionPenalty']) ? (float) $components['directionPenalty'] : 0.0;
+    $contentPenalty = isset($components['contentPenalty']) && is_numeric($components['contentPenalty']) ? (float) $components['contentPenalty'] : 0.0;
+
+    $confidence = $base;
+    $confidence *= max(0.0, 1.0 - clamp_confidence($noisePenalty));
+    $confidence *= max(0.0, 1.0 - clamp_confidence($directionPenalty));
+    $confidence -= max(0.0, $contentPenalty);
+
+    return clamp_confidence($confidence);
+}
+
+function candidate_confidence_components(
+    array $hit,
+    string $candidateLine,
+    int $candidateStart,
+    int $candidateLineIndex,
+    string $scope,
+    array $positionSettings = [],
+    array $lineGeometries = [],
+    ?string $candidateSpanText = null
+): array
+{
+    $settings = normalize_matching_position_adjustment_settings($positionSettings);
+
+    $base = 1.0;
+
+    $noiseDetails = candidate_noise_details(
+        $hit,
+        $candidateStart,
+        $candidateLineIndex,
+        $candidateSpanText,
+        $lineGeometries
+    );
+    $betweenText = is_string($noiseDetails['text'] ?? null) ? (string) $noiseDetails['text'] : '';
+    $noiseCharacters = is_int($noiseDetails['characterCount'] ?? null) ? (int) $noiseDetails['characterCount'] : 0;
+    $noisePenalty = min(1.0, $noiseCharacters * (float) $settings['noisePenaltyPerCharacter']);
+
+    $directionPenalty = candidate_direction_penalty(
+        $hit,
+        $candidateStart,
+        $candidateLineIndex,
+        $candidateSpanText,
+        $lineGeometries,
+        $settings
+    );
+
+    $contentPenalty = 0.0;
+    if (@preg_match('/(https?:\/\/|www\.|@[A-Za-z0-9._-]+)/iu', $betweenText) === 1) {
+        $contentPenalty = 0.15;
+    }
+
+    return [
+        'base' => $base,
+        'noisePenalty' => clamp_confidence($noisePenalty),
+        'directionPenalty' => max(0.0, $directionPenalty),
+        'contentPenalty' => max(0.0, $contentPenalty),
+        'noiseText' => $betweenText,
+    ];
+}
+
+function select_best_labeled_candidate(
+    array $lines,
+    array $labels,
+    array $replacementMap,
+    callable $candidateExtractor,
+    int $nearbyDistance = 1,
+    array $positionSettings = [],
+    array $lineGeometries = []
+): array
 {
     $best = [
         'value' => null,
@@ -6371,7 +6960,20 @@ function select_best_labeled_candidate(array $lines, array $labels, array $repla
                         continue;
                     }
 
-                    $confidence = candidate_confidence_score($hit, $line, $start, $hitIndex, 'tail');
+                    $spanText = is_string($candidate['spanText'] ?? null)
+                        ? (string) $candidate['spanText']
+                        : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                    $components = candidate_confidence_components(
+                        $hit,
+                        $line,
+                        $start,
+                        $hitIndex,
+                        'tail',
+                        $positionSettings,
+                        $lineGeometries,
+                        $spanText
+                    );
+                    $confidence = candidate_confidence_score($components);
                     if ($confidence > (float) $best['confidence']) {
                         $best = [
                             'value' => $value,
@@ -6399,7 +7001,20 @@ function select_best_labeled_candidate(array $lines, array $labels, array $repla
                     continue;
                 }
 
-                $confidence = candidate_confidence_score($hit, $line, $start, $hitIndex, 'line');
+                $spanText = is_string($candidate['spanText'] ?? null)
+                    ? (string) $candidate['spanText']
+                    : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                $components = candidate_confidence_components(
+                    $hit,
+                    $line,
+                    $start,
+                    $hitIndex,
+                    'line',
+                    $positionSettings,
+                    $lineGeometries,
+                    $spanText
+                );
+                $confidence = candidate_confidence_score($components);
                 if ($confidence > (float) $best['confidence']) {
                     $best = [
                         'value' => $value,
@@ -6436,7 +7051,20 @@ function select_best_labeled_candidate(array $lines, array $labels, array $repla
                     continue;
                 }
 
-                $confidence = candidate_confidence_score($hit, $nearLine, $start, $nearIndex, 'nearby');
+                $spanText = is_string($candidate['spanText'] ?? null)
+                    ? (string) $candidate['spanText']
+                    : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                $components = candidate_confidence_components(
+                    $hit,
+                    $nearLine,
+                    $start,
+                    (int) $nearIndex,
+                    'nearby',
+                    $positionSettings,
+                    $lineGeometries,
+                    $spanText
+                );
+                $confidence = candidate_confidence_score($components);
                 if ($confidence > (float) $best['confidence']) {
                     $best = [
                         'value' => $value,
@@ -7571,6 +8199,7 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
             'value' => $value,
             'raw' => $raw,
             'start' => $offsetBase + $valueStart,
+            'spanText' => $value,
             'matchType' => 'pattern',
         ];
     }
@@ -7843,7 +8472,10 @@ function add_extraction_field_match(
     float $confidence,
     ?string $matchType = null,
     ?string $searchTerm = null,
-    ?float $score = null
+    ?float $score = null,
+    ?float $noisePenalty = null,
+    ?float $directionPenalty = null,
+    ?string $noiseText = null
 ): void {
     if ($lineIndex < 0 || $start < 0 || $value === null) {
         return;
@@ -7866,6 +8498,15 @@ function add_extraction_field_match(
     }
     if (is_numeric($score)) {
         $candidate['score'] = (float) $score;
+    }
+    if (is_numeric($noisePenalty)) {
+        $candidate['noisePenalty'] = clamp_confidence((float) $noisePenalty);
+    }
+    if (is_numeric($directionPenalty)) {
+        $candidate['directionPenalty'] = max(0.0, (float) $directionPenalty);
+    }
+    if (is_string($noiseText)) {
+        $candidate['noiseText'] = $noiseText;
     }
 
     if (!isset($matchesByKey[$key]) || (float) ($matchesByKey[$key]['confidence'] ?? 0.0) < $candidate['confidence']) {
@@ -7897,7 +8538,15 @@ function sort_extraction_field_matches(array $matches): array
     return array_values($matches);
 }
 
-function collect_labeled_candidate_matches(array $lines, array $labels, array $replacementMap, callable $candidateExtractor, int $nearbyDistance = 1): array
+function collect_labeled_candidate_matches(
+    array $lines,
+    array $labels,
+    array $replacementMap,
+    callable $candidateExtractor,
+    int $nearbyDistance = 1,
+    array $positionSettings = [],
+    array $lineGeometries = []
+): array
 {
     $matchesByKey = [];
 
@@ -7930,6 +8579,19 @@ function collect_labeled_candidate_matches(array $lines, array $labels, array $r
                         continue;
                     }
 
+                    $confidenceComponents = candidate_confidence_components(
+                        $hit,
+                        $line,
+                        $start,
+                        $hitIndex,
+                        'tail',
+                        $positionSettings,
+                        $lineGeometries,
+                        is_string($candidate['spanText'] ?? null)
+                            ? (string) $candidate['spanText']
+                            : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null))
+                    );
+
                     add_extraction_field_match(
                         $matchesByKey,
                         $hitIndex,
@@ -7937,9 +8599,13 @@ function collect_labeled_candidate_matches(array $lines, array $labels, array $r
                         $value,
                         $raw,
                         'tail',
-                        candidate_confidence_score($hit, $line, $start, $hitIndex, 'tail'),
+                        candidate_confidence_score($confidenceComponents),
                         is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
-                        $label !== '' ? $label : null
+                        $label !== '' ? $label : null,
+                        null,
+                        is_numeric($confidenceComponents['noisePenalty'] ?? null) ? (float) $confidenceComponents['noisePenalty'] : null,
+                        is_numeric($confidenceComponents['directionPenalty'] ?? null) ? (float) $confidenceComponents['directionPenalty'] : null,
+                        is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null
                     );
                 }
             }
@@ -7959,6 +8625,19 @@ function collect_labeled_candidate_matches(array $lines, array $labels, array $r
                     continue;
                 }
 
+                $confidenceComponents = candidate_confidence_components(
+                    $hit,
+                    $line,
+                    $start,
+                    $hitIndex,
+                    'line',
+                    $positionSettings,
+                    $lineGeometries,
+                    is_string($candidate['spanText'] ?? null)
+                        ? (string) $candidate['spanText']
+                        : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null))
+                );
+
                 add_extraction_field_match(
                     $matchesByKey,
                     $hitIndex,
@@ -7966,9 +8645,13 @@ function collect_labeled_candidate_matches(array $lines, array $labels, array $r
                     $value,
                     $raw,
                     'line',
-                    candidate_confidence_score($hit, $line, $start, $hitIndex, 'line'),
+                    candidate_confidence_score($confidenceComponents),
                     is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
-                    $label !== '' ? $label : null
+                    $label !== '' ? $label : null,
+                    null,
+                    is_numeric($confidenceComponents['noisePenalty'] ?? null) ? (float) $confidenceComponents['noisePenalty'] : null,
+                    is_numeric($confidenceComponents['directionPenalty'] ?? null) ? (float) $confidenceComponents['directionPenalty'] : null,
+                    is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null
                 );
             }
         }
@@ -7997,6 +8680,19 @@ function collect_labeled_candidate_matches(array $lines, array $labels, array $r
                     continue;
                 }
 
+                $confidenceComponents = candidate_confidence_components(
+                    $hit,
+                    $nearLine,
+                    $start,
+                    (int) $nearIndex,
+                    'nearby',
+                    $positionSettings,
+                    $lineGeometries,
+                    is_string($candidate['spanText'] ?? null)
+                        ? (string) $candidate['spanText']
+                        : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null))
+                );
+
                 add_extraction_field_match(
                     $matchesByKey,
                     (int) $nearIndex,
@@ -8004,9 +8700,13 @@ function collect_labeled_candidate_matches(array $lines, array $labels, array $r
                     $value,
                     $raw,
                     'nearby',
-                    candidate_confidence_score($hit, $nearLine, $start, (int) $nearIndex, 'nearby'),
+                    candidate_confidence_score($confidenceComponents),
                     is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
-                    $label !== '' ? $label : null
+                    $label !== '' ? $label : null,
+                    null,
+                    is_numeric($confidenceComponents['noisePenalty'] ?? null) ? (float) $confidenceComponents['noisePenalty'] : null,
+                    is_numeric($confidenceComponents['directionPenalty'] ?? null) ? (float) $confidenceComponents['directionPenalty'] : null,
+                    is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null
                 );
             }
         }
@@ -8157,7 +8857,9 @@ function extract_generic_text_field_result(
     array $aliases,
     string $searchString,
     bool $isRegex,
-    array $replacementMap
+    array $replacementMap,
+    array $positionSettings = [],
+    array $lineGeometries = []
 ): array {
     $resolvedAliases = normalize_extraction_field_aliases($aliases);
     if ($resolvedAliases === []) {
@@ -8171,7 +8873,9 @@ function extract_generic_text_field_result(
             $resolvedAliases,
             $replacementMap,
             'generic_text_segment_candidates_from_text',
-            1
+            1,
+            $positionSettings,
+            $lineGeometries
         );
         return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
     }
@@ -8183,7 +8887,9 @@ function extract_generic_text_field_result(
         static function (string $text, int $offsetBase) use ($pattern, $isRegex): array {
             return extraction_field_pattern_candidates_from_text($text, $pattern, $isRegex, $offsetBase);
         },
-        1
+        1,
+        $positionSettings,
+        $lineGeometries
     );
     return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
@@ -8193,7 +8899,9 @@ function extract_generic_text_field_matches(
     array $aliases,
     string $searchString,
     bool $isRegex,
-    array $replacementMap
+    array $replacementMap,
+    array $positionSettings = [],
+    array $lineGeometries = []
 ): array {
     $resolvedAliases = normalize_extraction_field_aliases($aliases);
     if ($resolvedAliases === []) {
@@ -8207,7 +8915,9 @@ function extract_generic_text_field_matches(
             $resolvedAliases,
             $replacementMap,
             'generic_text_segment_candidates_from_text',
-            1
+            1,
+            $positionSettings,
+            $lineGeometries
         );
     }
 
@@ -8218,7 +8928,9 @@ function extract_generic_text_field_matches(
         static function (string $text, int $offsetBase) use ($pattern, $isRegex): array {
             return extraction_field_pattern_candidates_from_text($text, $pattern, $isRegex, $offsetBase);
         },
-        1
+        1,
+        $positionSettings,
+        $lineGeometries
     );
 }
 
@@ -8302,7 +9014,13 @@ function extract_unlabeled_pattern_field_matches(array $lines, string $pattern):
     return sort_extraction_field_matches(array_values($matchesByKey));
 }
 
-function extract_configured_rule_set_field_matches(array $lines, array $replacementMap, array $ruleSet): array
+function extract_configured_rule_set_field_matches(
+    array $lines,
+    array $replacementMap,
+    array $ruleSet,
+    array $positionSettings = [],
+    array $lineGeometries = []
+): array
 {
     $requiresSearchTerms = !array_key_exists('requiresSearchTerms', $ruleSet)
         || $ruleSet['requiresSearchTerms'] === true
@@ -8319,10 +9037,24 @@ function extract_configured_rule_set_field_matches(array $lines, array $replacem
         return [];
     }
 
-    return extract_generic_text_field_matches($lines, $searchTerms, $valuePattern, true, $replacementMap);
+        return extract_generic_text_field_matches(
+            $lines,
+            $searchTerms,
+            $valuePattern,
+            true,
+            $replacementMap,
+            $positionSettings,
+            $lineGeometries
+        );
 }
 
-function extract_configured_rule_set_field_result(array $lines, array $replacementMap, array $ruleSet): array
+function extract_configured_rule_set_field_result(
+    array $lines,
+    array $replacementMap,
+    array $ruleSet,
+    array $positionSettings = [],
+    array $lineGeometries = []
+): array
 {
     $requiresSearchTerms = !array_key_exists('requiresSearchTerms', $ruleSet)
         || $ruleSet['requiresSearchTerms'] === true
@@ -8339,10 +9071,24 @@ function extract_configured_rule_set_field_result(array $lines, array $replaceme
         return empty_extraction_field_result();
     }
 
-    return extract_generic_text_field_result($lines, $searchTerms, $valuePattern, true, $replacementMap);
+        return extract_generic_text_field_result(
+            $lines,
+            $searchTerms,
+            $valuePattern,
+            true,
+            $replacementMap,
+            $positionSettings,
+            $lineGeometries
+        );
 }
 
-function extract_configured_text_field_results(array $lines, array $replacementMap, array $fields): array
+function extract_configured_text_field_results(
+    array $lines,
+    array $replacementMap,
+    array $fields,
+    array $positionSettings = [],
+    array $lineGeometries = []
+): array
 {
     $results = [];
 
@@ -8375,7 +9121,13 @@ function extract_configured_text_field_results(array $lines, array $replacementM
                     continue;
                 }
 
-                $candidateMatches = extract_configured_rule_set_field_matches($lines, $replacementMap, $ruleSet);
+                $candidateMatches = extract_configured_rule_set_field_matches(
+                    $lines,
+                    $replacementMap,
+                    $ruleSet,
+                    $positionSettings,
+                    $lineGeometries
+                );
                 if ($candidateMatches === []) {
                     continue;
                 }
@@ -8517,6 +9269,9 @@ function simplify_extraction_field_meta(array $results): array
                         'matchType' => is_string($match['matchType'] ?? null) ? trim((string) $match['matchType']) : null,
                         'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : null,
                         'score' => is_numeric($match['score'] ?? null) ? (float) $match['score'] : null,
+                        'noisePenalty' => is_numeric($match['noisePenalty'] ?? null) ? clamp_confidence((float) $match['noisePenalty']) : null,
+                        'directionPenalty' => is_numeric($match['directionPenalty'] ?? null) ? max(0.0, (float) $match['directionPenalty']) : null,
+                        'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : null,
                     ];
                 },
                 array_values(array_filter($result['matches'], static fn ($match): bool => is_array($match)))
@@ -9044,8 +9799,14 @@ function calculate_auto_archiving_result_from_text(
     array $rules,
     array $clients,
     array $senders,
-    array $replacementMap
+    array $replacementMap,
+    ?array $matchingPayload = null
 ): array {
+    $resolvedMatchingPayload = is_array($matchingPayload) ? $matchingPayload : load_matching_settings_payload();
+    $positionSettings = normalize_matching_position_adjustment_settings(
+        is_array($resolvedMatchingPayload['positionAdjustment'] ?? null) ? $resolvedMatchingPayload['positionAdjustment'] : []
+    );
+    $lineGeometries = build_matching_line_geometries_for_job($job, $ocrText);
     $systemLabels = is_array($rules['systemLabels'] ?? null) ? $rules['systemLabels'] : [];
     $labels = is_array($rules['labels'] ?? null) ? $rules['labels'] : [];
     $categories = build_categories_from_archive_folders(is_array($rules['archiveFolders'] ?? null) ? $rules['archiveFolders'] : []);
@@ -9059,7 +9820,9 @@ function calculate_auto_archiving_result_from_text(
     $configuredFieldResults = extract_configured_text_field_results(
         split_lines_for_matching($ocrText),
         $replacementMap,
-        $configuredFields
+        $configuredFields,
+        $positionSettings,
+        $lineGeometries
     );
     $configuredFieldValues = simplify_extraction_field_values($configuredFieldResults);
     $configuredFieldMeta = simplify_extraction_field_meta($configuredFieldResults);
@@ -9146,7 +9909,8 @@ function calculate_auto_archiving_result_for_job(array $config, string $jobId, ?
         is_array($rules) ? $rules : load_active_archiving_rules(),
         load_clients(),
         load_senders(),
-        $replacementMap
+        $replacementMap,
+        $matchingPayload
     );
 }
 
@@ -10868,6 +11632,7 @@ function process_claimed_job(
     array $categories,
     array $labels,
     array $systemLabels,
+    array $matchingPayload,
     array $replacementMap,
     bool $ocrSkipExistingText,
     int $ocrOptimizeLevel,
@@ -11026,7 +11791,8 @@ function process_claimed_job(
         $activeRules,
         $clients,
         $senders,
-        $replacementMap
+        $replacementMap,
+        $matchingPayload
     );
 
     observe_extracted_sender_identifiers($analysisPayload['extractionFieldResults']);
@@ -11276,7 +12042,7 @@ function process_job_by_id(
     array $categories,
     array $labels,
     array $systemLabels,
-    array $matchingSettings,
+    array $matchingPayload,
     string $jobId
 ): void
 {
@@ -11307,7 +12073,9 @@ function process_job_by_id(
             ? (string) $jobData['fallbackTxtPath']
             : null;
 
-        $replacementMap = replacement_map($matchingSettings);
+        $replacementMap = replacement_map(
+            is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []
+        );
         $reprocessMode = is_string($jobData['reprocessMode'] ?? null)
             ? trim((string) $jobData['reprocessMode'])
             : 'full';
@@ -11324,6 +12092,7 @@ function process_job_by_id(
             $categories,
             $labels,
             $systemLabels,
+            $matchingPayload,
             $replacementMap,
             $forceOcr ? false : (bool) ($config['ocrSkipExistingText'] ?? true),
             (int) ($config['ocrOptimizeLevel'] ?? 1),
@@ -11386,7 +12155,6 @@ function run_processing_worker(array $config): void
         $labels = load_labels();
         $systemLabels = load_system_labels();
         $matchingPayload = load_matching_settings_payload();
-        $matchingSettings = is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : [];
 
         while (true) {
             $jobId = next_processing_job_id($config);
@@ -11400,7 +12168,7 @@ function run_processing_worker(array $config): void
                 $categories,
                 $labels,
                 $systemLabels,
-                $matchingSettings,
+                $matchingPayload,
                 $jobId
             );
         }

@@ -91,7 +91,8 @@ try {
                     }
                 }
                 $confidence = isset($match['confidence']) ? (float) $match['confidence'] : null;
-                if ($matchType === 'pattern') {
+                $matchSource = is_string($match['source'] ?? null) ? trim((string) $match['source']) : '';
+                if ($matchType === 'pattern' && $matchSource === 'pattern') {
                     $confidence = 1.0;
                 } elseif ($matchType === 'document_date_heuristic' && ($confidence === null || $confidence <= 0.0)) {
                     $confidence = null;
@@ -107,6 +108,9 @@ try {
                     'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : '',
                     'raw' => is_string($match['raw'] ?? null) ? (string) $match['raw'] : '',
                     'confidence' => $confidence,
+                    'noisePenalty' => is_numeric($match['noisePenalty'] ?? null) ? (float) $match['noisePenalty'] : null,
+                    'directionPenalty' => is_numeric($match['directionPenalty'] ?? null) ? (float) $match['directionPenalty'] : null,
+                    'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : '',
                     'score' => $score,
                     'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : PHP_INT_MAX,
                     'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : PHP_INT_MAX,
@@ -133,7 +137,10 @@ try {
                         $fallbackMatchType = 'document_date_heuristic';
                     }
                 }
-                if ($fallbackMatchType === 'pattern') {
+                $fallbackSource = $index === 0 && is_string($firstMatch['source'] ?? null)
+                    ? trim((string) $firstMatch['source'])
+                    : ($index === 0 && is_string($legacyField['source'] ?? null) ? trim((string) $legacyField['source']) : '');
+                if ($fallbackMatchType === 'pattern' && $fallbackSource === 'pattern') {
                     $fallbackConfidence = 1.0;
                 } elseif ($fallbackMatchType === 'document_date_heuristic' && ($fallbackConfidence === null || $fallbackConfidence <= 0.0)) {
                     $fallbackConfidence = null;
@@ -157,6 +164,9 @@ try {
                         ? (string) $firstMatch['raw']
                         : ($index === 0 && is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''),
                     'confidence' => $fallbackConfidence,
+                    'noisePenalty' => $index === 0 && is_numeric($firstMatch['noisePenalty'] ?? null) ? (float) $firstMatch['noisePenalty'] : null,
+                    'directionPenalty' => $index === 0 && is_numeric($firstMatch['directionPenalty'] ?? null) ? (float) $firstMatch['directionPenalty'] : null,
+                    'noiseText' => $index === 0 && is_string($firstMatch['noiseText'] ?? null) ? (string) $firstMatch['noiseText'] : '',
                     'score' => $fallbackScore,
                     'lineIndex' => $index === 0 && is_int($firstMatch['lineIndex'] ?? null) ? (int) $firstMatch['lineIndex'] : PHP_INT_MAX,
                     'start' => $index === 0 && is_int($firstMatch['start'] ?? null) ? (int) $firstMatch['start'] : PHP_INT_MAX,
