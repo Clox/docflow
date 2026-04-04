@@ -4953,9 +4953,15 @@ function renderSelectedJobSenderSection(job) {
       const item = document.createElement('li');
       item.className = 'selected-job-sender-linked-item';
 
+      const senderChoiceId = `selected-job-sender-choice-${String(senderRow.senderId || '') || 'none'}`;
+      const senderChoiceWrap = document.createElement('label');
+      senderChoiceWrap.className = 'selected-job-sender-radio-wrap';
+      senderChoiceWrap.htmlFor = senderChoiceId;
+
       const senderChoice = document.createElement('input');
       senderChoice.type = 'radio';
       senderChoice.name = 'selected-job-sender-choice';
+      senderChoice.id = senderChoiceId;
       senderChoice.className = 'selected-job-sender-radio';
       senderChoice.value = String(senderRow.senderId || '');
       senderChoice.checked = senderChoice.value !== '' && senderChoice.value === resolvedSelectedSenderId;
@@ -4966,6 +4972,7 @@ function renderSelectedJobSenderSection(job) {
         }
         applySelectedSenderValue(senderChoice.value);
       });
+      senderChoiceWrap.appendChild(senderChoice);
 
       const body = document.createElement('div');
       body.className = 'selected-job-sender-linked-body';
@@ -5037,7 +5044,7 @@ function renderSelectedJobSenderSection(job) {
       });
 
       body.append(header, components);
-      item.append(senderChoice, body);
+      item.append(senderChoiceWrap, body);
       senderList.appendChild(item);
     });
     selectedJobSenderLinkedInfoEl.replaceChildren(senderList);
