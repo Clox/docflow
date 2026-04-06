@@ -2231,6 +2231,22 @@ body.is-resizing-sidebar {
   cursor: help;
 }
 
+.matches-penalty-text {
+  color: #1f2937;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.matches-penalty-context {
+  color: #475569;
+}
+
+.matches-penalty-noise {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;

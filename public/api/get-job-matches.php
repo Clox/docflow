@@ -105,11 +105,17 @@ try {
                 $candidateRows[] = [
                     'value' => $candidateValue,
                     'source' => is_string($match['source'] ?? null) ? (string) $match['source'] : '',
+                    'labelText' => is_string($match['labelText'] ?? null) ? trim((string) $match['labelText']) : '',
                     'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : '',
-                    'raw' => is_string($match['raw'] ?? null) ? (string) $match['raw'] : '',
+                    'extractedRaw' => is_string($match['raw'] ?? null) ? (string) $match['raw'] : '',
+                    'raw' => is_string($match['matchText'] ?? null)
+                        ? (string) $match['matchText']
+                        : (is_string($match['raw'] ?? null) ? (string) $match['raw'] : ''),
                     'confidence' => $confidence,
                     'noisePenalty' => is_numeric($match['noisePenalty'] ?? null) ? (float) $match['noisePenalty'] : null,
-                    'directionPenalty' => is_numeric($match['directionPenalty'] ?? null) ? (float) $match['directionPenalty'] : null,
+                    'positionPenalty' => is_numeric($match['positionPenalty'] ?? null) ? (float) $match['positionPenalty'] : (is_numeric($match['directionPenalty'] ?? null) ? (float) $match['directionPenalty'] : null),
+                    'positionPenaltyAxis' => is_string($match['positionPenaltyAxis'] ?? null) ? trim((string) $match['positionPenaltyAxis']) : '',
+                    'mainDirection' => is_string($match['mainDirection'] ?? null) ? trim((string) $match['mainDirection']) : '',
                     'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : '',
                     'score' => $score,
                     'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : PHP_INT_MAX,
@@ -157,15 +163,27 @@ try {
                     'source' => $index === 0 && is_string($firstMatch['source'] ?? null)
                         ? (string) $firstMatch['source']
                         : ($index === 0 && is_string($legacyField['source'] ?? null) ? (string) $legacyField['source'] : ''),
+                    'labelText' => $index === 0 && is_string($firstMatch['labelText'] ?? null)
+                        ? trim((string) $firstMatch['labelText'])
+                        : '',
                     'searchTerm' => $index === 0 && is_string($firstMatch['searchTerm'] ?? null)
                         ? trim((string) $firstMatch['searchTerm'])
                         : '',
-                    'raw' => $index === 0 && is_string($firstMatch['raw'] ?? null)
+                    'extractedRaw' => $index === 0 && is_string($firstMatch['raw'] ?? null)
                         ? (string) $firstMatch['raw']
                         : ($index === 0 && is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''),
+                    'raw' => $index === 0 && is_string($firstMatch['matchText'] ?? null)
+                        ? (string) $firstMatch['matchText']
+                        : ($index === 0 && is_string($firstMatch['raw'] ?? null)
+                            ? (string) $firstMatch['raw']
+                            : ($index === 0 && is_string($legacyField['matchText'] ?? null)
+                                ? (string) $legacyField['matchText']
+                                : ($index === 0 && is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''))),
                     'confidence' => $fallbackConfidence,
                     'noisePenalty' => $index === 0 && is_numeric($firstMatch['noisePenalty'] ?? null) ? (float) $firstMatch['noisePenalty'] : null,
-                    'directionPenalty' => $index === 0 && is_numeric($firstMatch['directionPenalty'] ?? null) ? (float) $firstMatch['directionPenalty'] : null,
+                    'positionPenalty' => $index === 0 && is_numeric($firstMatch['positionPenalty'] ?? null) ? (float) $firstMatch['positionPenalty'] : ($index === 0 && is_numeric($firstMatch['directionPenalty'] ?? null) ? (float) $firstMatch['directionPenalty'] : null),
+                    'positionPenaltyAxis' => $index === 0 && is_string($firstMatch['positionPenaltyAxis'] ?? null) ? trim((string) $firstMatch['positionPenaltyAxis']) : '',
+                    'mainDirection' => $index === 0 && is_string($firstMatch['mainDirection'] ?? null) ? trim((string) $firstMatch['mainDirection']) : '',
                     'noiseText' => $index === 0 && is_string($firstMatch['noiseText'] ?? null) ? (string) $firstMatch['noiseText'] : '',
                     'score' => $fallbackScore,
                     'lineIndex' => $index === 0 && is_int($firstMatch['lineIndex'] ?? null) ? (int) $firstMatch['lineIndex'] : PHP_INT_MAX,
@@ -191,19 +209,6 @@ try {
             return ((int) ($left['start'] ?? PHP_INT_MAX)) <=> ((int) ($right['start'] ?? PHP_INT_MAX));
         };
 
-        $dedupedRowsByValue = [];
-        foreach ($candidateRows as $row) {
-            $normalizedValueKey = json_encode($row['value'] ?? null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if (!is_string($normalizedValueKey)) {
-                $normalizedValueKey = is_scalar($row['value'] ?? null) ? (string) $row['value'] : '';
-            }
-
-            if (!isset($dedupedRowsByValue[$normalizedValueKey]) || $compareCandidateRows($row, $dedupedRowsByValue[$normalizedValueKey]) < 0) {
-                $dedupedRowsByValue[$normalizedValueKey] = $row;
-            }
-        }
-
-        $candidateRows = array_values($dedupedRowsByValue);
         usort($candidateRows, $compareCandidateRows);
 
         $fields[$resolvedKey] = [
@@ -219,9 +224,19 @@ try {
             'source' => is_string($firstMatch['source'] ?? null)
                 ? (string) $firstMatch['source']
                 : (is_string($legacyField['source'] ?? null) ? (string) $legacyField['source'] : ''),
-            'raw' => is_string($firstMatch['raw'] ?? null)
+            'labelText' => is_string($firstMatch['labelText'] ?? null)
+                ? trim((string) $firstMatch['labelText'])
+                : '',
+            'extractedRaw' => is_string($firstMatch['raw'] ?? null)
                 ? (string) $firstMatch['raw']
                 : (is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''),
+            'raw' => is_string($firstMatch['matchText'] ?? null)
+                ? (string) $firstMatch['matchText']
+                : (is_string($firstMatch['raw'] ?? null)
+                    ? (string) $firstMatch['raw']
+                    : (is_string($legacyField['matchText'] ?? null)
+                        ? (string) $legacyField['matchText']
+                        : (is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''))),
             'confidence' => isset($firstMatch['confidence'])
                 ? (float) $firstMatch['confidence']
                 : (isset($legacyField['confidence']) ? (float) $legacyField['confidence'] : null),

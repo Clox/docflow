@@ -1029,7 +1029,7 @@ function predefined_extraction_field_definitions(): array
             'ruleSets' => [[
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['att betala', 'fakturabelopp', 'summa att betala', 'belopp att betala', 'total att betala'],
-                'valuePattern' => '\d[\d\s.,]*\d(?:[.,:]\d{2})?(?:\s*kr)?',
+                'valuePattern' => '(?:SEK\s*)?(-?\d[\d\s.,]*\d(?:[.,:]\d{2})?)(?:\s*kr)?',
                 'normalizationType' => 'none',
                 'normalizationChars' => '',
             ]],
@@ -1282,6 +1282,25 @@ function predefined_extraction_field_default_rule_sets(array $defaults): array
     return $ruleSets !== [] ? $ruleSets : [default_extraction_field_rule_set()];
 }
 
+function normalize_predefined_amount_rule_set(array $ruleSet): array
+{
+    $pattern = is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '';
+    if ($pattern === '') {
+        return $ruleSet;
+    }
+
+    $legacyPatterns = [
+        '\d[\d\s.,]*\d(?:[.,:]\d{2})?(?:\s*kr)?' => '(?:SEK\s*)?(-?\d[\d\s.,]*\d(?:[.,:]\d{2})?)(?:\s*kr)?',
+        '(?:SEK\\s*)  ?-?\\d{1,3}(?:[ .]\\d{3})*(?:[.,]\\d{2})?(?:\\s*kr)?' => '(?:SEK\\s*)?(-?\\d{1,3}(?:[ .]\\d{3})*(?:[.,]\\d{2})?)(?:\\s*kr)?',
+    ];
+
+    if (isset($legacyPatterns[$pattern])) {
+        $ruleSet['valuePattern'] = $legacyPatterns[$pattern];
+    }
+
+    return $ruleSet;
+}
+
 function normalize_extraction_fields(mixed $input): array
 {
     if (!is_array($input)) {
@@ -1339,6 +1358,9 @@ function normalize_predefined_extraction_field_with_defaults(string $key, mixed 
             if (!$hasLegacyOverrides) {
                 $ruleSets = $defaultRuleSets;
             }
+    }
+    if ($key === 'amount') {
+        $ruleSets = array_map('normalize_predefined_amount_rule_set', $ruleSets);
     }
 
     return [
@@ -2692,8 +2714,8 @@ function default_matching_position_adjustment_settings(): array
 {
     return [
         'noisePenaltyPerCharacter' => 0.01,
-        'downRightPenalty' => 0.25,
-        'upLeftPenalty' => 1.0,
+        'rightYOffsetPenalty' => 0.25,
+        'downXOffsetPenalty' => 0.25,
     ];
 }
 
@@ -2735,14 +2757,14 @@ function normalize_matching_position_adjustment_settings(?array $input): array
             $source['noisePenaltyPerCharacter'] ?? $source['noise_penalty_per_character'] ?? null,
             $defaults['noisePenaltyPerCharacter']
         ),
-        'downRightPenalty' => normalize_matching_decimal_setting(
-            $source['downRightPenalty'] ?? $source['down_right_penalty'] ?? null,
-            $defaults['downRightPenalty'],
+        'rightYOffsetPenalty' => normalize_matching_decimal_setting(
+            $source['rightYOffsetPenalty'] ?? $source['right_y_offset_penalty'] ?? $source['downRightPenalty'] ?? $source['down_right_penalty'] ?? null,
+            $defaults['rightYOffsetPenalty'],
             null
         ),
-        'upLeftPenalty' => normalize_matching_decimal_setting(
-            $source['upLeftPenalty'] ?? $source['up_left_penalty'] ?? null,
-            $defaults['upLeftPenalty'],
+        'downXOffsetPenalty' => normalize_matching_decimal_setting(
+            $source['downXOffsetPenalty'] ?? $source['down_x_offset_penalty'] ?? $source['downRightPenalty'] ?? $source['down_right_penalty'] ?? null,
+            $defaults['downXOffsetPenalty'],
             null
         ),
     ];
@@ -6270,6 +6292,24 @@ function find_label_hits(array $lines, array $labels, array $replacementMap): ar
     return $hits;
 }
 
+function matched_label_text_from_hit(array $hit): ?string
+{
+    $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
+    $labelStart = is_int($hit['labelStart'] ?? null) ? (int) $hit['labelStart'] : -1;
+    $labelEnd = is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : -1;
+    if ($line === '' || $labelStart < 0 || $labelEnd <= $labelStart) {
+        return null;
+    }
+
+    $matchedText = substr($line, $labelStart, $labelEnd - $labelStart);
+    if (!is_string($matchedText)) {
+        return null;
+    }
+
+    $matchedText = trim($matchedText);
+    return $matchedText !== '' ? $matchedText : null;
+}
+
 function extract_label_tail_info_from_line(string $line, string $pattern): array
 {
     $matches = [];
@@ -6515,54 +6555,6 @@ function line_geometry_span_bbox(?array $lineGeometry, int $start, int $end): ?a
     return $bbox;
 }
 
-function bbox_axis_overlap_ratio(array $left, array $right, string $startKey, string $endKey): float
-{
-    $overlap = max(
-        0.0,
-        min((float) ($left[$endKey] ?? 0.0), (float) ($right[$endKey] ?? 0.0))
-        - max((float) ($left[$startKey] ?? 0.0), (float) ($right[$startKey] ?? 0.0))
-    );
-
-    $leftSize = max(0.0, (float) ($left[$endKey] ?? 0.0) - (float) ($left[$startKey] ?? 0.0));
-    $rightSize = max(0.0, (float) ($right[$endKey] ?? 0.0) - (float) ($right[$startKey] ?? 0.0));
-    $referenceSize = max(1.0, min($leftSize, $rightSize));
-
-    return max(0.0, min(1.0, $overlap / $referenceSize));
-}
-
-function bbox_direction_vector(array $labelBbox, array $candidateBbox): array
-{
-    $labelCenterX = ($labelBbox['x0'] + $labelBbox['x1']) / 2.0;
-    $labelCenterY = ($labelBbox['y0'] + $labelBbox['y1']) / 2.0;
-    $candidateCenterX = ($candidateBbox['x0'] + $candidateBbox['x1']) / 2.0;
-    $candidateCenterY = ($candidateBbox['y0'] + $candidateBbox['y1']) / 2.0;
-
-    $verticalOverlapRatio = bbox_axis_overlap_ratio($labelBbox, $candidateBbox, 'y0', 'y1');
-    $horizontalOverlapRatio = bbox_axis_overlap_ratio($labelBbox, $candidateBbox, 'x0', 'x1');
-
-    if ($candidateBbox['x0'] >= $labelBbox['x1']) {
-        $dx = (float) $candidateBbox['x0'] - (float) $labelBbox['x1'];
-    } elseif ($candidateBbox['x1'] <= $labelBbox['x0']) {
-        $dx = (float) $candidateBbox['x1'] - (float) $labelBbox['x0'];
-    } else {
-        $dx = 0.0;
-        if ($horizontalOverlapRatio < 0.2) {
-            $dx = $candidateCenterX - $labelCenterX;
-        }
-    }
-
-    $rawDy = $candidateCenterY - $labelCenterY;
-    $dy = $rawDy * (1.0 - $verticalOverlapRatio);
-
-    return [
-        'dx' => (float) $dx,
-        'dy' => (float) $dy,
-        'rawDy' => (float) $rawDy,
-        'verticalOverlapRatio' => $verticalOverlapRatio,
-        'horizontalOverlapRatio' => $horizontalOverlapRatio,
-    ];
-}
-
 function bbox_center_point(array $bbox): array
 {
     return [
@@ -6599,6 +6591,77 @@ function connector_points_between_bboxes(array $labelBbox, array $candidateBbox)
         'start' => closest_point_on_bbox_to_point($labelBbox, (float) $candidateCenter['x'], (float) $candidateCenter['y']),
         'end' => closest_point_on_bbox_to_point($candidateBbox, (float) $labelCenter['x'], (float) $labelCenter['y']),
     ];
+}
+
+function connector_vector(array $connector): array
+{
+    $start = is_array($connector['start'] ?? null) ? $connector['start'] : [];
+    $end = is_array($connector['end'] ?? null) ? $connector['end'] : [];
+
+    return [
+        'dx' => ((float) ($end['x'] ?? 0.0)) - ((float) ($start['x'] ?? 0.0)),
+        'dy' => ((float) ($end['y'] ?? 0.0)) - ((float) ($start['y'] ?? 0.0)),
+    ];
+}
+
+function normalize_angle_360(float $angle): float
+{
+    $normalized = fmod($angle, 360.0);
+    if ($normalized < 0.0) {
+        $normalized += 360.0;
+    }
+
+    return $normalized;
+}
+
+function angular_distance_degrees(float $left, float $right): float
+{
+    $diff = abs(normalize_angle_360($left) - normalize_angle_360($right));
+    return min($diff, 360.0 - $diff);
+}
+
+function connector_main_direction(array $connector): string
+{
+    $vector = connector_vector($connector);
+    $dx = (float) ($vector['dx'] ?? 0.0);
+    $dy = (float) ($vector['dy'] ?? 0.0);
+    if (abs($dx) < 0.001 && abs($dy) < 0.001) {
+        return 'right';
+    }
+
+    $angle = normalize_angle_360(rad2deg(atan2($dy, $dx)));
+    $references = [
+        'right' => 0.0,
+        'down' => 90.0,
+        'left' => 180.0,
+        'up' => 270.0,
+    ];
+
+    $bestDirection = 'right';
+    $bestDistance = PHP_FLOAT_MAX;
+    foreach ($references as $direction => $referenceAngle) {
+        $distance = angular_distance_degrees($angle, $referenceAngle);
+        if ($distance < $bestDistance) {
+            $bestDistance = $distance;
+            $bestDirection = $direction;
+        }
+    }
+
+    return $bestDirection;
+}
+
+function bbox_height(array $bbox): float
+{
+    return max(0.0, (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0));
+}
+
+function average_text_height(array $labelBbox, array $candidateBbox): float
+{
+    $labelHeight = bbox_height($labelBbox);
+    $candidateHeight = bbox_height($candidateBbox);
+    $average = ($labelHeight + $candidateHeight) / 2.0;
+
+    return $average > 0.0 ? $average : 1.0;
 }
 
 function bboxes_overlap(array $left, array $right): bool
@@ -6781,74 +6844,71 @@ function candidate_noise_details(
     ];
 }
 
-function angle_to_direction_penalty(float $angle, array $positionSettings): float
-{
-    $settings = normalize_matching_position_adjustment_settings($positionSettings);
-    $normalizedAngle = fmod($angle, 360.0);
-    if ($normalizedAngle < 0.0) {
-        $normalizedAngle += 360.0;
-    }
-
-    $references = [
-        ['angle' => 0.0, 'penalty' => 0.0],
-        ['angle' => 90.0, 'penalty' => 0.0],
-        ['angle' => 135.0, 'penalty' => (float) $settings['downRightPenalty']],
-        ['angle' => 225.0, 'penalty' => (float) $settings['upLeftPenalty']],
-        ['angle' => 360.0, 'penalty' => 0.0],
-    ];
-
-    for ($i = 0, $count = count($references) - 1; $i < $count; $i++) {
-        $start = $references[$i];
-        $end = $references[$i + 1];
-        if ($normalizedAngle < (float) $start['angle'] || $normalizedAngle > (float) $end['angle']) {
-            continue;
-        }
-
-        $range = (float) $end['angle'] - (float) $start['angle'];
-        if ($range <= 0.0) {
-            return max(0.0, (float) $start['penalty']);
-        }
-
-        $progress = ($normalizedAngle - (float) $start['angle']) / $range;
-        $penalty = (float) $start['penalty'] + (((float) $end['penalty'] - (float) $start['penalty']) * $progress);
-        return max(0.0, $penalty);
-    }
-
-    return 0.0;
-}
-
-function candidate_direction_penalty(
+function candidate_position_penalty_details(
     array $hit,
     int $candidateStart,
     int $candidateLineIndex,
     ?string $candidateSpanText,
     array $lineGeometries,
     array $positionSettings
-): float {
+): array {
+    $empty = [
+        'penalty' => 0.0,
+        'mainDirection' => null,
+        'axis' => null,
+        'diff' => 0.0,
+        'normalizedDiff' => 0.0,
+    ];
+
     $relation = resolve_candidate_geometry_relation($hit, $candidateStart, $candidateLineIndex, $candidateSpanText, $lineGeometries);
     if (!is_array($relation)) {
-        return 0.0;
+        return $empty;
     }
 
     $labelBbox = is_array($relation['labelBbox'] ?? null) ? $relation['labelBbox'] : null;
     $candidateBbox = is_array($relation['candidateBbox'] ?? null) ? $relation['candidateBbox'] : null;
+    $connector = is_array($relation['connector'] ?? null) ? $relation['connector'] : null;
     if ($labelBbox === null || $candidateBbox === null) {
-        return 0.0;
+        return $empty;
     }
 
-    $vector = bbox_direction_vector($labelBbox, $candidateBbox);
-    $dx = (float) ($vector['dx'] ?? 0.0);
-    $dy = (float) ($vector['dy'] ?? 0.0);
-    if (abs($dx) < 0.001 && abs($dy) < 0.001) {
-        return 0.0;
+    $settings = normalize_matching_position_adjustment_settings($positionSettings);
+    $mainDirection = is_array($connector) ? connector_main_direction($connector) : 'right';
+    $labelCenter = bbox_center_point($labelBbox);
+    $candidateCenter = bbox_center_point($candidateBbox);
+    $averageTextHeight = average_text_height($labelBbox, $candidateBbox);
+
+    if ($mainDirection === 'left' || $mainDirection === 'up') {
+        return [
+            'penalty' => 1.0,
+            'mainDirection' => $mainDirection,
+            'axis' => 'invalid',
+            'diff' => 0.0,
+            'normalizedDiff' => 0.0,
+        ];
     }
 
-    $angle = rad2deg(atan2($dy, $dx));
-    if ($angle < 0.0) {
-        $angle += 360.0;
+    if ($mainDirection === 'right') {
+        $diff = abs((float) ($candidateBbox['y1'] ?? 0.0) - (float) ($labelBbox['y1'] ?? 0.0));
+        $normalizedDiff = $averageTextHeight > 0.0 ? ($diff / $averageTextHeight) : 0.0;
+        return [
+            'penalty' => max(0.0, $normalizedDiff * (float) ($settings['rightYOffsetPenalty'] ?? 0.0)),
+            'mainDirection' => $mainDirection,
+            'axis' => 'y',
+            'diff' => $diff,
+            'normalizedDiff' => $normalizedDiff,
+        ];
     }
 
-    return angle_to_direction_penalty($angle, $positionSettings);
+    $diff = abs((float) ($candidateCenter['x'] ?? 0.0) - (float) ($labelCenter['x'] ?? 0.0));
+    $normalizedDiff = $averageTextHeight > 0.0 ? ($diff / $averageTextHeight) : 0.0;
+    return [
+        'penalty' => max(0.0, $normalizedDiff * (float) ($settings['downXOffsetPenalty'] ?? 0.0)),
+        'mainDirection' => $mainDirection,
+        'axis' => 'x',
+        'diff' => $diff,
+        'normalizedDiff' => $normalizedDiff,
+    ];
 }
 
 function candidate_confidence_score(
@@ -6857,12 +6917,12 @@ function candidate_confidence_score(
 {
     $base = isset($components['base']) && is_numeric($components['base']) ? (float) $components['base'] : 1.0;
     $noisePenalty = isset($components['noisePenalty']) && is_numeric($components['noisePenalty']) ? (float) $components['noisePenalty'] : 0.0;
-    $directionPenalty = isset($components['directionPenalty']) && is_numeric($components['directionPenalty']) ? (float) $components['directionPenalty'] : 0.0;
+    $positionPenalty = isset($components['positionPenalty']) && is_numeric($components['positionPenalty']) ? (float) $components['positionPenalty'] : 0.0;
     $contentPenalty = isset($components['contentPenalty']) && is_numeric($components['contentPenalty']) ? (float) $components['contentPenalty'] : 0.0;
 
     $confidence = $base;
     $confidence *= max(0.0, 1.0 - clamp_confidence($noisePenalty));
-    $confidence *= max(0.0, 1.0 - clamp_confidence($directionPenalty));
+    $confidence *= max(0.0, 1.0 - clamp_confidence($positionPenalty));
     $confidence -= max(0.0, $contentPenalty);
 
     return clamp_confidence($confidence);
@@ -6894,7 +6954,7 @@ function candidate_confidence_components(
     $noiseCharacters = is_int($noiseDetails['characterCount'] ?? null) ? (int) $noiseDetails['characterCount'] : 0;
     $noisePenalty = min(1.0, $noiseCharacters * (float) $settings['noisePenaltyPerCharacter']);
 
-    $directionPenalty = candidate_direction_penalty(
+    $positionPenaltyDetails = candidate_position_penalty_details(
         $hit,
         $candidateStart,
         $candidateLineIndex,
@@ -6911,7 +6971,11 @@ function candidate_confidence_components(
     return [
         'base' => $base,
         'noisePenalty' => clamp_confidence($noisePenalty),
-        'directionPenalty' => max(0.0, $directionPenalty),
+        'positionPenalty' => max(0.0, (float) ($positionPenaltyDetails['penalty'] ?? 0.0)),
+        'positionPenaltyAxis' => is_string($positionPenaltyDetails['axis'] ?? null) ? (string) $positionPenaltyDetails['axis'] : null,
+        'mainDirection' => is_string($positionPenaltyDetails['mainDirection'] ?? null) ? (string) $positionPenaltyDetails['mainDirection'] : null,
+        'positionDiff' => is_numeric($positionPenaltyDetails['diff'] ?? null) ? (float) $positionPenaltyDetails['diff'] : null,
+        'positionNormalizedDiff' => is_numeric($positionPenaltyDetails['normalizedDiff'] ?? null) ? (float) ($positionPenaltyDetails['normalizedDiff']) : null,
         'contentPenalty' => max(0.0, $contentPenalty),
         'noiseText' => $betweenText,
     ];
@@ -6933,6 +6997,7 @@ function select_best_labeled_candidate(
         'lineIndex' => null,
         'source' => 'none',
         'raw' => null,
+        'matchText' => null,
     ];
 
     $hits = find_label_hits($lines, $labels, $replacementMap);
@@ -6981,6 +7046,7 @@ function select_best_labeled_candidate(
                             'lineIndex' => $hitIndex,
                             'source' => 'tail',
                             'raw' => $raw,
+                            'matchText' => is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
                         ];
                     }
                 }
@@ -7022,6 +7088,7 @@ function select_best_labeled_candidate(
                         'lineIndex' => $hitIndex,
                         'source' => 'line',
                         'raw' => $raw,
+                        'matchText' => is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
                     ];
                 }
             }
@@ -7072,6 +7139,7 @@ function select_best_labeled_candidate(
                         'lineIndex' => $nearIndex,
                         'source' => 'nearby',
                         'raw' => $raw,
+                        'matchText' => is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
                     ];
                 }
             }
@@ -8180,6 +8248,7 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
 
         $value = $raw;
         $valueStart = $start;
+        $extractedRaw = $raw;
         if ($isRegex && array_key_exists(1, $match)) {
             $captureGroup = $match[1];
             $captureValue = is_array($captureGroup) && is_string($captureGroup[0] ?? null)
@@ -8193,11 +8262,13 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
             }
             $value = $captureValue;
             $valueStart = $captureStart;
+            $extractedRaw = $captureValue;
         }
 
         $candidates[] = [
             'value' => $value,
-            'raw' => $raw,
+            'raw' => $extractedRaw,
+            'matchText' => $raw,
             'start' => $offsetBase + $valueStart,
             'spanText' => $value,
             'matchType' => 'pattern',
@@ -8449,6 +8520,7 @@ function empty_extraction_field_result(): array
         'lineIndex' => null,
         'source' => 'none',
         'raw' => null,
+        'matchText' => null,
     ];
 }
 
@@ -8468,14 +8540,20 @@ function add_extraction_field_match(
     int $start,
     mixed $value,
     ?string $raw,
+    ?string $matchText,
     string $source,
     float $confidence,
     ?string $matchType = null,
     ?string $searchTerm = null,
     ?float $score = null,
     ?float $noisePenalty = null,
-    ?float $directionPenalty = null,
-    ?string $noiseText = null
+    ?float $positionPenalty = null,
+    ?string $positionPenaltyAxis = null,
+    ?string $mainDirection = null,
+    ?float $positionDiff = null,
+    ?float $positionNormalizedDiff = null,
+    ?string $noiseText = null,
+    ?string $labelText = null
 ): void {
     if ($lineIndex < 0 || $start < 0 || $value === null) {
         return;
@@ -8490,6 +8568,9 @@ function add_extraction_field_match(
         'raw' => $raw,
         'start' => $start,
     ];
+    if (is_string($matchText)) {
+        $candidate['matchText'] = $matchText;
+    }
     if (is_string($matchType) && trim($matchType) !== '') {
         $candidate['matchType'] = trim($matchType);
     }
@@ -8502,11 +8583,26 @@ function add_extraction_field_match(
     if (is_numeric($noisePenalty)) {
         $candidate['noisePenalty'] = clamp_confidence((float) $noisePenalty);
     }
-    if (is_numeric($directionPenalty)) {
-        $candidate['directionPenalty'] = max(0.0, (float) $directionPenalty);
+    if (is_numeric($positionPenalty)) {
+        $candidate['positionPenalty'] = max(0.0, (float) $positionPenalty);
+    }
+    if (is_string($positionPenaltyAxis) && trim($positionPenaltyAxis) !== '') {
+        $candidate['positionPenaltyAxis'] = trim($positionPenaltyAxis);
+    }
+    if (is_string($mainDirection) && trim($mainDirection) !== '') {
+        $candidate['mainDirection'] = trim($mainDirection);
+    }
+    if (is_numeric($positionDiff)) {
+        $candidate['positionDiff'] = max(0.0, (float) $positionDiff);
+    }
+    if (is_numeric($positionNormalizedDiff)) {
+        $candidate['positionNormalizedDiff'] = max(0.0, (float) $positionNormalizedDiff);
     }
     if (is_string($noiseText)) {
         $candidate['noiseText'] = $noiseText;
+    }
+    if (is_string($labelText) && trim($labelText) !== '') {
+        $candidate['labelText'] = trim($labelText);
     }
 
     if (!isset($matchesByKey[$key]) || (float) ($matchesByKey[$key]['confidence'] ?? 0.0) < $candidate['confidence']) {
@@ -8555,6 +8651,7 @@ function collect_labeled_candidate_matches(
         $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
         $pattern = is_string($hit['pattern'] ?? null) ? (string) $hit['pattern'] : '';
         $label = is_string($hit['label'] ?? null) ? trim((string) $hit['label']) : '';
+        $matchedLabelText = matched_label_text_from_hit($hit);
         $hitIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : -1;
         $labelEnd = is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : 0;
         if ($line === '' || $hitIndex < 0) {
@@ -8598,14 +8695,20 @@ function collect_labeled_candidate_matches(
                         $start,
                         $value,
                         $raw,
+                        is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
                         'tail',
                         candidate_confidence_score($confidenceComponents),
                         is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
                         $label !== '' ? $label : null,
                         null,
                         is_numeric($confidenceComponents['noisePenalty'] ?? null) ? (float) $confidenceComponents['noisePenalty'] : null,
-                        is_numeric($confidenceComponents['directionPenalty'] ?? null) ? (float) $confidenceComponents['directionPenalty'] : null,
-                        is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null
+                        is_numeric($confidenceComponents['positionPenalty'] ?? null) ? (float) $confidenceComponents['positionPenalty'] : null,
+                        is_string($confidenceComponents['positionPenaltyAxis'] ?? null) ? (string) $confidenceComponents['positionPenaltyAxis'] : null,
+                        is_string($confidenceComponents['mainDirection'] ?? null) ? (string) $confidenceComponents['mainDirection'] : null,
+                        is_numeric($confidenceComponents['positionDiff'] ?? null) ? (float) $confidenceComponents['positionDiff'] : null,
+                        is_numeric($confidenceComponents['positionNormalizedDiff'] ?? null) ? (float) $confidenceComponents['positionNormalizedDiff'] : null,
+                        is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
+                        $matchedLabelText
                     );
                 }
             }
@@ -8644,14 +8747,20 @@ function collect_labeled_candidate_matches(
                     $start,
                     $value,
                     $raw,
+                    is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
                     'line',
                     candidate_confidence_score($confidenceComponents),
                     is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
                     $label !== '' ? $label : null,
                     null,
                     is_numeric($confidenceComponents['noisePenalty'] ?? null) ? (float) $confidenceComponents['noisePenalty'] : null,
-                    is_numeric($confidenceComponents['directionPenalty'] ?? null) ? (float) $confidenceComponents['directionPenalty'] : null,
-                    is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null
+                    is_numeric($confidenceComponents['positionPenalty'] ?? null) ? (float) $confidenceComponents['positionPenalty'] : null,
+                    is_string($confidenceComponents['positionPenaltyAxis'] ?? null) ? (string) $confidenceComponents['positionPenaltyAxis'] : null,
+                    is_string($confidenceComponents['mainDirection'] ?? null) ? (string) $confidenceComponents['mainDirection'] : null,
+                    is_numeric($confidenceComponents['positionDiff'] ?? null) ? (float) $confidenceComponents['positionDiff'] : null,
+                    is_numeric($confidenceComponents['positionNormalizedDiff'] ?? null) ? (float) $confidenceComponents['positionNormalizedDiff'] : null,
+                    is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
+                    $matchedLabelText
                 );
             }
         }
@@ -8699,14 +8808,20 @@ function collect_labeled_candidate_matches(
                     $start,
                     $value,
                     $raw,
+                    is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
                     'nearby',
                     candidate_confidence_score($confidenceComponents),
                     is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
                     $label !== '' ? $label : null,
                     null,
                     is_numeric($confidenceComponents['noisePenalty'] ?? null) ? (float) $confidenceComponents['noisePenalty'] : null,
-                    is_numeric($confidenceComponents['directionPenalty'] ?? null) ? (float) $confidenceComponents['directionPenalty'] : null,
-                    is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null
+                    is_numeric($confidenceComponents['positionPenalty'] ?? null) ? (float) $confidenceComponents['positionPenalty'] : null,
+                    is_string($confidenceComponents['positionPenaltyAxis'] ?? null) ? (string) $confidenceComponents['positionPenaltyAxis'] : null,
+                    is_string($confidenceComponents['mainDirection'] ?? null) ? (string) $confidenceComponents['mainDirection'] : null,
+                    is_numeric($confidenceComponents['positionDiff'] ?? null) ? (float) $confidenceComponents['positionDiff'] : null,
+                    is_numeric($confidenceComponents['positionNormalizedDiff'] ?? null) ? (float) $confidenceComponents['positionNormalizedDiff'] : null,
+                    is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
+                    $matchedLabelText
                 );
             }
         }
@@ -8738,6 +8853,7 @@ function document_date_result_matches(array $result): array
             $start,
             $value,
             $raw,
+            $raw,
             'document_date_heuristic',
             clamp_confidence(((int) ($candidate['score'] ?? 0)) / 180),
             'document_date_heuristic',
@@ -8754,6 +8870,7 @@ function document_date_result_matches(array $result): array
                 $lineIndex,
                 0,
                 $result['value'],
+                is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
                 is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
                 is_string($result['source'] ?? null) ? (string) $result['source'] : 'document_date_heuristic',
                 isset($result['confidence']) ? (float) $result['confidence'] : 0.0,
@@ -8964,6 +9081,7 @@ function extract_unlabeled_pattern_field_result(array $lines, string $pattern): 
                 'lineIndex' => is_int($lineIndex) ? $lineIndex : null,
                 'source' => 'pattern',
                 'raw' => is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null,
+                'matchText' => is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : (is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null),
             ];
         }
     }
@@ -9004,6 +9122,7 @@ function extract_unlabeled_pattern_field_matches(array $lines, string $pattern):
                 $start,
                 $value,
                 $raw,
+                is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
                 'pattern',
                 0.55,
                 is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern'
@@ -9195,6 +9314,7 @@ function extract_configured_text_field_results(
             'lineIndex' => is_array($primaryMatch) && is_int($primaryMatch['lineIndex'] ?? null) ? (int) $primaryMatch['lineIndex'] : null,
             'source' => is_array($primaryMatch) && is_string($primaryMatch['source'] ?? null) ? (string) $primaryMatch['source'] : 'none',
             'raw' => is_array($primaryMatch) && is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null,
+            'matchText' => is_array($primaryMatch) && is_string($primaryMatch['matchText'] ?? null) ? (string) $primaryMatch['matchText'] : (is_array($primaryMatch) && is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null),
             'matchedRuleSetIndex' => $matchedRuleSetIndex,
             'matches' => $resolvedMatches,
         ];
@@ -9262,7 +9382,9 @@ function simplify_extraction_field_meta(array $results): array
                     return [
                         'value' => $match['value'] ?? null,
                         'raw' => is_string($match['raw'] ?? null) ? (string) $match['raw'] : null,
+                        'matchText' => is_string($match['matchText'] ?? null) ? (string) $match['matchText'] : (is_string($match['raw'] ?? null) ? (string) $match['raw'] : null),
                         'source' => is_string($match['source'] ?? null) ? (string) $match['source'] : null,
+                        'labelText' => is_string($match['labelText'] ?? null) ? trim((string) $match['labelText']) : null,
                         'confidence' => isset($match['confidence']) ? clamp_confidence((float) $match['confidence']) : 0.0,
                         'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : null,
                         'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : null,
@@ -9270,7 +9392,11 @@ function simplify_extraction_field_meta(array $results): array
                         'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : null,
                         'score' => is_numeric($match['score'] ?? null) ? (float) $match['score'] : null,
                         'noisePenalty' => is_numeric($match['noisePenalty'] ?? null) ? clamp_confidence((float) $match['noisePenalty']) : null,
-                        'directionPenalty' => is_numeric($match['directionPenalty'] ?? null) ? max(0.0, (float) $match['directionPenalty']) : null,
+                        'positionPenalty' => is_numeric($match['positionPenalty'] ?? null) ? max(0.0, (float) $match['positionPenalty']) : (is_numeric($match['directionPenalty'] ?? null) ? max(0.0, (float) $match['directionPenalty']) : null),
+                        'positionPenaltyAxis' => is_string($match['positionPenaltyAxis'] ?? null) ? trim((string) $match['positionPenaltyAxis']) : null,
+                        'mainDirection' => is_string($match['mainDirection'] ?? null) ? trim((string) $match['mainDirection']) : null,
+                        'positionDiff' => is_numeric($match['positionDiff'] ?? null) ? (float) $match['positionDiff'] : null,
+                        'positionNormalizedDiff' => is_numeric($match['positionNormalizedDiff'] ?? null) ? (float) $match['positionNormalizedDiff'] : null,
                         'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : null,
                     ];
                 },
@@ -12840,6 +12966,7 @@ function extraction_field_result_matches(array $results, string $key): array
     return [[
         'value' => $value,
         'raw' => is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
+        'matchText' => is_string($result['matchText'] ?? null) ? (string) $result['matchText'] : (is_string($result['raw'] ?? null) ? (string) $result['raw'] : null),
         'source' => is_string($result['source'] ?? null) ? (string) $result['source'] : 'none',
         'confidence' => isset($result['confidence']) ? clamp_confidence((float) $result['confidence']) : 0.0,
         'lineIndex' => is_int($result['lineIndex'] ?? null) ? (int) $result['lineIndex'] : null,

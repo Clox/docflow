@@ -106,8 +106,8 @@ let matchingAddRowEl = null;
 let matchingCancelEl = null;
 let matchingApplyEl = null;
 let matchingNoisePenaltyEl = null;
-let matchingDownRightPenaltyEl = null;
-let matchingUpLeftPenaltyEl = null;
+let matchingRightYOffsetPenaltyEl = null;
+let matchingDownXOffsetPenaltyEl = null;
 let ocrSkipExistingTextEl = null;
 let ocrOptimizeLevelEl = null;
 let ocrTextExtractionMethodEl = null;
@@ -2074,11 +2074,15 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
               return {
                 value: rawValue,
                 raw: typeof match.raw === 'string' ? match.raw : '',
+                extractedRaw: typeof match.extractedRaw === 'string' ? match.extractedRaw : '',
                 source: typeof match.source === 'string' ? match.source : '',
+                labelText: typeof match.labelText === 'string' ? match.labelText : '',
                 searchTerm: typeof match.searchTerm === 'string' ? match.searchTerm : '',
                 confidence: Number.isFinite(Number(match.confidence)) ? Number(match.confidence) : null,
                 noisePenalty: Number.isFinite(Number(match.noisePenalty)) ? Number(match.noisePenalty) : null,
-                directionPenalty: Number.isFinite(Number(match.directionPenalty)) ? Number(match.directionPenalty) : null,
+                positionPenalty: Number.isFinite(Number(match.positionPenalty)) ? Number(match.positionPenalty) : (Number.isFinite(Number(match.directionPenalty)) ? Number(match.directionPenalty) : null),
+                positionPenaltyAxis: typeof match.positionPenaltyAxis === 'string' ? match.positionPenaltyAxis : '',
+                mainDirection: typeof match.mainDirection === 'string' ? match.mainDirection : '',
                 noiseText: typeof match.noiseText === 'string' ? match.noiseText : '',
                 score: Number.isFinite(Number(match.score)) ? Number(match.score) : null,
                 matchType: typeof match.matchType === 'string' ? match.matchType : '',
@@ -2096,11 +2100,15 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
             : [{
               value: fallbackValue,
               raw: typeof field.raw === 'string' ? field.raw : '',
+              extractedRaw: typeof field.extractedRaw === 'string' ? field.extractedRaw : '',
               source: typeof field.source === 'string' ? field.source : '',
+              labelText: typeof field.labelText === 'string' ? field.labelText : '',
               searchTerm: '',
               confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
               noisePenalty: Number.isFinite(Number(field.noisePenalty)) ? Number(field.noisePenalty) : null,
-              directionPenalty: Number.isFinite(Number(field.directionPenalty)) ? Number(field.directionPenalty) : null,
+              positionPenalty: Number.isFinite(Number(field.positionPenalty)) ? Number(field.positionPenalty) : (Number.isFinite(Number(field.directionPenalty)) ? Number(field.directionPenalty) : null),
+              positionPenaltyAxis: typeof field.positionPenaltyAxis === 'string' ? field.positionPenaltyAxis : '',
+              mainDirection: typeof field.mainDirection === 'string' ? field.mainDirection : '',
               noiseText: typeof field.noiseText === 'string' ? field.noiseText : '',
               score: Number.isFinite(Number(field.score)) ? Number(field.score) : null,
               matchType: typeof field.matchType === 'string' ? field.matchType : '',
@@ -2179,28 +2187,156 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
 
     return '';
   };
-  const buildNoisePenaltyTooltip = (noiseText) => {
-    if (typeof noiseText !== 'string' || noiseText === '') {
-      return 'Inget brussegment sparat.';
+  const appendInlinePart = (container, text, className = '') => {
+    if (typeof text !== 'string' || text === '') {
+      return;
     }
-    const visibleNoiseText = noiseText.replace(/ /gu, '·').replace(/\t/gu, '\\t').replace(/\n/gu, '\\n');
-    const noiseCharacters = Array.from(noiseText.matchAll(/\S/gu), (match) => match[0]);
-    const noiseCharactersLabel = noiseCharacters.length > 0 ? noiseCharacters.join(' ') : 'Inga';
-    return `Brussegment: ${visibleNoiseText}\nRäknade tecken: ${noiseCharactersLabel}`;
+    const span = document.createElement('span');
+    if (className) {
+      span.className = className;
+    }
+    span.textContent = text;
+    container.appendChild(span);
+  };
+  const normalizeWhitespaceForMatch = (text) => {
+    if (typeof text !== 'string' || text === '') {
+      return { text: '', indexMap: [] };
+    }
+    let normalized = '';
+    const indexMap = [];
+    let pendingSpaceIndex = -1;
+    for (let index = 0; index < text.length; index += 1) {
+      const character = text[index];
+      if (/\s/u.test(character)) {
+        if (normalized !== '' && pendingSpaceIndex === -1) {
+          pendingSpaceIndex = index;
+        }
+        continue;
+      }
+      if (pendingSpaceIndex !== -1) {
+        normalized += ' ';
+        indexMap.push(pendingSpaceIndex);
+        pendingSpaceIndex = -1;
+      }
+      normalized += character.toLocaleLowerCase('sv-SE');
+      indexMap.push(index);
+    }
+    return { text: normalized, indexMap };
+  };
+  const findNormalizedTextSpan = (haystack, needle) => {
+    if (typeof haystack !== 'string' || typeof needle !== 'string') {
+      return null;
+    }
+    const normalizedNeedleSource = needle.trim();
+    if (normalizedNeedleSource === '') {
+      return null;
+    }
+    const normalizedHaystack = normalizeWhitespaceForMatch(haystack);
+    const normalizedNeedle = normalizeWhitespaceForMatch(normalizedNeedleSource);
+    if (normalizedHaystack.text === '' || normalizedNeedle.text === '') {
+      return null;
+    }
+    const startIndex = normalizedHaystack.text.indexOf(normalizedNeedle.text);
+    if (startIndex < 0) {
+      return null;
+    }
+    const endIndex = startIndex + normalizedNeedle.text.length - 1;
+    const start = normalizedHaystack.indexMap[startIndex];
+    const end = normalizedHaystack.indexMap[endIndex] + 1;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) {
+      return null;
+    }
+    return { start, end };
+  };
+  const buildNoisePenaltyContext = (row) => {
+    const labelText = typeof row?.labelText === 'string' && row.labelText.trim() !== ''
+      ? row.labelText.trim()
+      : (typeof row?.searchTerm === 'string' ? row.searchTerm.trim() : '');
+    const noiseText = typeof row?.noiseText === 'string' ? row.noiseText.trim() : '';
+    const matchText = typeof row?.raw === 'string' ? row.raw.trim() : '';
+    const extractedRaw = typeof row?.extractedRaw === 'string' ? row.extractedRaw.trim() : '';
+
+    if (noiseText === '') {
+      return null;
+    }
+
+    const wrapper = document.createDocumentFragment();
+    const partsWrap = document.createElement('span');
+    partsWrap.className = 'matches-penalty-context';
+
+    if (labelText !== '') {
+      appendInlinePart(partsWrap, labelText);
+    }
+
+    let contextText = matchText;
+    if (matchText !== '' && extractedRaw !== '') {
+      const rawSpan = findNormalizedTextSpan(matchText, extractedRaw);
+      if (rawSpan) {
+        contextText = matchText.slice(0, rawSpan.end);
+      }
+    }
+
+    const noiseSpan = contextText !== '' ? findNormalizedTextSpan(contextText, noiseText) : null;
+
+    if (contextText !== '' && noiseSpan) {
+      if (labelText !== '') {
+        appendInlinePart(partsWrap, ' ');
+      }
+      const prefix = contextText.slice(0, noiseSpan.start);
+      const highlighted = contextText.slice(noiseSpan.start, noiseSpan.end);
+      const suffix = contextText.slice(noiseSpan.end);
+      appendInlinePart(partsWrap, prefix);
+      appendInlinePart(partsWrap, highlighted, 'matches-penalty-noise');
+      appendInlinePart(partsWrap, suffix);
+      wrapper.appendChild(partsWrap);
+      return wrapper;
+    }
+
+    if (contextText !== '') {
+      if (labelText !== '') {
+        appendInlinePart(partsWrap, ' ');
+      }
+      appendInlinePart(partsWrap, contextText);
+    } else {
+      if (labelText !== '') {
+        appendInlinePart(partsWrap, ' ');
+      }
+      appendInlinePart(partsWrap, noiseText, 'matches-penalty-noise');
+    }
+    if (contextText === '' && matchText !== '') {
+      appendInlinePart(partsWrap, ' ');
+      appendInlinePart(partsWrap, matchText);
+    }
+    wrapper.appendChild(partsWrap);
+    return wrapper;
   };
   const appendMatchPenalties = (cell, row) => {
     const parts = [];
     if (typeof row?.noisePenalty === 'number' && Number.isFinite(row.noisePenalty) && row.noisePenalty > 0) {
       const noiseEl = document.createElement('span');
-      noiseEl.className = 'matches-penalty-link';
-      noiseEl.textContent = `Brus -${(row.noisePenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
-      noiseEl.title = buildNoisePenaltyTooltip(row.noiseText);
+      const context = buildNoisePenaltyContext(row);
+      noiseEl.className = 'matches-penalty-text';
+      appendInlinePart(noiseEl, 'Brus');
+      if (context) {
+        appendInlinePart(noiseEl, ' (');
+        noiseEl.appendChild(context);
+        appendInlinePart(noiseEl, ')');
+      }
+      appendInlinePart(noiseEl, ` -${(row.noisePenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`);
       parts.push(noiseEl);
     }
-    if (typeof row?.directionPenalty === 'number' && Number.isFinite(row.directionPenalty) && row.directionPenalty > 0) {
-      const directionEl = document.createElement('span');
-      directionEl.textContent = `Riktning -${(row.directionPenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
-      parts.push(directionEl);
+    if (typeof row?.positionPenalty === 'number' && Number.isFinite(row.positionPenalty) && row.positionPenalty > 0) {
+      const positionEl = document.createElement('span');
+      let label = 'Position';
+      if (row.positionPenaltyAxis === 'x') {
+        label = 'X-avvikelse';
+      } else if (row.positionPenaltyAxis === 'y') {
+        label = 'Y-avvikelse';
+      } else if (row.positionPenaltyAxis === 'invalid') {
+        label = 'Fel riktning';
+      }
+      positionEl.textContent = `${label} -${(row.positionPenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
+      parts.push(positionEl);
     }
 
     if (parts.length === 0) {
@@ -7564,8 +7700,8 @@ function bindSettingsPanelRefs(tabId) {
     matchingCancelEl = document.getElementById('matching-cancel');
     matchingApplyEl = document.getElementById('matching-apply');
     matchingNoisePenaltyEl = document.getElementById('matching-noise-penalty');
-    matchingDownRightPenaltyEl = document.getElementById('matching-down-right-penalty');
-    matchingUpLeftPenaltyEl = document.getElementById('matching-up-left-penalty');
+    matchingRightYOffsetPenaltyEl = document.getElementById('matching-right-y-offset-penalty');
+    matchingDownXOffsetPenaltyEl = document.getElementById('matching-down-x-offset-penalty');
     const bindMatchingPenaltyInput = (inputEl, key) => {
       if (!(inputEl instanceof HTMLInputElement)) {
         return;
@@ -7581,8 +7717,8 @@ function bindSettingsPanelRefs(tabId) {
       });
     };
     bindMatchingPenaltyInput(matchingNoisePenaltyEl, 'noisePenaltyPerCharacter');
-    bindMatchingPenaltyInput(matchingDownRightPenaltyEl, 'downRightPenalty');
-    bindMatchingPenaltyInput(matchingUpLeftPenaltyEl, 'upLeftPenalty');
+    bindMatchingPenaltyInput(matchingRightYOffsetPenaltyEl, 'rightYOffsetPenalty');
+    bindMatchingPenaltyInput(matchingDownXOffsetPenaltyEl, 'downXOffsetPenalty');
     matchingAddRowEl.addEventListener('click', () => {
       matchingDraft.push(defaultReplacement());
       renderMatchingEditor();
@@ -8643,8 +8779,8 @@ function defaultReplacement() {
 function defaultMatchingPositionAdjustmentSettings() {
   return {
     noisePenaltyPerCharacter: 0.01,
-    downRightPenalty: 0.25,
-    upLeftPenalty: 1
+    rightYOffsetPenalty: 0.25,
+    downXOffsetPenalty: 0.25
   };
 }
 
@@ -8684,8 +8820,16 @@ function sanitizeMatchingPositionAdjustmentSettings(value) {
   const defaults = defaultMatchingPositionAdjustmentSettings();
   return {
     noisePenaltyPerCharacter: clampMatchingDecimal(input.noisePenaltyPerCharacter, defaults.noisePenaltyPerCharacter, 1),
-    downRightPenalty: clampMatchingDecimal(input.downRightPenalty, defaults.downRightPenalty, null),
-    upLeftPenalty: clampMatchingDecimal(input.upLeftPenalty, defaults.upLeftPenalty, null)
+    rightYOffsetPenalty: clampMatchingDecimal(
+      input.rightYOffsetPenalty ?? input.downRightPenalty,
+      defaults.rightYOffsetPenalty,
+      null
+    ),
+    downXOffsetPenalty: clampMatchingDecimal(
+      input.downXOffsetPenalty ?? input.downRightPenalty,
+      defaults.downXOffsetPenalty,
+      null
+    )
   };
 }
 
@@ -10404,11 +10548,11 @@ function syncMatchingPositionAdjustmentInputs() {
   if (matchingNoisePenaltyEl) {
     matchingNoisePenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.noisePenaltyPerCharacter, 1);
   }
-  if (matchingDownRightPenaltyEl) {
-    matchingDownRightPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.downRightPenalty, null);
+  if (matchingRightYOffsetPenaltyEl) {
+    matchingRightYOffsetPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.rightYOffsetPenalty, null);
   }
-  if (matchingUpLeftPenaltyEl) {
-    matchingUpLeftPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.upLeftPenalty, null);
+  if (matchingDownXOffsetPenaltyEl) {
+    matchingDownXOffsetPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.downXOffsetPenalty, null);
   }
 }
 
