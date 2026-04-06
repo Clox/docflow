@@ -2077,6 +2077,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
                 extractedRaw: typeof match.extractedRaw === 'string' ? match.extractedRaw : '',
                 source: typeof match.source === 'string' ? match.source : '',
                 labelText: typeof match.labelText === 'string' ? match.labelText : '',
+                between: typeof match.between === 'string' ? match.between : '',
                 searchTerm: typeof match.searchTerm === 'string' ? match.searchTerm : '',
                 confidence: Number.isFinite(Number(match.confidence)) ? Number(match.confidence) : null,
                 noisePenalty: Number.isFinite(Number(match.noisePenalty)) ? Number(match.noisePenalty) : null,
@@ -2084,9 +2085,25 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
                 positionPenaltyAxis: typeof match.positionPenaltyAxis === 'string' ? match.positionPenaltyAxis : '',
                 mainDirection: typeof match.mainDirection === 'string' ? match.mainDirection : '',
                 noiseText: typeof match.noiseText === 'string' ? match.noiseText : '',
+                noiseSegments: Array.isArray(match.noiseSegments)
+                  ? match.noiseSegments
+                    .map((segment) => {
+                      if (!segment || typeof segment !== 'object') {
+                        return null;
+                      }
+                      return {
+                        text: typeof segment.text === 'string' ? segment.text : '',
+                        lineIndex: Number.isInteger(segment.lineIndex) ? segment.lineIndex : null,
+                        start: Number.isInteger(segment.start) ? segment.start : null,
+                        end: Number.isInteger(segment.end) ? segment.end : null,
+                      };
+                    })
+                    .filter((segment) => segment && segment.text !== '' && Number.isInteger(segment.lineIndex) && Number.isInteger(segment.start) && Number.isInteger(segment.end) && segment.end > segment.start)
+                  : [],
                 score: Number.isFinite(Number(match.score)) ? Number(match.score) : null,
                 matchType: typeof match.matchType === 'string' ? match.matchType : '',
                 lineIndex: Number.isInteger(match.lineIndex) ? match.lineIndex : Number.MAX_SAFE_INTEGER,
+                labelLineIndex: Number.isInteger(match.labelLineIndex) ? match.labelLineIndex : null,
                 start: Number.isInteger(match.start) ? match.start : Number.MAX_SAFE_INTEGER,
               };
             })
@@ -2103,6 +2120,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
               extractedRaw: typeof field.extractedRaw === 'string' ? field.extractedRaw : '',
               source: typeof field.source === 'string' ? field.source : '',
               labelText: typeof field.labelText === 'string' ? field.labelText : '',
+              between: typeof field.between === 'string' ? field.between : '',
               searchTerm: '',
               confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
               noisePenalty: Number.isFinite(Number(field.noisePenalty)) ? Number(field.noisePenalty) : null,
@@ -2110,9 +2128,25 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
               positionPenaltyAxis: typeof field.positionPenaltyAxis === 'string' ? field.positionPenaltyAxis : '',
               mainDirection: typeof field.mainDirection === 'string' ? field.mainDirection : '',
               noiseText: typeof field.noiseText === 'string' ? field.noiseText : '',
+              noiseSegments: Array.isArray(field.noiseSegments)
+                ? field.noiseSegments
+                  .map((segment) => {
+                    if (!segment || typeof segment !== 'object') {
+                      return null;
+                    }
+                    return {
+                      text: typeof segment.text === 'string' ? segment.text : '',
+                      lineIndex: Number.isInteger(segment.lineIndex) ? segment.lineIndex : null,
+                      start: Number.isInteger(segment.start) ? segment.start : null,
+                      end: Number.isInteger(segment.end) ? segment.end : null,
+                    };
+                  })
+                  .filter((segment) => segment && segment.text !== '' && Number.isInteger(segment.lineIndex) && Number.isInteger(segment.start) && Number.isInteger(segment.end) && segment.end > segment.start)
+                : [],
               score: Number.isFinite(Number(field.score)) ? Number(field.score) : null,
               matchType: typeof field.matchType === 'string' ? field.matchType : '',
               lineIndex: Number.MAX_SAFE_INTEGER,
+              labelLineIndex: Number.isInteger(field.labelLineIndex) ? field.labelLineIndex : null,
               start: Number.MAX_SAFE_INTEGER,
             }]);
         if (rows.length === 0) {
@@ -2154,7 +2188,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Datafält', 'Värde', 'Sökord', 'Råtext', 'Straff', 'Säkerhet'].forEach((label) => {
+  ['Datafält', 'Värde', 'Träff', 'Straff', 'Säkerhet'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Säkerhet') {
@@ -2248,81 +2282,259 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
     }
     return { start, end };
   };
-  const buildNoisePenaltyContext = (row) => {
-    const labelText = typeof row?.labelText === 'string' && row.labelText.trim() !== ''
-      ? row.labelText.trim()
-      : (typeof row?.searchTerm === 'string' ? row.searchTerm.trim() : '');
-    const noiseText = typeof row?.noiseText === 'string' ? row.noiseText.trim() : '';
-    const matchText = typeof row?.raw === 'string' ? row.raw.trim() : '';
-    const extractedRaw = typeof row?.extractedRaw === 'string' ? row.extractedRaw.trim() : '';
+  const mergeHighlightRanges = (ranges) => {
+    if (!Array.isArray(ranges) || ranges.length === 0) {
+      return [];
+    }
+    const normalizedRanges = ranges
+      .map((range) => {
+        const start = Number.isInteger(range?.start) ? range.start : null;
+        const end = Number.isInteger(range?.end) ? range.end : null;
+        if (start === null || end === null || end <= start) {
+          return null;
+        }
+        return { start, end };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.start - right.start);
+    if (normalizedRanges.length === 0) {
+      return [];
+    }
+    return normalizedRanges.reduce((merged, range) => {
+      const previous = merged[merged.length - 1];
+      if (!previous || range.start > previous.end) {
+        merged.push({ ...range });
+        return merged;
+      }
+      previous.end = Math.max(previous.end, range.end);
+      return merged;
+    }, []);
+  };
+  const buildDisplaySegmentProjection = (text, compressWhitespace = false) => {
+    if (typeof text !== 'string' || text === '') {
+      return { text: '', map: [] };
+    }
+    if (!compressWhitespace) {
+      return {
+        text,
+        map: Array.from({ length: text.length }, (_, index) => ({ start: index, end: index + 1 })),
+      };
+    }
 
-    if (noiseText === '') {
+    let displayText = '';
+    const map = [];
+    for (let index = 0; index < text.length;) {
+      const character = text[index];
+      if (!/\s/u.test(character)) {
+        displayText += character;
+        map.push({ start: index, end: index + 1 });
+        index += 1;
+        continue;
+      }
+
+      let end = index + 1;
+      while (end < text.length && /\s/u.test(text[end])) {
+        end += 1;
+      }
+      displayText += ' ';
+      map.push({ start: index, end });
+      index = end;
+    }
+
+    return { text: displayText, map };
+  };
+  const appendHighlightedSegmentText = (container, text, highlightRanges = []) => {
+    if (!(container instanceof HTMLElement) || typeof text !== 'string' || text === '') {
+      return;
+    }
+    const resolvedRanges = mergeHighlightRanges(highlightRanges)
+      .map((range) => ({
+        start: Math.max(0, Math.min(text.length, range.start)),
+        end: Math.max(0, Math.min(text.length, range.end)),
+      }))
+      .filter((range) => range.end > range.start);
+    if (resolvedRanges.length === 0) {
+      appendInlinePart(container, text);
+      return;
+    }
+    let cursor = 0;
+    resolvedRanges.forEach((range) => {
+      if (range.start > cursor) {
+        appendInlinePart(container, text.slice(cursor, range.start));
+      }
+      appendInlinePart(container, text.slice(range.start, range.end), 'noise matches-noise');
+      cursor = Math.max(cursor, range.end);
+    });
+    if (cursor < text.length) {
+      appendInlinePart(container, text.slice(cursor));
+    }
+  };
+  const projectSourceRangesToDisplay = (ranges, displayMap) => {
+    if (!Array.isArray(ranges) || ranges.length === 0 || !Array.isArray(displayMap) || displayMap.length === 0) {
+      return [];
+    }
+    const displayRanges = [];
+    displayMap.forEach((entry, displayIndex) => {
+      if (!entry || !Number.isInteger(entry.start) || !Number.isInteger(entry.end) || entry.end <= entry.start) {
+        return;
+      }
+      const intersects = ranges.some((range) => range.end > entry.start && range.start < entry.end);
+      if (intersects) {
+        displayRanges.push({ start: displayIndex, end: displayIndex + 1 });
+      }
+    });
+    return mergeHighlightRanges(displayRanges);
+  };
+  const resolveNoiseRangesFromSegments = (row, combinedText) => {
+    const noiseSegments = Array.isArray(row?.noiseSegments) ? row.noiseSegments : [];
+    if (noiseSegments.length === 0 || typeof combinedText !== 'string' || combinedText === '') {
       return null;
     }
 
-    const wrapper = document.createDocumentFragment();
-    const partsWrap = document.createElement('span');
-    partsWrap.className = 'matches-penalty-context';
-
-    if (labelText !== '') {
-      appendInlinePart(partsWrap, labelText);
+    const candidateLineIndex = Number.isInteger(row?.lineIndex) ? row.lineIndex : null;
+    const candidateStart = Number.isInteger(row?.start) ? row.start : null;
+    const keyText = typeof row?.labelText === 'string' ? row.labelText : '';
+    const betweenText = typeof row?.between === 'string' ? row.between : '';
+    if (candidateLineIndex === null || candidateStart === null) {
+      return null;
     }
 
-    let contextText = matchText;
-    if (matchText !== '' && extractedRaw !== '') {
-      const rawSpan = findNormalizedTextSpan(matchText, extractedRaw);
-      if (rawSpan) {
-        contextText = matchText.slice(0, rawSpan.end);
+    const combinedStart = candidateStart - keyText.length - betweenText.length;
+    if (!Number.isInteger(combinedStart) || combinedStart < 0) {
+      return null;
+    }
+
+    const ranges = [];
+    for (const noiseSegment of noiseSegments) {
+      if (!noiseSegment || typeof noiseSegment !== 'object') {
+        return null;
       }
+      if (!Number.isInteger(noiseSegment.lineIndex) || noiseSegment.lineIndex !== candidateLineIndex) {
+        return null;
+      }
+      if (!Number.isInteger(noiseSegment.start) || !Number.isInteger(noiseSegment.end) || noiseSegment.end <= noiseSegment.start) {
+        return null;
+      }
+      const localStart = noiseSegment.start - combinedStart;
+      const localEnd = noiseSegment.end - combinedStart;
+      if (localStart < 0 || localEnd > combinedText.length || localEnd <= localStart) {
+        return null;
+      }
+      const projectedText = combinedText.slice(localStart, localEnd);
+      const normalizedProjected = normalizeWhitespaceForMatch(projectedText).text;
+      const normalizedNoise = normalizeWhitespaceForMatch(typeof noiseSegment.text === 'string' ? noiseSegment.text : '').text;
+      if (normalizedProjected === '' || normalizedProjected !== normalizedNoise) {
+        return null;
+      }
+      ranges.push({ start: localStart, end: localEnd });
     }
 
-    const noiseSpan = contextText !== '' ? findNormalizedTextSpan(contextText, noiseText) : null;
-
-    if (contextText !== '' && noiseSpan) {
-      if (labelText !== '') {
-        appendInlinePart(partsWrap, ' ');
-      }
-      const prefix = contextText.slice(0, noiseSpan.start);
-      const highlighted = contextText.slice(noiseSpan.start, noiseSpan.end);
-      const suffix = contextText.slice(noiseSpan.end);
-      appendInlinePart(partsWrap, prefix);
-      appendInlinePart(partsWrap, highlighted, 'matches-penalty-noise');
-      appendInlinePart(partsWrap, suffix);
-      wrapper.appendChild(partsWrap);
-      return wrapper;
+    return mergeHighlightRanges(ranges);
+  };
+  const projectHighlightRangesToSegment = (ranges, segmentStart, segmentEnd) => {
+    if (!Array.isArray(ranges) || ranges.length === 0) {
+      return [];
+    }
+    return mergeHighlightRanges(ranges
+      .map((range) => {
+        const overlapStart = Math.max(segmentStart, range.start);
+        const overlapEnd = Math.min(segmentEnd, range.end);
+        if (overlapEnd <= overlapStart) {
+          return null;
+        }
+        return {
+          start: overlapStart - segmentStart,
+          end: overlapEnd - segmentStart,
+        };
+      })
+      .filter(Boolean));
+  };
+  const resolveNoiseRanges = (row, combinedText) => {
+    const segmentRanges = resolveNoiseRangesFromSegments(row, combinedText);
+    if (Array.isArray(segmentRanges) && segmentRanges.length > 0) {
+      return segmentRanges;
     }
 
-    if (contextText !== '') {
-      if (labelText !== '') {
-        appendInlinePart(partsWrap, ' ');
-      }
-      appendInlinePart(partsWrap, contextText);
-    } else {
-      if (labelText !== '') {
-        appendInlinePart(partsWrap, ' ');
-      }
-      appendInlinePart(partsWrap, noiseText, 'matches-penalty-noise');
+    const noiseText = typeof row?.noiseText === 'string' ? row.noiseText.trim() : '';
+    const noiseSpan = noiseText !== '' ? findNormalizedTextSpan(combinedText, noiseText) : null;
+    return noiseSpan ? [noiseSpan] : [];
+  };
+  const renderHitText = (cell, row) => {
+    if (!(cell instanceof HTMLElement)) {
+      return;
     }
-    if (contextText === '' && matchText !== '') {
-      appendInlinePart(partsWrap, ' ');
-      appendInlinePart(partsWrap, matchText);
+    const keyText = typeof row?.labelText === 'string' ? row.labelText : '';
+    const betweenText = typeof row?.between === 'string' ? row.between : '';
+    const valueText = typeof row?.raw === 'string' ? row.raw : '';
+    const labelLineIndex = Number.isInteger(row?.labelLineIndex) ? row.labelLineIndex : null;
+    const candidateLineIndex = Number.isInteger(row?.lineIndex) ? row.lineIndex : null;
+    const isDifferentRows = labelLineIndex !== null && candidateLineIndex !== null
+      ? labelLineIndex !== candidateLineIndex
+      : row?.source === 'nearby';
+    const displayBetweenText = betweenText === '' && isDifferentRows && keyText !== '' && valueText !== ''
+      ? ' '
+      : betweenText;
+    const combinedText = `${keyText}${betweenText}${valueText}`;
+    if (combinedText === '') {
+      cell.textContent = '–';
+      return;
     }
-    wrapper.appendChild(partsWrap);
-    return wrapper;
+
+    const noiseRanges = resolveNoiseRanges(row, combinedText);
+    const segments = [
+      {
+        sourceText: keyText,
+        display: buildDisplaySegmentProjection(keyText, false),
+        className: 'key',
+      },
+      {
+        sourceText: betweenText,
+        display: buildDisplaySegmentProjection(displayBetweenText, true),
+        className: 'between',
+      },
+      {
+        sourceText: valueText,
+        display: buildDisplaySegmentProjection(valueText, false),
+        className: 'value',
+      },
+    ];
+    let offset = 0;
+    segments.forEach((segment) => {
+      if (segment.sourceText === '' && segment.display.text === '') {
+        return;
+      }
+      const segmentEl = document.createElement('span');
+      segmentEl.className = segment.className;
+      const segmentStart = offset;
+      const segmentEnd = offset + segment.sourceText.length;
+      const localSourceRanges = segment.sourceText !== ''
+        ? projectHighlightRangesToSegment(noiseRanges, segmentStart, segmentEnd)
+        : [];
+      const localDisplayRanges = segment.sourceText !== ''
+        ? projectSourceRangesToDisplay(localSourceRanges, segment.display.map)
+        : [];
+      if (localDisplayRanges.length > 0) {
+        appendHighlightedSegmentText(segmentEl, segment.display.text, localDisplayRanges);
+      } else {
+        appendInlinePart(segmentEl, segment.display.text);
+      }
+      cell.appendChild(segmentEl);
+      offset = segmentEnd;
+    });
+    if (isDifferentRows) {
+      const badge = document.createElement('span');
+      badge.className = 'matches-hit-row-badge';
+      badge.textContent = 'olika rader';
+      cell.appendChild(document.createTextNode(' '));
+      cell.appendChild(badge);
+    }
   };
   const appendMatchPenalties = (cell, row) => {
     const parts = [];
     if (typeof row?.noisePenalty === 'number' && Number.isFinite(row.noisePenalty) && row.noisePenalty > 0) {
       const noiseEl = document.createElement('span');
-      const context = buildNoisePenaltyContext(row);
       noiseEl.className = 'matches-penalty-text';
-      appendInlinePart(noiseEl, 'Brus');
-      if (context) {
-        appendInlinePart(noiseEl, ' (');
-        noiseEl.appendChild(context);
-        appendInlinePart(noiseEl, ')');
-      }
-      appendInlinePart(noiseEl, ` -${(row.noisePenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`);
+      noiseEl.textContent = `Brus -${(row.noisePenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
       parts.push(noiseEl);
     }
     if (typeof row?.positionPenalty === 'number' && Number.isFinite(row.positionPenalty) && row.positionPenalty > 0) {
@@ -2357,7 +2569,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
         const separatorRow = document.createElement('tr');
         separatorRow.className = 'matches-group-separator';
         const separatorCell = document.createElement('td');
-      separatorCell.colSpan = 6;
+      separatorCell.colSpan = 5;
         separatorCell.textContent = '';
         separatorRow.appendChild(separatorCell);
         tbody.appendChild(separatorRow);
@@ -2388,13 +2600,10 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
       valueCell.textContent = String(row.value);
       tr.appendChild(valueCell);
 
-      const searchTermCell = document.createElement('td');
-      searchTermCell.textContent = row.searchTerm || '';
-      tr.appendChild(searchTermCell);
-
-      const rawCell = document.createElement('td');
-      rawCell.textContent = row.raw || '';
-      tr.appendChild(rawCell);
+      const hitCell = document.createElement('td');
+      hitCell.className = 'matches-hit-cell';
+      renderHitText(hitCell, row);
+      tr.appendChild(hitCell);
 
       const penaltiesCell = document.createElement('td');
       appendMatchPenalties(penaltiesCell, row);
@@ -11432,11 +11641,51 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
   const fieldRow = createTreeRow({ markerless: true });
   const fieldBody = document.createElement('div');
-  fieldBody.className = 'tree-body category-body';
+  fieldBody.className = 'tree-body category-body extraction-field-editor-body';
   appendTreeBodyIcon(fieldBody, 'tree-body-icon tree-body-icon-category');
   if (showLock) {
     appendTreeBodyLock(fieldBody, 'Låst datafält');
   }
+
+  const fieldActions = document.createElement('div');
+  fieldActions.className = 'extraction-field-editor-actions';
+
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.className = 'extraction-field-copy-button';
+  copyButton.textContent = '⧉';
+  copyButton.title = 'Kopiera datafält som JSON';
+  copyButton.setAttribute('aria-label', 'Kopiera datafält som JSON');
+  copyButton.addEventListener('click', async () => {
+    const fieldConfig = sanitizeExtractionField(collection[index], index);
+    const json = JSON.stringify(fieldConfig, null, 2);
+    const defaultTitle = 'Kopiera datafält som JSON';
+    try {
+      const copied = await copyTextToClipboard(json);
+      if (!copied) {
+        throw new Error('copy_failed');
+      }
+      copyButton.classList.add('is-copied');
+      copyButton.title = 'Kopierad';
+      copyButton.setAttribute('aria-label', 'Kopierad');
+      window.setTimeout(() => {
+        copyButton.classList.remove('is-copied');
+        copyButton.title = defaultTitle;
+        copyButton.setAttribute('aria-label', defaultTitle);
+      }, 1200);
+    } catch (error) {
+      copyButton.classList.add('is-copy-failed');
+      copyButton.title = 'Kunde inte kopiera';
+      copyButton.setAttribute('aria-label', 'Kunde inte kopiera');
+      window.setTimeout(() => {
+        copyButton.classList.remove('is-copy-failed');
+        copyButton.title = defaultTitle;
+        copyButton.setAttribute('aria-label', defaultTitle);
+      }, 1200);
+    }
+  });
+  fieldActions.appendChild(copyButton);
+  fieldBody.appendChild(fieldActions);
 
   const fields = document.createElement('div');
   fields.className = 'category-fields category-fields--wide';

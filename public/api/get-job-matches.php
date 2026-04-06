@@ -106,6 +106,7 @@ try {
                     'value' => $candidateValue,
                     'source' => is_string($match['source'] ?? null) ? (string) $match['source'] : '',
                     'labelText' => is_string($match['labelText'] ?? null) ? trim((string) $match['labelText']) : '',
+                    'between' => is_string($match['between'] ?? null) ? (string) $match['between'] : '',
                     'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : '',
                     'extractedRaw' => is_string($match['raw'] ?? null) ? (string) $match['raw'] : '',
                     'raw' => is_string($match['matchText'] ?? null)
@@ -117,8 +118,30 @@ try {
                     'positionPenaltyAxis' => is_string($match['positionPenaltyAxis'] ?? null) ? trim((string) $match['positionPenaltyAxis']) : '',
                     'mainDirection' => is_string($match['mainDirection'] ?? null) ? trim((string) $match['mainDirection']) : '',
                     'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : '',
+                    'noiseSegments' => array_values(array_filter(array_map(
+                        static function ($segment): ?array {
+                            if (!is_array($segment)) {
+                                return null;
+                            }
+                            $text = is_string($segment['text'] ?? null) ? (string) $segment['text'] : '';
+                            $lineIndex = is_int($segment['lineIndex'] ?? null) ? (int) $segment['lineIndex'] : null;
+                            $start = is_int($segment['start'] ?? null) ? (int) $segment['start'] : null;
+                            $end = is_int($segment['end'] ?? null) ? (int) $segment['end'] : null;
+                            if ($text === '' || $lineIndex === null || $start === null || $end === null || $end <= $start) {
+                                return null;
+                            }
+                            return [
+                                'text' => $text,
+                                'lineIndex' => $lineIndex,
+                                'start' => $start,
+                                'end' => $end,
+                            ];
+                        },
+                        is_array($match['noiseSegments'] ?? null) ? $match['noiseSegments'] : []
+                    ), static fn ($segment): bool => is_array($segment))),
                     'score' => $score,
                     'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : PHP_INT_MAX,
+                    'labelLineIndex' => is_int($match['labelLineIndex'] ?? null) ? (int) $match['labelLineIndex'] : null,
                     'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : PHP_INT_MAX,
                     'matchType' => $matchType !== '' ? $matchType : null,
                 ];
@@ -166,6 +189,9 @@ try {
                     'labelText' => $index === 0 && is_string($firstMatch['labelText'] ?? null)
                         ? trim((string) $firstMatch['labelText'])
                         : '',
+                    'between' => $index === 0 && is_string($firstMatch['between'] ?? null)
+                        ? (string) $firstMatch['between']
+                        : '',
                     'searchTerm' => $index === 0 && is_string($firstMatch['searchTerm'] ?? null)
                         ? trim((string) $firstMatch['searchTerm'])
                         : '',
@@ -185,8 +211,32 @@ try {
                     'positionPenaltyAxis' => $index === 0 && is_string($firstMatch['positionPenaltyAxis'] ?? null) ? trim((string) $firstMatch['positionPenaltyAxis']) : '',
                     'mainDirection' => $index === 0 && is_string($firstMatch['mainDirection'] ?? null) ? trim((string) $firstMatch['mainDirection']) : '',
                     'noiseText' => $index === 0 && is_string($firstMatch['noiseText'] ?? null) ? (string) $firstMatch['noiseText'] : '',
+                    'noiseSegments' => $index === 0
+                        ? array_values(array_filter(array_map(
+                            static function ($segment): ?array {
+                                if (!is_array($segment)) {
+                                    return null;
+                                }
+                                $text = is_string($segment['text'] ?? null) ? (string) $segment['text'] : '';
+                                $lineIndex = is_int($segment['lineIndex'] ?? null) ? (int) $segment['lineIndex'] : null;
+                                $start = is_int($segment['start'] ?? null) ? (int) $segment['start'] : null;
+                                $end = is_int($segment['end'] ?? null) ? (int) $segment['end'] : null;
+                                if ($text === '' || $lineIndex === null || $start === null || $end === null || $end <= $start) {
+                                    return null;
+                                }
+                                return [
+                                    'text' => $text,
+                                    'lineIndex' => $lineIndex,
+                                    'start' => $start,
+                                    'end' => $end,
+                                ];
+                            },
+                            is_array($firstMatch['noiseSegments'] ?? null) ? $firstMatch['noiseSegments'] : []
+                        ), static fn ($segment): bool => is_array($segment)))
+                        : [],
                     'score' => $fallbackScore,
                     'lineIndex' => $index === 0 && is_int($firstMatch['lineIndex'] ?? null) ? (int) $firstMatch['lineIndex'] : PHP_INT_MAX,
+                    'labelLineIndex' => $index === 0 && is_int($firstMatch['labelLineIndex'] ?? null) ? (int) $firstMatch['labelLineIndex'] : null,
                     'start' => $index === 0 && is_int($firstMatch['start'] ?? null) ? (int) $firstMatch['start'] : PHP_INT_MAX,
                     'matchType' => $fallbackMatchType !== '' ? $fallbackMatchType : null,
                 ];
@@ -226,6 +276,9 @@ try {
                 : (is_string($legacyField['source'] ?? null) ? (string) $legacyField['source'] : ''),
             'labelText' => is_string($firstMatch['labelText'] ?? null)
                 ? trim((string) $firstMatch['labelText'])
+                : '',
+            'between' => is_string($firstMatch['between'] ?? null)
+                ? (string) $firstMatch['between']
                 : '',
             'extractedRaw' => is_string($firstMatch['raw'] ?? null)
                 ? (string) $firstMatch['raw']

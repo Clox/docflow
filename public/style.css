@@ -2224,27 +2224,49 @@ body.is-resizing-sidebar {
   font-weight: 600;
 }
 
-.matches-penalty-link {
-  color: #0f4c81;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  cursor: help;
-}
-
 .matches-penalty-text {
   color: #1f2937;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
-.matches-penalty-context {
-  color: #475569;
+.matches-hit-cell {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-.matches-penalty-noise {
-  text-decoration: underline;
-  text-decoration-thickness: 1.5px;
-  text-underline-offset: 2px;
+.matches-hit-cell .key {
+  color: #64748b;
+}
+
+.matches-hit-cell .between {
+  color: #1f2937;
+}
+
+.matches-hit-cell .value {
+  font-weight: 600;
+  color: #111827;
+}
+
+.matches-hit-row-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.matches-hit-cell .noise,
+.matches-noise {
+  background: #fef3c7;
+  border-radius: 4px;
+  padding: 0 2px;
 }
 
 .modal-overlay {
@@ -3542,6 +3564,53 @@ body.is-resizing-sidebar {
   border-radius: 6px;
   background: #f3fbf8;
   padding: 10px;
+}
+
+.extraction-field-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.extraction-field-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 18px;
+}
+
+.extraction-field-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #b9d6cf;
+  border-radius: 4px;
+  background: #fff;
+  color: #2f5b4f;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.extraction-field-copy-button:hover {
+  background: #eef8f4;
+  border-color: #9fc6bc;
+}
+
+.extraction-field-copy-button.is-copied {
+  background: #e5f8ee;
+  border-color: #7fb694;
+  color: #1f6c45;
+}
+
+.extraction-field-copy-button.is-copy-failed {
+  background: #fff1f1;
+  border-color: #d68e8e;
+  color: #a11;
 }
 
 .rule-body {

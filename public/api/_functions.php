@@ -6456,6 +6456,29 @@ function extract_label_tail_from_line(string $line, string $pattern): string
     return is_string($tail) ? trim($tail) : '';
 }
 
+function candidate_between_text(
+    array $hit,
+    string $candidateLine,
+    int $candidateStart,
+    int $candidateLineIndex
+): string {
+    $hitIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : -1;
+    $labelEnd = is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : -1;
+    if ($hitIndex < 0 || $labelEnd < 0 || $candidateStart < $labelEnd || $candidateLineIndex !== $hitIndex) {
+        return '';
+    }
+
+    $line = $candidateLine !== ''
+        ? $candidateLine
+        : (is_string($hit['line'] ?? null) ? (string) $hit['line'] : '');
+    if ($line === '') {
+        return '';
+    }
+
+    $between = substr($line, $labelEnd, $candidateStart - $labelEnd);
+    return is_string($between) ? $between : '';
+}
+
 function nearby_line_indexes(array $lines, int $index, int $distance = 1): array
 {
     $indexes = [];
@@ -6866,6 +6889,7 @@ function candidate_noise_details(
             'characterCount' => 0,
             'text' => '',
             'connector' => null,
+            'noiseSegments' => [],
         ];
     }
 
@@ -6878,12 +6902,14 @@ function candidate_noise_details(
             'characterCount' => 0,
             'text' => '',
             'connector' => null,
+            'noiseSegments' => [],
         ];
     }
 
     $noiseTexts = [];
     $noiseCharacters = 0;
-    foreach ($lineGeometries as $lineGeometry) {
+    $noiseSegments = [];
+    foreach ($lineGeometries as $lineIndex => $lineGeometry) {
         if (!is_array($lineGeometry)) {
             continue;
         }
@@ -6922,6 +6948,16 @@ function candidate_noise_details(
 
             $noiseTexts[] = $segmentText;
             $noiseCharacters += count_pattern_matches('/\S/u', $segmentText);
+            $segmentStart = is_numeric($segment['start'] ?? null) ? (int) $segment['start'] : null;
+            $segmentEnd = is_numeric($segment['end'] ?? null) ? (int) $segment['end'] : null;
+            if (is_int($lineIndex) && is_int($segmentStart) && is_int($segmentEnd) && $segmentEnd > $segmentStart) {
+                $noiseSegments[] = [
+                    'text' => $segmentText,
+                    'lineIndex' => $lineIndex,
+                    'start' => $segmentStart,
+                    'end' => $segmentEnd,
+                ];
+            }
         }
     }
 
@@ -6929,6 +6965,7 @@ function candidate_noise_details(
         'characterCount' => $noiseCharacters,
         'text' => implode(' ', $noiseTexts),
         'connector' => $connector,
+        'noiseSegments' => $noiseSegments,
     ];
 }
 
@@ -7030,6 +7067,7 @@ function candidate_confidence_components(
     $settings = normalize_matching_position_adjustment_settings($positionSettings);
 
     $base = 1.0;
+    $betweenText = candidate_between_text($hit, $candidateLine, $candidateStart, $candidateLineIndex);
 
     $noiseDetails = candidate_noise_details(
         $hit,
@@ -7038,7 +7076,18 @@ function candidate_confidence_components(
         $candidateSpanText,
         $lineGeometries
     );
-    $betweenText = is_string($noiseDetails['text'] ?? null) ? (string) $noiseDetails['text'] : '';
+    $noiseText = is_string($noiseDetails['text'] ?? null) ? (string) $noiseDetails['text'] : '';
+    $noiseSegments = array_values(array_filter(
+        is_array($noiseDetails['noiseSegments'] ?? null) ? $noiseDetails['noiseSegments'] : [],
+        static function ($segment): bool {
+            return is_array($segment)
+                && is_string($segment['text'] ?? null)
+                && is_int($segment['lineIndex'] ?? null)
+                && is_int($segment['start'] ?? null)
+                && is_int($segment['end'] ?? null)
+                && (int) $segment['end'] > (int) $segment['start'];
+        }
+    ));
     $noiseCharacters = is_int($noiseDetails['characterCount'] ?? null) ? (int) $noiseDetails['characterCount'] : 0;
     $noisePenalty = min(1.0, $noiseCharacters * (float) $settings['noisePenaltyPerCharacter']);
 
@@ -7052,7 +7101,7 @@ function candidate_confidence_components(
     );
 
     $contentPenalty = 0.0;
-    if (@preg_match('/(https?:\/\/|www\.|@[A-Za-z0-9._-]+)/iu', $betweenText) === 1) {
+    if (@preg_match('/(https?:\/\/|www\.|@[A-Za-z0-9._-]+)/iu', $noiseText) === 1) {
         $contentPenalty = 0.15;
     }
 
@@ -7065,7 +7114,9 @@ function candidate_confidence_components(
         'positionDiff' => is_numeric($positionPenaltyDetails['diff'] ?? null) ? (float) $positionPenaltyDetails['diff'] : null,
         'positionNormalizedDiff' => is_numeric($positionPenaltyDetails['normalizedDiff'] ?? null) ? (float) ($positionPenaltyDetails['normalizedDiff']) : null,
         'contentPenalty' => max(0.0, $contentPenalty),
-        'noiseText' => $betweenText,
+        'betweenText' => $betweenText,
+        'noiseText' => $noiseText,
+        'noiseSegments' => $noiseSegments,
     ];
 }
 
@@ -8335,7 +8386,6 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
         }
 
         $value = $raw;
-        $valueStart = $start;
         $extractedRaw = $raw;
         if ($isRegex && array_key_exists(1, $match)) {
             $captureGroup = $match[1];
@@ -8349,7 +8399,6 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
                 continue;
             }
             $value = $captureValue;
-            $valueStart = $captureStart;
             $extractedRaw = $captureValue;
         }
 
@@ -8357,8 +8406,8 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
             'value' => $value,
             'raw' => $extractedRaw,
             'matchText' => $raw,
-            'start' => $offsetBase + $valueStart,
-            'spanText' => $value,
+            'start' => $offsetBase + $start,
+            'spanText' => $raw,
             'matchType' => 'pattern',
         ];
     }
@@ -8640,8 +8689,11 @@ function add_extraction_field_match(
     ?string $mainDirection = null,
     ?float $positionDiff = null,
     ?float $positionNormalizedDiff = null,
+    ?string $betweenText = null,
     ?string $noiseText = null,
-    ?string $labelText = null
+    ?string $labelText = null,
+    ?int $labelLineIndex = null,
+    ?array $noiseSegments = null
 ): void {
     if ($lineIndex < 0 || $start < 0 || $value === null) {
         return;
@@ -8686,11 +8738,43 @@ function add_extraction_field_match(
     if (is_numeric($positionNormalizedDiff)) {
         $candidate['positionNormalizedDiff'] = max(0.0, (float) $positionNormalizedDiff);
     }
+    if (is_string($betweenText)) {
+        $candidate['between'] = $betweenText;
+    }
     if (is_string($noiseText)) {
         $candidate['noiseText'] = $noiseText;
     }
     if (is_string($labelText) && trim($labelText) !== '') {
         $candidate['labelText'] = trim($labelText);
+    }
+    if (is_int($labelLineIndex) && $labelLineIndex >= 0) {
+        $candidate['labelLineIndex'] = $labelLineIndex;
+    }
+    if (is_array($noiseSegments)) {
+        $normalizedNoiseSegments = array_values(array_filter(array_map(
+            static function ($segment): ?array {
+                if (!is_array($segment)) {
+                    return null;
+                }
+                $text = is_string($segment['text'] ?? null) ? (string) $segment['text'] : '';
+                $segmentLineIndex = is_int($segment['lineIndex'] ?? null) ? (int) $segment['lineIndex'] : null;
+                $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : null;
+                $segmentEnd = is_int($segment['end'] ?? null) ? (int) $segment['end'] : null;
+                if ($text === '' || $segmentLineIndex === null || $segmentStart === null || $segmentEnd === null || $segmentEnd <= $segmentStart) {
+                    return null;
+                }
+                return [
+                    'text' => $text,
+                    'lineIndex' => $segmentLineIndex,
+                    'start' => $segmentStart,
+                    'end' => $segmentEnd,
+                ];
+            },
+            $noiseSegments
+        ), static fn ($segment): bool => is_array($segment)));
+        if ($normalizedNoiseSegments !== []) {
+            $candidate['noiseSegments'] = $normalizedNoiseSegments;
+        }
     }
 
     if (!isset($matchesByKey[$key]) || (float) ($matchesByKey[$key]['confidence'] ?? 0.0) < $candidate['confidence']) {
@@ -8795,8 +8879,11 @@ function collect_labeled_candidate_matches(
                         is_string($confidenceComponents['mainDirection'] ?? null) ? (string) $confidenceComponents['mainDirection'] : null,
                         is_numeric($confidenceComponents['positionDiff'] ?? null) ? (float) $confidenceComponents['positionDiff'] : null,
                         is_numeric($confidenceComponents['positionNormalizedDiff'] ?? null) ? (float) $confidenceComponents['positionNormalizedDiff'] : null,
+                        is_string($confidenceComponents['betweenText'] ?? null) ? (string) $confidenceComponents['betweenText'] : null,
                         is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
-                        $matchedLabelText
+                        $matchedLabelText,
+                        $hitIndex,
+                        is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null
                     );
                 }
             }
@@ -8847,8 +8934,11 @@ function collect_labeled_candidate_matches(
                     is_string($confidenceComponents['mainDirection'] ?? null) ? (string) $confidenceComponents['mainDirection'] : null,
                     is_numeric($confidenceComponents['positionDiff'] ?? null) ? (float) $confidenceComponents['positionDiff'] : null,
                     is_numeric($confidenceComponents['positionNormalizedDiff'] ?? null) ? (float) $confidenceComponents['positionNormalizedDiff'] : null,
+                    is_string($confidenceComponents['betweenText'] ?? null) ? (string) $confidenceComponents['betweenText'] : null,
                     is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
-                    $matchedLabelText
+                    $matchedLabelText,
+                    $hitIndex,
+                    is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null
                 );
             }
         }
@@ -8908,8 +8998,11 @@ function collect_labeled_candidate_matches(
                     is_string($confidenceComponents['mainDirection'] ?? null) ? (string) $confidenceComponents['mainDirection'] : null,
                     is_numeric($confidenceComponents['positionDiff'] ?? null) ? (float) $confidenceComponents['positionDiff'] : null,
                     is_numeric($confidenceComponents['positionNormalizedDiff'] ?? null) ? (float) $confidenceComponents['positionNormalizedDiff'] : null,
+                    is_string($confidenceComponents['betweenText'] ?? null) ? (string) $confidenceComponents['betweenText'] : null,
                     is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
-                    $matchedLabelText
+                    $matchedLabelText,
+                    $hitIndex,
+                    is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null
                 );
             }
         }
@@ -9473,8 +9566,10 @@ function simplify_extraction_field_meta(array $results): array
                         'matchText' => is_string($match['matchText'] ?? null) ? (string) $match['matchText'] : (is_string($match['raw'] ?? null) ? (string) $match['raw'] : null),
                         'source' => is_string($match['source'] ?? null) ? (string) $match['source'] : null,
                         'labelText' => is_string($match['labelText'] ?? null) ? trim((string) $match['labelText']) : null,
+                        'between' => is_string($match['between'] ?? null) ? (string) $match['between'] : null,
                         'confidence' => isset($match['confidence']) ? clamp_confidence((float) $match['confidence']) : 0.0,
                         'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : null,
+                        'labelLineIndex' => is_int($match['labelLineIndex'] ?? null) ? (int) $match['labelLineIndex'] : null,
                         'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : null,
                         'matchType' => is_string($match['matchType'] ?? null) ? trim((string) $match['matchType']) : null,
                         'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : null,
@@ -9486,6 +9581,27 @@ function simplify_extraction_field_meta(array $results): array
                         'positionDiff' => is_numeric($match['positionDiff'] ?? null) ? (float) $match['positionDiff'] : null,
                         'positionNormalizedDiff' => is_numeric($match['positionNormalizedDiff'] ?? null) ? (float) $match['positionNormalizedDiff'] : null,
                         'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : null,
+                        'noiseSegments' => array_values(array_filter(array_map(
+                            static function ($segment): ?array {
+                                if (!is_array($segment)) {
+                                    return null;
+                                }
+                                $text = is_string($segment['text'] ?? null) ? (string) $segment['text'] : '';
+                                $lineIndex = is_int($segment['lineIndex'] ?? null) ? (int) $segment['lineIndex'] : null;
+                                $start = is_int($segment['start'] ?? null) ? (int) $segment['start'] : null;
+                                $end = is_int($segment['end'] ?? null) ? (int) $segment['end'] : null;
+                                if ($text === '' || $lineIndex === null || $start === null || $end === null || $end <= $start) {
+                                    return null;
+                                }
+                                return [
+                                    'text' => $text,
+                                    'lineIndex' => $lineIndex,
+                                    'start' => $start,
+                                    'end' => $end,
+                                ];
+                            },
+                            is_array($match['noiseSegments'] ?? null) ? $match['noiseSegments'] : []
+                        ), static fn ($segment): bool => is_array($segment))),
                     ];
                 },
                 array_values(array_filter($result['matches'], static fn ($match): bool => is_array($match)))
