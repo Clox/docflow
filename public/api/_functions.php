@@ -6215,25 +6215,43 @@ function split_lines_for_matching(string $text): array
     return ocr_text_lines($text);
 }
 
-function build_tolerant_label_regex(string $label, array $replacementMap): ?string
+function build_data_field_search_term_regex(string $searchTerm, array $replacementMap): ?string
 {
-    $trimmed = trim($label);
+    $trimmed = trim($searchTerm);
     if ($trimmed === '') {
         return null;
     }
 
     $inverseMap = build_inverse_single_char_map($replacementMap);
-    $basePattern = build_rule_match_pattern($trimmed, $inverseMap);
-    if (!is_string($basePattern) || strlen($basePattern) < 4) {
+    $segments = preg_split('/\s+/u', $trimmed, -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($segments) || $segments === []) {
         return null;
     }
 
-    $body = substr($basePattern, 1, -3);
-    if (!is_string($body) || $body === '') {
+    $patternParts = [];
+    foreach ($segments as $segment) {
+        if (!is_string($segment) || $segment === '') {
+            continue;
+        }
+
+        $segmentPattern = build_rule_match_pattern($segment, $inverseMap);
+        if (!is_string($segmentPattern) || strlen($segmentPattern) < 4) {
+            return null;
+        }
+
+        $body = substr($segmentPattern, 1, -3);
+        if (!is_string($body) || $body === '') {
+            return null;
+        }
+
+        $patternParts[] = $body;
+    }
+
+    if ($patternParts === []) {
         return null;
     }
 
-    return '/\b' . $body . '\b/iu';
+    return '/\b' . implode('\s+', $patternParts) . '\b/iu';
 }
 
 function find_label_hits(array $lines, array $labels, array $replacementMap): array
@@ -6244,7 +6262,7 @@ function find_label_hits(array $lines, array $labels, array $replacementMap): ar
             continue;
         }
 
-        $pattern = build_tolerant_label_regex($label, $replacementMap);
+        $pattern = build_data_field_search_term_regex($label, $replacementMap);
         if (!is_string($pattern)) {
             continue;
         }
@@ -6265,27 +6283,97 @@ function find_label_hits(array $lines, array $labels, array $replacementMap): ar
             continue;
         }
 
+        $lineHits = [];
         foreach ($compiled as $item) {
             $pattern = $item['pattern'];
             $labelMatches = [];
-            if (@preg_match($pattern, $line, $labelMatches, PREG_OFFSET_CAPTURE) !== 1) {
+            if (@preg_match_all($pattern, $line, $labelMatches, PREG_OFFSET_CAPTURE) !== 1) {
                 continue;
             }
 
-            $matched = $labelMatches[0] ?? null;
-            $matchedText = is_array($matched) && is_string($matched[0] ?? null) ? (string) $matched[0] : '';
-            $labelStart = is_array($matched) && is_int($matched[1] ?? null) ? (int) $matched[1] : 0;
-            $labelEnd = $labelStart + strlen($matchedText);
+            $fullMatches = $labelMatches[0] ?? null;
+            if (!is_array($fullMatches)) {
+                continue;
+            }
 
-            $hits[] = [
-                'index' => is_int($index) ? $index : 0,
-                'line' => $line,
-                'pattern' => $pattern,
-                'label' => $item['label'],
-                'labelStart' => $labelStart,
-                'labelEnd' => $labelEnd,
-            ];
-            break;
+            foreach ($fullMatches as $matched) {
+                $matchedText = is_array($matched) && is_string($matched[0] ?? null) ? (string) $matched[0] : '';
+                $labelStart = is_array($matched) && is_int($matched[1] ?? null) ? (int) $matched[1] : 0;
+                if ($matchedText === '') {
+                    continue;
+                }
+
+                $labelEnd = $labelStart + strlen($matchedText);
+                $lineHits[] = [
+                    'index' => is_int($index) ? (int) $index : 0,
+                    'line' => $line,
+                    'pattern' => $pattern,
+                    'label' => $item['label'],
+                    'labelStart' => $labelStart,
+                    'labelEnd' => $labelEnd,
+                    '_matchedLength' => strlen($matchedText),
+                ];
+            }
+        }
+
+        if ($lineHits === []) {
+            continue;
+        }
+
+        usort($lineHits, static function (array $left, array $right): int {
+            $startCompare = ((int) ($left['labelStart'] ?? 0)) <=> ((int) ($right['labelStart'] ?? 0));
+            if ($startCompare !== 0) {
+                return $startCompare;
+            }
+
+            $lengthCompare = ((int) ($right['_matchedLength'] ?? 0)) <=> ((int) ($left['_matchedLength'] ?? 0));
+            if ($lengthCompare !== 0) {
+                return $lengthCompare;
+            }
+
+            return ((int) ($right['labelEnd'] ?? 0)) <=> ((int) ($left['labelEnd'] ?? 0));
+        });
+
+        $selectedLineHits = [];
+        foreach ($lineHits as $candidateHit) {
+            $candidateStart = (int) ($candidateHit['labelStart'] ?? 0);
+            $candidateEnd = (int) ($candidateHit['labelEnd'] ?? 0);
+            $candidateLength = (int) ($candidateHit['_matchedLength'] ?? 0);
+            $replaced = false;
+
+            foreach ($selectedLineHits as $selectedIndex => $selectedHit) {
+                $selectedStart = (int) ($selectedHit['labelStart'] ?? 0);
+                $selectedEnd = (int) ($selectedHit['labelEnd'] ?? 0);
+                $overlaps = $candidateStart < $selectedEnd && $candidateEnd > $selectedStart;
+                if (!$overlaps) {
+                    continue;
+                }
+
+                $selectedLength = (int) ($selectedHit['_matchedLength'] ?? 0);
+                if ($candidateLength > $selectedLength) {
+                    $selectedLineHits[$selectedIndex] = $candidateHit;
+                }
+                $replaced = true;
+                break;
+            }
+
+            if (!$replaced) {
+                $selectedLineHits[] = $candidateHit;
+            }
+        }
+
+        usort($selectedLineHits, static function (array $left, array $right): int {
+            $startCompare = ((int) ($left['labelStart'] ?? 0)) <=> ((int) ($right['labelStart'] ?? 0));
+            if ($startCompare !== 0) {
+                return $startCompare;
+            }
+
+            return ((int) ($left['labelEnd'] ?? 0)) <=> ((int) ($right['labelEnd'] ?? 0));
+        });
+
+        foreach ($selectedLineHits as $selectedHit) {
+            unset($selectedHit['_matchedLength']);
+            $hits[] = $selectedHit;
         }
     }
 
