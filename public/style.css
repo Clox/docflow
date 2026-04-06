@@ -536,6 +536,14 @@ body.is-resizing-sidebar {
   overflow-wrap: anywhere;
 }
 
+.selected-job-sender-component-key {
+  font-weight: 600;
+}
+
+.selected-job-sender-component-value {
+  font-weight: 400;
+}
+
 .selected-job-sender-component-row.is-found,
 .selected-job-sender-component-row.is-found .selected-job-sender-component-text,
 .selected-job-sender-component-row.is-found .selected-job-sender-component-marker {

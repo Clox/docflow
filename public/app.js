@@ -5370,19 +5370,16 @@ function renderSelectedJobSenderSection(job) {
       body.className = 'selected-job-sender-linked-body';
 
       const header = document.createElement('div');
-      header.className = `selected-job-sender-linked-header ${senderRow.nameFound === true ? 'is-found' : 'is-missing'}`;
+      const headerFound = senderRow && senderRow.headerFound === true;
+      header.className = `selected-job-sender-linked-header ${headerFound ? 'is-found' : 'is-missing'}`;
 
       const headerMain = document.createElement('div');
       headerMain.className = 'selected-job-sender-linked-header-main';
 
-      const headerMarker = document.createElement('span');
-      headerMarker.className = 'selected-job-sender-linked-header-marker';
-      headerMarker.textContent = senderRow.nameFound === true ? '✓' : '';
-
       const headerName = document.createElement('div');
       headerName.className = 'selected-job-sender-linked-title';
       headerName.textContent = typeof senderRow.name === 'string' ? senderRow.name : '';
-      headerMain.append(headerName, headerMarker);
+      headerMain.appendChild(headerName);
       header.appendChild(headerMain);
 
       const openButton = document.createElement('button');
@@ -5399,7 +5396,7 @@ function renderSelectedJobSenderSection(job) {
       const components = document.createElement('div');
       components.className = 'selected-job-sender-components';
 
-      const appendComponentRow = (text, found) => {
+      const appendComponentRow = (label, valueText, found) => {
         const row = document.createElement('div');
         row.className = `selected-job-sender-component-row ${found ? 'is-found' : 'is-missing'}`;
 
@@ -5407,32 +5404,49 @@ function renderSelectedJobSenderSection(job) {
         marker.className = 'selected-job-sender-component-marker';
         marker.textContent = found ? '✓' : '';
 
-        const value = document.createElement('span');
-        value.className = 'selected-job-sender-component-text';
-        value.textContent = text;
+        const text = document.createElement('span');
+        text.className = 'selected-job-sender-component-text';
 
-        row.append(value, marker);
+        const key = document.createElement('span');
+        key.className = 'selected-job-sender-component-key';
+        key.textContent = label;
+
+        const value = document.createElement('span');
+        value.className = 'selected-job-sender-component-value';
+        value.textContent = valueText !== '' ? ` ${valueText}` : '';
+
+        text.append(key, value);
+        row.append(text, marker);
         components.appendChild(row);
       };
 
-      const matchedAlias = typeof senderRow.matchedAlias === 'string' ? senderRow.matchedAlias.trim() : '';
-      if (matchedAlias !== '') {
-        appendComponentRow(`Alias: ${matchedAlias}`, true);
-      }
+      const nameComponents = Array.isArray(senderRow.nameComponents) ? senderRow.nameComponents : [];
+      nameComponents.forEach((nameComponent) => {
+        if (!nameComponent || typeof nameComponent !== 'object') {
+          return;
+        }
+        const label = typeof nameComponent.label === 'string' && nameComponent.label.trim() !== ''
+          ? nameComponent.label.trim()
+          : 'Namn';
+        const valueText = typeof nameComponent.value === 'string' ? nameComponent.value.trim() : '';
+        if (valueText === '') {
+          return;
+        }
+        appendComponentRow(label, valueText, nameComponent.found === true);
+      });
 
       if (senderRow.organizationNumber && typeof senderRow.organizationNumber === 'object') {
-        appendComponentRow(
-          `Org.nr ${senderRow.organizationNumber.value || ''}`.trim(),
-          senderRow.organizationNumber.found === true
-        );
+        appendComponentRow('Org.nr', String(senderRow.organizationNumber.value || '').trim(), senderRow.organizationNumber.found === true);
       }
 
       const paymentParts = Array.isArray(senderRow.paymentNumbers) ? senderRow.paymentNumbers : [];
       paymentParts.forEach((payment) => {
-        appendComponentRow(
-          `${payment && payment.label ? payment.label : ''} ${payment && payment.value ? payment.value : ''}`.trim(),
-          payment && payment.found === true
-        );
+        const paymentLabel = payment && payment.label ? String(payment.label).trim() : '';
+        const paymentValue = payment && payment.value ? String(payment.value).trim() : '';
+        if (paymentLabel === '' && paymentValue === '') {
+          return;
+        }
+        appendComponentRow(paymentLabel, paymentValue, payment && payment.found === true);
       });
 
       body.append(header, components);

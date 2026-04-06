@@ -12806,17 +12806,12 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
     $observations = [];
     $observationKeys = [];
     $senderIds = [];
-    $documentComponentNamesBySenderId = [];
 
     foreach ($organizationNumbers as $organizationNumber) {
         $observedRow = observed_sender_organization_summary_row($organizationNumber);
         $observedSenderId = isset($observedRow['senderId']) && (int) $observedRow['senderId'] > 0 ? (int) $observedRow['senderId'] : null;
         if ($observedSenderId !== null) {
             $senderIds[$observedSenderId] = true;
-            $observedName = is_string($observedRow['organizationName'] ?? null) ? trim((string) $observedRow['organizationName']) : '';
-            if ($observedName !== '') {
-                $documentComponentNamesBySenderId[$observedSenderId][] = $observedName;
-            }
         } else {
             $observationKey = 'organization_number:' . (is_string($observedRow['organizationNumber'] ?? null)
                 ? $observedRow['organizationNumber']
@@ -12843,10 +12838,6 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
         if ($observedSenderId !== null) {
             $senderIds[$observedSenderId] = true;
-            $observedName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
-            if ($observedName !== '') {
-                $documentComponentNamesBySenderId[$observedSenderId][] = $observedName;
-            }
         } else {
             $observationKey = 'bankgiro:' . (is_string($observedRow['number'] ?? null)
                 ? $observedRow['number']
@@ -12871,10 +12862,6 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         $lookupStatus = is_string($observedRow['payeeLookupStatus'] ?? null) ? trim((string) $observedRow['payeeLookupStatus']) : '';
         if ($observedSenderId !== null) {
             $senderIds[$observedSenderId] = true;
-            $observedName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
-            if ($observedName !== '') {
-                $documentComponentNamesBySenderId[$observedSenderId][] = $observedName;
-            }
         } else {
             $observationKey = 'plusgiro:' . (is_string($observedRow['number'] ?? null)
                 ? $observedRow['number']
@@ -12911,8 +12898,6 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
             continue;
         }
 
-        $nameFound = sender_summary_text_contains($documentText, $name);
-
         $organizationEntry = null;
         $organizationRows = is_array($senderRow['organizationNumbers'] ?? null) ? $senderRow['organizationNumbers'] : [];
         $firstOrganizationRow = $organizationRows[0] ?? null;
@@ -12926,6 +12911,28 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                     'found' => isset($normalizedOrganizationNumbers[$normalizedNumber]),
                 ];
             }
+        }
+
+        $nameComponents = [];
+        $nameComponentMap = [];
+        foreach ($organizationRows as $organizationRow) {
+            if (!is_array($organizationRow)) {
+                continue;
+            }
+            $organizationName = is_string($organizationRow['organizationName'] ?? null) ? trim((string) $organizationRow['organizationName']) : '';
+            if ($organizationName === '') {
+                continue;
+            }
+            $normalizedOrganizationName = normalized_sender_summary_search_text($organizationName);
+            if ($normalizedOrganizationName === '' || isset($nameComponentMap[$normalizedOrganizationName])) {
+                continue;
+            }
+            $nameComponentMap[$normalizedOrganizationName] = true;
+            $nameComponents[] = [
+                'label' => 'Namn',
+                'value' => $organizationName,
+                'found' => sender_summary_text_contains($documentText, $organizationName),
+            ];
         }
 
         $paymentEntries = [];
@@ -12950,43 +12957,27 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                     ? isset($normalizedPlusgiroValues[$normalizedNumber])
                     : isset($normalizedBankgiroValues[$normalizedNumber]),
             ];
-        }
 
-        $normalizedAlternativeNames = [];
-        foreach (is_array($senderRow['alternativeNames'] ?? null) ? $senderRow['alternativeNames'] : [] as $alternativeName) {
-            if (!is_string($alternativeName)) {
-                continue;
+            $payeeName = is_string($paymentRow['payeeName'] ?? null) ? trim((string) $paymentRow['payeeName']) : '';
+            if ($payeeName !== '') {
+                $normalizedPayeeName = normalized_sender_summary_search_text($payeeName);
+                if ($normalizedPayeeName !== '' && !isset($nameComponentMap[$normalizedPayeeName])) {
+                    $nameComponentMap[$normalizedPayeeName] = true;
+                    $nameComponents[] = [
+                        'label' => 'Namn',
+                        'value' => $payeeName,
+                        'found' => sender_summary_text_contains($documentText, $payeeName),
+                    ];
+                }
             }
-            $trimmedAlternativeName = trim($alternativeName);
-            if ($trimmedAlternativeName === '') {
-                continue;
-            }
-            $normalizedAlternativeName = normalized_sender_summary_search_text($trimmedAlternativeName);
-            if ($normalizedAlternativeName === '' || isset($normalizedAlternativeNames[$normalizedAlternativeName])) {
-                continue;
-            }
-            $normalizedAlternativeNames[$normalizedAlternativeName] = $trimmedAlternativeName;
-        }
-
-        $matchedAlias = null;
-        foreach ($documentComponentNamesBySenderId[$senderId] ?? [] as $documentComponentName) {
-            if (!is_string($documentComponentName)) {
-                continue;
-            }
-            $normalizedComponentName = normalized_sender_summary_search_text($documentComponentName);
-            if ($normalizedComponentName === '' || !isset($normalizedAlternativeNames[$normalizedComponentName])) {
-                continue;
-            }
-            $matchedAlias = $normalizedAlternativeNames[$normalizedComponentName];
-            break;
         }
 
         $matchKinds = [];
-        if ($nameFound) {
-            $matchKinds[] = 'primary_name';
-        }
-        if ($matchedAlias !== null) {
-            $matchKinds[] = 'alternative_name';
+        foreach ($nameComponents as $nameComponent) {
+            if (($nameComponent['found'] ?? false) === true) {
+                $matchKinds[] = 'name';
+                break;
+            }
         }
         if (is_array($organizationEntry) && ($organizationEntry['found'] ?? false) === true) {
             $matchKinds[] = 'organization_number';
@@ -12998,6 +12989,16 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
             }
         }
         $matchKinds = array_values(array_unique($matchKinds));
+        $strongMatchCount = 0;
+        if (is_array($organizationEntry) && ($organizationEntry['found'] ?? false) === true) {
+            $strongMatchCount++;
+        }
+        foreach ($paymentEntries as $paymentEntry) {
+            if (($paymentEntry['found'] ?? false) === true) {
+                $strongMatchCount++;
+            }
+        }
+        $headerFound = $strongMatchCount > 0;
         $matchedBy = count($matchKinds) > 1
             ? 'kombination'
             : ($matchKinds[0] ?? null);
@@ -13006,9 +13007,10 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
             'key' => 'sender:' . $senderId,
             'senderId' => $senderId,
             'name' => $name,
-            'nameFound' => $nameFound,
+            'headerFound' => $headerFound,
             'matchedBy' => $matchedBy,
-            'matchedAlias' => $matchedAlias,
+            'matchedAlias' => null,
+            'nameComponents' => $nameComponents,
             'organizationNumber' => $organizationEntry,
             'paymentNumbers' => $paymentEntries,
         ];
@@ -13017,11 +13019,8 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
     usort(
         $senders,
         static function (array $left, array $right): int {
-            $countFoundMarks = static function (array $row): int {
-                $count = ($row['nameFound'] ?? false) === true ? 1 : 0;
-                if (is_string($row['matchedAlias'] ?? null) && trim((string) $row['matchedAlias']) !== '') {
-                    $count++;
-                }
+            $countStrongMatches = static function (array $row): int {
+                $count = 0;
                 if (is_array($row['organizationNumber'] ?? null) && (($row['organizationNumber']['found'] ?? false) === true)) {
                     $count++;
                 }
@@ -13033,8 +13032,24 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 return $count;
             };
 
-            $leftFoundCount = $countFoundMarks($left);
-            $rightFoundCount = $countFoundMarks($right);
+            $countAllFoundMarks = static function (array $row) use ($countStrongMatches): int {
+                $count = $countStrongMatches($row);
+                foreach (is_array($row['nameComponents'] ?? null) ? $row['nameComponents'] : [] as $nameComponent) {
+                    if (is_array($nameComponent) && (($nameComponent['found'] ?? false) === true)) {
+                        $count++;
+                    }
+                }
+                return $count;
+            };
+
+            $leftStrongCount = $countStrongMatches($left);
+            $rightStrongCount = $countStrongMatches($right);
+            if ($leftStrongCount !== $rightStrongCount) {
+                return $rightStrongCount <=> $leftStrongCount;
+            }
+
+            $leftFoundCount = $countAllFoundMarks($left);
+            $rightFoundCount = $countAllFoundMarks($right);
             if ($leftFoundCount !== $rightFoundCount) {
                 return $rightFoundCount <=> $leftFoundCount;
             }
