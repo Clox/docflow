@@ -6743,13 +6743,13 @@ function bbox_height(array $bbox): float
     return max(0.0, (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0));
 }
 
-function average_text_height(array $labelBbox, array $candidateBbox): float
+function position_penalty_line_height(array $labelBbox, array $candidateBbox): float
 {
     $labelHeight = bbox_height($labelBbox);
     $candidateHeight = bbox_height($candidateBbox);
-    $average = ($labelHeight + $candidateHeight) / 2.0;
+    $lineHeight = max($labelHeight, $candidateHeight);
 
-    return $average > 0.0 ? $average : 1.0;
+    return $lineHeight > 0.0 ? $lineHeight : 1.0;
 }
 
 function bboxes_overlap(array $left, array $right): bool
@@ -6964,7 +6964,7 @@ function candidate_position_penalty_details(
     $mainDirection = is_array($connector) ? connector_main_direction($connector) : 'right';
     $labelCenter = bbox_center_point($labelBbox);
     $candidateCenter = bbox_center_point($candidateBbox);
-    $averageTextHeight = average_text_height($labelBbox, $candidateBbox);
+    $lineHeight = position_penalty_line_height($labelBbox, $candidateBbox);
 
     if ($mainDirection === 'left' || $mainDirection === 'up') {
         return [
@@ -6978,7 +6978,7 @@ function candidate_position_penalty_details(
 
     if ($mainDirection === 'right') {
         $diff = abs((float) ($candidateBbox['y1'] ?? 0.0) - (float) ($labelBbox['y1'] ?? 0.0));
-        $normalizedDiff = $averageTextHeight > 0.0 ? ($diff / $averageTextHeight) : 0.0;
+        $normalizedDiff = $lineHeight > 0.0 ? ($diff / $lineHeight) : 0.0;
         return [
             'penalty' => max(0.0, $normalizedDiff * (float) ($settings['rightYOffsetPenalty'] ?? 0.0)),
             'mainDirection' => $mainDirection,
@@ -6989,7 +6989,7 @@ function candidate_position_penalty_details(
     }
 
     $diff = abs((float) ($candidateCenter['x'] ?? 0.0) - (float) ($labelCenter['x'] ?? 0.0));
-    $normalizedDiff = $averageTextHeight > 0.0 ? ($diff / $averageTextHeight) : 0.0;
+    $normalizedDiff = $lineHeight > 0.0 ? ($diff / $lineHeight) : 0.0;
     return [
         'penalty' => max(0.0, $normalizedDiff * (float) ($settings['downXOffsetPenalty'] ?? 0.0)),
         'mainDirection' => $mainDirection,
