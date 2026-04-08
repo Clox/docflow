@@ -8,14 +8,14 @@ try {
     ensure_job_dispatcher_running($config);
     $includeClients = array_key_exists('includeClients', $_GET);
     $includeSenders = array_key_exists('includeSenders', $_GET);
-    $includeCategories = array_key_exists('includeCategories', $_GET);
+    $includeArchiveStructure = array_key_exists('includeArchiveStructure', $_GET);
     $hasAfterEventId = array_key_exists('afterEventId', $_GET);
     $afterEventId = filter_var($_GET['afterEventId'] ?? null, FILTER_VALIDATE_INT);
     if ($afterEventId === false || $afterEventId === null || $afterEventId < 0) {
         $afterEventId = 0;
     }
 
-    if (!$includeClients && !$includeSenders && !$includeCategories && $hasAfterEventId) {
+    if (!$includeClients && !$includeSenders && !$includeArchiveStructure && $hasAfterEventId) {
         $events = read_job_events_since($afterEventId);
         if (count($events) === 0) {
             http_response_code(204);
@@ -41,7 +41,7 @@ try {
     $jobsPayload = build_jobs_state_payload($config);
     $clients = $includeClients ? load_clients() : [];
     $senders = $includeSenders ? load_senders() : [];
-    $categories = $includeCategories ? load_categories() : [];
+    $archiveFolders = $includeArchiveStructure ? load_archive_folders() : [];
 
     $response = [
         'processingJobs' => $jobsPayload['processingJobs'],
@@ -66,8 +66,8 @@ try {
     if ($includeSenders) {
         $response['senders'] = $senders;
     }
-    if ($includeCategories) {
-        $response['categories'] = $categories;
+    if ($includeArchiveStructure) {
+        $response['archiveFolders'] = $archiveFolders;
     }
 
     json_response($response);

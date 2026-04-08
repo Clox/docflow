@@ -37,7 +37,7 @@ try {
     $job = archive_job_by_id($config, $jobId, $action === 'restore', [
         'selectedClientDirName' => $payload['selectedClientDirName'] ?? null,
         'selectedSenderId' => $payload['selectedSenderId'] ?? null,
-        'selectedCategoryId' => $payload['selectedCategoryId'] ?? null,
+        'selectedFolderId' => $payload['selectedFolderId'] ?? null,
         'selectedLabelIds' => $payload['selectedLabelIds'] ?? null,
         'filename' => $payload['filename'] ?? null,
     ]);

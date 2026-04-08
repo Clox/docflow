@@ -28,8 +28,8 @@ try {
     $config = load_config();
     ensure_job_dispatcher_running($config);
     $state = load_archiving_rules_state();
-    $normalizedArchiveFolders = normalize_archive_structure($payload['archiveFolders']);
-    $state['draftArchivingRules']['archiveFolders'] = $normalizedArchiveFolders;
+    $archiveStructure = normalize_archive_structure_data($payload);
+    $state['draftArchivingRules']['archiveFolders'] = $archiveStructure['archiveFolders'];
     $stored = save_archiving_rules_state($state);
     maybe_advance_draft_archiving_review_session($config, 10);
     maybe_queue_archiving_rules_update_event($config);

@@ -798,7 +798,7 @@ function normalize_editable_label_rule(mixed $input): array
     ]);
 }
 
-function normalize_category_label_ids(mixed $input): array
+function normalize_label_id_list(mixed $input): array
 {
     $labelIds = [];
     $seen = [];
@@ -946,9 +946,9 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
         ];
     }
 
-    if ($type === 'category') {
+    if ($type === 'folder') {
         return [
-            'type' => 'category',
+            'type' => 'folder',
             'prefixParts' => $prefixParts,
             'suffixParts' => $suffixParts,
         ];
@@ -1628,50 +1628,233 @@ function normalize_labels(mixed $input): array
     return $labels;
 }
 
-function build_categories_from_archive_folders(array $archiveFolders): array
+function normalize_archive_structure_unique_id(string $base, string $fallback, array &$usedIds): string
 {
-    $categories = [];
+    $candidate = slugify_text($base, '-', $fallback);
+    if ($candidate === '') {
+        $candidate = $fallback;
+    }
+    $resolved = $candidate;
+    $suffix = 2;
+    while (isset($usedIds[$resolved])) {
+        $resolved = $candidate . '-' . $suffix;
+        $suffix += 1;
+    }
+    $usedIds[$resolved] = true;
+    return $resolved;
+}
 
-    foreach ($archiveFolders as $archiveFolderIndex => $archiveFolder) {
-        if (!is_array($archiveFolder)) {
+function archive_folder_display_text(array $folder): string
+{
+    $name = is_string($folder['name'] ?? null) ? trim((string) $folder['name']) : '';
+    if ($name !== '') {
+        return $name;
+    }
+
+    $template = normalize_filename_template($folder['pathTemplate'] ?? ($folder['path'] ?? null));
+    foreach (is_array($template['parts'] ?? null) ? $template['parts'] : [] as $part) {
+        if (($part['type'] ?? 'text') !== 'text') {
             continue;
         }
-
-        $archiveFolderId = is_string($archiveFolder['id'] ?? null) ? trim((string) $archiveFolder['id']) : '';
-        $archiveFolderName = is_string($archiveFolder['name'] ?? null) ? trim((string) $archiveFolder['name']) : '';
-        $archiveFolderPath = is_string($archiveFolder['path'] ?? null) ? trim((string) $archiveFolder['path']) : '';
-        $archiveFolderFilenameTemplate = normalize_filename_template($archiveFolder['filenameTemplate'] ?? null);
-        $archiveFolderCategories = $archiveFolder['categories'] ?? [];
-        if (!is_array($archiveFolderCategories)) {
-            continue;
-        }
-
-        foreach ($archiveFolderCategories as $categoryIndex => $category) {
-            if (!is_array($category)) {
-                continue;
-            }
-            $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
-            $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
-            if ($categoryId === '') {
-                $categoryId = slugify_text($categoryName, '-', '');
-            }
-            $priority = positive_int($category['priority'] ?? 1, 1);
-            $labelIds = normalize_category_label_ids($category['labelIds'] ?? null);
-
-            $categories[] = [
-                'id' => $categoryId,
-                'name' => $categoryName,
-                'archiveFolderId' => $archiveFolderId,
-                'path' => $archiveFolderPath,
-                'archiveFolderName' => $archiveFolderName,
-                'priority' => $priority,
-                'labelIds' => $labelIds,
-                'filenameTemplate' => $archiveFolderFilenameTemplate,
-            ];
+        $value = is_string($part['value'] ?? null) ? trim((string) $part['value']) : '';
+        if ($value !== '') {
+            return $value;
         }
     }
 
-    return $categories;
+    return '';
+}
+
+function normalize_archive_folder_definition(array $input, int $index, array &$usedIds): array
+{
+    $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
+    $pathTemplate = normalize_filename_template($input['pathTemplate'] ?? ($input['path'] ?? null));
+    $idSource = is_string($input['id'] ?? null) && trim((string) $input['id']) !== ''
+        ? trim((string) $input['id'])
+        : ($name !== '' ? $name : archive_folder_display_text([
+            'name' => $name,
+            'pathTemplate' => $pathTemplate,
+        ]));
+    $folderId = normalize_archive_structure_unique_id($idSource, 'folder', $usedIds);
+    $filenameTemplates = normalize_archive_folder_filename_templates($input['filenameTemplates'] ?? null, $folderId);
+
+    return [
+        'id' => $folderId,
+        'name' => $name,
+        'pathTemplate' => $pathTemplate,
+        'filenameTemplates' => $filenameTemplates,
+    ];
+}
+
+function normalize_archive_folders(mixed $input): array
+{
+    if (!is_array($input)) {
+        return [];
+    }
+
+    $folders = [];
+    $usedIds = [];
+    $usedTemplateIds = [];
+    foreach (array_values($input) as $index => $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $folder = normalize_archive_folder_definition($row, (int) $index, $usedIds);
+        $folderId = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
+        $filenameTemplates = [];
+        foreach (is_array($folder['filenameTemplates'] ?? null) ? $folder['filenameTemplates'] : [] as $templateIndex => $template) {
+            if (!is_array($template)) {
+                continue;
+            }
+            $templateIdSource = is_string($template['id'] ?? null) && trim((string) $template['id']) !== ''
+                ? trim((string) $template['id'])
+                : ($folderId !== '' ? $folderId . '-filename-template-' . ((int) $templateIndex + 1) : 'filename-template');
+            $template['id'] = normalize_archive_structure_unique_id($templateIdSource, 'filename-template', $usedTemplateIds);
+            $filenameTemplates[] = $template;
+        }
+        $folder['filenameTemplates'] = $filenameTemplates;
+        $folders[] = $folder;
+    }
+
+    return $folders;
+}
+
+function normalize_archive_folder_filename_template_definition(array $input, int $index, string $folderId, array &$usedIds): array
+{
+    $template = normalize_filename_template($input['template'] ?? ($input['filenameTemplate'] ?? null));
+    $idSource = is_string($input['id'] ?? null) && trim((string) $input['id']) !== ''
+        ? trim((string) $input['id'])
+        : ($folderId . '-filename-template-' . ($index + 1));
+
+    return [
+        'id' => normalize_archive_structure_unique_id($idSource, 'filename-template', $usedIds),
+        'template' => $template,
+        'labelIds' => normalize_archive_rule_label_ids($input['labelIds'] ?? ($input['conditions']['labelIds'] ?? null)),
+    ];
+}
+
+function normalize_archive_folder_filename_templates(mixed $input, string $folderId): array
+{
+    if (!is_array($input)) {
+        return [];
+    }
+
+    $templates = [];
+    $usedIds = [];
+    foreach (array_values($input) as $index => $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $templates[] = normalize_archive_folder_filename_template_definition($row, (int) $index, $folderId, $usedIds);
+    }
+
+    return $templates;
+}
+
+function normalize_archive_rule_label_ids(mixed $input): array
+{
+    return normalize_label_id_list($input);
+}
+
+function normalize_archive_rule_conditions(mixed $input): array
+{
+    $decoded = is_array($input) ? $input : [];
+    return [
+        'labelIds' => normalize_archive_rule_label_ids($decoded['labelIds'] ?? null),
+    ];
+}
+
+function normalize_archive_rule_definition(
+    array $input,
+    int $index,
+    array &$usedIds,
+    array $knownFolderIds
+): array {
+    $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
+    $conditions = normalize_archive_rule_conditions($input['conditions'] ?? $input);
+    $folderId = is_string($input['folderId'] ?? null) ? trim((string) $input['folderId']) : '';
+    if ($folderId !== '' && !isset($knownFolderIds[$folderId])) {
+        $folderId = '';
+    }
+    $priority = positive_int($input['priority'] ?? ($index + 1), $index + 1);
+    $sortOrder = positive_int($input['sortOrder'] ?? ($index + 1), $index + 1);
+    $isActive = array_key_exists('isActive', $input) ? ($input['isActive'] !== false) : true;
+    $idSource = is_string($input['id'] ?? null) && trim((string) $input['id']) !== ''
+        ? trim((string) $input['id'])
+        : ($name !== '' ? $name : ('rule-' . ($index + 1)));
+
+    return [
+        'id' => normalize_archive_structure_unique_id($idSource, 'rule', $usedIds),
+        'name' => $name,
+        'priority' => $priority,
+        'sortOrder' => $sortOrder,
+        'conditions' => $conditions,
+        'folderId' => $folderId,
+        'isActive' => $isActive,
+    ];
+}
+
+function normalize_archive_rules(mixed $input, array $folders = []): array
+{
+    if (!is_array($input)) {
+        return [];
+    }
+
+    $knownFolderIds = [];
+    foreach ($folders as $folder) {
+        $folderId = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
+        if ($folderId !== '') {
+            $knownFolderIds[$folderId] = true;
+        }
+    }
+
+    $rules = [];
+    $usedIds = [];
+    foreach (array_values($input) as $index => $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $rules[] = normalize_archive_rule_definition($row, (int) $index, $usedIds, $knownFolderIds);
+    }
+
+    return $rules;
+}
+
+function build_archive_structure_indexes(array $rules): array
+{
+    $foldersById = [];
+    $filenameTemplatesById = [];
+    foreach (is_array($rules['archiveFolders'] ?? null) ? $rules['archiveFolders'] : [] as $folder) {
+        if (!is_array($folder)) {
+            continue;
+        }
+        $folderId = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
+        if ($folderId !== '') {
+            $foldersById[$folderId] = $folder;
+            foreach (is_array($folder['filenameTemplates'] ?? null) ? $folder['filenameTemplates'] : [] as $templateIndex => $template) {
+                if (!is_array($template)) {
+                    continue;
+                }
+                $templateId = is_string($template['id'] ?? null) ? trim((string) $template['id']) : '';
+                if ($templateId === '') {
+                    continue;
+                }
+                $filenameTemplatesById[$templateId] = $template + [
+                    'folderId' => $folderId,
+                    'folderName' => archive_folder_display_text($folder),
+                    'templateIndex' => is_int($templateIndex) ? $templateIndex : 0,
+                ];
+            }
+        }
+    }
+
+    return [$foldersById, $filenameTemplatesById];
+}
+
+function load_archive_folders(): array
+{
+    $rules = load_active_archiving_rules();
+    return is_array($rules['archiveFolders'] ?? null) ? $rules['archiveFolders'] : [];
 }
 
 function load_labels(): array
@@ -1741,124 +1924,10 @@ function normalize_selected_job_label_ids_payload(mixed $value, array $knownLabe
     return $resolved;
 }
 
-function load_categories(): array
-{
-    $rules = load_active_archiving_rules();
-    $archiveFolders = is_array($rules['archiveFolders'] ?? null) ? $rules['archiveFolders'] : [];
-    return build_categories_from_archive_folders($archiveFolders);
-}
-
-function normalize_archive_structure(array $input): array
-{
-    $archiveFolders = [];
-    $usedCategoryIds = [];
-    $usedCategoryLabelIds = [];
-    foreach ($input as $row) {
-        if (!is_array($row)) {
-            continue;
-        }
-
-        $filenameTemplate = null;
-        if (array_key_exists('filenameTemplate', $row)) {
-            $filenameTemplate = normalize_filename_template($row['filenameTemplate']);
-        } else {
-            $rawCategories = is_array($row['categories'] ?? null) ? $row['categories'] : [];
-            foreach ($rawCategories as $rawCategory) {
-                if (!is_array($rawCategory) || !array_key_exists('filenameTemplate', $rawCategory)) {
-                    continue;
-                }
-                $filenameTemplate = normalize_filename_template($rawCategory['filenameTemplate']);
-                break;
-            }
-        }
-        if (!is_array($filenameTemplate)) {
-            $filenameTemplate = normalize_filename_template(null);
-        }
-
-        $archiveFolders[] = [
-            'id' => slugify_text(
-                is_string($row['path'] ?? null) && trim((string) $row['path']) !== ''
-                    ? (string) $row['path']
-                    : (is_string($row['name'] ?? null) ? (string) $row['name'] : ''),
-                '-',
-                'folder'
-            ),
-            'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
-            'path' => is_string($row['path'] ?? null) ? trim((string) $row['path']) : '',
-            'filenameTemplate' => $filenameTemplate,
-            'categories' => normalize_archive_categories($row['categories'] ?? [], $usedCategoryIds, $usedCategoryLabelIds),
-        ];
-    }
-
-    return $archiveFolders;
-}
-
-function sync_active_filename_templates_from_archive_folders(array $activeArchiveFolders, array $savedArchiveFolders): array
-{
-    $normalizedActive = normalize_archive_structure($activeArchiveFolders);
-    $normalizedSaved = normalize_archive_structure($savedArchiveFolders);
-    $savedById = [];
-    foreach ($normalizedSaved as $index => $archiveFolder) {
-        if (!is_array($archiveFolder)) {
-            continue;
-        }
-        $folderId = is_string($archiveFolder['id'] ?? null) ? trim((string) $archiveFolder['id']) : '';
-        if ($folderId !== '') {
-            $savedById[$folderId] = $archiveFolder;
-        }
-        $normalizedSaved[$index] = $archiveFolder;
-    }
-
-    foreach ($normalizedActive as $index => $activeArchiveFolder) {
-        if (!is_array($activeArchiveFolder)) {
-            continue;
-        }
-        $activeId = is_string($activeArchiveFolder['id'] ?? null) ? trim((string) $activeArchiveFolder['id']) : '';
-        $sourceFolder = null;
-        if ($activeId !== '' && isset($savedById[$activeId]) && is_array($savedById[$activeId])) {
-            $sourceFolder = $savedById[$activeId];
-        } elseif (isset($normalizedSaved[$index]) && is_array($normalizedSaved[$index])) {
-            $sourceFolder = $normalizedSaved[$index];
-        }
-        if (!is_array($sourceFolder)) {
-            continue;
-        }
-        $activeArchiveFolder['filenameTemplate'] = normalize_filename_template($sourceFolder['filenameTemplate'] ?? null);
-        $normalizedActive[$index] = $activeArchiveFolder;
-    }
-
-    return $normalizedActive;
-}
-
-function archive_structure_without_filename_templates(array $archiveFolders): array
-{
-    $normalized = normalize_archive_structure($archiveFolders);
-    foreach ($normalized as $index => $archiveFolder) {
-        if (!is_array($archiveFolder)) {
-            continue;
-        }
-        unset($archiveFolder['filenameTemplate']);
-        $categories = is_array($archiveFolder['categories'] ?? null) ? $archiveFolder['categories'] : [];
-        foreach ($categories as $categoryIndex => $category) {
-            if (!is_array($category)) {
-                continue;
-            }
-            unset($category['filenameTemplate']);
-            $categories[$categoryIndex] = $category;
-        }
-        $archiveFolder['categories'] = $categories;
-        $normalized[$index] = $archiveFolder;
-    }
-
-    return $normalized;
-}
-
 function normalize_archive_structure_data(mixed $input): array
 {
     $decoded = is_array($input) ? $input : [];
-
-    $rawArchiveFolders = is_array($decoded['archiveFolders'] ?? null) ? $decoded['archiveFolders'] : [];
-    $archiveFolders = normalize_archive_structure($rawArchiveFolders);
+    $archiveFolders = normalize_archive_folders($decoded['archiveFolders'] ?? null);
 
     return [
         'archiveFolders' => $archiveFolders,
@@ -1868,6 +1937,7 @@ function normalize_archive_structure_data(mixed $input): array
 function normalize_archiving_rules_set(mixed $input): array
 {
     $decoded = is_array($input) ? $input : [];
+    $archiveStructure = normalize_archive_structure_data($decoded);
     $fields = normalize_extraction_fields(
         is_array($decoded['fields'] ?? null) ? $decoded['fields'] : []
     );
@@ -1912,9 +1982,7 @@ function normalize_archiving_rules_set(mixed $input): array
     }
 
     return [
-        'archiveFolders' => normalize_archive_structure(
-            is_array($decoded['archiveFolders'] ?? null) ? $decoded['archiveFolders'] : []
-        ),
+        'archiveFolders' => $archiveStructure['archiveFolders'],
         'labels' => normalize_labels(
             is_array($decoded['labels'] ?? null) ? $decoded['labels'] : []
         ),
@@ -2095,27 +2163,7 @@ function archiving_rules_have_unpublished_changes(?array $activeRules = null, ?a
 
 function archiving_rules_review_relevant_set(array $rules): array
 {
-    $normalized = normalize_archiving_rules_set($rules);
-    $archiveFolders = is_array($normalized['archiveFolders'] ?? null) ? $normalized['archiveFolders'] : [];
-    foreach ($archiveFolders as $index => $archiveFolder) {
-        if (!is_array($archiveFolder)) {
-            continue;
-        }
-        unset($archiveFolder['filenameTemplate']);
-        $categories = is_array($archiveFolder['categories'] ?? null) ? $archiveFolder['categories'] : [];
-        foreach ($categories as $categoryIndex => $category) {
-            if (!is_array($category)) {
-                continue;
-            }
-            unset($category['filenameTemplate']);
-            $categories[$categoryIndex] = $category;
-        }
-        $archiveFolder['categories'] = $categories;
-        $archiveFolders[$index] = $archiveFolder;
-    }
-    $normalized['archiveFolders'] = $archiveFolders;
-
-    return $normalized;
+    return normalize_archiving_rules_set($rules);
 }
 
 function archiving_rules_review_relevant_hash(array $rules): string
@@ -2155,6 +2203,36 @@ function archiving_rules_changed_sections(array $active, array $draft): array
     return $changedSections;
 }
 
+function flatten_archive_folder_filename_templates(array $rules): array
+{
+    $flattened = [];
+    $usedFolderIds = [];
+    foreach (is_array($rules['archiveFolders'] ?? null) ? $rules['archiveFolders'] : [] as $folderIndex => $folder) {
+        if (!is_array($folder)) {
+            continue;
+        }
+        $normalizedFolder = normalize_archive_folder_definition($folder, is_int($folderIndex) ? $folderIndex : 0, $usedFolderIds);
+        $folderId = is_string($normalizedFolder['id'] ?? null) ? trim((string) $normalizedFolder['id']) : '';
+        $folderName = archive_folder_display_text($normalizedFolder);
+        foreach (is_array($normalizedFolder['filenameTemplates'] ?? null) ? $normalizedFolder['filenameTemplates'] : [] as $templateIndex => $template) {
+            if (!is_array($template)) {
+                continue;
+            }
+            $templateId = is_string($template['id'] ?? null) ? trim((string) $template['id']) : '';
+            $flattened[] = [
+                'folderId' => $folderId,
+                'folderName' => $folderName,
+                'templateIndex' => is_int($templateIndex) ? $templateIndex : 0,
+                'templateId' => $templateId,
+                'template' => normalize_filename_template($template['template'] ?? null),
+                'labelIds' => normalize_archive_rule_label_ids($template['labelIds'] ?? null),
+            ];
+        }
+    }
+
+    return $flattened;
+}
+
 function filename_template_part_review_label(array $part, array $nameMaps): string
 {
     $type = is_string($part['type'] ?? null) ? (string) $part['type'] : 'text';
@@ -2170,8 +2248,8 @@ function filename_template_part_review_label(array $part, array $nameMaps): stri
         $key = is_string($part['key'] ?? null) ? trim((string) $part['key']) : '';
         $resolved = $nameMaps[$type][$key] ?? $key;
         $label = $resolved !== '' ? $resolved : ($type === 'systemField' ? 'Systemdatafält' : 'Datafält');
-    } elseif ($type === 'category') {
-        $label = 'Kategori';
+    } elseif ($type === 'folder') {
+        $label = 'Mapp';
     } elseif ($type === 'labels') {
         $separator = is_string($part['separator'] ?? null) ? (string) $part['separator'] : ', ';
         $label = $separator === ', '
@@ -2258,30 +2336,32 @@ function filename_template_review_name_maps(array $activeRules, array $draftRule
 
 function archiving_rules_filename_template_changes(array $activeRules, array $draftRules): array
 {
-    $activeFolders = normalize_archive_structure(is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : []);
-    $draftFolders = normalize_archive_structure(is_array($draftRules['archiveFolders'] ?? null) ? $draftRules['archiveFolders'] : []);
+    $activeTemplates = flatten_archive_folder_filename_templates($activeRules);
+    $draftTemplates = flatten_archive_folder_filename_templates($draftRules);
     $nameMaps = filename_template_review_name_maps($activeRules, $draftRules);
     $activeByKey = [];
     $draftByKey = [];
     $orderedKeys = [];
 
-    foreach ($activeFolders as $index => $archiveFolder) {
-        if (!is_array($archiveFolder)) {
+    foreach ($activeTemplates as $index => $template) {
+        if (!is_array($template)) {
             continue;
         }
-        $folderId = is_string($archiveFolder['id'] ?? null) ? trim((string) $archiveFolder['id']) : '';
-        $key = $folderId !== '' ? $folderId : ('#' . $index);
-        $activeByKey[$key] = $archiveFolder;
+        $templateId = is_string($template['templateId'] ?? null) ? trim((string) $template['templateId']) : '';
+        $folderId = is_string($template['folderId'] ?? null) ? trim((string) $template['folderId']) : '';
+        $key = ($folderId !== '' ? $folderId : '#folder') . ':' . ($templateId !== '' ? $templateId : ('#' . $index));
+        $activeByKey[$key] = $template;
         $orderedKeys[] = $key;
     }
 
-    foreach ($draftFolders as $index => $archiveFolder) {
-        if (!is_array($archiveFolder)) {
+    foreach ($draftTemplates as $index => $template) {
+        if (!is_array($template)) {
             continue;
         }
-        $folderId = is_string($archiveFolder['id'] ?? null) ? trim((string) $archiveFolder['id']) : '';
-        $key = $folderId !== '' ? $folderId : ('#' . $index);
-        $draftByKey[$key] = $archiveFolder;
+        $templateId = is_string($template['templateId'] ?? null) ? trim((string) $template['templateId']) : '';
+        $folderId = is_string($template['folderId'] ?? null) ? trim((string) $template['folderId']) : '';
+        $key = ($folderId !== '' ? $folderId : '#folder') . ':' . ($templateId !== '' ? $templateId : ('#' . $index));
+        $draftByKey[$key] = $template;
         if (!in_array($key, $orderedKeys, true)) {
             $orderedKeys[] = $key;
         }
@@ -2289,31 +2369,33 @@ function archiving_rules_filename_template_changes(array $activeRules, array $dr
 
     $changes = [];
     foreach ($orderedKeys as $key) {
-        $activeFolder = is_array($activeByKey[$key] ?? null) ? $activeByKey[$key] : [];
-        $draftFolder = is_array($draftByKey[$key] ?? null) ? $draftByKey[$key] : [];
-        $before = normalize_filename_template($activeFolder['filenameTemplate'] ?? null);
-        $after = normalize_filename_template($draftFolder['filenameTemplate'] ?? null);
+        $activeTemplate = is_array($activeByKey[$key] ?? null) ? $activeByKey[$key] : [];
+        $draftTemplate = is_array($draftByKey[$key] ?? null) ? $draftByKey[$key] : [];
+        $before = normalize_filename_template($activeTemplate['template'] ?? null);
+        $after = normalize_filename_template($draftTemplate['template'] ?? null);
         if (json_encode($before, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) === json_encode($after, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) {
             continue;
         }
 
         $folderName = '';
-        foreach ([$draftFolder, $activeFolder] as $folder) {
-            if (!is_array($folder)) {
+        $templateIndex = 0;
+        $templateId = '';
+        foreach ([$draftTemplate, $activeTemplate] as $template) {
+            if (!is_array($template)) {
                 continue;
             }
-            $candidateName = is_string($folder['name'] ?? null) ? trim((string) $folder['name']) : '';
-            $candidatePath = is_string($folder['path'] ?? null) ? trim((string) $folder['path']) : '';
-            $candidateId = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
-            $folderName = $candidateName !== '' ? $candidateName : ($candidatePath !== '' ? $candidatePath : $candidateId);
-            if ($folderName !== '') {
+            $folderName = is_string($template['folderName'] ?? null) ? trim((string) $template['folderName']) : $folderName;
+            $templateIndex = is_int($template['templateIndex'] ?? null) ? (int) $template['templateIndex'] : $templateIndex;
+            $templateId = is_string($template['templateId'] ?? null) ? trim((string) $template['templateId']) : $templateId;
+            if ($folderName !== '' || $templateId !== '') {
                 break;
             }
         }
+        $templateName = trim(($folderName !== '' ? $folderName . ' / ' : '') . 'Filnamnsmall ' . ($templateIndex + 1));
 
         $changes[] = [
-            'archiveFolderId' => is_string($draftFolder['id'] ?? $activeFolder['id'] ?? null) ? trim((string) ($draftFolder['id'] ?? $activeFolder['id'])) : '',
-            'archiveFolderName' => $folderName,
+            'filenameTemplateId' => $templateId,
+            'filenameTemplateName' => $templateName,
             'before' => filename_template_review_label($before, $nameMaps),
             'after' => filename_template_review_label($after, $nameMaps),
         ];
@@ -2603,50 +2685,6 @@ function archived_job_historical_auto_result(string $jobId, array $job, int $act
     );
 }
 
-function normalize_archive_categories(mixed $input, array &$usedCategoryIds = [], array &$usedCategoryLabelIds = []): array
-{
-    if (!is_array($input)) {
-        return [];
-    }
-
-    $categories = [];
-    foreach ($input as $row) {
-        if (!is_array($row)) {
-            continue;
-        }
-        $categories[] = normalize_archive_category($row, $usedCategoryIds, $usedCategoryLabelIds);
-    }
-
-    return $categories;
-}
-
-function normalize_archive_category(array $input, array &$usedCategoryIds = [], array &$usedCategoryLabelIds = []): array
-{
-    $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
-    $id = slugify_text($name, '-', '');
-    if ($id === '') {
-        throw new RuntimeException('Kategori saknar giltigt namn');
-    }
-    if (isset($usedCategoryIds[$id])) {
-        throw new RuntimeException('Kategori-id krockar: ' . $id);
-    }
-    $usedCategoryIds[$id] = true;
-    $labelIds = normalize_category_label_ids($input['labelIds'] ?? null);
-    foreach ($labelIds as $labelId) {
-        if (isset($usedCategoryLabelIds[$labelId])) {
-            throw new RuntimeException('Etikett används redan av en annan kategori: ' . $labelId);
-        }
-        $usedCategoryLabelIds[$labelId] = $id;
-    }
-
-    return [
-        'id' => $id,
-        'name' => $name,
-        'priority' => positive_int($input['priority'] ?? 1, 1),
-        'labelIds' => $labelIds,
-    ];
-}
-
 function load_matching_settings_payload(): array
 {
     $defaultPositionAdjustment = default_matching_position_adjustment_settings();
@@ -2874,15 +2912,15 @@ function job_review_pdf_path(array $config, string $jobId, ?array $job = null): 
     return null;
 }
 
-function find_loaded_category_by_id(array $categories, string $categoryId): ?array
+function find_loaded_archive_folder_by_id(array $folders, string $folderId): ?array
 {
-    foreach ($categories as $category) {
-        if (!is_array($category)) {
+    foreach ($folders as $folder) {
+        if (!is_array($folder)) {
             continue;
         }
-        $id = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
-        if ($id === $categoryId) {
-            return $category;
+        $id = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
+        if ($id === $folderId) {
+            return $folder;
         }
     }
 
@@ -2918,7 +2956,7 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
 
     $clients = load_clients();
     $senders = load_senders();
-    $categories = load_categories();
+    $archiveFolders = load_archive_folders();
     $knownLabelIds = known_job_label_ids();
 
     if (array_key_exists('selectedClientDirName', $payload)) {
@@ -2957,17 +2995,17 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
         }
     }
 
-    if (array_key_exists('selectedCategoryId', $payload)) {
-        $value = $payload['selectedCategoryId'];
+    if (array_key_exists('selectedFolderId', $payload)) {
+        $value = $payload['selectedFolderId'];
         if ($value === null || $value === '') {
-            unset($job['selectedCategoryId']);
+            unset($job['selectedFolderId']);
         } else {
-            $categoryId = is_string($value) ? trim($value) : '';
-            $category = find_loaded_category_by_id($categories, $categoryId);
-            if ($categoryId === '' || !is_array($category)) {
-                throw new RuntimeException('Ogiltig kategori');
+            $folderId = is_string($value) ? trim($value) : '';
+            $folder = find_loaded_archive_folder_by_id($archiveFolders, $folderId);
+            if ($folderId === '' || !is_array($folder)) {
+                throw new RuntimeException('Ogiltig mapp');
             }
-            $job['selectedCategoryId'] = $categoryId;
+            $job['selectedFolderId'] = $folderId;
         }
     }
 
@@ -2994,7 +3032,7 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
     if (($job['archived'] ?? false) === true && (
         array_key_exists('selectedClientDirName', $payload)
         || array_key_exists('selectedSenderId', $payload)
-        || array_key_exists('selectedCategoryId', $payload)
+        || array_key_exists('selectedFolderId', $payload)
         || array_key_exists('selectedLabelIds', $payload)
         || array_key_exists('filename', $payload)
     )) {
@@ -3058,7 +3096,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
 
     $clients = load_clients();
     $senders = load_senders();
-    $categories = load_categories();
+    $archiveFolders = load_archive_folders();
     $knownLabelIds = known_job_label_ids();
 
     $selectedClientDirName = array_key_exists('selectedClientDirName', $payload)
@@ -3067,9 +3105,9 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $selectedSenderId = array_key_exists('selectedSenderId', $payload)
         ? (int) ($payload['selectedSenderId'] ?? 0)
         : (int) ($job['selectedSenderId'] ?? 0);
-    $selectedCategoryId = array_key_exists('selectedCategoryId', $payload)
-        ? (is_string($payload['selectedCategoryId'] ?? null) ? trim((string) $payload['selectedCategoryId']) : '')
-        : (is_string($job['selectedCategoryId'] ?? null) ? trim((string) $job['selectedCategoryId']) : '');
+    $selectedFolderId = array_key_exists('selectedFolderId', $payload)
+        ? (is_string($payload['selectedFolderId'] ?? null) ? trim((string) $payload['selectedFolderId']) : '')
+        : (is_string($job['selectedFolderId'] ?? null) ? trim((string) $job['selectedFolderId']) : '');
     $selectedLabelIds = array_key_exists('selectedLabelIds', $payload)
         ? (($payload['selectedLabelIds'] ?? null) === null ? null : normalize_selected_job_label_ids_payload($payload['selectedLabelIds'], $knownLabelIds))
         : (array_key_exists('selectedLabelIds', $job) ? normalize_stored_job_label_ids($job['selectedLabelIds']) : null);
@@ -3094,9 +3132,9 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
         throw new RuntimeException('Ogiltig avsändare');
     }
 
-    $category = find_loaded_category_by_id($categories, $selectedCategoryId);
-    if (!is_array($category)) {
-        throw new RuntimeException('Ogiltig kategori');
+    $archiveFolder = find_loaded_archive_folder_by_id($archiveFolders, $selectedFolderId);
+    if (!is_array($archiveFolder)) {
+        throw new RuntimeException('Ogiltig mapp');
     }
 
     $activeRules = load_active_archiving_rules();
@@ -3105,17 +3143,17 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $autoDetectedAtApproval = normalize_auto_archiving_result(
         is_array($autoAnalysis['autoArchivingResult'] ?? null) ? $autoAnalysis['autoArchivingResult'] : []
     );
-    $userApprovedAtApproval = approved_archiving_from_archive_request($job, $autoDetectedAtApproval, $payload, $categories);
+    $userApprovedAtApproval = approved_archiving_from_archive_request($job, $autoDetectedAtApproval, $payload, $archiveFolders);
 
     $filename = sanitize_pdf_filename(
         $filenameInput !== ''
             ? $filenameInput
             : (is_string($userApprovedAtApproval['filename'] ?? null) ? (string) $userApprovedAtApproval['filename'] : (string) ($job['originalFilename'] ?? 'dokument.pdf'))
     );
-    $categoryPath = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
+    $folderPath = render_archive_folder_path($userApprovedAtApproval, $archiveFolder, $activeRules, $senders);
     $targetDirectory = rtrim($outputBaseDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $selectedClientDirName;
-    if ($categoryPath !== '') {
-        $targetDirectory .= DIRECTORY_SEPARATOR . $categoryPath;
+    if ($folderPath !== '') {
+        $targetDirectory .= DIRECTORY_SEPARATOR . $folderPath;
     }
     ensure_directory($targetDirectory);
 
@@ -3130,7 +3168,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
 
     $job['selectedClientDirName'] = $selectedClientDirName;
     $job['selectedSenderId'] = $selectedSenderId;
-    $job['selectedCategoryId'] = $selectedCategoryId;
+    $job['selectedFolderId'] = $selectedFolderId;
     if ($selectedLabelIds === null) {
         unset($job['selectedLabelIds']);
     } else {
@@ -3141,9 +3179,8 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
         'filename' => $filename,
         'clientId' => $selectedClientDirName,
         'senderId' => $selectedSenderId,
-        'categoryId' => $selectedCategoryId,
-        'archiveFolderId' => is_string($category['archiveFolderId'] ?? null) ? trim((string) $category['archiveFolderId']) : null,
-        'archiveFolderPath' => $categoryPath,
+        'folderId' => $selectedFolderId,
+        'archiveFolderPath' => $folderPath,
     ]));
     set_job_archiving_snapshot($job, $activeVersion, $autoDetectedAtApproval, $approvedSnapshotValue);
     $job['archived'] = true;
@@ -6035,82 +6072,75 @@ function find_scored_rule_matches(string $ocrText, array $entities, array $repla
     return filter_scored_rule_matches_by_threshold($signalMatches);
 }
 
-function find_category_matches(string $ocrText, array $categories, array $replacementMap, array $context = []): array
+function select_archive_folder_filename_template(array $folder, array $matchedLabelsById): ?array
 {
-    unset($ocrText, $replacementMap);
+    $templates = is_array($folder['filenameTemplates'] ?? null) ? array_values($folder['filenameTemplates']) : [];
+    if ($templates === []) {
+        return null;
+    }
 
-    $matchedLabelsById = is_array($context['matchedLabelsById'] ?? null) ? $context['matchedLabelsById'] : [];
-    $matches = [];
-
-    foreach ($categories as $categoryIndex => $category) {
-        if (!is_array($category)) {
+    $candidates = [];
+    foreach ($templates as $templateIndex => $template) {
+        if (!is_array($template)) {
             continue;
         }
-
-        $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
-        if ($categoryId === '') {
-            continue;
-        }
-
-        $labelIds = normalize_category_label_ids($category['labelIds'] ?? null);
-        if (count($labelIds) === 0) {
-            continue;
-        }
-
-        $matchedLabels = [];
+        $labelIds = normalize_archive_rule_label_ids($template['labelIds'] ?? null);
+        $matchedCount = 0;
         foreach ($labelIds as $labelId) {
-            $matchedLabel = $matchedLabelsById[$labelId] ?? null;
-            if (!is_array($matchedLabel)) {
-                continue;
+            if (is_array($matchedLabelsById[$labelId] ?? null)) {
+                $matchedCount += 1;
             }
-            $labelName = is_string($matchedLabel['name'] ?? null) ? trim((string) $matchedLabel['name']) : '';
-            $matchedLabels[] = [
-                'id' => $labelId,
-                'name' => $labelName !== '' ? $labelName : $labelId,
-            ];
         }
-
-        if (count($matchedLabels) === 0) {
+        if ($labelIds !== [] && $matchedCount < 1) {
             continue;
         }
-
-        $priority = positive_int($category['priority'] ?? 1, 1);
-        $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
-        $categoryPath = is_string($category['path'] ?? null) ? trim((string) $category['path']) : '';
-        $archiveFolderId = is_string($category['archiveFolderId'] ?? null) ? trim((string) $category['archiveFolderId']) : '';
-        $archiveFolderName = is_string($category['archiveFolderName'] ?? null) ? trim((string) $category['archiveFolderName']) : '';
-
-        $matches[] = [
-            'id' => $categoryId,
-            'name' => $categoryName !== '' ? $categoryName : 'Namnlös kategori',
-            'path' => $categoryPath,
-            'archiveFolderId' => $archiveFolderId,
-            'archiveFolderName' => $archiveFolderName,
-            'priority' => $priority,
-            'matchCount' => count($matchedLabels),
-            'matchedLabelIds' => array_values(array_map(static function (array $label): string {
-                return (string) $label['id'];
-            }, $matchedLabels)),
-            'matchedLabels' => $matchedLabels,
-            '_categoryOrder' => is_int($categoryIndex) ? $categoryIndex : 0,
+        $candidates[] = [
+            'template' => $template,
+            'templateIndex' => is_int($templateIndex) ? $templateIndex : 0,
+            'matchedCount' => $matchedCount,
+            'conditionCount' => count($labelIds),
         ];
     }
 
-    usort($matches, static function (array $a, array $b): int {
-        $priorityCompare = (int) ($b['priority'] ?? 1) <=> (int) ($a['priority'] ?? 1);
-        if ($priorityCompare !== 0) {
-            return $priorityCompare;
-        }
+    if ($candidates === []) {
+        $firstTemplate = $templates[0] ?? null;
+        return is_array($firstTemplate)
+            ? [
+                'template' => $firstTemplate,
+                'templateIndex' => 0,
+                'matchedCount' => 0,
+                'conditionCount' => count(normalize_archive_rule_label_ids($firstTemplate['labelIds'] ?? null)),
+            ]
+            : null;
+    }
 
-        return (int) ($a['_categoryOrder'] ?? 0) <=> (int) ($b['_categoryOrder'] ?? 0);
+    usort($candidates, static function (array $left, array $right): int {
+        $matchedCompare = (int) ($right['matchedCount'] ?? 0) <=> (int) ($left['matchedCount'] ?? 0);
+        if ($matchedCompare !== 0) {
+            return $matchedCompare;
+        }
+        $conditionCompare = (int) ($right['conditionCount'] ?? 0) <=> (int) ($left['conditionCount'] ?? 0);
+        if ($conditionCompare !== 0) {
+            return $conditionCompare;
+        }
+        return (int) ($left['templateIndex'] ?? 0) <=> (int) ($right['templateIndex'] ?? 0);
     });
 
-    foreach ($matches as &$match) {
-        unset($match['_categoryOrder']);
-    }
-    unset($match);
+    return $candidates[0] ?? null;
+}
 
-    return $matches;
+function select_archive_folder_filename_template_by_label_ids(array $folder, array $labelIds): ?array
+{
+    $matchedLabelsById = [];
+    foreach ($labelIds as $labelId) {
+        $resolvedId = is_string($labelId) ? trim((string) $labelId) : '';
+        if ($resolvedId === '') {
+            continue;
+        }
+        $matchedLabelsById[$resolvedId] = ['id' => $resolvedId];
+    }
+
+    return select_archive_folder_filename_template($folder, $matchedLabelsById);
 }
 
 function find_incremental_label_matches(string $ocrText, array $labels, array $replacementMap, array $context = []): array
@@ -9634,26 +9664,6 @@ function find_sender_by_id(array $senders, int $senderId): ?array
     return null;
 }
 
-function top_category_match(array $matches): ?array
-{
-    $best = null;
-    foreach ($matches as $match) {
-        if (!is_array($match)) {
-            continue;
-        }
-        $categoryId = is_string($match['id'] ?? null) ? trim((string) $match['id']) : '';
-        $priority = positive_int($match['priority'] ?? 1, 1);
-        if ($categoryId === '' || $priority < 1) {
-            continue;
-        }
-        if ($best === null || $priority > positive_int($best['priority'] ?? 1, 1)) {
-            $best = $match;
-        }
-    }
-
-    return is_array($best) ? $best : null;
-}
-
 function partition_archiving_field_values(array $values, array $rules): array
 {
     $fieldKeys = [];
@@ -9749,8 +9759,8 @@ function evaluate_filename_template_parts_backend(array $parts, array $fieldValu
             continue;
         }
 
-        if ($type === 'category') {
-            $value = array_key_exists('category', $fieldValues) ? trim((string) $fieldValues['category']) : '';
+        if ($type === 'folder') {
+            $value = array_key_exists('folder', $fieldValues) ? trim((string) $fieldValues['folder']) : '';
             if ($value === '') {
                 continue;
             }
@@ -9857,7 +9867,7 @@ function build_auto_archiving_filename_label_names(array $autoResult, array $rul
     return array_values(array_filter($labelNames, static fn (string $value): bool => $value !== ''));
 }
 
-function build_auto_archiving_filename_field_values(array $autoResult, array $senders, array $categoriesById, array $rules): array
+function build_auto_archiving_filename_field_values(array $autoResult, array $senders, array $foldersById, array $rules): array
 {
     $values = [];
     $setValue = static function (array &$target, string $key, mixed $value): void {
@@ -9870,17 +9880,17 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
         }
     };
 
-    $categoryId = is_string($autoResult['categoryId'] ?? null) ? trim((string) $autoResult['categoryId']) : '';
+    $folderId = is_string($autoResult['folderId'] ?? null) ? trim((string) $autoResult['folderId']) : '';
     $senderId = (int) ($autoResult['senderId'] ?? 0);
     $clientId = is_string($autoResult['clientId'] ?? null) ? trim((string) $autoResult['clientId']) : '';
     $fields = is_array($autoResult['fields'] ?? null) ? $autoResult['fields'] : [];
     $systemFields = is_array($autoResult['systemFields'] ?? null) ? $autoResult['systemFields'] : [];
     $allFields = array_merge($fields, $systemFields);
 
-    $category = $categoryId !== '' ? ($categoriesById[$categoryId] ?? null) : null;
+    $folder = $folderId !== '' ? ($foldersById[$folderId] ?? null) : null;
     $sender = $senderId > 0 ? find_sender_by_id($senders, $senderId) : null;
 
-    $setValue($values, 'category', is_array($category) ? ($category['name'] ?? null) : null);
+    $setValue($values, 'folder', is_array($folder) ? archive_folder_display_text($folder) : null);
     $setValue($values, 'client', $clientId);
     $setValue($values, 'main_client', $clientId);
     $setValue($values, 'sender', is_array($sender) ? ($sender['name'] ?? null) : null);
@@ -9929,28 +9939,46 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
     return $values;
 }
 
-function generate_auto_archiving_filename(array $job, array $autoResult, array $rules, array $senders): string
+function render_archive_folder_path(array $autoResult, array $folder, array $rules, array $senders): string
 {
-    $categoriesById = [];
-    foreach (build_categories_from_archive_folders(is_array($rules['archiveFolders'] ?? null) ? $rules['archiveFolders'] : []) as $category) {
-        if (!is_array($category)) {
-            continue;
-        }
-        $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
-        if ($categoryId !== '') {
-            $categoriesById[$categoryId] = $category;
-        }
-    }
-
-    $categoryId = is_string($autoResult['categoryId'] ?? null) ? trim((string) $autoResult['categoryId']) : '';
-    $category = $categoryId !== '' ? ($categoriesById[$categoryId] ?? null) : null;
-    $template = is_array($category) ? normalize_filename_template($category['filenameTemplate'] ?? null) : normalize_filename_template(null);
+    $folderId = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
+    $template = normalize_filename_template($folder['pathTemplate'] ?? null);
     $rendered = trim(preg_replace(
         '/\s+/',
         ' ',
         evaluate_filename_template_parts_backend(
             is_array($template['parts'] ?? null) ? $template['parts'] : [],
-            build_auto_archiving_filename_field_values($autoResult, $senders, $categoriesById, $rules)
+            build_auto_archiving_filename_field_values($autoResult, $senders, $folderId !== '' ? [$folderId => $folder] : [], $rules)
+        )
+    ) ?? '');
+
+    return trim($rendered, " \t\n\r\0\x0B" . DIRECTORY_SEPARATOR);
+}
+
+function generate_auto_archiving_filename(array $job, array $autoResult, array $rules, array $senders): string
+{
+    [$foldersById, $filenameTemplatesById] = build_archive_structure_indexes($rules);
+    $folderId = is_string($autoResult['folderId'] ?? null) ? trim((string) $autoResult['folderId']) : '';
+    $folder = $folderId !== '' ? ($foldersById[$folderId] ?? null) : null;
+    $labelIds = array_values(array_filter(array_map(static function ($value): string {
+        return is_string($value) ? trim((string) $value) : '';
+    }, is_array($autoResult['labels'] ?? null) ? $autoResult['labels'] : []), static fn (string $value): bool => $value !== ''));
+    $selectedTemplate = null;
+    $filenameTemplateId = is_string($autoResult['filenameTemplateId'] ?? null) ? trim((string) $autoResult['filenameTemplateId']) : '';
+    if ($filenameTemplateId !== '') {
+        $selectedTemplate = $filenameTemplatesById[$filenameTemplateId] ?? null;
+    }
+    if ($selectedTemplate === null && is_array($folder)) {
+        $selectedTemplateMatch = select_archive_folder_filename_template_by_label_ids($folder, $labelIds);
+        $selectedTemplate = is_array($selectedTemplateMatch) ? ($selectedTemplateMatch['template'] ?? null) : null;
+    }
+    $template = normalize_filename_template(is_array($selectedTemplate) ? ($selectedTemplate['template'] ?? null) : null);
+    $rendered = trim(preg_replace(
+        '/\s+/',
+        ' ',
+        evaluate_filename_template_parts_backend(
+            is_array($template['parts'] ?? null) ? $template['parts'] : [],
+            build_auto_archiving_filename_field_values($autoResult, $senders, is_array($folder) && $folderId !== '' ? [$folderId => $folder] : [], $rules)
         )
     ) ?? '');
 
@@ -9999,12 +10027,12 @@ function normalize_auto_archiving_result(array $result): array
     return [
         'clientId' => $clientId !== '' ? $clientId : null,
         'senderId' => isset($result['senderId']) && (int) $result['senderId'] > 0 ? (int) $result['senderId'] : null,
-        'categoryId' => is_string($result['categoryId'] ?? null) ? trim((string) $result['categoryId']) : null,
+        'folderId' => is_string($result['folderId'] ?? null) ? trim((string) $result['folderId']) : null,
+        'filenameTemplateId' => is_string($result['filenameTemplateId'] ?? null) ? trim((string) $result['filenameTemplateId']) : null,
         'labels' => array_values(array_unique($labels)),
         'fields' => $fields,
         'systemFields' => $systemFields,
         'filename' => is_string($result['filename'] ?? null) ? trim((string) $result['filename']) : null,
-        'archiveFolderId' => is_string($result['archiveFolderId'] ?? null) ? trim((string) $result['archiveFolderId']) : null,
         'archiveFolderPath' => is_string($result['archiveFolderPath'] ?? null) ? trim((string) $result['archiveFolderPath']) : null,
     ];
 }
@@ -10024,7 +10052,7 @@ function job_auto_archiving_result(array $job): array
     if (
         $normalized['clientId'] !== null
         || $normalized['senderId'] !== null
-        || $normalized['categoryId'] !== null
+        || $normalized['folderId'] !== null
         || $normalized['labels'] !== []
         || $normalized['fields'] !== []
         || $normalized['systemFields'] !== []
@@ -10045,7 +10073,7 @@ function job_analysis_payload(array $job): array
     if (
         $autoResult['clientId'] !== null
         || $autoResult['senderId'] !== null
-        || $autoResult['categoryId'] !== null
+        || $autoResult['folderId'] !== null
         || $autoResult['labels'] !== []
         || $autoResult['fields'] !== []
         || $autoResult['systemFields'] !== []
@@ -10139,7 +10167,7 @@ function calculate_auto_archiving_result_from_text(
     $lineGeometries = build_matching_line_geometries_for_job($job, $ocrText);
     $systemLabels = is_array($rules['systemLabels'] ?? null) ? $rules['systemLabels'] : [];
     $labels = is_array($rules['labels'] ?? null) ? $rules['labels'] : [];
-    $categories = build_categories_from_archive_folders(is_array($rules['archiveFolders'] ?? null) ? $rules['archiveFolders'] : []);
+    [$foldersById] = build_archive_structure_indexes($rules);
     $configuredFields = array_values(array_merge(
         is_array($rules['predefinedFields'] ?? null) ? $rules['predefinedFields'] : [],
         is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [],
@@ -10172,23 +10200,17 @@ function calculate_auto_archiving_result_from_text(
     $labelMatches = find_incremental_label_matches($ocrText, $labels, $replacementMap, [
         'matchedLabelsById' => matched_labels_by_id($systemLabelMatches),
     ]);
-    $categoryMatches = find_category_matches($ocrText, $categories, $replacementMap, [
-        'matchedLabelsById' => matched_labels_by_id(array_merge($systemLabelMatches, $labelMatches)),
-    ]);
+    $matchedLabelsById = matched_labels_by_id(array_merge($systemLabelMatches, $labelMatches));
     $resolvedLabels = resolved_label_ids_from_matches($systemLabelMatches, $labelMatches);
-    $bestCategory = top_category_match($categoryMatches);
 
     $autoResult = normalize_auto_archiving_result([
         'clientId' => is_string($matchedClientDirName) && trim($matchedClientDirName) !== ''
             ? trim($matchedClientDirName)
             : null,
         'senderId' => $matchedSenderId,
-        'categoryId' => is_array($bestCategory) ? ($bestCategory['id'] ?? null) : null,
         'labels' => $resolvedLabels,
         'fields' => $fieldPartitions['fields'],
         'systemFields' => $fieldPartitions['systemFields'],
-        'archiveFolderId' => is_array($bestCategory) ? ($bestCategory['archiveFolderId'] ?? null) : null,
-        'archiveFolderPath' => is_array($bestCategory) ? ($bestCategory['path'] ?? null) : null,
     ]);
     $autoResult['filename'] = generate_auto_archiving_filename($job, $autoResult, $rules, $senders);
 
@@ -10199,7 +10221,6 @@ function calculate_auto_archiving_result_from_text(
         'preselectedSender' => $preselectedSender,
         'systemLabelMatches' => $systemLabelMatches,
         'labelMatches' => $labelMatches,
-        'categoryMatches' => $categoryMatches,
         'labels' => $resolvedLabels,
         'extractionFieldResults' => $configuredFieldResults,
         'extractionFieldValues' => $configuredFieldValues,
@@ -10259,7 +10280,7 @@ function current_approved_archiving_for_job(array $job): array
 
     $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null) ? trim((string) $job['selectedClientDirName']) : '';
     $selectedSenderId = resolve_active_sender_id(isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
-    $selectedCategoryId = is_string($job['selectedCategoryId'] ?? null) ? trim((string) $job['selectedCategoryId']) : '';
+    $selectedFolderId = is_string($job['selectedFolderId'] ?? null) ? trim((string) $job['selectedFolderId']) : '';
     $selectedLabelIds = array_key_exists('selectedLabelIds', $job)
         ? normalize_stored_job_label_ids($job['selectedLabelIds'])
         : null;
@@ -10271,8 +10292,18 @@ function current_approved_archiving_for_job(array $job): array
     if ($selectedSenderId > 0) {
         $normalized['senderId'] = $selectedSenderId;
     }
-    if ($selectedCategoryId !== '') {
-        $normalized['categoryId'] = $selectedCategoryId;
+    if ($selectedFolderId !== '') {
+        $normalized['folderId'] = $selectedFolderId;
+        $archiveFolder = find_loaded_archive_folder_by_id(load_archive_folders(), $selectedFolderId);
+        if (is_array($archiveFolder)) {
+            $selectedFilenameTemplate = select_archive_folder_filename_template_by_label_ids(
+                $archiveFolder,
+                is_array($selectedLabelIds) ? $selectedLabelIds : (is_array($normalized['labels'] ?? null) ? $normalized['labels'] : [])
+            );
+            $normalized['filenameTemplateId'] = is_array($selectedFilenameTemplate)
+                ? (is_string($selectedFilenameTemplate['template']['id'] ?? null) ? trim((string) $selectedFilenameTemplate['template']['id']) : null)
+                : null;
+        }
     }
     if (is_array($selectedLabelIds)) {
         $normalized['labels'] = $selectedLabelIds;
@@ -10284,7 +10315,7 @@ function current_approved_archiving_for_job(array $job): array
     return normalize_auto_archiving_result($normalized);
 }
 
-function approved_archiving_from_archive_request(array $job, array $autoResult, array $payload, array $categories): array
+function approved_archiving_from_archive_request(array $job, array $autoResult, array $payload, array $archiveFolders): array
 {
     $approved = normalize_auto_archiving_result($autoResult);
     $selectedClientDirName = array_key_exists('selectedClientDirName', $payload)
@@ -10294,9 +10325,9 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
         ? (int) ($payload['selectedSenderId'] ?? 0)
         : (isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
     $selectedSenderId = resolve_active_sender_id($selectedSenderId) ?? 0;
-    $selectedCategoryId = array_key_exists('selectedCategoryId', $payload)
-        ? (is_string($payload['selectedCategoryId'] ?? null) ? trim((string) $payload['selectedCategoryId']) : '')
-        : (is_string($job['selectedCategoryId'] ?? null) ? trim((string) $job['selectedCategoryId']) : '');
+    $selectedFolderId = array_key_exists('selectedFolderId', $payload)
+        ? (is_string($payload['selectedFolderId'] ?? null) ? trim((string) $payload['selectedFolderId']) : '')
+        : (is_string($job['selectedFolderId'] ?? null) ? trim((string) $job['selectedFolderId']) : '');
     $selectedLabelIds = array_key_exists('selectedLabelIds', $payload)
         ? (($payload['selectedLabelIds'] ?? null) === null ? null : normalize_selected_job_label_ids_payload($payload['selectedLabelIds'], known_job_label_ids()))
         : (array_key_exists('selectedLabelIds', $job) ? normalize_stored_job_label_ids($job['selectedLabelIds']) : null);
@@ -10310,12 +10341,18 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
     if ($selectedSenderId > 0) {
         $approved['senderId'] = $selectedSenderId;
     }
-    if ($selectedCategoryId !== '') {
-        $approved['categoryId'] = $selectedCategoryId;
-        $category = find_loaded_category_by_id($categories, $selectedCategoryId);
-        if (is_array($category)) {
-            $approved['archiveFolderId'] = is_string($category['archiveFolderId'] ?? null) ? trim((string) $category['archiveFolderId']) : null;
-            $approved['archiveFolderPath'] = is_string($category['path'] ?? null) ? trim((string) $category['path']) : null;
+    if ($selectedFolderId !== '') {
+        $approved['folderId'] = $selectedFolderId;
+        $archiveFolder = find_loaded_archive_folder_by_id($archiveFolders, $selectedFolderId);
+        if (is_array($archiveFolder)) {
+            $selectedFilenameTemplate = select_archive_folder_filename_template_by_label_ids(
+                $archiveFolder,
+                is_array($selectedLabelIds) ? $selectedLabelIds : (is_array($approved['labels'] ?? null) ? $approved['labels'] : [])
+            );
+            $approved['filenameTemplateId'] = is_array($selectedFilenameTemplate)
+                ? (is_string($selectedFilenameTemplate['template']['id'] ?? null) ? trim((string) $selectedFilenameTemplate['template']['id']) : null)
+                : null;
+            $approved['archiveFolderPath'] = render_archive_folder_path($approved, $archiveFolder, load_active_archiving_rules(), load_senders());
         }
     }
     if (is_array($selectedLabelIds)) {
@@ -10368,24 +10405,35 @@ function archiving_review_change_type(mixed $approved, mixed $active, mixed $dra
 
 function archiving_review_display_maps(array $activeRules, array $draftRules): array
 {
-    $categoryNames = [];
-    $archiveFolderNames = [];
+    $folderNames = [];
     foreach (array_merge(
-        build_categories_from_archive_folders(is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : []),
-        build_categories_from_archive_folders(is_array($draftRules['archiveFolders'] ?? null) ? $draftRules['archiveFolders'] : [])
-    ) as $category) {
-        if (!is_array($category)) {
+        is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : [],
+        is_array($draftRules['archiveFolders'] ?? null) ? $draftRules['archiveFolders'] : []
+    ) as $folder) {
+        if (!is_array($folder)) {
             continue;
         }
-        $categoryId = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
-        $categoryName = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
-        if ($categoryId !== '' && $categoryName !== '' && !isset($categoryNames[$categoryId])) {
-            $categoryNames[$categoryId] = $categoryName;
+        $folderId = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
+        $folderName = archive_folder_display_text($folder);
+        if ($folderId !== '' && $folderName !== '' && !isset($folderNames[$folderId])) {
+            $folderNames[$folderId] = $folderName;
         }
-        $archiveFolderId = is_string($category['archiveFolderId'] ?? null) ? trim((string) $category['archiveFolderId']) : '';
-        $archiveFolderName = is_string($category['archiveFolderName'] ?? null) ? trim((string) $category['archiveFolderName']) : '';
-        if ($archiveFolderId !== '' && $archiveFolderName !== '' && !isset($archiveFolderNames[$archiveFolderId])) {
-            $archiveFolderNames[$archiveFolderId] = $archiveFolderName;
+    }
+
+    $filenameTemplateNames = [];
+    foreach (array_merge(
+        flatten_archive_folder_filename_templates($activeRules),
+        flatten_archive_folder_filename_templates($draftRules)
+    ) as $template) {
+        if (!is_array($template)) {
+            continue;
+        }
+        $templateId = is_string($template['templateId'] ?? null) ? trim((string) $template['templateId']) : '';
+        $folderName = is_string($template['folderName'] ?? null) ? trim((string) $template['folderName']) : '';
+        $templateIndex = is_int($template['templateIndex'] ?? null) ? (int) $template['templateIndex'] : 0;
+        $templateName = trim(($folderName !== '' ? $folderName . ' / ' : '') . 'Filnamnsmall ' . ($templateIndex + 1));
+        if ($templateId !== '' && $templateName !== '' && !isset($filenameTemplateNames[$templateId])) {
+            $filenameTemplateNames[$templateId] = $templateName;
         }
     }
 
@@ -10449,8 +10497,8 @@ function archiving_review_display_maps(array $activeRules, array $draftRules): a
     }
 
     return [
-        'categories' => $categoryNames,
-        'archiveFolders' => $archiveFolderNames,
+        'archiveFolders' => $folderNames,
+        'filenameTemplates' => $filenameTemplateNames,
         'labels' => $labelNames,
         'fields' => $fieldNames,
         'clients' => $clientNames,
@@ -10476,13 +10524,13 @@ function archiving_review_display_value(string $key, mixed $value, array $displa
         $resolved = (string) ((int) $value);
         return $displayMaps['senders'][$resolved] ?? $resolved;
     }
-    if ($key === 'categoryId') {
-        $resolved = (string) $value;
-        return $displayMaps['categories'][$resolved] ?? $resolved;
-    }
-    if ($key === 'archiveFolderId') {
+    if ($key === 'folderId') {
         $resolved = (string) $value;
         return $displayMaps['archiveFolders'][$resolved] ?? $resolved;
+    }
+    if ($key === 'filenameTemplateId') {
+        $resolved = (string) $value;
+        return $displayMaps['filenameTemplates'][$resolved] ?? $resolved;
     }
 
     return is_scalar($value) ? (string) $value : json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -10569,8 +10617,8 @@ function archiving_review_change_items(array $approved, array $activeResult, arr
     foreach ([
         'clientId' => 'Huvudman',
         'senderId' => 'Avsändare',
-        'categoryId' => 'Kategori',
-        'archiveFolderId' => 'Arkivmapp',
+        'folderId' => 'Mapp',
+        'filenameTemplateId' => 'Filnamnsregel',
     ] as $key => $label) {
         if (!isset($changes[$key]) || !is_array($changes[$key])) {
             continue;
@@ -10766,7 +10814,7 @@ function with_archiving_rules_review_lock(callable $callback)
 function archiving_result_diff_with_options(array $baseline, array $candidate, array $options = []): array
 {
     $includeFilename = ($options['includeFilename'] ?? true) !== false;
-    $scalarKeys = ['clientId', 'senderId', 'categoryId', 'archiveFolderId', 'archiveFolderPath'];
+    $scalarKeys = ['clientId', 'senderId', 'folderId', 'filenameTemplateId', 'archiveFolderPath'];
     if ($includeFilename) {
         array_splice($scalarKeys, 3, 0, ['filename']);
     }
@@ -11733,7 +11781,7 @@ function resolved_active_review_value(array $payload, array $proposed, array $co
 {
     $clients = load_clients();
     $senders = load_senders();
-    $categories = load_categories();
+    $archiveFolders = load_archive_folders();
     $rules = load_active_archiving_rules();
 
     $clientDirName = is_string($payload['clientId'] ?? null) ? trim((string) $payload['clientId']) : '';
@@ -11758,10 +11806,10 @@ function resolved_active_review_value(array $payload, array $proposed, array $co
         throw new RuntimeException('Ogiltig avsändare');
     }
 
-    $categoryId = is_string($payload['categoryId'] ?? null) ? trim((string) $payload['categoryId']) : '';
-    $category = $categoryId !== '' ? find_loaded_category_by_id($categories, $categoryId) : null;
-    if ($categoryId !== '' && !is_array($category)) {
-        throw new RuntimeException('Ogiltig kategori');
+    $folderId = is_string($payload['folderId'] ?? null) ? trim((string) $payload['folderId']) : '';
+    $archiveFolder = $folderId !== '' ? find_loaded_archive_folder_by_id($archiveFolders, $folderId) : null;
+    if ($folderId !== '' && !is_array($archiveFolder)) {
+        throw new RuntimeException('Ogiltig mapp');
     }
 
     $allowedLabelIds = [];
@@ -11809,10 +11857,11 @@ function resolved_active_review_value(array $payload, array $proposed, array $co
     if ($senderId > 0) {
         $next['senderId'] = $senderId;
     }
-    if ($categoryId !== '') {
-        $next['categoryId'] = $categoryId;
-        $next['archiveFolderId'] = is_array($category) ? ($category['archiveFolderId'] ?? null) : null;
-        $next['archiveFolderPath'] = is_array($category) ? ($category['path'] ?? null) : null;
+    if ($folderId !== '') {
+        $next['folderId'] = $folderId;
+        $next['archiveFolderPath'] = is_array($archiveFolder)
+            ? render_archive_folder_path($next, $archiveFolder, $rules, $senders)
+            : null;
     }
 
     if (array_key_exists('labels', $payload) && is_array($payload['labels'])) {
@@ -11897,7 +11946,7 @@ function save_archived_job_review(array $config, string $jobId, string $action, 
     $job['approvedArchiving'] = $normalizedApproved;
     $job['selectedClientDirName'] = is_string($nextApproved['clientId'] ?? null) ? trim((string) $nextApproved['clientId']) : null;
     $job['selectedSenderId'] = isset($nextApproved['senderId']) ? (int) $nextApproved['senderId'] : null;
-    $job['selectedCategoryId'] = is_string($nextApproved['categoryId'] ?? null) ? trim((string) $nextApproved['categoryId']) : null;
+    $job['selectedFolderId'] = is_string($nextApproved['folderId'] ?? null) ? trim((string) $nextApproved['folderId']) : null;
     $job['selectedLabelIds'] = normalize_stored_job_label_ids($nextApproved['labels'] ?? null);
     $job['filename'] = is_string($nextApproved['filename'] ?? null) ? trim((string) $nextApproved['filename']) : null;
     $job['archivedPdfPath'] = $nextPath;
@@ -11941,7 +11990,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
         ],
         'selectedClientDirName' => null,
         'selectedSenderId' => null,
-        'selectedCategoryId' => null,
+        'selectedFolderId' => null,
         'filename' => null,
         'archived' => false,
     ];
@@ -11959,7 +12008,7 @@ function process_claimed_job(
     ?string $fallbackTxtPath,
     array $jobContext,
     array $clients,
-    array $categories,
+    array $archiveFolders,
     array $labels,
     array $systemLabels,
     array $matchingPayload,
@@ -12162,7 +12211,6 @@ function process_claimed_job(
 
     $extractedData = [
         'matchedClientDirName' => $analysisPayload['matchedClientDirName'],
-        'categoryMatches' => $analysisPayload['categoryMatches'],
         'systemLabelMatches' => $analysisPayload['systemLabelMatches'],
         'labelMatches' => $analysisPayload['labelMatches'],
         'labels' => $analysisPayload['labels'],
@@ -12197,7 +12245,6 @@ function process_claimed_job(
     $extractedData = [
         'matchedClientDirName' => $analysisPayload['matchedClientDirName'],
         'matchedSenderId' => $analysisPayload['matchedSenderId'],
-        'categoryMatches' => $analysisPayload['categoryMatches'],
         'systemLabelMatches' => $analysisPayload['systemLabelMatches'],
         'labelMatches' => $analysisPayload['labelMatches'],
         'labels' => $analysisPayload['labels'],
@@ -12369,7 +12416,7 @@ function next_processing_job_id(array $config): ?string
 function process_job_by_id(
     array $config,
     array $clients,
-    array $categories,
+    array $archiveFolders,
     array $labels,
     array $systemLabels,
     array $matchingPayload,
@@ -12419,7 +12466,7 @@ function process_job_by_id(
             $fallbackTxtPath,
             $jobData,
             $clients,
-            $categories,
+            $archiveFolders,
             $labels,
             $systemLabels,
             $matchingPayload,
@@ -12481,7 +12528,7 @@ function run_processing_worker(array $config): void
 
     try {
         $clients = load_clients();
-        $categories = load_categories();
+        $archiveFolders = load_archive_folders();
         $labels = load_labels();
         $systemLabels = load_system_labels();
         $matchingPayload = load_matching_settings_payload();
@@ -12495,7 +12542,7 @@ function run_processing_worker(array $config): void
             process_job_by_id(
                 $config,
                 $clients,
-                $categories,
+                $archiveFolders,
                 $labels,
                 $systemLabels,
                 $matchingPayload,
@@ -12617,27 +12664,6 @@ function ensure_job_dispatcher_running(array $config): void
     @touch($throttlePath);
 
     start_job_dispatcher();
-}
-
-function build_job_state_category_indexes(): array
-{
-    $categories = load_categories();
-    $categoryOrderById = [];
-    $categoryNameById = [];
-    foreach ($categories as $index => $category) {
-        if (!is_array($category)) {
-            continue;
-        }
-
-        $id = is_string($category['id'] ?? null) ? trim((string) $category['id']) : '';
-        $order = is_int($index) ? $index : 999999;
-        if ($id !== '' && !isset($categoryOrderById[$id])) {
-            $categoryOrderById[$id] = $order;
-            $categoryNameById[$id] = is_string($category['name'] ?? null) ? trim((string) $category['name']) : '';
-        }
-    }
-
-    return [$categoryOrderById, $categoryNameById];
 }
 
 function extracted_field_scalar_value(array $extracted, string $fieldKey): ?string
@@ -13583,9 +13609,7 @@ function handle_resolved_sender_identifier_followups(
 function build_job_state_entry(
     array $config,
     string $jobDir,
-    array $job,
-    array $categoryOrderById,
-    array $categoryNameById
+    array $job
 ): ?array {
     $status = $job['status'] ?? '';
     if ($status !== 'ready' && $status !== 'processing' && $status !== 'failed') {
@@ -13616,8 +13640,8 @@ function build_job_state_entry(
     if ($selectedSenderId !== null && $selectedSenderId < 1) {
         $selectedSenderId = null;
     }
-    $selectedCategoryId = is_string($job['selectedCategoryId'] ?? null)
-        ? trim((string) $job['selectedCategoryId'])
+    $selectedFolderId = is_string($job['selectedFolderId'] ?? null)
+        ? trim((string) $job['selectedFolderId'])
         : null;
     $selectedLabelIds = array_key_exists('selectedLabelIds', $job)
         ? normalize_stored_job_label_ids($job['selectedLabelIds'])
@@ -13651,7 +13675,7 @@ function build_job_state_entry(
                 'analysis' => $analysis,
                 'selectedClientDirName' => $selectedClientDirName,
                 'selectedSenderId' => $selectedSenderId,
-                'selectedCategoryId' => $selectedCategoryId,
+                'selectedFolderId' => $selectedFolderId,
                 'selectedLabelIds' => $selectedLabelIds,
                 'filename' => $filename,
                 'senderSummary' => $senderSummary,
@@ -13682,7 +13706,7 @@ function build_job_state_entry(
                 'analysis' => $analysis,
                 'selectedClientDirName' => $selectedClientDirName,
                 'selectedSenderId' => $selectedSenderId,
-                'selectedCategoryId' => $selectedCategoryId,
+                'selectedFolderId' => $selectedFolderId,
                 'selectedLabelIds' => $selectedLabelIds,
                 'filename' => $filename,
                 'senderSummary' => $senderSummary,
@@ -13699,9 +13723,6 @@ function build_job_state_entry(
 
     $matchedClientDirName = null;
     $matchedSenderId = null;
-    $topMatchedCategoryId = null;
-    $topMatchedCategoryName = null;
-    $topMatchedCategoryScore = null;
     $preselectedClient = is_array($analysis['preselectedClient'] ?? null)
         ? $analysis['preselectedClient']
         : null;
@@ -13727,38 +13748,6 @@ function build_job_state_entry(
         }
     }
 
-    if (is_array($extracted) && isset($extracted['categoryMatches']) && is_array($extracted['categoryMatches'])) {
-        $bestOrder = 999999;
-        foreach ($extracted['categoryMatches'] as $categoryMatch) {
-            if (!is_array($categoryMatch)) {
-                continue;
-            }
-
-            $categoryId = is_string($categoryMatch['id'] ?? null) ? trim((string) $categoryMatch['id']) : '';
-            $priority = positive_int($categoryMatch['priority'] ?? 1, 1);
-
-            if ($categoryId === '' || $priority <= 0) {
-                continue;
-            }
-
-            $order = isset($categoryOrderById[$categoryId]) ? (int) $categoryOrderById[$categoryId] : 999999;
-            $resolvedName = isset($categoryNameById[$categoryId]) ? (string) $categoryNameById[$categoryId] : '';
-            if ($topMatchedCategoryScore === null || $priority > $topMatchedCategoryScore) {
-                $topMatchedCategoryId = $categoryId;
-                $topMatchedCategoryName = $resolvedName;
-                $topMatchedCategoryScore = (float) $priority;
-                $bestOrder = $order;
-                continue;
-            }
-            if ((float) $priority === $topMatchedCategoryScore && $order < $bestOrder) {
-                $topMatchedCategoryId = $categoryId;
-                $topMatchedCategoryName = $resolvedName;
-                $topMatchedCategoryScore = (float) $priority;
-                $bestOrder = $order;
-            }
-        }
-    }
-
     $senderSummary = build_job_sender_summary($extracted, $jobDir, $matchedSenderId, $selectedSenderId);
 
     $readyPayload = [
@@ -13775,12 +13764,9 @@ function build_job_state_entry(
         'analysis' => $analysis,
         'matchedClientDirName' => $matchedClientDirName,
         'matchedSenderId' => $matchedSenderId,
-        'topMatchedCategoryId' => $topMatchedCategoryId,
-        'topMatchedCategoryName' => $topMatchedCategoryName,
-        'topMatchedCategoryScore' => $topMatchedCategoryScore,
         'selectedClientDirName' => $selectedClientDirName,
         'selectedSenderId' => $selectedSenderId,
-        'selectedCategoryId' => $selectedCategoryId,
+        'selectedFolderId' => $selectedFolderId,
         'selectedLabelIds' => $selectedLabelIds,
         'filename' => $filename,
         'senderSummary' => $senderSummary,
@@ -13811,8 +13797,7 @@ function load_job_state_entry_by_id(array $config, string $jobId): ?array
     if (!is_array($job)) {
         return null;
     }
-    [$categoryOrderById, $categoryNameById] = build_job_state_category_indexes();
-    return build_job_state_entry($config, $jobDir, $job, $categoryOrderById, $categoryNameById);
+    return build_job_state_entry($config, $jobDir, $job);
 }
 
 function job_events_log_path(): string
@@ -13957,7 +13942,6 @@ function read_jobs_state(array $config): array
 {
     $jobsDir = $config['jobsDirectory'];
     ensure_directory($jobsDir);
-    [$categoryOrderById, $categoryNameById] = build_job_state_category_indexes();
 
     $entries = scandir($jobsDir);
     if ($entries === false) {
@@ -13988,7 +13972,7 @@ function read_jobs_state(array $config): array
         if (!is_array($job)) {
             continue;
         }
-        $stateEntry = build_job_state_entry($config, $jobDir, $job, $categoryOrderById, $categoryNameById);
+        $stateEntry = build_job_state_entry($config, $jobDir, $job);
         if (!is_array($stateEntry) || !is_array($stateEntry['job'] ?? null)) {
             continue;
         }
@@ -14306,7 +14290,7 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
     unset(
         $job['selectedClientDirName'],
         $job['selectedSenderId'],
-        $job['selectedCategoryId'],
+        $job['selectedFolderId'],
         $job['selectedLabelIds'],
         $job['filename'],
         $job['approvedArchiving'],

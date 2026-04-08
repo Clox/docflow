@@ -29,7 +29,8 @@ final class JobRepository
                 auto_sender_id,
                 analysis_client_id,
                 analysis_sender_id,
-                analysis_category_id,
+                analysis_folder_id,
+                analysis_filename_template_id,
                 analysis_labels_json,
                 analysis_fields_json,
                 analysis_system_fields_json,
@@ -141,7 +142,8 @@ final class JobRepository
                 id,
                 analysis_client_id,
                 analysis_sender_id,
-                analysis_category_id,
+                analysis_folder_id,
+                analysis_filename_template_id,
                 analysis_labels_json,
                 analysis_fields_json,
                 analysis_system_fields_json,
@@ -152,7 +154,8 @@ final class JobRepository
                 :id,
                 :analysis_client_id,
                 :analysis_sender_id,
-                :analysis_category_id,
+                :analysis_folder_id,
+                :analysis_filename_template_id,
                 :analysis_labels_json,
                 :analysis_fields_json,
                 :analysis_system_fields_json,
@@ -163,7 +166,8 @@ final class JobRepository
             ON CONFLICT(id) DO UPDATE SET
                 analysis_client_id = excluded.analysis_client_id,
                 analysis_sender_id = excluded.analysis_sender_id,
-                analysis_category_id = excluded.analysis_category_id,
+                analysis_folder_id = excluded.analysis_folder_id,
+                analysis_filename_template_id = excluded.analysis_filename_template_id,
                 analysis_labels_json = excluded.analysis_labels_json,
                 analysis_fields_json = excluded.analysis_fields_json,
                 analysis_system_fields_json = excluded.analysis_system_fields_json,
@@ -178,8 +182,11 @@ final class JobRepository
             ':analysis_sender_id' => isset($autoResult['senderId']) && (int) $autoResult['senderId'] > 0
                 ? (int) $autoResult['senderId']
                 : null,
-            ':analysis_category_id' => is_string($autoResult['categoryId'] ?? null) && trim((string) $autoResult['categoryId']) !== ''
-                ? trim((string) $autoResult['categoryId'])
+            ':analysis_folder_id' => is_string($autoResult['folderId'] ?? null) && trim((string) $autoResult['folderId']) !== ''
+                ? trim((string) $autoResult['folderId'])
+                : null,
+            ':analysis_filename_template_id' => is_string($autoResult['filenameTemplateId'] ?? null) && trim((string) $autoResult['filenameTemplateId']) !== ''
+                ? trim((string) $autoResult['filenameTemplateId'])
                 : null,
             ':analysis_labels_json' => $labelsJson,
             ':analysis_fields_json' => $fieldsJson,
@@ -268,7 +275,8 @@ final class JobRepository
             'SELECT
                 analysis_client_id,
                 analysis_sender_id,
-                analysis_category_id,
+                analysis_folder_id,
+                analysis_filename_template_id,
                 analysis_labels_json,
                 analysis_fields_json,
                 analysis_system_fields_json,
@@ -290,7 +298,8 @@ final class JobRepository
 
         $hasPayload = (is_string($row['analysis_client_id'] ?? null) && trim((string) $row['analysis_client_id']) !== '')
             || (isset($row['analysis_sender_id']) && (int) $row['analysis_sender_id'] > 0)
-            || (is_string($row['analysis_category_id'] ?? null) && trim((string) $row['analysis_category_id']) !== '')
+            || (is_string($row['analysis_folder_id'] ?? null) && trim((string) $row['analysis_folder_id']) !== '')
+            || (is_string($row['analysis_filename_template_id'] ?? null) && trim((string) $row['analysis_filename_template_id']) !== '')
             || $labels !== []
             || $fields !== []
             || $systemFields !== []
@@ -302,7 +311,8 @@ final class JobRepository
         return [
             'clientId' => is_string($row['analysis_client_id'] ?? null) ? trim((string) $row['analysis_client_id']) : null,
             'senderId' => isset($row['analysis_sender_id']) && (int) $row['analysis_sender_id'] > 0 ? (int) $row['analysis_sender_id'] : null,
-            'categoryId' => is_string($row['analysis_category_id'] ?? null) ? trim((string) $row['analysis_category_id']) : null,
+            'folderId' => is_string($row['analysis_folder_id'] ?? null) ? trim((string) $row['analysis_folder_id']) : null,
+            'filenameTemplateId' => is_string($row['analysis_filename_template_id'] ?? null) ? trim((string) $row['analysis_filename_template_id']) : null,
             'labels' => $labels,
             'fields' => $fields,
             'systemFields' => $systemFields,

@@ -37,7 +37,7 @@ const sidebarEl = document.querySelector('.sidebar');
 const sidebarSplitterEl = document.getElementById('sidebar-splitter');
 const clientSelectEl = document.getElementById('client-select');
 const senderSelectEl = document.getElementById('sender-select');
-const categorySelectEl = document.getElementById('category-select');
+const folderSelectEl = document.getElementById('folder-select');
 const jobLabelsFieldEl = document.getElementById('job-labels-field');
 const jobLabelsSummaryEl = document.getElementById('job-labels-summary');
 const jobLabelsOverlayEl = document.getElementById('job-labels-overlay');
@@ -71,7 +71,7 @@ const settingsPanelTemplateIds = {
   senders: 'settings-template-senders',
   matching: 'settings-template-matching',
   'ocr-processing': 'settings-template-ocr-processing',
-  categories: 'settings-template-categories',
+  'archive-structure': 'settings-template-archive-structure',
   labels: 'settings-template-labels',
   'data-fields': 'settings-template-data-fields',
   'archiving-review': 'settings-template-archiving-review',
@@ -134,10 +134,10 @@ let rapidocrInstallLogButtonEl = null;
 let rapidocrLocalInstallButtonEl = null;
 let ocrProcessingCancelEl = null;
 let ocrProcessingApplyEl = null;
-let categoriesListEl = null;
-let categoriesAddCategoryEl = null;
-let categoriesCancelEl = null;
-let categoriesApplyEl = null;
+let archiveStructureListEl = null;
+let archiveStructureAddFolderEl = null;
+let archiveStructureCancelEl = null;
+let archiveStructureApplyEl = null;
 let labelsListEl = null;
 let systemLabelEditorEl = null;
 let labelsAddRowEl = null;
@@ -189,7 +189,7 @@ let state = {
   },
   clients: [],
   senders: [],
-  categories: [],
+  archiveFolders: [],
   archivingRules: {
     activeVersion: 1,
     hasUnpublishedChanges: false,
@@ -283,7 +283,7 @@ let ocrRenderedPages = [];
 let matchesRequestSeq = 0;
 let metaRequestSeq = 0;
 let preferredJobIdFromHash = '';
-let categoriesDraft = [];
+let archiveFoldersDraft = [];
 let labelsDraft = [];
 let systemLabelsDraft = createDefaultSystemLabels();
 let labelsBuiltInCollapsed = true;
@@ -313,7 +313,9 @@ let matchingBaselineJson = JSON.stringify({
   positionAdjustment: defaultMatchingPositionAdjustmentSettings()
 });
 let pathsBaselineValue = '';
-let categoriesBaselineJson = JSON.stringify([]);
+let archiveStructureBaselineJson = JSON.stringify({
+  archiveFolders: [],
+});
 let labelsBaselineJson = JSON.stringify({
   labels: [],
   systemLabels: systemLabelsDraft,
@@ -325,7 +327,7 @@ let extractionFieldsBaselineJson = JSON.stringify({
 });
 let clientOptionsSignature = '';
 let senderOptionsSignature = '';
-let categoryOptionsSignature = '';
+let folderOptionsSignature = '';
 let hasLoadedClients = false;
 let hasLoadedLabels = false;
 const OCR_ZOOM_STEPS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
@@ -346,7 +348,7 @@ let hasLoadedInitialJobsState = false;
 let selectedJobStateSig = '';
 const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
-const selectedCategoryByJobId = new Map();
+const selectedFolderByJobId = new Map();
 const selectedLabelIdsByJobId = new Map();
 const archivedReviewDraftByJobId = new Map();
 const filenameByJobId = new Map();
@@ -368,7 +370,7 @@ const loadedSettingsPanels = new Set();
 const loadingSettingsPanels = new Set();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
-const EDIT_CATEGORIES_OPTION_VALUE = '__edit_categories__';
+const EDIT_ARCHIVE_STRUCTURE_OPTION_VALUE = '__edit_archive_structure__';
 const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta', 'review']);
 const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'processing', 'archived']);
 const SIDEBAR_LIST_SIZE_STORAGE_KEY = 'docflow.sidebar.listSizePercent';
@@ -423,7 +425,7 @@ jobListModeEl.value = currentJobListMode;
 
 clientSelectEl.disabled = true;
 senderSelectEl.disabled = true;
-categorySelectEl.disabled = true;
+folderSelectEl.disabled = true;
 setOcrSearchButtonsEnabled(false);
 setOcrSearchStatus('');
 
@@ -604,83 +606,74 @@ function renderSenderSelect(senders) {
   senderOptionsSignature = signature;
 }
 
-function categoryDisplayName(category) {
-  if (category && typeof category.name === 'string' && category.name.trim() !== '') {
-    return category.name.trim();
+function archiveFolderDisplayName(folder) {
+  if (folder && typeof folder.name === 'string' && folder.name.trim() !== '') {
+    return folder.name.trim();
   }
-  if (category && typeof category.path === 'string' && category.path.trim() !== '') {
-    return category.path.trim();
+  const template = folder && folder.pathTemplate && typeof folder.pathTemplate === 'object'
+    ? sanitizeFilenameTemplate(folder.pathTemplate)
+    : sanitizeFilenameTemplate(folder && folder.path);
+  const firstText = Array.isArray(template.parts)
+    ? template.parts.find((part) => part && typeof part === 'object' && part.type === 'text' && String(part.value || '').trim() !== '')
+    : null;
+  if (firstText && typeof firstText.value === 'string' && firstText.value.trim() !== '') {
+    return firstText.value.trim();
   }
   return '';
 }
 
-function renderCategorySelect(categories) {
-  const groups = [];
-  const groupOrder = new Map();
-  (Array.isArray(categories) ? categories : []).forEach((category) => {
-    const value = category && typeof category.id === 'string' ? category.id.trim() : '';
-    const label = categoryDisplayName(category);
-    if (!value || !label) {
-      return;
-    }
-    const groupLabel = category && typeof category.archiveFolderName === 'string' && category.archiveFolderName.trim() !== ''
-      ? category.archiveFolderName.trim()
-      : (category && typeof category.path === 'string' && category.path.trim() !== '' ? category.path.trim() : 'Övrigt');
-    if (!groupOrder.has(groupLabel)) {
-      groupOrder.set(groupLabel, groups.length);
-      groups.push({
-        label: groupLabel,
-        options: [],
-      });
-    }
-    groups[groupOrder.get(groupLabel)].options.push({ value, label });
-  });
+function renderFolderSelect(folders) {
+  const options = (Array.isArray(folders) ? folders : [])
+    .map((folder, index) => ({
+      value: folder && typeof folder.id === 'string' ? folder.id.trim() : '',
+      label: archiveFolderDisplayName(folder),
+      sortOrder: Number.isFinite(Number(folder && folder.sortOrder)) ? Number(folder.sortOrder) : (index + 1),
+    }))
+    .filter((option) => option.value !== '' && option.label !== '')
+    .sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder) {
+        return left.sortOrder - right.sortOrder;
+      }
+      return left.label.localeCompare(right.label, 'sv');
+    });
   const signature = JSON.stringify({
-    action: EDIT_CATEGORIES_OPTION_VALUE,
-    groups
+    action: EDIT_ARCHIVE_STRUCTURE_OPTION_VALUE,
+    options,
   });
-  if (signature === categoryOptionsSignature) {
+  if (signature === folderOptionsSignature) {
     return;
   }
 
-  const currentValue = categorySelectEl.value;
-  categorySelectEl.innerHTML = '';
+  const currentValue = folderSelectEl.value;
+  folderSelectEl.innerHTML = '';
 
   const placeholderOption = document.createElement('option');
   placeholderOption.value = '';
   placeholderOption.hidden = true;
-  placeholderOption.textContent = 'Välj kategori';
-  categorySelectEl.appendChild(placeholderOption);
+  placeholderOption.textContent = 'Välj mapp';
+  folderSelectEl.appendChild(placeholderOption);
 
   const editOption = document.createElement('option');
-  editOption.value = EDIT_CATEGORIES_OPTION_VALUE;
-  editOption.textContent = 'Redigera kategorier...';
-  categorySelectEl.appendChild(editOption);
+  editOption.value = EDIT_ARCHIVE_STRUCTURE_OPTION_VALUE;
+  editOption.textContent = 'Redigera arkivstruktur...';
+  folderSelectEl.appendChild(editOption);
 
   const separatorOption = document.createElement('option');
   separatorOption.value = '__separator__';
   separatorOption.textContent = '──────────';
   separatorOption.disabled = true;
-  categorySelectEl.appendChild(separatorOption);
+  folderSelectEl.appendChild(separatorOption);
 
-  groups.forEach((group) => {
-    if (!group || !Array.isArray(group.options) || group.options.length === 0) {
-      return;
-    }
-    const optgroup = document.createElement('optgroup');
-    optgroup.label = group.label;
-    group.options.forEach((item) => {
-      const option = document.createElement('option');
-      option.value = item.value;
-      option.textContent = item.label;
-      optgroup.appendChild(option);
-    });
-    categorySelectEl.appendChild(optgroup);
+  options.forEach((item) => {
+    const option = document.createElement('option');
+    option.value = item.value;
+    option.textContent = item.label;
+    folderSelectEl.appendChild(option);
   });
 
-  const hasCurrentValue = groups.some((group) => Array.isArray(group.options) && group.options.some((item) => item.value === currentValue));
-  categorySelectEl.value = hasCurrentValue ? currentValue : '';
-  categoryOptionsSignature = signature;
+  const hasCurrentValue = options.some((item) => item.value === currentValue);
+  folderSelectEl.value = hasCurrentValue ? currentValue : '';
+  folderOptionsSignature = signature;
 }
 
 function clampSidebarListSizePercent(value) {
@@ -860,25 +853,25 @@ function setSenderForJob(job) {
   senderSelectEl.value = '';
 }
 
-function setCategoryForJob(job) {
-  categorySelectEl.disabled = !job || job.status !== 'ready' || job.archived === true;
+function setFolderForJob(job) {
+  folderSelectEl.disabled = !job || job.status !== 'ready' || job.archived === true;
 
   if (!job) {
-    categorySelectEl.value = '';
+    folderSelectEl.value = '';
     return;
   }
 
-  const resolvedValue = effectiveCategoryId(job);
+  const resolvedValue = effectiveFolderId(job);
   if (resolvedValue) {
-    const hasManualOption = Array.from(categorySelectEl.options).some(
+    const hasManualOption = Array.from(folderSelectEl.options).some(
       (option) => option.value === resolvedValue
     );
     if (hasManualOption) {
-      categorySelectEl.value = resolvedValue;
+      folderSelectEl.value = resolvedValue;
       return;
     }
   }
-  categorySelectEl.value = '';
+  folderSelectEl.value = '';
 }
 
 function normalizeSelectedLabelIds(input) {
@@ -920,7 +913,7 @@ function selectedJobLabelsEditable(job) {
 }
 
 function currentSelectedJobLabelOptions() {
-  return categoryLabelOptions()
+  return archiveRuleLabelOptionsList()
     .map((option) => ({
       value: typeof option.value === 'string' ? option.value.trim() : '',
       label: typeof option.label === 'string' ? option.label.trim() : '',
@@ -1353,8 +1346,8 @@ async function createAndApplyLabelToSelectedJob(labelName) {
     if (labelsListEl) {
       renderLabelsEditor();
     }
-    if (categoriesListEl) {
-      renderCategoriesEditor();
+    if (archiveStructureListEl) {
+      renderArchiveStructureEditor();
     }
     updateSettingsActionButtons();
     renderJobLabelsOverlay(findJobById(selectedJobId));
@@ -1812,95 +1805,13 @@ async function setViewerOcr(jobId) {
   }
 }
 
-function appendCategoryMatchesSection(container, title, categories, emptyText) {
+function appendRuleMatchesSection(container, title, entities, emptyText, entityLabel = 'Regel') {
   const header = document.createElement('h3');
   header.className = 'matches-header';
   header.textContent = title;
   container.appendChild(header);
 
-  if (!Array.isArray(categories) || categories.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'matches-empty';
-    empty.textContent = emptyText;
-    container.appendChild(empty);
-    return;
-  }
-
-  const tableWrap = document.createElement('div');
-  tableWrap.className = 'matches-table-wrap';
-  const table = document.createElement('table');
-  table.className = 'matches-table';
-
-  const thead = document.createElement('thead');
-  const headerRow = document.createElement('tr');
-  ['Kategori', 'Mapp', 'Prioritet', 'Matchande etiketter'].forEach((label) => {
-    const th = document.createElement('th');
-    th.textContent = label;
-    if (label === 'Prioritet') {
-      th.className = 'is-numeric';
-    }
-    headerRow.appendChild(th);
-  });
-  thead.appendChild(headerRow);
-  table.appendChild(thead);
-
-  const tbody = document.createElement('tbody');
-
-  categories.forEach((category) => {
-    const fallbackName = 'Namnlös kategori';
-    const name = category && typeof category.name === 'string' && category.name !== ''
-      ? category.name
-      : fallbackName;
-    const folderName = category && typeof category.archiveFolderName === 'string' && category.archiveFolderName.trim() !== ''
-      ? category.archiveFolderName.trim()
-      : (category && typeof category.path === 'string' ? category.path : '');
-    const priority = category && Number.isFinite(Number(category.priority))
-      ? Number(category.priority)
-      : 1;
-    const matchedLabels = category && Array.isArray(category.matchedLabels)
-      ? category.matchedLabels
-      : [];
-    const matchedLabelText = matchedLabels
-      .map((label) => label && typeof label.name === 'string' && label.name.trim() !== ''
-        ? label.name.trim()
-        : (label && typeof label.id === 'string' ? label.id : ''))
-      .filter(Boolean)
-      .join(', ');
-
-    const tr = document.createElement('tr');
-
-    const categoryCell = document.createElement('td');
-    categoryCell.textContent = name;
-    tr.appendChild(categoryCell);
-
-    const folderCell = document.createElement('td');
-    folderCell.textContent = folderName;
-    tr.appendChild(folderCell);
-
-    const priorityCell = document.createElement('td');
-    priorityCell.className = 'is-numeric';
-    priorityCell.textContent = String(priority);
-    tr.appendChild(priorityCell);
-
-    const labelsCell = document.createElement('td');
-    labelsCell.textContent = matchedLabelText || '(Ingen matchande etikett)';
-    tr.appendChild(labelsCell);
-
-    tbody.appendChild(tr);
-  });
-
-  table.appendChild(tbody);
-  tableWrap.appendChild(table);
-  container.appendChild(tableWrap);
-}
-
-function appendRuleMatchesSection(container, title, categories, emptyText, entityLabel = 'Kategori') {
-  const header = document.createElement('h3');
-  header.className = 'matches-header';
-  header.textContent = title;
-  container.appendChild(header);
-
-  if (!Array.isArray(categories) || categories.length === 0) {
+  if (!Array.isArray(entities) || entities.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
     empty.textContent = emptyText;
@@ -1931,8 +1842,8 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
 
   const tbody = document.createElement('tbody');
 
-  categories.forEach((category, categoryIndex) => {
-    if (categoryIndex > 0) {
+  entities.forEach((entity, entityIndex) => {
+    if (entityIndex > 0) {
       const separatorRow = document.createElement('tr');
       separatorRow.className = 'matches-group-separator';
       const separatorCell = document.createElement('td');
@@ -1942,24 +1853,24 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
       tbody.appendChild(separatorRow);
     }
 
-    const name = category && typeof category.name === 'string' && category.name !== ''
-      ? category.name
-      : 'Namnlös kategori';
-    const score = category && Number.isFinite(Number(category.score))
-      ? Number(category.score)
+    const name = entity && typeof entity.name === 'string' && entity.name !== ''
+      ? entity.name
+      : `Namnlös ${entityLabel.toLowerCase()}`;
+    const score = entity && Number.isFinite(Number(entity.score))
+      ? Number(entity.score)
       : 0;
-    const minScore = category && Number.isFinite(Number(category.minScore))
-      ? Number(category.minScore)
+    const minScore = entity && Number.isFinite(Number(entity.minScore))
+      ? Number(entity.minScore)
       : 1;
 
-    const rules = category && Array.isArray(category.matchedRules) ? category.matchedRules : [];
+    const rules = entity && Array.isArray(entity.matchedRules) ? entity.matchedRules : [];
     if (rules.length === 0) {
       const tr = document.createElement('tr');
       tr.classList.add('matches-group-start', 'matches-group-end');
 
-      const categoryCell = document.createElement('td');
-      categoryCell.textContent = name;
-      tr.appendChild(categoryCell);
+      const entityCell = document.createElement('td');
+      entityCell.textContent = name;
+      tr.appendChild(entityCell);
 
       const totalCell = document.createElement('td');
       totalCell.className = 'is-numeric';
@@ -2008,10 +1919,10 @@ function appendRuleMatchesSection(container, title, categories, emptyText, entit
       }
 
       if (ruleIndex === 0) {
-        const categoryCell = document.createElement('td');
-        categoryCell.textContent = name;
-        categoryCell.rowSpan = rules.length;
-        tr.appendChild(categoryCell);
+        const entityCell = document.createElement('td');
+        entityCell.textContent = name;
+        entityCell.rowSpan = rules.length;
+        tr.appendChild(entityCell);
 
         const totalCell = document.createElement('td');
         totalCell.className = 'is-numeric summary-cell';
@@ -2626,11 +2537,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
 function renderMatchesContent(payload) {
   matchesViewEl.innerHTML = '';
 
-  const categories = payload && Array.isArray(payload.categories) ? payload.categories : [];
   const labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
   const fields = payload && typeof payload.fields === 'object' && payload.fields !== null ? payload.fields : {};
 
-  appendCategoryMatchesSection(matchesViewEl, 'Kategorier', categories, 'Inga kategorimatchningar hittades.');
   appendRuleMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
   appendFieldMatchesSection(matchesViewEl, 'Datafält', fields, 'Inga datafältsmatchningar hittades.');
 }
@@ -3880,7 +3789,7 @@ function mergeFetchStateOptions(baseOptions = {}, nextOptions = {}) {
   const merged = {
     refreshClients: base.refreshClients === true || next.refreshClients === true,
     refreshSenders: base.refreshSenders === true || next.refreshSenders === true,
-    refreshCategories: base.refreshCategories === true || next.refreshCategories === true,
+    refreshArchiveStructure: base.refreshArchiveStructure === true || next.refreshArchiveStructure === true,
     force: base.force === true || next.force === true,
   };
   if (base.syncTransport === false && next.syncTransport === false) {
@@ -3948,7 +3857,7 @@ function ensureArchivedReviewDraft(jobId, payload) {
   const draft = {
     clientId: typeof source.clientId === 'string' ? source.clientId : '',
     senderId: source.senderId ? String(source.senderId) : '',
-    categoryId: typeof source.categoryId === 'string' ? source.categoryId : '',
+    folderId: typeof source.folderId === 'string' ? source.folderId : '',
     filename: typeof source.filename === 'string' ? source.filename : '',
     labels: Array.isArray(source.labels) ? [...source.labels] : [],
     fields: source.fields && typeof source.fields === 'object' ? deepCloneJson(source.fields) : {},
@@ -4040,7 +3949,7 @@ async function saveArchivedReviewAction(action) {
   if (action === 'manual' && draft) {
     body.clientId = draft.clientId || null;
     body.senderId = draft.senderId || null;
-    body.categoryId = draft.categoryId || null;
+    body.folderId = draft.folderId || null;
     body.filename = draft.filename || null;
     body.labels = draft.labels;
     body.fields = draft.fields;
@@ -4267,15 +4176,15 @@ function renderArchivedReviewPanel() {
   );
 
   addSelectPair(
-    'Kategori',
-    typeof archivedValue.categoryId === 'string' ? archivedValue.categoryId : '',
-    draft.categoryId,
-    (Array.isArray(state.categories) ? state.categories : []).map((category) => ({
-      value: category && typeof category.id === 'string' ? category.id : '',
-      label: category && typeof category.name === 'string' ? category.name : ''
+    'Mapp',
+    typeof archivedValue.folderId === 'string' ? archivedValue.folderId : '',
+    draft.folderId,
+    (Array.isArray(state.archiveFolders) ? state.archiveFolders : []).map((folder) => ({
+      value: folder && typeof folder.id === 'string' ? folder.id : '',
+      label: archiveFolderDisplayName(folder)
     })).filter((option) => option.value && option.label),
     (value) => {
-      draft.categoryId = value;
+      draft.folderId = value;
     }
   );
 
@@ -4627,7 +4536,7 @@ async function resetArchivingRulesDraft() {
     throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte kassera utkastet.');
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
-  await Promise.all([loadCategories(), loadLabels({ reload: true }), loadExtractionFields()]);
+  await Promise.all([loadArchiveStructure(), loadLabels({ reload: true }), loadExtractionFields()]);
 }
 
 async function publishArchivingRules() {
@@ -4644,7 +4553,7 @@ async function publishArchivingRules() {
   }
 
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
-  await Promise.all([loadCategories(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshCategories: true })]);
+  await Promise.all([loadArchiveStructure(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshArchiveStructure: true })]);
   const flaggedCount = payload.flaggedArchivedJobs && Number.isInteger(payload.flaggedArchivedJobs.flaggedCount)
     ? payload.flaggedArchivedJobs.flaggedCount
     : 0;
@@ -5022,8 +4931,6 @@ function findJobById(jobId) {
     ...processingJob,
     matchedClientDirName: snapshot.matchedClientDirName,
     matchedSenderId: snapshot.matchedSenderId,
-    topMatchedCategoryId: snapshot.topMatchedCategoryId,
-    topMatchedCategoryScore: snapshot.topMatchedCategoryScore
   };
 }
 
@@ -5081,37 +4988,68 @@ function isJobVisibleInCurrentList(jobId) {
   return displayedJobsForCurrentListMode().some((job) => job && job.id === jobId);
 }
 
-function findCategoryById(categoryId) {
-  if (!categoryId) {
+function findArchiveFolderById(folderId) {
+  if (!folderId) {
     return null;
   }
-  return (Array.isArray(state.categories) ? state.categories : []).find((category) => category && category.id === categoryId) || null;
+  return (Array.isArray(state.archiveFolders) ? state.archiveFolders : []).find((folder) => folder && folder.id === folderId) || null;
 }
 
-function findDraftCategoryById(categoryId) {
-  const normalizedId = typeof categoryId === 'string' ? categoryId.trim() : '';
+function findDraftArchiveFolderById(folderId) {
+  const normalizedId = typeof folderId === 'string' ? folderId.trim() : '';
   if (!normalizedId) {
     return null;
   }
 
-  for (const folder of Array.isArray(categoriesDraft) ? categoriesDraft : []) {
-    if (!folder || typeof folder !== 'object' || !Array.isArray(folder.categories)) {
-      continue;
-    }
-    const match = folder.categories.find((category) => category && category.id === normalizedId);
-    if (match) {
-      return {
-        ...match,
-        filenameTemplate: sanitizeFilenameTemplate(folder.filenameTemplate),
-      };
+  for (const folder of Array.isArray(archiveFoldersDraft) ? archiveFoldersDraft : []) {
+    if (folder && typeof folder === 'object' && folder.id === normalizedId) {
+      return folder;
     }
   }
 
   return null;
 }
 
-function findFilenameTemplateCategoryById(categoryId) {
-  return findCategoryById(categoryId);
+function findFilenameTemplateById(templateId) {
+  const normalizedId = typeof templateId === 'string' ? templateId.trim() : '';
+  if (!normalizedId) {
+    return null;
+  }
+  for (const folder of Array.isArray(state.archiveFolders) ? state.archiveFolders : []) {
+    const templates = Array.isArray(folder && folder.filenameTemplates) ? folder.filenameTemplates : [];
+    for (let index = 0; index < templates.length; index += 1) {
+      const template = templates[index];
+      if (template && template.id === normalizedId) {
+        return {
+          ...template,
+          folderId: folder && typeof folder.id === 'string' ? folder.id : '',
+          templateIndex: index,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function findDraftFilenameTemplateById(templateId) {
+  const normalizedId = typeof templateId === 'string' ? templateId.trim() : '';
+  if (!normalizedId) {
+    return null;
+  }
+  for (const folder of Array.isArray(archiveFoldersDraft) ? archiveFoldersDraft : []) {
+    const templates = Array.isArray(folder && folder.filenameTemplates) ? folder.filenameTemplates : [];
+    for (let index = 0; index < templates.length; index += 1) {
+      const template = templates[index];
+      if (template && template.id === normalizedId) {
+        return {
+          ...template,
+          folderId: folder && typeof folder.id === 'string' ? folder.id : '',
+          templateIndex: index,
+        };
+      }
+    }
+  }
+  return null;
 }
 
 function findSenderById(senderId) {
@@ -5469,35 +5407,59 @@ function renderSelectedJobSenderSection(job) {
   }
 }
 
-function effectiveCategoryId(job) {
-  const isKnownCategory = (value) => {
+function effectiveFolderId(job) {
+  const isKnownFolder = (value) => {
     const normalized = typeof value === 'string' ? value.trim() : '';
     if (!normalized) {
       return false;
     }
-    return Array.isArray(state.categories) && state.categories.some((category) => {
-      return category
-        && typeof category.id === 'string'
-        && category.id.trim() === normalized;
+    return Array.isArray(state.archiveFolders) && state.archiveFolders.some((folder) => {
+      return folder
+        && typeof folder.id === 'string'
+        && folder.id.trim() === normalized;
     });
   };
 
   if (!job) {
     return '';
   }
-  const localValue = selectedCategoryByJobId.get(job.id);
-  if (isKnownCategory(localValue)) {
+  const localValue = selectedFolderByJobId.get(job.id);
+  if (isKnownFolder(localValue)) {
     return localValue;
   }
-  if (typeof job.selectedCategoryId === 'string' && isKnownCategory(job.selectedCategoryId)) {
-    return job.selectedCategoryId.trim();
+  if (typeof job.selectedFolderId === 'string' && isKnownFolder(job.selectedFolderId)) {
+    return job.selectedFolderId.trim();
   }
   const autoResult = autoArchivingResultForJob(job);
-  if (autoResult && typeof autoResult.categoryId === 'string' && isKnownCategory(autoResult.categoryId)) {
-    return autoResult.categoryId.trim();
+  if (autoResult && typeof autoResult.folderId === 'string' && isKnownFolder(autoResult.folderId)) {
+    return autoResult.folderId.trim();
   }
-  if (typeof job.topMatchedCategoryId === 'string' && isKnownCategory(job.topMatchedCategoryId)) {
-    return job.topMatchedCategoryId.trim();
+  return '';
+}
+
+function effectiveFilenameTemplateId(job) {
+  const effectiveFolder = findArchiveFolderById(effectiveFolderId(job));
+  const isKnownFilenameTemplate = (value) => {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    if (!normalized) {
+      return false;
+    }
+    const templates = Array.isArray(effectiveFolder && effectiveFolder.filenameTemplates) ? effectiveFolder.filenameTemplates : [];
+    return templates.some((template) => template && typeof template.id === 'string' && template.id.trim() === normalized);
+  };
+
+  if (!job) {
+    return '';
+  }
+  const autoResult = autoArchivingResultForJob(job);
+  if (autoResult && typeof autoResult.filenameTemplateId === 'string' && isKnownFilenameTemplate(autoResult.filenameTemplateId)) {
+    return autoResult.filenameTemplateId.trim();
+  }
+  const firstTemplate = Array.isArray(effectiveFolder && effectiveFolder.filenameTemplates)
+    ? effectiveFolder.filenameTemplates.find((template) => template && typeof template.id === 'string' && template.id.trim() !== '')
+    : null;
+  if (firstTemplate && typeof firstTemplate.id === 'string') {
+    return firstTemplate.id.trim();
   }
   return '';
 }
@@ -5523,7 +5485,7 @@ function buildFilenameFieldValues(job) {
     : {};
   const clientDirName = effectiveClientDirName(job);
   const sender = findSenderById(effectiveSenderId(job));
-  const category = findFilenameTemplateCategoryById(effectiveCategoryId(job));
+  const folder = findArchiveFolderById(effectiveFolderId(job));
 
   const values = new Map();
   const setValue = (key, value) => {
@@ -5536,7 +5498,7 @@ function buildFilenameFieldValues(job) {
     }
   };
 
-  setValue('category', category && category.name);
+  setValue('folder', archiveFolderDisplayName(folder));
   setValue('client', clientDirName);
   setValue('main_client', clientDirName);
   setValue('sender', sender && sender.name);
@@ -5620,8 +5582,8 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
       return;
     }
 
-    if (part.type === 'category') {
-      const value = String(fieldValues.get('category') || '').trim();
+    if (part.type === 'folder') {
+      const value = String(fieldValues.get('folder') || '').trim();
       if (value === '') {
         return;
       }
@@ -5675,9 +5637,9 @@ function generateFilenameForJob(job) {
     return '';
   }
 
-  const category = findFilenameTemplateCategoryById(effectiveCategoryId(job));
-  const template = category && category.filenameTemplate && typeof category.filenameTemplate === 'object'
-    ? sanitizeFilenameTemplate(category.filenameTemplate)
+  const filenameTemplate = findFilenameTemplateById(effectiveFilenameTemplateId(job));
+  const template = filenameTemplate && filenameTemplate.template && typeof filenameTemplate.template === 'object'
+    ? sanitizeFilenameTemplate(filenameTemplate.template)
     : { parts: [] };
   const fieldValues = buildFilenameFieldValues(job);
   const rendered = evaluateFilenameTemplateParts(template.parts || [], fieldValues)
@@ -5699,9 +5661,9 @@ function displayedFilenameForJob(job) {
   if (localValue) {
     return localValue;
   }
-  const category = findFilenameTemplateCategoryById(effectiveCategoryId(job));
-  const template = category && category.filenameTemplate && typeof category.filenameTemplate === 'object'
-    ? sanitizeFilenameTemplate(category.filenameTemplate)
+  const filenameTemplate = findFilenameTemplateById(effectiveFilenameTemplateId(job));
+  const template = filenameTemplate && filenameTemplate.template && typeof filenameTemplate.template === 'object'
+    ? sanitizeFilenameTemplate(filenameTemplate.template)
     : { parts: [] };
   const hasMeaningfulTemplate = Array.isArray(template.parts) && template.parts.some((part) => {
     if (!part || typeof part !== 'object') {
@@ -5746,6 +5708,15 @@ function displayedFilenameForJob(job) {
   return generateFilenameForJob(job);
 }
 
+function renderArchiveFolderPathForJob(job) {
+  const folder = findArchiveFolderById(effectiveFolderId(job));
+  const template = folder && folder.pathTemplate && typeof folder.pathTemplate === 'object'
+    ? sanitizeFilenameTemplate(folder.pathTemplate)
+    : { parts: [] };
+  const fieldValues = buildFilenameFieldValues(job);
+  return evaluateFilenameTemplateParts(template.parts || [], fieldValues).replace(/\s+/g, ' ').trim();
+}
+
 function filenameTooltipForJob(job, explicitFilename = null) {
   if (!job) {
     return '';
@@ -5767,8 +5738,7 @@ function filenameTooltipForJob(job, explicitFilename = null) {
 
   const basePath = normalizedPathValue(outputBasePathEl ? outputBasePathEl.value : pathsBaselineValue);
   const clientDirName = effectiveClientDirName(job);
-  const category = findCategoryById(effectiveCategoryId(job));
-  const archiveFolderPath = category && typeof category.path === 'string' ? category.path.trim() : '';
+  const archiveFolderPath = renderArchiveFolderPathForJob(job);
   const parts = [basePath, clientDirName, archiveFolderPath, filename]
     .filter((part) => typeof part === 'string' && part.trim() !== '')
     .map((part, index) => index === 0 ? part.replace(/[\\/]+$/, '') : part.replace(/^[\\/]+|[\\/]+$/g, ''));
@@ -5842,8 +5812,8 @@ function updateArchiveAction(job) {
   if (!effectiveSenderId(job)) {
     missingFields.push('Avsändare');
   }
-  if (!effectiveCategoryId(job)) {
-    missingFields.push('Kategori');
+  if (!effectiveFolderId(job)) {
+    missingFields.push('Mapp');
   }
   if (!String(filenameInputEl ? filenameInputEl.value : displayedFilenameForJob(job)).trim()) {
     missingFields.push('Filnamn');
@@ -5940,7 +5910,7 @@ function restoreSelectedJobEditorState() {
   const currentJob = findJobById(selectedJobId);
   setClientForJob(currentJob);
   setSenderForJob(currentJob);
-  setCategoryForJob(currentJob);
+  setFolderForJob(currentJob);
   setLabelsForJob(currentJob);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
@@ -7268,7 +7238,7 @@ function applySelectedJobId(jobId, options = {}) {
   selectedJobStateSig = jobStateSignature(selectedJob);
   setClientForJob(selectedJob);
   setSenderForJob(selectedJob);
-  setCategoryForJob(selectedJob);
+  setFolderForJob(selectedJob);
   setLabelsForJob(selectedJob);
   if (syncHash) {
     updateHashState();
@@ -7335,7 +7305,7 @@ function refreshSelection() {
     selectedJobStateSig = nextJobStateSig;
     setClientForJob(currentSelection);
     setSenderForJob(currentSelection);
-    setCategoryForJob(currentSelection);
+    setFolderForJob(currentSelection);
     setLabelsForJob(currentSelection);
     syncFilenameField(currentSelection);
     updateArchiveAction(currentSelection);
@@ -7358,7 +7328,7 @@ function applyState(nextState) {
 
   const shouldUpdateClients = Array.isArray(nextState.clients);
   const shouldUpdateSenders = Array.isArray(nextState.senders);
-  const shouldUpdateCategories = Array.isArray(nextState.categories);
+  const shouldUpdateArchiveFolders = Array.isArray(nextState.archiveFolders);
   const shouldUpdateSenderOrganizationLookupQueue = nextState.senderOrganizationLookupQueue && typeof nextState.senderOrganizationLookupQueue === 'object';
   const shouldUpdateSenderPayeeLookupQueue = nextState.senderPayeeLookupQueue && typeof nextState.senderPayeeLookupQueue === 'object';
   const shouldUpdateArchivingRules = nextState.archivingRules && typeof nextState.archivingRules === 'object';
@@ -7381,7 +7351,7 @@ function applyState(nextState) {
     senderPayeeLookupQueue: nextSenderPayeeLookupQueue,
     clients: shouldUpdateClients ? nextState.clients : state.clients,
     senders: shouldUpdateSenders ? nextState.senders : state.senders,
-    categories: shouldUpdateCategories ? nextState.categories : state.categories,
+    archiveFolders: shouldUpdateArchiveFolders ? nextState.archiveFolders : state.archiveFolders,
     archivingRules: nextArchivingRules
   };
   console.info('[Docflow] applyState senderOrganizationLookupQueue', state.senderOrganizationLookupQueue);
@@ -7404,9 +7374,9 @@ function applyState(nextState) {
       selectedSenderByJobId.delete(jobId);
     }
   });
-  Array.from(selectedCategoryByJobId.keys()).forEach((jobId) => {
+  Array.from(selectedFolderByJobId.keys()).forEach((jobId) => {
     if (!validJobIds.has(jobId)) {
-      selectedCategoryByJobId.delete(jobId);
+      selectedFolderByJobId.delete(jobId);
     }
   });
   Array.from(selectedLabelIdsByJobId.keys()).forEach((jobId) => {
@@ -7463,8 +7433,8 @@ function applyState(nextState) {
   if (shouldUpdateSenders) {
     renderSenderSelect(state.senders);
   }
-  if (shouldUpdateCategories) {
-    renderCategorySelect(state.categories);
+  if (shouldUpdateArchiveFolders) {
+    renderFolderSelect(state.archiveFolders);
   }
   renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
   refreshSelection();
@@ -7545,7 +7515,7 @@ function applyJobEvents(events) {
     failedJobs: cloneJobList(state.failedJobs),
     clients: state.clients,
     senders: state.senders,
-    categories: state.categories,
+    archiveFolders: state.archiveFolders,
     archivingRules: state.archivingRules,
   };
   let mutated = false;
@@ -8095,30 +8065,30 @@ function bindSettingsPanelRefs(tabId) {
     renderPythonStatus(null);
     renderRapidocrStatus(null);
     renderOcrProcessingCommand();
-  } else if (tabId === 'categories') {
-    categoriesListEl = document.getElementById('categories-list');
-    categoriesAddCategoryEl = document.getElementById('categories-add-category');
-    categoriesCancelEl = document.getElementById('categories-cancel');
-    categoriesApplyEl = document.getElementById('categories-apply');
-    categoriesAddCategoryEl.addEventListener('click', () => {
-      categoriesDraft.push(defaultArchiveFolder());
-      renderCategoriesEditor();
+  } else if (tabId === 'archive-structure') {
+    archiveStructureListEl = document.getElementById('archive-structure-list');
+    archiveStructureAddFolderEl = document.getElementById('archive-structure-add-folder');
+      archiveStructureCancelEl = document.getElementById('archive-structure-cancel');
+    archiveStructureApplyEl = document.getElementById('archive-structure-apply');
+    archiveStructureAddFolderEl.addEventListener('click', () => {
+      archiveFoldersDraft.push(defaultArchiveFolder());
+      renderArchiveStructureEditor();
       updateSettingsActionButtons();
     });
-    categoriesCancelEl.addEventListener('click', () => {
+    archiveStructureCancelEl.addEventListener('click', () => {
       let parsed = {};
       try {
-        parsed = JSON.parse(categoriesBaselineJson);
+        parsed = JSON.parse(archiveStructureBaselineJson);
       } catch (error) {
         parsed = {};
       }
-      categoriesDraft = Array.isArray(parsed) ? parsed.map(sanitizeArchiveFolder) : [];
-      renderCategoriesEditor();
+      archiveFoldersDraft = Array.isArray(parsed.archiveFolders) ? parsed.archiveFolders.map((folder, index) => sanitizeArchiveFolder(folder, index)) : [];
+      renderArchiveStructureEditor();
       updateSettingsActionButtons();
     });
-    categoriesApplyEl.addEventListener('click', async () => {
+    archiveStructureApplyEl.addEventListener('click', async () => {
       try {
-        await saveCategories();
+        await saveArchiveStructure();
       } catch (error) {
         alert(error.message || 'Kunde inte spara arkivstruktur.');
       }
@@ -8384,9 +8354,9 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
       await loadMatchingSettings();
     } else if (tabId === 'ocr-processing') {
       await loadOcrProcessingSettings(options);
-    } else if (tabId === 'categories') {
-      await Promise.all([loadCategories(), loadExtractionFields(), loadLabels()]);
-      renderCategoriesEditor();
+    } else if (tabId === 'archive-structure') {
+      await Promise.all([loadArchiveStructure(), loadExtractionFields(), loadLabels()]);
+      renderArchiveStructureEditor();
     } else if (tabId === 'labels') {
       await loadLabels();
     } else if (tabId === 'data-fields') {
@@ -8481,26 +8451,28 @@ async function openSenderInRegister(senderId) {
   focusSenderDraftRow(senderUiKey(senderRow));
 }
 
-async function openCategoriesSettingsDirect() {
+async function openArchiveStructureSettingsDirect() {
   if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
     return false;
   }
 
   openSettingsModal();
-  setSettingsTab('categories');
+  setSettingsTab('archive-structure');
 
   try {
-    await ensureSettingsPanelReady('categories');
+    await ensureSettingsPanelReady('archive-structure');
   } catch (error) {
     alert('Kunde inte ladda arkivstruktur.');
-    categoriesDraft = [];
-    categoriesBaselineJson = JSON.stringify(categoriesDraft.map(sanitizeArchiveFolder));
-    renderCategoriesEditor();
+    archiveFoldersDraft = [];
+    archiveStructureBaselineJson = normalizedArchiveStructureJson();
+    renderArchiveStructureEditor();
     updateSettingsActionButtons();
     return false;
   }
 
-  categoriesAddCategoryEl.focus();
+  if (archiveStructureAddFolderEl) {
+    archiveStructureAddFolderEl.focus();
+  }
   updateSettingsActionButtons();
   return true;
 }
@@ -8537,7 +8509,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'categories', 'labels', 'data-fields', 'archiving-review', 'paths', 'system', 'extensions'];
+  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'archive-structure', 'labels', 'data-fields', 'archiving-review', 'paths', 'system', 'extensions'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -8556,7 +8528,7 @@ function isEditableSettingsTab(tabId) {
     || tabId === 'senders'
     || tabId === 'matching'
     || tabId === 'ocr-processing'
-    || tabId === 'categories'
+    || tabId === 'archive-structure'
     || tabId === 'labels'
     || tabId === 'data-fields'
     || tabId === 'paths';
@@ -8600,8 +8572,10 @@ function normalizedSendersJson(senders) {
   return JSON.stringify(senders.map(sanitizeSenderDraft));
 }
 
-function normalizedCategoriesJson(categories) {
-  return JSON.stringify(categories.map(sanitizeArchiveFolder));
+function normalizedArchiveStructureJson() {
+  return JSON.stringify({
+    archiveFolders: archiveFoldersDraft.map((folder, index) => sanitizeArchiveFolder(folder, index)),
+  });
 }
 
 function normalizedLabelsJson(labels, systemLabels = systemLabelsDraft) {
@@ -8637,8 +8611,8 @@ function isSendersDirty() {
   return normalizedSendersJson(sendersDraft) !== sendersBaselineJson;
 }
 
-function isCategoriesDirty() {
-  return normalizedCategoriesJson(categoriesDraft) !== categoriesBaselineJson;
+function isArchiveStructureDirty() {
+  return normalizedArchiveStructureJson() !== archiveStructureBaselineJson;
 }
 
 function isLabelsDirty() {
@@ -8676,8 +8650,8 @@ function isSettingsTabDirty(tabId) {
   if (tabId === 'senders') {
     return isSendersDirty();
   }
-  if (tabId === 'categories') {
-    return isCategoriesDirty();
+  if (tabId === 'archive-structure') {
+    return isArchiveStructureDirty();
   }
   if (tabId === 'labels') {
     return isLabelsDirty();
@@ -8695,7 +8669,7 @@ function isSettingsTabDirty(tabId) {
 }
 
 function hasAnyUnsavedSettingsChanges() {
-  return isClientsDirty() || isSendersDirty() || isMatchingDirty() || isOcrProcessingDirty() || isCategoriesDirty() || isLabelsDirty() || isExtractionFieldsDirty() || isPathsDirty();
+  return isClientsDirty() || isSendersDirty() || isMatchingDirty() || isOcrProcessingDirty() || isArchiveStructureDirty() || isLabelsDirty() || isExtractionFieldsDirty() || isPathsDirty();
 }
 
 function panelActionButtonsForTab(tabId) {
@@ -8708,8 +8682,8 @@ function panelActionButtonsForTab(tabId) {
   if (tabId === 'matching') {
     return [matchingCancelEl, matchingApplyEl];
   }
-  if (tabId === 'categories') {
-    return [categoriesCancelEl, categoriesApplyEl];
+  if (tabId === 'archive-structure') {
+    return [archiveStructureCancelEl, archiveStructureApplyEl];
   }
   if (tabId === 'labels') {
     return [labelsCancelEl, labelsApplyEl];
@@ -8732,7 +8706,7 @@ function updateSettingsActionButtons() {
   const sendersLoading = loadingSettingsPanels.has('senders');
   const matchingLoading = loadingSettingsPanels.has('matching');
   const ocrProcessingLoading = loadingSettingsPanels.has('ocr-processing');
-  const categoriesLoading = loadingSettingsPanels.has('categories');
+  const archiveStructureLoading = loadingSettingsPanels.has('archive-structure');
   const labelsLoading = loadingSettingsPanels.has('labels');
   const extractionFieldsLoading = loadingSettingsPanels.has('data-fields');
   const archivingReviewLoading = loadingSettingsPanels.has('archiving-review');
@@ -8741,8 +8715,8 @@ function updateSettingsActionButtons() {
   const sendersDirty = isSendersDirty();
   const matchingDirty = isMatchingDirty();
   const ocrProcessingDirty = isOcrProcessingDirty();
-  const categoriesDirty = isCategoriesDirty();
-  const categoriesError = categoriesValidationError();
+  const archiveStructureDirty = isArchiveStructureDirty();
+  const archiveStructureError = archiveStructureValidationError();
   const labelsDirty = isLabelsDirty();
   const labelsError = labelsValidationError();
   const extractionFieldsDirty = isExtractionFieldsDirty();
@@ -8769,10 +8743,10 @@ function updateSettingsActionButtons() {
     ocrProcessingApplyEl.disabled = ocrProcessingLoading || !ocrProcessingDirty;
   }
 
-  if (categoriesCancelEl && categoriesApplyEl) {
-    categoriesCancelEl.disabled = categoriesLoading || !categoriesDirty;
-    categoriesApplyEl.disabled = categoriesLoading || !categoriesDirty || categoriesError !== '';
-    categoriesApplyEl.title = categoriesError || '';
+  if (archiveStructureCancelEl && archiveStructureApplyEl) {
+    archiveStructureCancelEl.disabled = archiveStructureLoading || !archiveStructureDirty;
+    archiveStructureApplyEl.disabled = archiveStructureLoading || !archiveStructureDirty || archiveStructureError !== '';
+    archiveStructureApplyEl.title = archiveStructureError || '';
   }
 
   if (labelsCancelEl && labelsApplyEl) {
@@ -8831,14 +8805,6 @@ function defaultRule() {
   };
 }
 
-function defaultCategory() {
-  return {
-    name: '',
-    priority: 1,
-    labelIds: [],
-  };
-}
-
 function defaultLabel() {
   return {
     id: '',
@@ -8850,13 +8816,44 @@ function defaultLabel() {
 
 function defaultArchiveFolder() {
   return {
+    id: '',
     name: '',
-    path: '',
-    filenameTemplate: {
+    pathTemplate: {
       parts: [defaultFilenameTemplatePart('text')]
     },
-    categories: []
+    filenameTemplates: [defaultFilenameTemplateDraft()],
   };
+}
+
+function defaultFilenameTemplateDraft() {
+  return {
+    id: '',
+    template: {
+      parts: [defaultFilenameTemplatePart('text')]
+    },
+    labelIds: [],
+  };
+}
+
+function moveArrayItem(items, fromIndex, toIndex) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  const next = [...items];
+  if (
+    !Number.isInteger(fromIndex)
+    || !Number.isInteger(toIndex)
+    || fromIndex < 0
+    || fromIndex >= next.length
+    || toIndex < 0
+    || toIndex >= next.length
+    || fromIndex === toIndex
+  ) {
+    return next;
+  }
+  const [item] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, item);
+  return next;
 }
 
 function sanitizePositiveInt(value, fallback = 1) {
@@ -9893,7 +9890,7 @@ function sanitizeLabelRule(rule) {
   return sanitizeRule(rule);
 }
 
-function sanitizeCategoryLabelIds(labelIds) {
+function sanitizeRuleLabelIds(labelIds) {
   const normalized = [];
   const seen = new Set();
 
@@ -9913,29 +9910,30 @@ function sanitizeCategoryLabelIds(labelIds) {
   return normalized;
 }
 
-function sanitizeCategory(category) {
-  const input = category && typeof category === 'object' ? category : {};
+function sanitizeArchiveFolder(archiveFolder, fallbackIndex = 0) {
+  const input = archiveFolder && typeof archiveFolder === 'object' ? archiveFolder : {};
   const name = typeof input.name === 'string' ? input.name : '';
+  const normalizedId = typeof input.id === 'string' && input.id.trim() !== ''
+    ? input.id.trim()
+    : slugifyText(name || `folder-${fallbackIndex + 1}`, '-', `folder-${fallbackIndex + 1}`);
+  const rawTemplates = Array.isArray(input.filenameTemplates) ? input.filenameTemplates : [];
   return {
-    id: slugifyText(name, '-', ''),
+    id: normalizedId,
     name,
-    priority: sanitizePositiveInt(input.priority, 1),
-    labelIds: sanitizeCategoryLabelIds(input.labelIds),
+    pathTemplate: sanitizeFilenameTemplate(input.pathTemplate ?? input.path),
+    filenameTemplates: rawTemplates.map((template, index) => sanitizeFilenameTemplateDraft(template, index, normalizedId)),
   };
 }
 
-function sanitizeArchiveFolder(archiveFolder) {
-  const input = archiveFolder && typeof archiveFolder === 'object' ? archiveFolder : {};
-  const rawCategories = Array.isArray(input.categories) ? input.categories : [];
-  const categories = rawCategories.map(sanitizeCategory);
-  const migratedFilenameTemplate = input.filenameTemplate && typeof input.filenameTemplate === 'object'
-    ? input.filenameTemplate
-    : rawCategories.find((category) => category && typeof category === 'object' && category.filenameTemplate && typeof category.filenameTemplate === 'object')?.filenameTemplate;
+function sanitizeFilenameTemplateDraft(template, fallbackIndex = 0, folderId = '') {
+  const input = template && typeof template === 'object' ? template : {};
+  const normalizedId = typeof input.id === 'string' && input.id.trim() !== ''
+    ? input.id.trim()
+    : slugifyText(`${folderId || 'folder'}-filename-template-${fallbackIndex + 1}`, '-', `filename-template-${fallbackIndex + 1}`);
   return {
-    name: typeof input.name === 'string' ? input.name : '',
-    path: typeof input.path === 'string' ? input.path : '',
-    filenameTemplate: sanitizeFilenameTemplate(migratedFilenameTemplate),
-    categories
+    id: normalizedId,
+    template: sanitizeFilenameTemplate(input.template ?? input.filenameTemplate),
+    labelIds: sanitizeRuleLabelIds(input.labelIds ?? (input.conditions && input.conditions.labelIds)),
   };
 }
 
@@ -10000,7 +9998,7 @@ function systemLabelOptions() {
     .filter((label) => label.value !== '' && label.label !== '');
 }
 
-function categoryLabelOptions() {
+function archiveRuleLabelOptionsList() {
   const options = [...systemLabelOptions(), ...sanitizeLabels(labelsDraft)
     .map((label) => ({
       value: typeof label.id === 'string' ? label.id.trim() : '',
@@ -10017,73 +10015,46 @@ function categoryLabelOptions() {
   return Array.from(deduped.values());
 }
 
-function duplicateCategoryIds(folders) {
-  const counts = new Map();
-  (Array.isArray(folders) ? folders : []).forEach((folder) => {
-    const categories = Array.isArray(folder && folder.categories) ? folder.categories : [];
-    categories.map(sanitizeCategory).forEach((category) => {
-      const id = typeof category.id === 'string' ? category.id.trim() : '';
-      if (!id) {
-        return;
-      }
-      counts.set(id, (counts.get(id) || 0) + 1);
-    });
-  });
-  return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([id]) => id));
+function archiveRuleLabelOptions() {
+  return archiveRuleLabelOptionsList();
 }
 
-function duplicateCategoryLabelIds(folders) {
-  const counts = new Map();
-  (Array.isArray(folders) ? folders : []).forEach((folder) => {
-    const categories = Array.isArray(folder && folder.categories) ? folder.categories : [];
-    categories.map(sanitizeCategory).forEach((category) => {
-      sanitizeCategoryLabelIds(category.labelIds).forEach((labelId) => {
-        counts.set(labelId, (counts.get(labelId) || 0) + 1);
-      });
-    });
-  });
-  return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([id]) => id));
+function archiveRuleLabelOptionsForRule(ruleIndex, currentLabelId = '') {
+  return archiveRuleLabelOptions();
 }
 
-function categoryLabelOptionsForCategory(folderIndex, categoryIndex, currentLabelId = '') {
-  const normalizedCurrentId = typeof currentLabelId === 'string' ? currentLabelId.trim() : '';
-  const blocked = new Set();
-
-  (Array.isArray(categoriesDraft) ? categoriesDraft : []).forEach((folder, nextFolderIndex) => {
-    const categories = Array.isArray(folder && folder.categories) ? folder.categories : [];
-    categories.forEach((category, nextCategoryIndex) => {
-      const labelIds = sanitizeCategoryLabelIds(category && category.labelIds);
-      labelIds.forEach((labelId) => {
-        const isCurrentCategory = nextFolderIndex === folderIndex && nextCategoryIndex === categoryIndex;
-        if (isCurrentCategory && labelId === normalizedCurrentId) {
-          return;
-        }
-        blocked.add(labelId);
-      });
-    });
-  });
-
-  return categoryLabelOptions().filter((option) => {
-    return option.value === normalizedCurrentId || !blocked.has(option.value);
-  });
-}
-
-function categoriesValidationError() {
-  const duplicates = duplicateCategoryIds(categoriesDraft);
-  if (duplicates.size > 0) {
-    return `Kategori-id krockar: ${Array.from(duplicates).join(', ')}`;
-  }
-  const duplicateLabelIds = duplicateCategoryLabelIds(categoriesDraft);
-  if (duplicateLabelIds.size > 0) {
-    return `Etiketter kan bara användas i en kategori: ${Array.from(duplicateLabelIds).join(', ')}`;
-  }
-  for (const folder of categoriesDraft) {
-    const categories = Array.isArray(folder && folder.categories) ? folder.categories : [];
-    const blankCategory = categories.map(sanitizeCategory).find((category) => !category.name.trim() || !category.id.trim());
-    if (blankCategory) {
-      return 'Alla kategorier måste ha ett namn.';
+function archiveStructureValidationError() {
+  const duplicateIds = new Set();
+  const allIds = new Map();
+  const rememberId = (id, label) => {
+    if (!id) {
+      return;
     }
+    if (allIds.has(id)) {
+      duplicateIds.add(`${id} (${label})`);
+      return;
+    }
+    allIds.set(id, label);
+  };
+
+  archiveFoldersDraft.map((folder, index) => sanitizeArchiveFolder(folder, index)).forEach((folder) => {
+    rememberId(folder.id, 'mapp');
+    if (!folder.name.trim()) {
+      duplicateIds.add('__blank_folder_name__');
+    }
+    folder.filenameTemplates.forEach((template) => {
+      rememberId(template.id, 'filnamnsregel');
+    });
+  });
+
+  if (duplicateIds.has('__blank_folder_name__')) {
+    return 'Alla mappar måste ha ett namn.';
   }
+  const duplicateRealIds = Array.from(duplicateIds).filter((value) => !value.startsWith('__'));
+  if (duplicateRealIds.length > 0) {
+    return `Id krockar i arkivstrukturen: ${duplicateRealIds.join(', ')}`;
+  }
+
   return '';
 }
 
@@ -10154,9 +10125,9 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
       suffixParts,
     };
   }
-  if (type === 'category') {
+  if (type === 'folder') {
     return {
-      type: 'category',
+      type: 'folder',
       prefixParts,
       suffixParts,
     };
@@ -10191,9 +10162,9 @@ function sanitizeFilenameTemplate(template) {
 }
 
 function defaultFilenameTemplatePart(type = 'text') {
-  if (type === 'category') {
+  if (type === 'folder') {
     return {
-      type: 'category',
+      type: 'folder',
       prefixParts: [],
       suffixParts: [],
     };
@@ -10505,10 +10476,10 @@ function filenameTemplateInsertOptions() {
       title: field.title,
     })),
     {
-      type: 'category',
-      label: 'Kategori',
-      tone: 'category',
-      title: 'Lägger till dokumentets kategori i filnamnet.',
+      type: 'folder',
+      label: 'Mapp',
+      tone: 'folder',
+      title: 'Lägger till dokumentets valda mapp i mallen.',
     },
     {
       type: 'dataField',
@@ -12117,7 +12088,7 @@ function setExtractionFieldsTab(tabId) {
 
 function labelRuleOptions(currentLabelId = '') {
   const normalizedCurrentId = typeof currentLabelId === 'string' ? currentLabelId.trim() : '';
-  return categoryLabelOptions().filter((option) => option.value !== normalizedCurrentId);
+  return archiveRuleLabelOptionsList().filter((option) => option.value !== normalizedCurrentId);
 }
 
 function currentLabelDraftForEditor(options = {}) {
@@ -12550,6 +12521,8 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
   );
 
   const isSlotEditor = options && options.variant === 'slot';
+  const focusToolbar = options && options.focusToolbar === true;
+  const autoFocus = !(options && options.autoFocus === false);
   const inlinePlaceholder = options && typeof options.placeholder === 'string'
     ? options.placeholder
     : '';
@@ -12571,11 +12544,11 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
       };
     }
 
-    if (part.type === 'category') {
+    if (part.type === 'folder') {
       return {
-        label: 'Kategori',
-        tone: 'category',
-        title: 'Lägger till dokumentets kategori i filnamnet.',
+        label: 'Mapp',
+        tone: 'folder',
+        title: 'Lägger till dokumentets valda mapp i mallen.',
       };
     }
     if (part.type === 'dataField') {
@@ -12618,7 +12591,21 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
   };
 
   if (!context && !isSlotEditor) {
-    wrapper.appendChild(createFilenameTemplateToolbar(sharedContext));
+    const toolbar = createFilenameTemplateToolbar(sharedContext);
+    if (focusToolbar) {
+      toolbar.hidden = true;
+      wrapper.addEventListener('focusin', () => {
+        toolbar.hidden = false;
+      });
+      wrapper.addEventListener('focusout', () => {
+        window.requestAnimationFrame(() => {
+          if (!wrapper.contains(document.activeElement)) {
+            toolbar.hidden = true;
+          }
+        });
+      });
+    }
+    wrapper.appendChild(toolbar);
   }
 
   const isRootEditor = depth === 0 && !isSlotEditor;
@@ -13959,12 +13946,12 @@ let activeEditable = null;
   } else {
     wrapper.appendChild(sequence);
   }
-  if (!context && isRootEditor) {
+  if (autoFocus && !context && isRootEditor) {
     const trailingSlot = Array.from(sequence.childNodes).reverse().find((child) => isRootTextSlot(child)) || null;
     if (trailingSlot instanceof HTMLElement) {
       setActiveEditable(trailingSlot);
     }
-  } else if (!context && !isSlotEditor) {
+  } else if (autoFocus && !context && !isSlotEditor) {
     setActiveEditable(sequence);
   }
 
@@ -13972,291 +13959,289 @@ let activeEditable = null;
 }
 
 function syncCategoriesEditorValidation() {
-  if (!categoriesListEl) {
+  if (!(archiveStructureListEl instanceof HTMLElement)) {
     return;
   }
-
-  const duplicateIds = duplicateCategoryIds(categoriesDraft);
-  Array.from(categoriesListEl.querySelectorAll('[data-category-folder-index][data-category-index]')).forEach((input) => {
-    if (!(input instanceof HTMLInputElement)) {
-      return;
-    }
-    const folderIndex = parseInt(input.dataset.categoryFolderIndex || '', 10);
-    const categoryIndex = parseInt(input.dataset.categoryIndex || '', 10);
-    const folder = Number.isInteger(folderIndex) ? categoriesDraft[folderIndex] : null;
-    const category = folder && Array.isArray(folder.categories) ? sanitizeCategory(folder.categories[categoryIndex]) : null;
-    const id = category && typeof category.id === 'string' ? category.id.trim() : '';
-    const name = category && typeof category.name === 'string' ? category.name.trim() : '';
-    const message = !name || !id
-      ? 'Kategorin måste ha ett namn.'
-      : duplicateIds.has(id)
-        ? `Kategori-id krockar: ${id}`
-        : '';
-    input.classList.toggle('settings-field-invalid', message !== '');
-    input.title = message;
-  });
+  const message = archiveStructureValidationError();
+  archiveStructureListEl.dataset.validationError = message;
 }
 
-function renderCategoriesEditor() {
-  if (!categoriesListEl) {
+function renderArchiveStructureEditor() {
+  if (!(archiveStructureListEl instanceof HTMLElement)) {
     return;
   }
-  categoriesListEl.innerHTML = '';
 
-  const foldersLabel = document.createElement('div');
-  foldersLabel.className = 'archive-folders-label';
-  foldersLabel.textContent = 'Mappar';
-  categoriesListEl.appendChild(foldersLabel);
+  archiveStructureListEl.innerHTML = '';
 
-  if (categoriesDraft.length === 0) {
+  const renderSectionLabel = (text) => {
+    const label = document.createElement('div');
+    label.className = 'archive-folders-label';
+    label.textContent = text;
+    archiveStructureListEl.appendChild(label);
+  };
+
+  const createMoveButton = (label, title, hidden, onClick) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'archive-icon-button archive-move-button';
+    button.textContent = label;
+    button.title = title;
+    button.classList.toggle('is-hidden-preserve-space', hidden === true);
+    button.setAttribute('aria-hidden', hidden === true ? 'true' : 'false');
+    button.tabIndex = hidden === true ? -1 : 0;
+    button.addEventListener('click', onClick);
+    return button;
+  };
+
+  const renderLabelConditionRows = (parentEl, labelIds, onChange, fieldLabel = 'Etikett') => {
+    const labelRows = sanitizeRuleLabelIds(labelIds).concat(['']);
+    labelRows.forEach((selectedLabelId, labelIndex) => {
+      const labelNode = document.createElement('div');
+      labelNode.className = 'tree-node tree-rule has-parent';
+      const labelRow = createTreeRow({ markerless: true });
+      const labelBody = document.createElement('div');
+      labelBody.className = 'tree-body rule-body';
+      appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-rule');
+
+      const labelFields = document.createElement('div');
+      labelFields.className = 'rule-fields category-label-fields';
+      const labelSelect = document.createElement('select');
+      const placeholderOption = document.createElement('option');
+      placeholderOption.value = '';
+      placeholderOption.hidden = true;
+      const labelOptions = archiveRuleLabelOptions();
+      placeholderOption.textContent = labelOptions.length > 0 ? 'Välj etikett' : 'Inga etiketter';
+      labelSelect.appendChild(placeholderOption);
+      labelOptions.forEach((optionData) => {
+        const option = document.createElement('option');
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        labelSelect.appendChild(option);
+      });
+      labelSelect.value = selectedLabelId && labelOptions.some((option) => option.value === selectedLabelId)
+        ? selectedLabelId
+        : '';
+      labelSelect.addEventListener('change', () => {
+        const nextLabelIds = sanitizeRuleLabelIds(labelIds);
+        if (labelSelect.value) {
+          nextLabelIds[labelIndex] = labelSelect.value;
+        } else if (labelIndex < nextLabelIds.length) {
+          nextLabelIds.splice(labelIndex, 1);
+        }
+        onChange(sanitizeRuleLabelIds(nextLabelIds));
+        renderArchiveStructureEditor();
+        updateSettingsActionButtons();
+      });
+      labelFields.appendChild(createFloatingField(fieldLabel, labelSelect));
+
+      if (selectedLabelId) {
+        const removeLabelButton = document.createElement('button');
+        removeLabelButton.type = 'button';
+        removeLabelButton.className = 'archive-danger-button archive-compact-button';
+        removeLabelButton.textContent = 'Ta bort';
+        removeLabelButton.addEventListener('click', () => {
+          const nextLabelIds = sanitizeRuleLabelIds(labelIds);
+          nextLabelIds.splice(labelIndex, 1);
+          onChange(nextLabelIds);
+          renderArchiveStructureEditor();
+          updateSettingsActionButtons();
+        });
+        labelFields.appendChild(removeLabelButton);
+      } else {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'rule-remove-placeholder';
+        labelFields.appendChild(placeholder);
+      }
+
+      labelBody.appendChild(labelFields);
+      labelRow.appendChild(labelBody);
+      labelNode.appendChild(labelRow);
+      parentEl.appendChild(labelNode);
+    });
+  };
+
+  renderSectionLabel('Mappar');
+  if (archiveFoldersDraft.length < 1) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
     empty.textContent = 'Inga mappar ännu.';
-    categoriesListEl.appendChild(empty);
-    return;
+    archiveStructureListEl.appendChild(empty);
   }
+  archiveFoldersDraft.forEach((folder, folderIndex) => {
+    const folderDraft = sanitizeArchiveFolder(folder, folderIndex);
+    archiveFoldersDraft[folderIndex] = folderDraft;
 
-  categoriesDraft.forEach((archiveFolder, archiveFolderIndex) => {
-    const archiveFolderNode = document.createElement('div');
-    archiveFolderNode.className = 'tree-node tree-folder';
+    const node = document.createElement('div');
+    node.className = 'tree-node tree-folder';
+    const row = createTreeRow({ markerless: true });
+    const body = document.createElement('div');
+    body.className = 'tree-body folder-body';
+    appendTreeBodyIcon(body, 'tree-body-icon tree-body-icon-folder');
 
-    const archiveFolderRow = createTreeRow({ markerless: true });
+    const fields = document.createElement('div');
+    fields.className = 'folder-fields';
 
-    const archiveFolderBody = document.createElement('div');
-    archiveFolderBody.className = 'tree-body folder-body';
-    appendTreeBodyIcon(archiveFolderBody, 'tree-body-icon tree-body-icon-folder');
-
-    const archiveFolderFields = document.createElement('div');
-    archiveFolderFields.className = 'folder-fields';
-
-    const archiveFolderNameInput = document.createElement('input');
-    archiveFolderNameInput.type = 'text';
-    archiveFolderNameInput.placeholder = 'Ex: "Dokument"';
-    archiveFolderNameInput.value = archiveFolder.name;
-    archiveFolderNameInput.addEventListener('input', () => {
-      categoriesDraft[archiveFolderIndex].name = archiveFolderNameInput.value;
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Ex: "Fakturor"';
+    nameInput.value = folderDraft.name;
+    nameInput.addEventListener('input', () => {
+      archiveFoldersDraft[folderIndex].name = nameInput.value;
       updateSettingsActionButtons();
     });
 
-    const archiveFolderPathInput = document.createElement('input');
-    archiveFolderPathInput.type = 'text';
-    archiveFolderPathInput.placeholder = 'Ex: "dokument"';
-    archiveFolderPathInput.value = archiveFolder.path;
-    archiveFolderPathInput.addEventListener('input', () => {
-      categoriesDraft[archiveFolderIndex].path = archiveFolderPathInput.value;
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'archive-danger-button archive-compact-button';
+    removeButton.textContent = 'Ta bort mapp';
+    removeButton.addEventListener('click', () => {
+      archiveFoldersDraft.splice(folderIndex, 1);
+      renderArchiveStructureEditor();
       updateSettingsActionButtons();
     });
 
-    const removeArchiveFolderButton = document.createElement('button');
-    removeArchiveFolderButton.type = 'button';
-    removeArchiveFolderButton.className = 'category-remove';
-    removeArchiveFolderButton.textContent = 'Ta bort mapp';
-    removeArchiveFolderButton.addEventListener('click', () => {
-      categoriesDraft.splice(archiveFolderIndex, 1);
-      renderCategoriesEditor();
+    fields.appendChild(createFloatingField('Namn', nameInput));
+    fields.appendChild(createMoveButton('↑', 'Flytta upp', folderIndex < 1, () => {
+      archiveFoldersDraft = moveArrayItem(archiveFoldersDraft, folderIndex, folderIndex - 1);
+      renderArchiveStructureEditor();
       updateSettingsActionButtons();
-    });
+    }));
+    fields.appendChild(createMoveButton('↓', 'Flytta ner', folderIndex >= archiveFoldersDraft.length - 1, () => {
+      archiveFoldersDraft = moveArrayItem(archiveFoldersDraft, folderIndex, folderIndex + 1);
+      renderArchiveStructureEditor();
+      updateSettingsActionButtons();
+    }));
+    fields.appendChild(removeButton);
+    body.appendChild(fields);
 
-    archiveFolderFields.appendChild(createFloatingField('Namn', archiveFolderNameInput));
-    archiveFolderFields.appendChild(createFloatingField('Sökväg', archiveFolderPathInput));
-    archiveFolderFields.appendChild(removeArchiveFolderButton);
-    archiveFolderBody.appendChild(archiveFolderFields);
+    const templateLabel = document.createElement('div');
+    templateLabel.className = 'archive-level-label';
+    templateLabel.textContent = 'Sökvägsmall';
+    body.appendChild(templateLabel);
 
-    const filenameTemplateLabel = document.createElement('div');
-    filenameTemplateLabel.className = 'archive-level-label';
-    filenameTemplateLabel.textContent = 'Filnamnsmall';
-    archiveFolderBody.appendChild(filenameTemplateLabel);
-    const filenameTemplate = sanitizeFilenameTemplate(
-      categoriesDraft[archiveFolderIndex].filenameTemplate
-    );
-    filenameTemplate.parts = normalizeEditableFilenameTemplateParts(filenameTemplate.parts);
-    categoriesDraft[archiveFolderIndex].filenameTemplate = filenameTemplate;
-    archiveFolderBody.appendChild(
+    body.appendChild(
       createFilenameTemplatePartsEditor(
-        filenameTemplate.parts,
+        folderDraft.pathTemplate.parts,
         () => {
           updateSettingsActionButtons();
-        }
+        },
+        0,
+        null,
+        { focusToolbar: true, autoFocus: false }
       )
     );
 
-    const archiveFolderCategories = createTreeChildren({ markerless: true });
+    const templatesLabel = document.createElement('div');
+    templatesLabel.className = 'archive-level-label';
+    templatesLabel.textContent = 'Filnamnsregler';
+    body.appendChild(templatesLabel);
 
-    const categoriesLabel = document.createElement('div');
-    categoriesLabel.className = 'archive-level-label';
-    categoriesLabel.textContent = 'Kategorier';
-    archiveFolderCategories.appendChild(categoriesLabel);
-
-    if (archiveFolder.categories.length === 0) {
-      const emptyCategories = document.createElement('div');
-      emptyCategories.className = 'categories-empty';
-      emptyCategories.textContent = 'Inga kategorier i mappen ännu.';
-      archiveFolderCategories.appendChild(emptyCategories);
+    const templatesList = createTreeChildren({ markerless: true });
+    if (folderDraft.filenameTemplates.length < 1) {
+      const empty = document.createElement('div');
+      empty.className = 'categories-empty';
+      empty.textContent = 'Inga filnamnsregler i mappen ännu.';
+      templatesList.appendChild(empty);
     }
 
-    archiveFolder.categories.forEach((category, categoryIndex) => {
-      const categoryNode = document.createElement('div');
-      categoryNode.className = 'tree-node tree-category has-parent';
+    folderDraft.filenameTemplates.forEach((template, templateIndex) => {
+      const templateDraft = sanitizeFilenameTemplateDraft(template, templateIndex, folderDraft.id);
+      archiveFoldersDraft[folderIndex].filenameTemplates[templateIndex] = templateDraft;
 
-      const categoryRow = createTreeRow({ markerless: true });
+      const templateNode = document.createElement('div');
+      templateNode.className = 'tree-node tree-category has-parent';
+      const templateRow = createTreeRow({ markerless: true });
+      const templateBody = document.createElement('div');
+      templateBody.className = 'tree-body category-body';
+      appendTreeBodyIcon(templateBody, 'tree-body-icon tree-body-icon-category');
 
-      const categoryBody = document.createElement('div');
-      categoryBody.className = 'tree-body category-body';
-      appendTreeBodyIcon(categoryBody, 'tree-body-icon tree-body-icon-category');
+      const templateFields = document.createElement('div');
+      templateFields.className = 'category-fields category-fields--wide';
 
-      const removeCategoryButton = document.createElement('button');
-      removeCategoryButton.type = 'button';
-      removeCategoryButton.className = 'category-remove';
-      removeCategoryButton.textContent = 'Ta bort kategori';
-      removeCategoryButton.addEventListener('click', () => {
-        categoriesDraft[archiveFolderIndex].categories.splice(categoryIndex, 1);
-        renderCategoriesEditor();
+      templateFields.appendChild(createMoveButton('↑', 'Flytta upp', templateIndex < 1, () => {
+        archiveFoldersDraft[folderIndex].filenameTemplates = moveArrayItem(
+          archiveFoldersDraft[folderIndex].filenameTemplates,
+          templateIndex,
+          templateIndex - 1
+        );
+        renderArchiveStructureEditor();
+        updateSettingsActionButtons();
+      }));
+      templateFields.appendChild(createMoveButton('↓', 'Flytta ner', templateIndex >= folderDraft.filenameTemplates.length - 1, () => {
+        archiveFoldersDraft[folderIndex].filenameTemplates = moveArrayItem(
+          archiveFoldersDraft[folderIndex].filenameTemplates,
+          templateIndex,
+          templateIndex + 1
+        );
+        renderArchiveStructureEditor();
+        updateSettingsActionButtons();
+      }));
+
+      const removeTemplateButton = document.createElement('button');
+      removeTemplateButton.type = 'button';
+      removeTemplateButton.className = 'archive-danger-button archive-compact-button';
+      removeTemplateButton.textContent = 'Ta bort filnamnsregel';
+      removeTemplateButton.addEventListener('click', () => {
+        archiveFoldersDraft[folderIndex].filenameTemplates.splice(templateIndex, 1);
+        renderArchiveStructureEditor();
         updateSettingsActionButtons();
       });
+      templateFields.appendChild(removeTemplateButton);
+      templateBody.appendChild(templateFields);
 
-      const fields = document.createElement('div');
-      fields.className = 'category-fields';
-
-      const categoryNameInput = document.createElement('input');
-      categoryNameInput.type = 'text';
-      categoryNameInput.placeholder = 'Ex: "Fakturor"';
-      categoryNameInput.value = category.name;
-      categoryNameInput.dataset.categoryFolderIndex = String(archiveFolderIndex);
-      categoryNameInput.dataset.categoryIndex = String(categoryIndex);
-      categoryNameInput.addEventListener('input', () => {
-        categoriesDraft[archiveFolderIndex].categories[categoryIndex].name = categoryNameInput.value;
-        syncCategoriesEditorValidation();
-        updateSettingsActionButtons();
-      });
-
-      const priorityInput = document.createElement('input');
-      priorityInput.type = 'number';
-      priorityInput.step = '1';
-      priorityInput.min = '1';
-      priorityInput.value = String(category.priority);
-      priorityInput.addEventListener('input', () => {
-        categoriesDraft[archiveFolderIndex].categories[categoryIndex].priority = sanitizePositiveInt(priorityInput.value, 1);
-        updateSettingsActionButtons();
-      });
-
-      fields.appendChild(createFloatingField('Namn', categoryNameInput));
-      fields.appendChild(createFloatingField('Prioritet', priorityInput, 'score-field'));
-      fields.appendChild(removeCategoryButton);
-      categoryBody.appendChild(fields);
-
-      const labelList = createTreeChildren({ markerless: true });
-
-      const labelsLabel = document.createElement('div');
-      labelsLabel.className = 'archive-level-label';
-      labelsLabel.textContent = 'Etiketter';
-      labelList.appendChild(labelsLabel);
-
-      const currentLabelIds = sanitizeCategoryLabelIds(category.labelIds);
-      categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds = currentLabelIds;
-      const labelRows = currentLabelIds.concat(['']);
-
-      labelRows.forEach((selectedLabelId, labelIndex) => {
-        const labelNode = document.createElement('div');
-        labelNode.className = 'tree-node tree-rule has-parent';
-
-        const labelRow = createTreeRow({ markerless: true });
-        const labelBody = document.createElement('div');
-        labelBody.className = 'tree-body rule-body';
-        appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-rule');
-
-        const labelFields = document.createElement('div');
-        labelFields.className = 'rule-fields category-label-fields';
-
-        const labelOptions = categoryLabelOptionsForCategory(archiveFolderIndex, categoryIndex, selectedLabelId);
-        const labelSelect = document.createElement('select');
-        const placeholderOption = document.createElement('option');
-        placeholderOption.value = '';
-        placeholderOption.disabled = true;
-        placeholderOption.hidden = true;
-        placeholderOption.textContent = labelOptions.length > 0 ? 'Välj etikett' : 'Inga etiketter';
-        labelSelect.appendChild(placeholderOption);
-        labelOptions.forEach((optionData) => {
-          const option = document.createElement('option');
-          option.value = optionData.value;
-          option.textContent = optionData.label;
-          labelSelect.appendChild(option);
-        });
-        labelSelect.disabled = labelOptions.length === 0;
-        const syncLabelSelectPlaceholderState = () => {
-          labelSelect.classList.toggle('is-placeholder', labelSelect.value === '');
-        };
-        labelSelect.value = labelOptions.some((option) => option.value === selectedLabelId)
-          ? selectedLabelId
-          : '';
-        syncLabelSelectPlaceholderState();
-        labelSelect.addEventListener('change', () => {
-          const nextLabelIds = sanitizeCategoryLabelIds(categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds);
-          if (labelSelect.value) {
-            nextLabelIds[labelIndex] = labelSelect.value;
-          } else if (labelIndex < nextLabelIds.length) {
-            nextLabelIds.splice(labelIndex, 1);
-          }
-          categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds = sanitizeCategoryLabelIds(nextLabelIds);
-          syncLabelSelectPlaceholderState();
-          renderCategoriesEditor();
-          updateSettingsActionButtons();
-        });
-        labelFields.appendChild(createFloatingField('Etikett', labelSelect));
-
-        if (selectedLabelId) {
-          const removeLabelButton = document.createElement('button');
-          removeLabelButton.type = 'button';
-          removeLabelButton.className = 'rule-remove';
-          removeLabelButton.textContent = 'Ta bort';
-          removeLabelButton.addEventListener('click', () => {
-            const nextLabelIds = sanitizeCategoryLabelIds(categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds);
-            nextLabelIds.splice(labelIndex, 1);
-            categoriesDraft[archiveFolderIndex].categories[categoryIndex].labelIds = nextLabelIds;
-            renderCategoriesEditor();
+      const templateLabel = document.createElement('div');
+      templateLabel.className = 'archive-level-label';
+      templateLabel.textContent = 'Filnamnsmall';
+      templateBody.appendChild(templateLabel);
+      templateBody.appendChild(
+        createFilenameTemplatePartsEditor(
+          templateDraft.template.parts,
+          () => {
             updateSettingsActionButtons();
-          });
-          labelFields.appendChild(removeLabelButton);
-        } else {
-          const placeholder = document.createElement('div');
-          placeholder.className = 'rule-remove-placeholder';
-          labelFields.appendChild(placeholder);
+          },
+          0,
+          null,
+          { focusToolbar: true, autoFocus: false }
+        )
+      );
+
+      const templateConditions = createTreeChildren({ markerless: true });
+      const templateConditionsLabel = document.createElement('div');
+      templateConditionsLabel.className = 'archive-level-label';
+      templateConditionsLabel.textContent = 'Matchande etiketter';
+      templateConditions.appendChild(templateConditionsLabel);
+      renderLabelConditionRows(
+        templateConditions,
+        templateDraft.labelIds,
+        (nextLabelIds) => {
+          archiveFoldersDraft[folderIndex].filenameTemplates[templateIndex].labelIds = nextLabelIds;
         }
+      );
+      templateBody.appendChild(templateConditions);
 
-        labelBody.appendChild(labelFields);
-        labelRow.appendChild(labelBody);
-        labelNode.appendChild(labelRow);
-        labelList.appendChild(labelNode);
-      });
-
-      categoryBody.appendChild(labelList);
-
-      categoryRow.appendChild(categoryBody);
-      categoryNode.appendChild(categoryRow);
-      archiveFolderCategories.appendChild(categoryNode);
+      templateRow.appendChild(templateBody);
+      templateNode.appendChild(templateRow);
+      templatesList.appendChild(templateNode);
     });
 
-    syncCategoriesEditorValidation();
-
-    archiveFolderBody.appendChild(archiveFolderCategories);
-
-    const categoryActions = document.createElement('div');
-    categoryActions.className = 'folder-actions';
-    const addCategoryButton = document.createElement('button');
-    addCategoryButton.type = 'button';
-    addCategoryButton.textContent = 'Lägg till kategori';
-    addCategoryButton.addEventListener('click', () => {
-      categoriesDraft[archiveFolderIndex].categories.push(defaultCategory());
-      renderCategoriesEditor();
+    const addTemplateButton = document.createElement('button');
+    addTemplateButton.type = 'button';
+    addTemplateButton.className = 'archive-add-button';
+    addTemplateButton.textContent = 'Lägg till filnamnsregel';
+    addTemplateButton.addEventListener('click', () => {
+      archiveFoldersDraft[folderIndex].filenameTemplates.push(defaultFilenameTemplateDraft());
+      renderArchiveStructureEditor();
       updateSettingsActionButtons();
     });
-    categoryActions.appendChild(addCategoryButton);
-    archiveFolderBody.appendChild(categoryActions);
+    templatesList.appendChild(addTemplateButton);
+    body.appendChild(templatesList);
 
-    archiveFolderRow.appendChild(archiveFolderBody);
-    archiveFolderNode.appendChild(archiveFolderRow);
-    categoriesListEl.appendChild(archiveFolderNode);
+    row.appendChild(body);
+    node.appendChild(row);
+    archiveStructureListEl.appendChild(node);
   });
 
+  syncCategoriesEditorValidation();
   updateSettingsActionButtons();
 }
 
@@ -14757,7 +14742,7 @@ async function loadOcrProcessingSettings(options = {}) {
   updateSettingsActionButtons();
 }
 
-async function loadCategories() {
+async function loadArchiveStructure() {
   const requestLocalRevision = archivingRulesLocalRevision;
   const response = await fetch('/api/get-categories.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -14765,12 +14750,15 @@ async function loadCategories() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.archiveFolders)) {
+  if (
+    !payload
+    || !Array.isArray(payload.archiveFolders)
+  ) {
     throw new Error('Ogiltigt svar för arkivstruktur');
   }
 
-  categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+  archiveFoldersDraft = payload.archiveFolders.map((folder, index) => sanitizeArchiveFolder(folder, index));
+  archiveStructureBaselineJson = normalizedArchiveStructureJson();
   applyArchivingRulesPayloadFromResponse(payload, {
     forceRender: true,
     expectedLocalRevision: requestLocalRevision
@@ -14780,7 +14768,7 @@ async function loadCategories() {
     syncFilenameField(selectedJob);
     updateArchiveAction(selectedJob);
   }
-  renderCategoriesEditor();
+  renderArchiveStructureEditor();
   updateSettingsActionButtons();
 }
 
@@ -14819,8 +14807,8 @@ async function loadLabels(options = {}) {
     syncFilenameField(selectedJob);
   }
   renderLabelsEditor();
-  if (categoriesListEl) {
-    renderCategoriesEditor();
+  if (archiveStructureListEl) {
+    renderArchiveStructureEditor();
   }
   updateSettingsActionButtons();
 }
@@ -14847,8 +14835,8 @@ async function loadExtractionFields() {
   });
   renderExtractionFieldsEditor();
   renderSystemExtractionFieldsEditor();
-  if (categoriesListEl) {
-    renderCategoriesEditor();
+  if (archiveStructureListEl) {
+    renderArchiveStructureEditor();
   }
   updateSettingsActionButtons();
 }
@@ -14940,40 +14928,45 @@ async function saveMatchingSettings() {
   updateSettingsActionButtons();
 }
 
-async function saveCategories() {
-  const validationError = categoriesValidationError();
+async function saveArchiveStructure() {
+  const validationError = archiveStructureValidationError();
   if (validationError) {
     throw new Error(validationError);
   }
 
-  const normalized = categoriesDraft.map(sanitizeArchiveFolder);
+  const normalizedArchiveFolders = archiveFoldersDraft.map((folder, index) => sanitizeArchiveFolder(folder, index));
   const response = await fetch('/api/save-categories.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      archiveFolders: normalized,
+      archiveFolders: normalizedArchiveFolders,
     })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.archiveFolders)) {
+  if (
+    !response.ok
+    || !payload
+    || payload.ok !== true
+    || !Array.isArray(payload.archiveFolders)
+  ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara arkivstruktur';
     throw new Error(message);
   }
 
-  categoriesDraft = payload.archiveFolders.map(sanitizeArchiveFolder);
-  categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+  archiveFoldersDraft = payload.archiveFolders.map((folder, index) => sanitizeArchiveFolder(folder, index));
+  archiveStructureBaselineJson = normalizedArchiveStructureJson();
   const selectedJob = findJobById(selectedJobId);
   if (selectedJob) {
     syncFilenameField(selectedJob);
     updateArchiveAction(selectedJob);
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
-  renderCategoriesEditor();
+  renderArchiveStructureEditor();
   updateSettingsActionButtons();
 }
 
@@ -15013,8 +15006,8 @@ async function saveLabels() {
     syncFilenameField(selectedJob);
   }
   renderLabelsEditor();
-  if (categoriesListEl) {
-    renderCategoriesEditor();
+  if (archiveStructureListEl) {
+    renderArchiveStructureEditor();
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   updateSettingsActionButtons();
@@ -15050,8 +15043,8 @@ async function saveExtractionFields() {
   extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
   renderExtractionFieldsEditor();
   renderSystemExtractionFieldsEditor();
-  if (categoriesListEl) {
-    renderCategoriesEditor();
+  if (archiveStructureListEl) {
+    renderArchiveStructureEditor();
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   updateSettingsActionButtons();
@@ -15162,7 +15155,7 @@ function cloneCurrentStateForRollback() {
     failedJobs: Array.isArray(state.failedJobs) ? state.failedJobs.map((job) => ({ ...job })) : [],
     clients: state.clients,
     senders: state.senders,
-    categories: state.categories
+    archiveFolders: state.archiveFolders,
   };
 }
 
@@ -15291,11 +15284,11 @@ senderSelectEl.addEventListener('change', () => {
   applySelectedSenderValue(value);
 });
 
-categorySelectEl.addEventListener('change', () => {
-  if (categorySelectEl.value === EDIT_CATEGORIES_OPTION_VALUE) {
+folderSelectEl.addEventListener('change', () => {
+  if (folderSelectEl.value === EDIT_ARCHIVE_STRUCTURE_OPTION_VALUE) {
     const selectedJob = state.readyJobs.find((job) => job.id === selectedJobId) || null;
-    openCategoriesSettingsDirect().finally(() => {
-      setCategoryForJob(selectedJob);
+    openArchiveStructureSettingsDirect().finally(() => {
+      setFolderForJob(selectedJob);
     });
     return;
   }
@@ -15306,22 +15299,22 @@ categorySelectEl.addEventListener('change', () => {
 
   const selectedJob = findJobById(selectedJobId);
   if (selectedJob && selectedJob.archived === true) {
-    setCategoryForJob(selectedJob);
+    setFolderForJob(selectedJob);
     return;
   }
 
-  const value = categorySelectEl.value;
+  const value = folderSelectEl.value;
   if (!value) {
-    selectedCategoryByJobId.delete(selectedJobId);
+    selectedFolderByJobId.delete(selectedJobId);
   } else {
-    selectedCategoryByJobId.set(selectedJobId, value);
+    selectedFolderByJobId.set(selectedJobId, value);
   }
   const currentJob = findJobById(selectedJobId);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
-  saveSelectedJobFields(selectedJobId, { selectedCategoryId: value || null }).catch((error) => {
+  saveSelectedJobFields(selectedJobId, { selectedFolderId: value || null }).catch((error) => {
     restoreSelectedJobEditorState();
-    alert(error.message || 'Kunde inte spara kategori.');
+    alert(error.message || 'Kunde inte spara mapp.');
   });
 });
 
@@ -15475,7 +15468,7 @@ archiveActionEl.addEventListener('click', async () => {
         action,
         selectedClientDirName: effectiveClientDirName(selectedJob) || null,
         selectedSenderId: effectiveSenderId(selectedJob) || null,
-        selectedCategoryId: effectiveCategoryId(selectedJob) || null,
+        selectedFolderId: effectiveFolderId(selectedJob) || null,
         selectedLabelIds: effectiveSelectedLabelIds(selectedJob),
         filename: filenameInputEl.value || displayedFilenameForJob(selectedJob),
       })
@@ -15554,11 +15547,11 @@ settingsTabEls.forEach((tabButton) => {
         renderOcrPdfSubstitutionsEditor();
         renderJbig2Status(null);
         renderOcrProcessingCommand();
-      } else if (tabId === 'categories') {
+      } else if (tabId === 'archive-structure') {
         alert('Kunde inte ladda arkivstruktur.');
-        categoriesDraft = [];
-        categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
-        renderCategoriesEditor();
+        archiveFoldersDraft = [];
+            archiveStructureBaselineJson = normalizedArchiveStructureJson();
+        renderArchiveStructureEditor();
       } else if (tabId === 'labels') {
         alert('Kunde inte ladda etiketter.');
         labelsDraft = [];
@@ -15772,11 +15765,11 @@ async function fetchState(options = {}) {
 
   const refreshClients = options.refreshClients === true;
   const refreshSenders = options.refreshSenders === true;
-  const refreshCategories = options.refreshCategories === true;
+  const refreshArchiveStructure = options.refreshArchiveStructure === true;
   const force = options.force === true;
   const includeClients = !hasLoadedClients || refreshClients;
   const includeSenders = !hasLoadedSenders || refreshSenders;
-  const includeCategories = !hasLoadedCategories || refreshCategories;
+  const includeArchiveStructure = !hasLoadedCategories || refreshArchiveStructure;
 
   pollInFlight = true;
   const startedArchivingRulesLocalRevision = archivingRulesLocalRevision;
@@ -15788,10 +15781,10 @@ async function fetchState(options = {}) {
     if (includeSenders) {
       params.set('includeSenders', '1');
     }
-    if (includeCategories) {
-      params.set('includeCategories', '1');
+    if (includeArchiveStructure) {
+      params.set('includeArchiveStructure', '1');
     }
-    if (!force && !includeClients && !includeSenders && !includeCategories && hasLoadedInitialJobsState) {
+    if (!force && !includeClients && !includeSenders && !includeArchiveStructure && hasLoadedInitialJobsState) {
       params.set('afterEventId', String(stateEventCursor));
     }
 
@@ -15849,7 +15842,7 @@ async function fetchState(options = {}) {
         : undefined,
       clients: includeClients && Array.isArray(nextState.clients) ? nextState.clients : undefined,
       senders: includeSenders && Array.isArray(nextState.senders) ? nextState.senders : undefined,
-      categories: includeCategories && Array.isArray(nextState.categories) ? nextState.categories : undefined
+      archiveFolders: includeArchiveStructure && Array.isArray(nextState.archiveFolders) ? nextState.archiveFolders : undefined,
     });
 
     const lastEventId = Number.parseInt(String(nextState.lastEventId || ''), 10);
@@ -15863,7 +15856,7 @@ async function fetchState(options = {}) {
     if (includeSenders) {
       hasLoadedSenders = true;
     }
-    if (includeCategories) {
+    if (includeArchiveStructure) {
       hasLoadedCategories = true;
     }
   } catch (error) {
@@ -16035,9 +16028,9 @@ window.addEventListener('focus', () => {
 });
 Promise.all([
   fetchState({ refreshSenders: true }),
-  loadCategories().catch(() => {
-    categoriesDraft = [];
-    categoriesBaselineJson = normalizedCategoriesJson(categoriesDraft);
+  loadArchiveStructure().catch(() => {
+    archiveFoldersDraft = [];
+    archiveStructureBaselineJson = normalizedArchiveStructureJson();
     console.error('Kunde inte ladda arkivstruktur vid app-start.');
   }),
   loadLabels().catch(() => {

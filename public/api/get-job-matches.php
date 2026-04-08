@@ -23,13 +23,8 @@ try {
 
     $extracted = load_json_file($extractedPath);
     if (!is_array($extracted)) {
-        json_response(['categories' => []]);
+        json_response(['labels' => [], 'fields' => []]);
         exit;
-    }
-
-    $categories = $extracted['categoryMatches'] ?? [];
-    if (!is_array($categories)) {
-        $categories = [];
     }
 
     $labels = $extracted['labelMatches'] ?? [];
@@ -297,13 +292,11 @@ try {
     }
 
     json_response([
-        'categories' => $categories,
         'labels' => $labels,
         'fields' => $fields,
     ]);
 } catch (Throwable $e) {
     json_response([
-        'categories' => [],
         'labels' => [],
         'fields' => [],
     ], 500);

@@ -81,9 +81,9 @@
               </select>
             </div>
             <div class="field-group">
-              <label class="floating-label" for="category-select">Kategori</label>
-              <select id="category-select">
-                <option value="" hidden>Välj kategori</option>
+              <label class="floating-label" for="folder-select">Mapp</label>
+              <select id="folder-select">
+                <option value="" hidden>Välj mapp</option>
               </select>
             </div>
             <div class="field-group field-group-job-labels">
@@ -252,7 +252,7 @@
         <div class="settings-nav-section">
           <div class="settings-nav-group-title">Arkivering</div>
           <button class="settings-tab" data-settings-tab="archiving-review" type="button">Granska regeländringar <span class="settings-tab-indicator" aria-hidden="true">●</span></button>
-          <button class="settings-tab" data-settings-tab="categories" type="button">Arkivstruktur</button>
+          <button class="settings-tab" data-settings-tab="archive-structure" type="button">Arkivstruktur</button>
           <button class="settings-tab" data-settings-tab="labels" type="button">Etiketter</button>
           <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
         </div>
@@ -271,7 +271,7 @@
         <div id="settings-panel-senders" class="settings-panel hidden"></div>
         <div id="settings-panel-matching" class="settings-panel hidden"></div>
         <div id="settings-panel-ocr-processing" class="settings-panel hidden"></div>
-        <div id="settings-panel-categories" class="settings-panel hidden"></div>
+        <div id="settings-panel-archive-structure" class="settings-panel hidden"></div>
         <div id="settings-panel-labels" class="settings-panel hidden"></div>
         <div id="settings-panel-data-fields" class="settings-panel hidden"></div>
         <div id="settings-panel-archiving-review" class="settings-panel hidden"></div>
@@ -521,23 +521,23 @@
     </div>
   </template>
 
-  <template id="settings-template-categories">
+  <template id="settings-template-archive-structure">
     <h3>Arkivstruktur</h3>
-    <p>Bygg upp mappar med kategorier och regler (Mapp → Kategori → Regel).</p>
-    <div id="categories-list" class="categories-list"></div>
+    <p>Hantera mappar och filnamnsregler. Varje mapp har en sökvägsmall och egna filnamnsregler som kan styras av etiketter.</p>
+    <div id="archive-structure-list" class="categories-list"></div>
     <div class="categories-actions">
-      <button id="categories-add-category" type="button">Lägg till mapp</button>
+      <button id="archive-structure-add-folder" type="button">Lägg till mapp</button>
     </div>
 
     <div class="panel-actions">
-      <button id="categories-cancel" class="button-danger" type="button">Avbryt</button>
-      <button id="categories-apply" class="button-success" type="button">Spara</button>
+      <button id="archive-structure-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="archive-structure-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 
   <template id="settings-template-labels">
     <h3>Etiketter</h3>
-    <p>Globala etiketter som matchas mot OCR-texten med samma regelmodell som kategorier.</p>
+    <p>Globala etiketter som matchas mot OCR-texten med samma regelmodell som arkivregler.</p>
     <div class="archive-subtabs hidden">
       <button id="labels-tab-custom" class="archive-subtab active" type="button" data-labels-tab="labels">Etiketter</button>
       <button id="labels-tab-system" class="archive-subtab" type="button" data-labels-tab="system" hidden>Systemetiketter</button>
