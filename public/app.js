@@ -12162,7 +12162,7 @@ function renderSingleLabelEditor(container, options = {}) {
   }
 
   const fields = document.createElement('div');
-  fields.className = 'category-fields category-fields--wide';
+  fields.className = 'label-fields';
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
