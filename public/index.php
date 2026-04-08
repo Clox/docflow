@@ -523,7 +523,17 @@
 
   <template id="settings-template-archive-structure">
     <h3>Arkivstruktur</h3>
-    <p>Hantera mappar och filnamnsregler. Varje mapp har en sökvägsmall och egna filnamnsregler som kan styras av etiketter.</p>
+    <p>Hantera mappar och filnamnsregler. Varje mapp har en sökvägsmall, en matchningsprioritet och egna filnamnsregler som väljs inom mappen.</p>
+    <div class="archive-structure-toolbar">
+      <label class="archive-structure-sort" for="archive-structure-folder-sort">
+        <span>Sortera mappar i vyn</span>
+        <select id="archive-structure-folder-sort">
+          <option value="name">Namn</option>
+          <option value="priority">Prioritet</option>
+          <option value="path">Sökväg</option>
+        </select>
+      </label>
+    </div>
     <div id="archive-structure-list" class="categories-list"></div>
     <div class="categories-actions">
       <button id="archive-structure-add-folder" type="button">Lägg till mapp</button>

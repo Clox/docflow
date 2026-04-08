@@ -1669,6 +1669,7 @@ function normalize_archive_folder_definition(array $input, int $index, array &$u
 {
     $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
     $pathTemplate = normalize_filename_template($input['pathTemplate'] ?? ($input['path'] ?? null));
+    $priority = positive_int($input['priority'] ?? 1, 1);
     $idSource = is_string($input['id'] ?? null) && trim((string) $input['id']) !== ''
         ? trim((string) $input['id'])
         : ($name !== '' ? $name : archive_folder_display_text([
@@ -1682,6 +1683,7 @@ function normalize_archive_folder_definition(array $input, int $index, array &$u
         'id' => $folderId,
         'name' => $name,
         'pathTemplate' => $pathTemplate,
+        'priority' => $priority,
         'filenameTemplates' => $filenameTemplates,
     ];
 }
@@ -6143,6 +6145,79 @@ function select_archive_folder_filename_template_by_label_ids(array $folder, arr
     return select_archive_folder_filename_template($folder, $matchedLabelsById);
 }
 
+function select_archive_folder_by_labels(array $folders, array $matchedLabelsById): ?array
+{
+    $candidates = [];
+
+    foreach (array_values($folders) as $folderIndex => $folder) {
+        if (!is_array($folder)) {
+            continue;
+        }
+
+        $folderId = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
+        if ($folderId === '') {
+            continue;
+        }
+
+        $bestMatchedCount = 0;
+        $bestConditionCount = 0;
+        foreach (is_array($folder['filenameTemplates'] ?? null) ? $folder['filenameTemplates'] : [] as $template) {
+            if (!is_array($template)) {
+                continue;
+            }
+
+            $labelIds = normalize_archive_rule_label_ids($template['labelIds'] ?? null);
+            if ($labelIds === []) {
+                continue;
+            }
+
+            $matchedCount = 0;
+            foreach ($labelIds as $labelId) {
+                if (is_array($matchedLabelsById[$labelId] ?? null)) {
+                    $matchedCount += 1;
+                }
+            }
+
+            if ($matchedCount < 1) {
+                continue;
+            }
+
+            $conditionCount = count($labelIds);
+            if ($matchedCount > $bestMatchedCount || ($matchedCount === $bestMatchedCount && $conditionCount > $bestConditionCount)) {
+                $bestMatchedCount = $matchedCount;
+                $bestConditionCount = $conditionCount;
+            }
+        }
+
+        if ($bestMatchedCount < 1) {
+            continue;
+        }
+
+        $candidates[] = [
+            'folder' => $folder,
+            'folderIndex' => is_int($folderIndex) ? $folderIndex : 0,
+            'priority' => positive_int($folder['priority'] ?? 1, 1),
+            'matchedCount' => $bestMatchedCount,
+            'conditionCount' => $bestConditionCount,
+        ];
+    }
+
+    if ($candidates === []) {
+        return null;
+    }
+
+    usort($candidates, static function (array $left, array $right): int {
+        $priorityCompare = (int) ($right['priority'] ?? 1) <=> (int) ($left['priority'] ?? 1);
+        if ($priorityCompare !== 0) {
+            return $priorityCompare;
+        }
+
+        return (int) ($left['folderIndex'] ?? 0) <=> (int) ($right['folderIndex'] ?? 0);
+    });
+
+    return $candidates[0] ?? null;
+}
+
 function find_incremental_label_matches(string $ocrText, array $labels, array $replacementMap, array $context = []): array
 {
     $matches = [];
@@ -10167,7 +10242,7 @@ function calculate_auto_archiving_result_from_text(
     $lineGeometries = build_matching_line_geometries_for_job($job, $ocrText);
     $systemLabels = is_array($rules['systemLabels'] ?? null) ? $rules['systemLabels'] : [];
     $labels = is_array($rules['labels'] ?? null) ? $rules['labels'] : [];
-    [$foldersById] = build_archive_structure_indexes($rules);
+    $archiveFolders = is_array($rules['archiveFolders'] ?? null) ? $rules['archiveFolders'] : [];
     $configuredFields = array_values(array_merge(
         is_array($rules['predefinedFields'] ?? null) ? $rules['predefinedFields'] : [],
         is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [],
@@ -10202,16 +10277,30 @@ function calculate_auto_archiving_result_from_text(
     ]);
     $matchedLabelsById = matched_labels_by_id(array_merge($systemLabelMatches, $labelMatches));
     $resolvedLabels = resolved_label_ids_from_matches($systemLabelMatches, $labelMatches);
+    $selectedFolderMatch = select_archive_folder_by_labels($archiveFolders, $matchedLabelsById);
+    $selectedFolder = is_array($selectedFolderMatch) ? ($selectedFolderMatch['folder'] ?? null) : null;
+    $selectedFolderId = is_string($selectedFolder['id'] ?? null) ? trim((string) $selectedFolder['id']) : null;
+    $selectedFilenameTemplate = is_array($selectedFolder)
+        ? select_archive_folder_filename_template($selectedFolder, $matchedLabelsById)
+        : null;
+    $selectedFilenameTemplateId = is_array($selectedFilenameTemplate)
+        ? (is_string($selectedFilenameTemplate['template']['id'] ?? null) ? trim((string) $selectedFilenameTemplate['template']['id']) : null)
+        : null;
 
     $autoResult = normalize_auto_archiving_result([
         'clientId' => is_string($matchedClientDirName) && trim($matchedClientDirName) !== ''
             ? trim($matchedClientDirName)
             : null,
         'senderId' => $matchedSenderId,
+        'folderId' => $selectedFolderId,
+        'filenameTemplateId' => $selectedFilenameTemplateId,
         'labels' => $resolvedLabels,
         'fields' => $fieldPartitions['fields'],
         'systemFields' => $fieldPartitions['systemFields'],
     ]);
+    if (is_array($selectedFolder)) {
+        $autoResult['archiveFolderPath'] = render_archive_folder_path($autoResult, $selectedFolder, $rules, $senders);
+    }
     $autoResult['filename'] = generate_auto_archiving_filename($job, $autoResult, $rules, $senders);
 
     return [

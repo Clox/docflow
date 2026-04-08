@@ -136,6 +136,7 @@ let ocrProcessingCancelEl = null;
 let ocrProcessingApplyEl = null;
 let archiveStructureListEl = null;
 let archiveStructureAddFolderEl = null;
+let archiveStructureFolderSortEl = null;
 let archiveStructureCancelEl = null;
 let archiveStructureApplyEl = null;
 let labelsListEl = null;
@@ -284,6 +285,7 @@ let matchesRequestSeq = 0;
 let metaRequestSeq = 0;
 let preferredJobIdFromHash = '';
 let archiveFoldersDraft = [];
+let archiveStructureFolderSortMode = 'path';
 let labelsDraft = [];
 let systemLabelsDraft = createDefaultSystemLabels();
 let labelsBuiltInCollapsed = true;
@@ -8068,8 +8070,16 @@ function bindSettingsPanelRefs(tabId) {
   } else if (tabId === 'archive-structure') {
     archiveStructureListEl = document.getElementById('archive-structure-list');
     archiveStructureAddFolderEl = document.getElementById('archive-structure-add-folder');
-      archiveStructureCancelEl = document.getElementById('archive-structure-cancel');
+    archiveStructureFolderSortEl = document.getElementById('archive-structure-folder-sort');
+    archiveStructureCancelEl = document.getElementById('archive-structure-cancel');
     archiveStructureApplyEl = document.getElementById('archive-structure-apply');
+    if (archiveStructureFolderSortEl instanceof HTMLSelectElement) {
+      archiveStructureFolderSortEl.value = archiveStructureFolderSortMode;
+      archiveStructureFolderSortEl.addEventListener('change', () => {
+        archiveStructureFolderSortMode = archiveStructureFolderSortEl.value || 'path';
+        renderArchiveStructureEditor();
+      });
+    }
     archiveStructureAddFolderEl.addEventListener('click', () => {
       archiveFoldersDraft.push(defaultArchiveFolder());
       renderArchiveStructureEditor();
@@ -8818,6 +8828,7 @@ function defaultArchiveFolder() {
   return {
     id: '',
     name: '',
+    priority: 1,
     pathTemplate: {
       parts: [defaultFilenameTemplatePart('text')]
     },
@@ -9920,6 +9931,7 @@ function sanitizeArchiveFolder(archiveFolder, fallbackIndex = 0) {
   return {
     id: normalizedId,
     name,
+    priority: sanitizePositiveInt(input.priority, 1),
     pathTemplate: sanitizeFilenameTemplate(input.pathTemplate ?? input.path),
     filenameTemplates: rawTemplates.map((template, index) => sanitizeFilenameTemplateDraft(template, index, normalizedId)),
   };
@@ -13972,6 +13984,13 @@ function renderArchiveStructureEditor() {
   }
 
   archiveStructureListEl.innerHTML = '';
+  const folderSortMode = ['name', 'priority', 'path'].includes(archiveStructureFolderSortMode)
+    ? archiveStructureFolderSortMode
+    : 'path';
+
+  if (archiveStructureFolderSortEl instanceof HTMLSelectElement) {
+    archiveStructureFolderSortEl.value = folderSortMode;
+  }
 
   const renderSectionLabel = (text) => {
     const label = document.createElement('div');
@@ -14060,16 +14079,64 @@ function renderArchiveStructureEditor() {
     });
   };
 
+  const archiveFolderPathSortText = (folder) => {
+    const template = sanitizeFilenameTemplate(folder && folder.pathTemplate && typeof folder.pathTemplate === 'object'
+      ? folder.pathTemplate
+      : (folder && folder.path));
+    const textParts = Array.isArray(template.parts)
+      ? template.parts
+        .filter((part) => part && typeof part === 'object' && part.type === 'text' && String(part.value || '') !== '')
+        .map((part) => String(part.value || ''))
+      : [];
+    return textParts.join(' ').trim().toLocaleLowerCase('sv');
+  };
+
+  const folderEntries = archiveFoldersDraft.map((folder, index) => {
+    const folderDraft = sanitizeArchiveFolder(folder, index);
+    archiveFoldersDraft[index] = folderDraft;
+    return {
+      folderDraft,
+      folderIndex: index,
+    };
+  });
+
+  folderEntries.sort((left, right) => {
+    if (folderSortMode === 'name') {
+      const compare = archiveFolderDisplayName(left.folderDraft).localeCompare(
+        archiveFolderDisplayName(right.folderDraft),
+        'sv',
+        { sensitivity: 'base', numeric: true }
+      );
+      if (compare !== 0) {
+        return compare;
+      }
+    } else if (folderSortMode === 'priority') {
+      const compare = (right.folderDraft.priority || 1) - (left.folderDraft.priority || 1);
+      if (compare !== 0) {
+        return compare;
+      }
+    } else if (folderSortMode === 'path') {
+      const compare = archiveFolderPathSortText(left.folderDraft).localeCompare(
+        archiveFolderPathSortText(right.folderDraft),
+        'sv',
+        { sensitivity: 'base', numeric: true }
+      );
+      if (compare !== 0) {
+        return compare;
+      }
+    }
+
+    return left.folderIndex - right.folderIndex;
+  });
+
   renderSectionLabel('Mappar');
-  if (archiveFoldersDraft.length < 1) {
+  if (folderEntries.length < 1) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
     empty.textContent = 'Inga mappar ännu.';
     archiveStructureListEl.appendChild(empty);
   }
-  archiveFoldersDraft.forEach((folder, folderIndex) => {
-    const folderDraft = sanitizeArchiveFolder(folder, folderIndex);
-    archiveFoldersDraft[folderIndex] = folderDraft;
+  folderEntries.forEach(({ folderDraft, folderIndex }) => {
 
     const node = document.createElement('div');
     node.className = 'tree-node tree-folder';
@@ -14089,6 +14156,27 @@ function renderArchiveStructureEditor() {
       archiveFoldersDraft[folderIndex].name = nameInput.value;
       updateSettingsActionButtons();
     });
+    nameInput.addEventListener('change', () => {
+      if (folderSortMode === 'name') {
+        renderArchiveStructureEditor();
+      }
+    });
+
+    const priorityInput = document.createElement('input');
+    priorityInput.type = 'number';
+    priorityInput.min = '1';
+    priorityInput.step = '1';
+    priorityInput.inputMode = 'numeric';
+    priorityInput.value = String(folderDraft.priority || 1);
+    priorityInput.addEventListener('input', () => {
+      archiveFoldersDraft[folderIndex].priority = sanitizePositiveInt(priorityInput.value, 1);
+      updateSettingsActionButtons();
+    });
+    priorityInput.addEventListener('change', () => {
+      if (folderSortMode === 'priority') {
+        renderArchiveStructureEditor();
+      }
+    });
 
     const removeButton = document.createElement('button');
     removeButton.type = 'button';
@@ -14101,16 +14189,7 @@ function renderArchiveStructureEditor() {
     });
 
     fields.appendChild(createFloatingField('Namn', nameInput));
-    fields.appendChild(createMoveButton('↑', 'Flytta upp', folderIndex < 1, () => {
-      archiveFoldersDraft = moveArrayItem(archiveFoldersDraft, folderIndex, folderIndex - 1);
-      renderArchiveStructureEditor();
-      updateSettingsActionButtons();
-    }));
-    fields.appendChild(createMoveButton('↓', 'Flytta ner', folderIndex >= archiveFoldersDraft.length - 1, () => {
-      archiveFoldersDraft = moveArrayItem(archiveFoldersDraft, folderIndex, folderIndex + 1);
-      renderArchiveStructureEditor();
-      updateSettingsActionButtons();
-    }));
+    fields.appendChild(createFloatingField('Prioritet', priorityInput));
     fields.appendChild(removeButton);
     body.appendChild(fields);
 

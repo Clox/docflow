@@ -3654,9 +3654,32 @@ body.is-resizing-sidebar {
   --tree-connector-span: 25px;
 }
 
+.archive-structure-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 8px 0 12px;
+}
+
+.archive-structure-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #555;
+}
+
+.archive-structure-sort select {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  color: #222;
+}
+
 .folder-fields {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 28px 28px auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(90px, 110px) auto;
   gap: 8px;
   align-items: start;
 }
