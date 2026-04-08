@@ -11697,7 +11697,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   fieldBody.appendChild(fieldActions);
 
   const fields = document.createElement('div');
-  fields.className = 'category-fields category-fields--wide';
+  fields.className = 'extraction-field-header-fields';
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';

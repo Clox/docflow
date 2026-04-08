@@ -3410,6 +3410,7 @@ body.is-resizing-sidebar {
 .client-fields,
 .category-fields,
 .label-fields,
+.extraction-field-header-fields,
 .rule-fields,
 .folder-actions,
 .category-rule-actions {
@@ -3723,12 +3724,20 @@ body.is-resizing-sidebar {
   align-items: start;
 }
 
+.extraction-field-header-fields {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
 .category-fields--wide {
   grid-template-columns: 28px 28px auto;
 }
 
 .category-fields input,
 .label-fields input,
+.extraction-field-header-fields input,
 .category-fields select,
 .rule-fields select,
 .rule-fields input[type="text"],
@@ -3762,6 +3771,7 @@ body.is-resizing-sidebar {
 
 .folder-fields input:disabled,
 .label-fields input:disabled,
+.extraction-field-header-fields input:disabled,
 .category-fields input:disabled {
   background: #f3f4f6;
   color: #444;
