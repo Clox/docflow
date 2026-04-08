@@ -4554,8 +4554,20 @@ async function publishArchivingRules() {
     throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte använda utkastet.');
   }
 
+  const reprocessedJobIds = Array.isArray(payload.reprocessedJobs && payload.reprocessedJobs.reprocessedJobIds)
+    ? payload.reprocessedJobs.reprocessedJobIds
+      .filter((jobId) => typeof jobId === 'string' && jobId !== '')
+    : [];
+
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   await Promise.all([loadArchiveStructure(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshArchiveStructure: true })]);
+  if (reprocessedJobIds.length > 0) {
+    reprocessedJobIds.forEach((jobId) => {
+      reprocessWatchJobIds.add(jobId);
+    });
+    scheduleReprocessWatchPoll(1000);
+    scheduleStatePoll(0);
+  }
   const flaggedCount = payload.flaggedArchivedJobs && Number.isInteger(payload.flaggedArchivedJobs.flaggedCount)
     ? payload.flaggedArchivedJobs.flaggedCount
     : 0;
