@@ -10348,11 +10348,16 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
   const extractor = typeof input.extractor === 'string' && input.extractor.trim() !== ''
     ? input.extractor.trim()
     : 'generic_label';
+  const isPredefinedField = input.isPredefinedField === true;
   const isSystemField = input.isSystemField === true
     || (typeof input.systemFieldKey === 'string' && input.systemFieldKey.trim() !== '');
-  const normalizedKey = typeof input.key === 'string' && input.key.trim() !== ''
+  const derivedKey = normalizeConfigKey(name || `field_${fallbackIndex + 1}`);
+  const storedKey = typeof input.key === 'string' && input.key.trim() !== ''
     ? input.key.trim()
-    : normalizeConfigKey(name || `field_${fallbackIndex + 1}`);
+    : '';
+  const normalizedKey = storedKey !== ''
+    ? ((!isSystemField && !isPredefinedField && storedKey.length <= 1 && derivedKey.length > 1 && storedKey !== derivedKey) ? derivedKey : storedKey)
+    : derivedKey;
 
   if (isSystemField) {
     let searchString = typeof input.searchString === 'string'
@@ -10377,7 +10382,7 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
       normalizationChars: typeof input.normalizationChars === 'string' ? input.normalizationChars : '',
       extractor,
       predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
-      isPredefinedField: input.isPredefinedField === true,
+      isPredefinedField,
       systemFieldKey: typeof input.systemFieldKey === 'string' ? input.systemFieldKey : '',
       isSystemField: input.isSystemField === true,
     };
@@ -10389,7 +10394,7 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
     ruleSets: sanitizeExtractionFieldRuleSets(input.ruleSets, input),
     extractor,
     predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
-    isPredefinedField: input.isPredefinedField === true,
+    isPredefinedField,
     systemFieldKey: typeof input.systemFieldKey === 'string' ? input.systemFieldKey : '',
     isSystemField: input.isSystemField === true,
   };

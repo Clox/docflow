@@ -1322,7 +1322,14 @@ function normalize_extraction_fields(mixed $input): array
             continue;
         }
 
-        $keySource = is_string($row['key'] ?? null) ? trim((string) $row['key']) : $name;
+        $storedKey = is_string($row['key'] ?? null) ? trim((string) $row['key']) : '';
+        $derivedKey = normalize_config_key($name, 'field');
+        $keySource = $storedKey;
+        if ($keySource === '') {
+            $keySource = $name;
+        } elseif (strlen($keySource) <= 1 && $derivedKey !== '' && strlen($derivedKey) > 1 && $derivedKey !== $keySource) {
+            $keySource = $derivedKey;
+        }
         $baseKey = normalize_config_key($keySource, 'field');
         $key = ensure_unique_config_key($baseKey, $usedKeys);
 
@@ -9537,13 +9544,21 @@ function extract_configured_text_field_results(
                     continue;
                 }
 
-                $result = is_array($candidateMatches[0] ?? null)
-                    ? $candidateMatches[0]
-                    : empty_extraction_field_result();
-                $matches = $candidateMatches;
-                $matchedRuleSetIndex = $ruleSetIndex;
-                $matchedRuleSet = $ruleSet;
-                break;
+                if ($matchedRuleSetIndex === null) {
+                    $result = is_array($candidateMatches[0] ?? null)
+                        ? $candidateMatches[0]
+                        : empty_extraction_field_result();
+                    $matchedRuleSetIndex = $ruleSetIndex;
+                    $matchedRuleSet = $ruleSet;
+                }
+
+                foreach ($candidateMatches as $candidateMatch) {
+                    if (!is_array($candidateMatch)) {
+                        continue;
+                    }
+                    $candidateMatch['ruleSetIndex'] = $ruleSetIndex;
+                    $matches[] = $candidateMatch;
+                }
             }
         }
 
@@ -9562,12 +9577,18 @@ function extract_configured_text_field_results(
                 continue;
             }
 
+            $matchRuleSetIndex = is_int($match['ruleSetIndex'] ?? null) ? (int) $match['ruleSetIndex'] : null;
+            $normalizationRuleSet = $matchedRuleSet;
+            if ($matchRuleSetIndex !== null && is_array($ruleSets[$matchRuleSetIndex] ?? null)) {
+                $normalizationRuleSet = $ruleSets[$matchRuleSetIndex];
+            }
+
             $resolvedValue = $match['value'] ?? null;
             if (is_string($resolvedValue)) {
                 $resolvedValue = apply_extraction_field_normalization(
                     $resolvedValue,
-                    is_string($matchedRuleSet['normalizationType'] ?? null) ? (string) $matchedRuleSet['normalizationType'] : 'none',
-                    is_string($matchedRuleSet['normalizationChars'] ?? null) ? (string) $matchedRuleSet['normalizationChars'] : ''
+                    is_string($normalizationRuleSet['normalizationType'] ?? null) ? (string) $normalizationRuleSet['normalizationType'] : 'none',
+                    is_string($normalizationRuleSet['normalizationChars'] ?? null) ? (string) $normalizationRuleSet['normalizationChars'] : ''
                 );
             }
 
@@ -9577,6 +9598,9 @@ function extract_configured_text_field_results(
             }
 
             $resolvedMatch = $match;
+            if ($matchRuleSetIndex !== null) {
+                $resolvedMatch['ruleSetIndex'] = $matchRuleSetIndex;
+            }
             $resolvedMatch['value'] = $resolvedValue;
             $resolvedMatches[] = $resolvedMatch;
         }
@@ -9676,6 +9700,7 @@ function simplify_extraction_field_meta(array $results): array
                         'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : null,
                         'labelLineIndex' => is_int($match['labelLineIndex'] ?? null) ? (int) $match['labelLineIndex'] : null,
                         'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : null,
+                        'ruleSetIndex' => is_int($match['ruleSetIndex'] ?? null) ? (int) $match['ruleSetIndex'] : null,
                         'matchType' => is_string($match['matchType'] ?? null) ? trim((string) $match['matchType']) : null,
                         'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : null,
                         'score' => is_numeric($match['score'] ?? null) ? (float) $match['score'] : null,
