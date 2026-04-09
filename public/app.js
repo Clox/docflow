@@ -9899,8 +9899,8 @@ function sanitizeRule(rule) {
   const type = rawType === 'label' ? 'label' : 'text';
   return {
     type,
-    text: typeof input.text === 'string' ? input.text : '',
-    labelId: typeof input.labelId === 'string' ? input.labelId : '',
+    text: type === 'text' && typeof input.text === 'string' ? input.text : '',
+    labelId: type === 'label' && typeof input.labelId === 'string' ? input.labelId : '',
     score: sanitizePositiveInt(input.score, 1)
   };
 }

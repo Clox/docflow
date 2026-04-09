@@ -776,10 +776,13 @@ function normalize_archive_rule(mixed $input, array $options = []): array
         $type = 'text';
     }
 
+    $text = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
+    $labelId = is_string($rule['labelId'] ?? null) ? trim((string) $rule['labelId']) : '';
+
     return [
         'type' => $type,
-        'text' => is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '',
-        'labelId' => is_string($rule['labelId'] ?? null) ? trim((string) $rule['labelId']) : '',
+        'text' => $type === 'text' ? $text : '',
+        'labelId' => $type === 'label' ? $labelId : '',
         'score' => positive_int($rule['score'] ?? 1, 1),
     ];
 }
