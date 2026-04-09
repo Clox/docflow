@@ -12141,6 +12141,35 @@ function sanitizedLabelDraftForEditor(options = {}) {
   return sanitizeLabel(draft);
 }
 
+function serializeLabelRuleForClipboard(rule) {
+  const sanitized = sanitizeLabelRule(rule);
+  if (sanitized.type === 'label') {
+    return {
+      type: 'label',
+      labelId: sanitized.labelId,
+      score: sanitized.score
+    };
+  }
+  return {
+    type: 'text',
+    text: sanitized.text,
+    score: sanitized.score
+  };
+}
+
+function serializeLabelDraftForClipboard(options = {}) {
+  const label = sanitizedLabelDraftForEditor(options);
+  if (!label) {
+    return null;
+  }
+  return {
+    id: label.id,
+    name: label.name,
+    minScore: label.minScore,
+    rules: Array.isArray(label.rules) ? label.rules.map(serializeLabelRuleForClipboard) : []
+  };
+}
+
 function renderSingleLabelEditor(container, options = {}) {
   if (!(container instanceof HTMLElement)) {
     return;
@@ -12176,7 +12205,7 @@ function renderSingleLabelEditor(container, options = {}) {
   copyButton.title = 'Kopiera etikett som JSON';
   copyButton.setAttribute('aria-label', 'Kopiera etikett som JSON');
   copyButton.addEventListener('click', async () => {
-    const labelConfig = sanitizedLabelDraftForEditor(options);
+    const labelConfig = serializeLabelDraftForClipboard(options);
     if (!labelConfig) {
       return;
     }
