@@ -12160,11 +12160,55 @@ function renderSingleLabelEditor(container, options = {}) {
 
   const labelRow = createTreeRow({ markerless: true });
   const labelBody = document.createElement('div');
-  labelBody.className = 'tree-body category-body';
+  labelBody.className = 'tree-body category-body extraction-field-editor-body';
   appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-category');
   if (builtIn) {
     appendTreeBodyLock(labelBody);
   }
+
+  const labelActions = document.createElement('div');
+  labelActions.className = 'extraction-field-editor-actions';
+
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.className = 'extraction-field-copy-button';
+  copyButton.textContent = '⧉';
+  copyButton.title = 'Kopiera etikett som JSON';
+  copyButton.setAttribute('aria-label', 'Kopiera etikett som JSON');
+  copyButton.addEventListener('click', async () => {
+    const labelConfig = sanitizedLabelDraftForEditor(options);
+    if (!labelConfig) {
+      return;
+    }
+
+    const json = JSON.stringify(labelConfig, null, 2);
+    const defaultTitle = 'Kopiera etikett som JSON';
+    try {
+      const copied = await copyTextToClipboard(json);
+      if (!copied) {
+        throw new Error('copy_failed');
+      }
+      copyButton.classList.add('is-copied');
+      copyButton.title = 'Kopierad';
+      copyButton.setAttribute('aria-label', 'Kopierad');
+      window.setTimeout(() => {
+        copyButton.classList.remove('is-copied');
+        copyButton.title = defaultTitle;
+        copyButton.setAttribute('aria-label', defaultTitle);
+      }, 1200);
+    } catch (error) {
+      copyButton.classList.add('is-copy-failed');
+      copyButton.title = 'Kunde inte kopiera';
+      copyButton.setAttribute('aria-label', 'Kunde inte kopiera');
+      window.setTimeout(() => {
+        copyButton.classList.remove('is-copy-failed');
+        copyButton.title = defaultTitle;
+        copyButton.setAttribute('aria-label', defaultTitle);
+      }, 1200);
+    }
+  });
+  labelActions.appendChild(copyButton);
+  labelBody.appendChild(labelActions);
 
   const fields = document.createElement('div');
   fields.className = 'label-fields';
