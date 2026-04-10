@@ -1830,13 +1830,13 @@ function appendRuleMatchesSection(container, title, entities, emptyText, entityL
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  [entityLabel, 'Totalpoäng', 'Minpoäng', 'Regeltext', 'Matchad text', 'Regelpoäng'].forEach((label) => {
+  [entityLabel, 'Totalpoäng', 'Minpoäng', 'Regel', 'Matchad text', 'Regelpoäng'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Regelpoäng' || label === 'Totalpoäng' || label === 'Minpoäng') {
       th.className = 'is-numeric';
     }
-    if (label === 'Regeltext') {
+    if (label === 'Regel') {
       th.classList.add('matches-group-detail-start');
     }
     headerRow.appendChild(th);
@@ -1888,7 +1888,7 @@ function appendRuleMatchesSection(container, title, entities, emptyText, entityL
 
       const ruleCell = document.createElement('td');
       ruleCell.className = 'matches-group-detail-start';
-      ruleCell.textContent = '(Inga ord matchade)';
+      ruleCell.textContent = '(Inga regler matchade)';
       tr.appendChild(ruleCell);
 
       const sourceCell = document.createElement('td');
@@ -1909,6 +1909,7 @@ function appendRuleMatchesSection(container, title, entities, emptyText, entityL
       const sourceText = rule && typeof rule.sourceText === 'string' && rule.sourceText !== ''
         ? rule.sourceText
         : '';
+      const ruleType = rule && typeof rule.type === 'string' ? rule.type : 'text';
       const ruleScore = rule && Number.isFinite(Number(rule.score)) ? Number(rule.score) : 0;
 
       const tr = document.createElement('tr');
@@ -1943,7 +1944,28 @@ function appendRuleMatchesSection(container, title, entities, emptyText, entityL
 
       const ruleCell = document.createElement('td');
       ruleCell.className = 'matches-group-detail-start';
-      ruleCell.textContent = text;
+      const ruleTypeLabel = ({
+        text: 'Innehåller text',
+        sender_is: 'Avsändare är',
+        sender_name_contains: 'Avsändarnamn innehåller',
+        field_exists: 'Fält finns',
+      })[ruleType] || 'Regel';
+      let ruleValueText = text;
+      if (ruleType === 'sender_is' || ruleType === 'sender_name_contains' || ruleType === 'field_exists') {
+        const separatorIndex = text.indexOf(':');
+        ruleValueText = separatorIndex >= 0 ? text.slice(separatorIndex + 1).trim() : text;
+      }
+      const ruleTypeEl = document.createElement('span');
+      ruleTypeEl.className = 'matches-rule-type';
+      ruleTypeEl.textContent = `${ruleTypeLabel}:`;
+      ruleCell.appendChild(ruleTypeEl);
+      if (ruleValueText !== '') {
+        ruleCell.appendChild(document.createTextNode(' '));
+        const ruleValueEl = document.createElement('span');
+        ruleValueEl.className = 'matches-rule-value';
+        ruleValueEl.textContent = ruleValueText;
+        ruleCell.appendChild(ruleValueEl);
+      }
       tr.appendChild(ruleCell);
 
       const sourceCell = document.createElement('td');
@@ -2120,7 +2142,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
   const tbody = document.createElement('tbody');
   const formatMatchConfidence = (row) => {
     if (row && row.matchType === 'document_date_heuristic') {
-      if (typeof row.score === 'number' && Number.isFinite(row.score) && row.score > 0) {
+      if (typeof row.score === 'number' && Number.isFinite(row.score)) {
         const hasFraction = Math.abs(row.score % 1) > 0.000001;
         return `${row.score.toLocaleString('sv-SE', {
           minimumFractionDigits: hasFraction ? 2 : 0,
@@ -2449,7 +2471,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
     if (typeof row?.noisePenalty === 'number' && Number.isFinite(row.noisePenalty) && row.noisePenalty > 0) {
       const noiseEl = document.createElement('span');
       noiseEl.className = 'matches-penalty-text';
-      noiseEl.textContent = `Brus -${(row.noisePenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
+      noiseEl.textContent = `Brus -${(row.noisePenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`;
       parts.push(noiseEl);
     }
     if (typeof row?.positionPenalty === 'number' && Number.isFinite(row.positionPenalty) && row.positionPenalty > 0) {
@@ -2462,7 +2484,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
       } else if (row.positionPenaltyAxis === 'invalid') {
         label = 'Fel riktning';
       }
-      positionEl.textContent = `${label} -${(row.positionPenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
+      positionEl.textContent = `${label} -${(row.positionPenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`;
       parts.push(positionEl);
     }
 

@@ -7095,6 +7095,105 @@ function connector_main_direction(array $connector): string
     return $bestDirection;
 }
 
+function bbox_gap_vector(array $labelBbox, array $candidateBbox): array
+{
+    $labelX0 = (float) ($labelBbox['x0'] ?? 0.0);
+    $labelY0 = (float) ($labelBbox['y0'] ?? 0.0);
+    $labelX1 = (float) ($labelBbox['x1'] ?? 0.0);
+    $labelY1 = (float) ($labelBbox['y1'] ?? 0.0);
+    $candidateX0 = (float) ($candidateBbox['x0'] ?? 0.0);
+    $candidateY0 = (float) ($candidateBbox['y0'] ?? 0.0);
+    $candidateX1 = (float) ($candidateBbox['x1'] ?? 0.0);
+    $candidateY1 = (float) ($candidateBbox['y1'] ?? 0.0);
+
+    $dx = 0.0;
+    if ($candidateX0 >= $labelX1) {
+        $dx = $candidateX0 - $labelX1;
+    } elseif ($labelX0 >= $candidateX1) {
+        $dx = -($labelX0 - $candidateX1);
+    }
+
+    $dy = 0.0;
+    if ($candidateY0 >= $labelY1) {
+        $dy = $candidateY0 - $labelY1;
+    } elseif ($labelY0 >= $candidateY1) {
+        $dy = -($labelY0 - $candidateY1);
+    }
+
+    if (abs($dx) < 0.001 && abs($dy) < 0.001) {
+        $labelCenter = bbox_center_point($labelBbox);
+        $candidateCenter = bbox_center_point($candidateBbox);
+        $dx = (float) ($candidateCenter['x'] ?? 0.0) - (float) ($labelCenter['x'] ?? 0.0);
+        $dy = (float) ($candidateCenter['y'] ?? 0.0) - (float) ($labelCenter['y'] ?? 0.0);
+    }
+
+    return [
+        'dx' => $dx,
+        'dy' => $dy,
+    ];
+}
+
+function bbox_overlap_length(float $leftStart, float $leftEnd, float $rightStart, float $rightEnd): float
+{
+    return max(0.0, min($leftEnd, $rightEnd) - max($leftStart, $rightStart));
+}
+
+function bbox_main_direction(array $labelBbox, array $candidateBbox, ?int $labelLineIndex = null, ?int $candidateLineIndex = null): string
+{
+    $labelX0 = (float) ($labelBbox['x0'] ?? 0.0);
+    $labelX1 = (float) ($labelBbox['x1'] ?? 0.0);
+    $labelY0 = (float) ($labelBbox['y0'] ?? 0.0);
+    $labelY1 = (float) ($labelBbox['y1'] ?? 0.0);
+    $candidateX0 = (float) ($candidateBbox['x0'] ?? 0.0);
+    $candidateX1 = (float) ($candidateBbox['x1'] ?? 0.0);
+    $candidateY0 = (float) ($candidateBbox['y0'] ?? 0.0);
+    $candidateY1 = (float) ($candidateBbox['y1'] ?? 0.0);
+    $horizontalOverlap = bbox_overlap_length($labelX0, $labelX1, $candidateX0, $candidateX1);
+    $verticalOverlap = bbox_overlap_length($labelY0, $labelY1, $candidateY0, $candidateY1);
+    if ($labelLineIndex !== null && $candidateLineIndex !== null && $candidateLineIndex !== $labelLineIndex) {
+        if ($horizontalOverlap > 0.0) {
+            return $candidateLineIndex > $labelLineIndex ? 'down' : 'up';
+        }
+    }
+    if ($verticalOverlap > 0.0) {
+        $labelCenter = bbox_center_point($labelBbox);
+        $candidateCenter = bbox_center_point($candidateBbox);
+        return ((float) ($candidateCenter['x'] ?? 0.0)) >= ((float) ($labelCenter['x'] ?? 0.0)) ? 'right' : 'left';
+    }
+    if ($horizontalOverlap > 0.0) {
+        $labelCenter = bbox_center_point($labelBbox);
+        $candidateCenter = bbox_center_point($candidateBbox);
+        return ((float) ($candidateCenter['y'] ?? 0.0)) >= ((float) ($labelCenter['y'] ?? 0.0)) ? 'down' : 'up';
+    }
+
+    $vector = bbox_gap_vector($labelBbox, $candidateBbox);
+    $dx = (float) ($vector['dx'] ?? 0.0);
+    $dy = (float) ($vector['dy'] ?? 0.0);
+    if (abs($dx) < 0.001 && abs($dy) < 0.001) {
+        return 'right';
+    }
+
+    $angle = normalize_angle_360(rad2deg(atan2($dy, $dx)));
+    $references = [
+        'right' => 0.0,
+        'down' => 90.0,
+        'left' => 180.0,
+        'up' => 270.0,
+    ];
+
+    $bestDirection = 'right';
+    $bestDistance = PHP_FLOAT_MAX;
+    foreach ($references as $direction => $referenceAngle) {
+        $distance = angular_distance_degrees($angle, $referenceAngle);
+        if ($distance < $bestDistance) {
+            $bestDistance = $distance;
+            $bestDirection = $direction;
+        }
+    }
+
+    return $bestDirection;
+}
+
 function bbox_height(array $bbox): float
 {
     return max(0.0, (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0));
@@ -7107,6 +7206,16 @@ function position_penalty_line_height(array $labelBbox, array $candidateBbox): f
     $lineHeight = max($labelHeight, $candidateHeight);
 
     return $lineHeight > 0.0 ? $lineHeight : 1.0;
+}
+
+function bbox_horizontal_overlap(array $labelBbox, array $candidateBbox): float
+{
+    return bbox_overlap_length(
+        (float) ($labelBbox['x0'] ?? 0.0),
+        (float) ($labelBbox['x1'] ?? 0.0),
+        (float) ($candidateBbox['x0'] ?? 0.0),
+        (float) ($candidateBbox['x1'] ?? 0.0)
+    );
 }
 
 function bboxes_overlap(array $left, array $right): bool
@@ -7332,7 +7441,8 @@ function candidate_position_penalty_details(
     }
 
     $settings = normalize_matching_position_adjustment_settings($positionSettings);
-    $mainDirection = is_array($connector) ? connector_main_direction($connector) : 'right';
+    $hitIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : null;
+    $mainDirection = bbox_main_direction($labelBbox, $candidateBbox, $hitIndex, $candidateLineIndex);
     $labelCenter = bbox_center_point($labelBbox);
     $candidateCenter = bbox_center_point($candidateBbox);
     $lineHeight = position_penalty_line_height($labelBbox, $candidateBbox);
@@ -7359,7 +7469,10 @@ function candidate_position_penalty_details(
         ];
     }
 
-    $diff = abs((float) ($candidateCenter['x'] ?? 0.0) - (float) ($labelCenter['x'] ?? 0.0));
+    $horizontalOverlap = bbox_horizontal_overlap($labelBbox, $candidateBbox);
+    $diff = $horizontalOverlap > 0.0
+        ? 0.0
+        : abs((float) ($candidateCenter['x'] ?? 0.0) - (float) ($labelCenter['x'] ?? 0.0));
     $normalizedDiff = $lineHeight > 0.0 ? ($diff / $lineHeight) : 0.0;
     return [
         'penalty' => max(0.0, $normalizedDiff * (float) ($settings['downXOffsetPenalty'] ?? 0.0)),

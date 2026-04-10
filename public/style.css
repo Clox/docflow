@@ -2230,6 +2230,15 @@ body.is-resizing-sidebar {
   word-break: break-word;
 }
 
+.matches-rule-type {
+  color: #64748b;
+  font-weight: 600;
+}
+
+.matches-rule-value {
+  color: #111827;
+}
+
 .matches-hit-cell {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

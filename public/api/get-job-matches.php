@@ -89,11 +89,11 @@ try {
                 $matchSource = is_string($match['source'] ?? null) ? trim((string) $match['source']) : '';
                 if ($matchType === 'pattern' && $matchSource === 'pattern') {
                     $confidence = 1.0;
-                } elseif ($matchType === 'document_date_heuristic' && ($confidence === null || $confidence <= 0.0)) {
+                } elseif ($matchType === 'document_date_heuristic' && $confidence === null) {
                     $confidence = null;
                 }
                 $score = is_numeric($match['score'] ?? null) ? (float) $match['score'] : null;
-                if ($matchType === 'document_date_heuristic' && ($score === null || $score <= 0.0)) {
+                if ($matchType === 'document_date_heuristic' && $score === null) {
                     $score = null;
                 }
 
@@ -166,13 +166,13 @@ try {
                     : ($index === 0 && is_string($legacyField['source'] ?? null) ? trim((string) $legacyField['source']) : '');
                 if ($fallbackMatchType === 'pattern' && $fallbackSource === 'pattern') {
                     $fallbackConfidence = 1.0;
-                } elseif ($fallbackMatchType === 'document_date_heuristic' && ($fallbackConfidence === null || $fallbackConfidence <= 0.0)) {
+                } elseif ($fallbackMatchType === 'document_date_heuristic' && $fallbackConfidence === null) {
                     $fallbackConfidence = null;
                 }
                 $fallbackScore = $index === 0 && is_numeric($firstMatch['score'] ?? null)
                     ? (float) $firstMatch['score']
                     : null;
-                if ($fallbackMatchType === 'document_date_heuristic' && ($fallbackScore === null || $fallbackScore <= 0.0)) {
+                if ($fallbackMatchType === 'document_date_heuristic' && $fallbackScore === null) {
                     $fallbackScore = null;
                 }
 
