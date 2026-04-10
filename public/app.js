@@ -8824,7 +8824,6 @@ function defaultRule() {
   return {
     type: 'text',
     text: '',
-    labelId: '',
     senderId: null,
     field: '',
     score: 1
@@ -9901,14 +9900,13 @@ function buildSimilarSenderGroups() {
 function sanitizeRule(rule) {
   const input = rule && typeof rule === 'object' ? rule : {};
   const rawType = String(input.type || 'text').trim().toLowerCase();
-  const type = ['text', 'sender_is', 'sender_name_contains', 'field_exists', 'label'].includes(rawType)
+  const type = ['text', 'sender_is', 'sender_name_contains', 'field_exists'].includes(rawType)
     ? rawType
     : 'text';
   const senderId = Number.parseInt(String(input.senderId || ''), 10);
   return {
     type,
     text: (type === 'text' || type === 'sender_name_contains') && typeof input.text === 'string' ? input.text : '',
-    labelId: type === 'label' && typeof input.labelId === 'string' ? input.labelId : '',
     senderId: type === 'sender_is' && Number.isInteger(senderId) && senderId > 0 ? senderId : null,
     field: type === 'field_exists' && typeof input.field === 'string' ? input.field : '',
     score: sanitizePositiveInt(input.score, 1)
@@ -10168,10 +10166,6 @@ function labelsValidationError() {
       } else if (rule.type === 'field_exists') {
         if (typeof rule.field !== 'string' || rule.field.trim() === '') {
           return `Etiketten "${labelName}" har en fältregel utan valt datafält.`;
-        }
-      } else if (rule.type === 'label') {
-        if (typeof rule.labelId !== 'string' || rule.labelId.trim() === '') {
-          return `Etiketten "${labelName}" har en äldre etikettregel utan vald etikett.`;
         }
       } else if (typeof rule.text !== 'string' || rule.text.trim() === '') {
         return `Etiketten "${labelName}" har en textregel utan text.`;
@@ -12232,13 +12226,6 @@ function serializeLabelRuleForClipboard(rule) {
       score: sanitized.score
     };
   }
-  if (sanitized.type === 'label') {
-    return {
-      type: 'label',
-      labelId: sanitized.labelId,
-      score: sanitized.score
-    };
-  }
   return {
     type: 'text',
     text: sanitized.text,
@@ -12432,42 +12419,26 @@ function renderSingleLabelEditor(container, options = {}) {
     ruleFields.className = 'rule-fields';
 
     const typeSelect = document.createElement('select');
-    const ruleTypeOptions = [
+    [
       ['text', 'Innehåller text...'],
       ['sender_is', 'Avsändare är...'],
       ['sender_name_contains', 'Avsändarnamn innehåller...'],
       ['field_exists', 'Fält finns'],
-    ];
-    if (rule.type === 'label') {
-      ruleTypeOptions.push(['label', 'Har etikett... (legacy)']);
-    }
-    ruleTypeOptions.forEach(([value, optionLabel]) => {
+    ].forEach(([value, optionLabel]) => {
       const option = document.createElement('option');
       option.value = value;
       option.textContent = optionLabel;
       typeSelect.appendChild(option);
     });
-    typeSelect.value = ruleTypeOptions.some(([value]) => value === rule.type) ? rule.type : 'text';
+    typeSelect.value = ['text', 'sender_is', 'sender_name_contains', 'field_exists'].includes(rule.type) ? rule.type : 'text';
     typeSelect.addEventListener('change', () => {
       const draft = currentLabelDraftForEditor(options);
-      const sanitizedCurrent = sanitizedLabelDraftForEditor(options);
       if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
         return;
       }
       const nextType = String(typeSelect.value || 'text').trim();
       draft.rules[ruleIndex].type = nextType;
-      if (nextType === 'label') {
-        const availableOptions = labelRuleOptions(sanitizedCurrent && sanitizedCurrent.id ? sanitizedCurrent.id : '');
-        const fallbackLabelId = availableOptions[0] && typeof availableOptions[0].value === 'string'
-          ? availableOptions[0].value
-          : '';
-        draft.rules[ruleIndex].labelId = availableOptions.some((option) => option.value === draft.rules[ruleIndex].labelId)
-          ? draft.rules[ruleIndex].labelId
-          : fallbackLabelId;
-        draft.rules[ruleIndex].text = '';
-        draft.rules[ruleIndex].senderId = null;
-        draft.rules[ruleIndex].field = '';
-      } else if (nextType === 'sender_is') {
+      if (nextType === 'sender_is') {
         const senderOptions = labelRuleSenderOptions();
         const fallbackSenderId = senderOptions[0] && Number.isInteger(senderOptions[0].value)
           ? senderOptions[0].value
@@ -12476,7 +12447,6 @@ function renderSingleLabelEditor(container, options = {}) {
           ? draft.rules[ruleIndex].senderId
           : fallbackSenderId;
         draft.rules[ruleIndex].text = '';
-        draft.rules[ruleIndex].labelId = '';
         draft.rules[ruleIndex].field = '';
       } else if (nextType === 'field_exists') {
         const fieldOptions = labelRuleFieldOptions();
@@ -12487,10 +12457,8 @@ function renderSingleLabelEditor(container, options = {}) {
           ? draft.rules[ruleIndex].field
           : fallbackField;
         draft.rules[ruleIndex].text = '';
-        draft.rules[ruleIndex].labelId = '';
         draft.rules[ruleIndex].senderId = null;
       } else {
-        draft.rules[ruleIndex].labelId = '';
         draft.rules[ruleIndex].senderId = null;
         draft.rules[ruleIndex].field = '';
       }
@@ -12510,44 +12478,6 @@ function renderSingleLabelEditor(container, options = {}) {
         return;
       }
       draft.rules[ruleIndex].text = textInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const labelSelect = document.createElement('select');
-    const availableLabelOptions = labelRuleOptions(currentLabel.id);
-    if (availableLabelOptions.length === 0) {
-      const option = document.createElement('option');
-      option.value = '';
-      option.textContent = 'Inga etiketter';
-      labelSelect.appendChild(option);
-      labelSelect.disabled = true;
-    } else {
-      availableLabelOptions.forEach((optionData) => {
-        const option = document.createElement('option');
-        option.value = optionData.value;
-        option.textContent = optionData.label;
-        labelSelect.appendChild(option);
-      });
-      const currentLabelId = typeof rule.labelId === 'string' ? rule.labelId.trim() : '';
-      const resolvedLabelId = availableLabelOptions.some((option) => option.value === currentLabelId)
-        ? currentLabelId
-        : availableLabelOptions[0].value;
-      labelSelect.value = resolvedLabelId;
-      const selectedOption = availableLabelOptions.find((option) => option.value === resolvedLabelId) || null;
-      labelSelect.title = selectedOption && selectedOption.description ? selectedOption.description : '';
-      const draft = currentLabelDraftForEditor(options);
-      if (draft && Array.isArray(draft.rules) && draft.rules[ruleIndex]) {
-        draft.rules[ruleIndex].labelId = resolvedLabelId;
-      }
-    }
-    labelSelect.addEventListener('change', () => {
-      const draft = currentLabelDraftForEditor(options);
-      if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
-        return;
-      }
-      draft.rules[ruleIndex].labelId = labelSelect.value;
-      const selected = availableLabelOptions.find((option) => option.value === labelSelect.value) || null;
-      labelSelect.title = selected && selected.description ? selected.description : '';
       updateSettingsActionButtons();
     });
 
@@ -12656,8 +12586,6 @@ function renderSingleLabelEditor(container, options = {}) {
       ruleFields.appendChild(createFloatingField('Avsändare', senderSelect));
     } else if (rule.type === 'field_exists') {
       ruleFields.appendChild(createFloatingField('Fält', fieldSelect));
-    } else if (rule.type === 'label') {
-      ruleFields.appendChild(createFloatingField('Etikett', labelSelect));
     } else {
       ruleFields.appendChild(createFloatingField(rule.type === 'sender_name_contains' ? 'Text' : 'Regeltext', textInput));
     }

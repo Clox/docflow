@@ -767,21 +767,15 @@ function system_label_definitions(): array
     ];
 }
 
-function normalize_archive_rule(mixed $input, array $options = []): array
+function normalize_archive_rule(mixed $input): array
 {
     $rule = is_array($input) ? $input : [];
-    $allowLabel = ($options['allowLabel'] ?? false) === true;
     $type = is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text';
-    if ($type === 'label') {
-        if (!$allowLabel) {
-            $type = 'text';
-        }
-    } elseif (!in_array($type, ['text', 'sender_is', 'sender_name_contains', 'field_exists'], true)) {
+    if (!in_array($type, ['text', 'sender_is', 'sender_name_contains', 'field_exists'], true)) {
         $type = 'text';
     }
 
     $text = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
-    $labelId = is_string($rule['labelId'] ?? null) ? trim((string) $rule['labelId']) : '';
     $field = is_string($rule['field'] ?? null) ? trim((string) $rule['field']) : '';
     $senderId = null;
     $senderIdRaw = $rule['senderId'] ?? null;
@@ -800,7 +794,6 @@ function normalize_archive_rule(mixed $input, array $options = []): array
     return [
         'type' => $type,
         'text' => in_array($type, ['text', 'sender_name_contains'], true) ? $text : '',
-        'labelId' => $type === 'label' ? $labelId : '',
         'senderId' => $type === 'sender_is' ? $senderId : null,
         'field' => $type === 'field_exists' ? $field : '',
         'score' => positive_int($rule['score'] ?? 1, 1),
@@ -809,16 +802,12 @@ function normalize_archive_rule(mixed $input, array $options = []): array
 
 function normalize_system_label_rule(mixed $input): array
 {
-    return normalize_archive_rule($input, [
-        'allowLabel' => true,
-    ]);
+    return normalize_archive_rule($input);
 }
 
 function normalize_editable_label_rule(mixed $input): array
 {
-    return normalize_archive_rule($input, [
-        'allowLabel' => true,
-    ]);
+    return normalize_archive_rule($input);
 }
 
 function normalize_label_id_list(mixed $input): array
@@ -6150,7 +6139,6 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
     $normalizedOcr = normalize_for_matching($ocrText, $replacementMap);
     $inverseMap = build_inverse_single_char_map($replacementMap);
     $matches = [];
-    $matchedLabelsById = is_array($context['matchedLabelsById'] ?? null) ? $context['matchedLabelsById'] : [];
     $matchedSenderId = isset($context['senderId']) ? (int) $context['senderId'] : 0;
     $matchedSenderName = is_string($context['senderName'] ?? null) ? trim((string) $context['senderName']) : '';
     $senderNamesById = is_array($context['senderNamesById'] ?? null) ? $context['senderNamesById'] : [];
@@ -6191,22 +6179,13 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
 
             $ruleType = is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text';
             $ruleText = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
-            $ruleLabelId = is_string($rule['labelId'] ?? null) ? trim((string) $rule['labelId']) : '';
             $ruleSenderId = isset($rule['senderId']) ? (int) $rule['senderId'] : 0;
             $ruleField = is_string($rule['field'] ?? null) ? trim((string) $rule['field']) : '';
             $ruleScore = positive_int($rule['score'] ?? 1, 1);
             $sourceText = '';
             $displayText = $ruleText;
 
-            if ($ruleType === 'label') {
-                if ($ruleLabelId === '' || !is_array($matchedLabelsById[$ruleLabelId] ?? null)) {
-                    continue;
-                }
-                $matchedLabel = $matchedLabelsById[$ruleLabelId];
-                $matchedLabelName = is_string($matchedLabel['name'] ?? null) ? trim((string) $matchedLabel['name']) : '';
-                $sourceText = $matchedLabelName !== '' ? $matchedLabelName : $ruleLabelId;
-                $displayText = 'Har etikett: ' . $sourceText;
-            } elseif ($ruleType === 'sender_is') {
+            if ($ruleType === 'sender_is') {
                 if ($ruleSenderId < 1 || $matchedSenderId < 1 || $ruleSenderId !== $matchedSenderId) {
                     continue;
                 }
@@ -6254,7 +6233,6 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
             $matchedRules[] = [
                 'type' => $ruleType,
                 'text' => $displayText,
-                'labelId' => $ruleLabelId,
                 'senderId' => $ruleType === 'sender_is' ? $ruleSenderId : null,
                 'field' => $ruleType === 'field_exists' ? $ruleField : '',
                 'sourceText' => $sourceText,
