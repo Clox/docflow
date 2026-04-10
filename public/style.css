@@ -2278,6 +2278,64 @@ body.is-resizing-sidebar {
   padding: 0 2px;
 }
 
+.label-import-dialog {
+  width: min(720px, calc(100vw - 32px));
+  height: auto;
+  max-height: min(760px, calc(100dvh - 32px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.label-import-dialog > h3 {
+  margin: 0;
+  padding: 18px 20px 0;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.label-import-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 14px 20px 0;
+}
+
+.label-import-dialog-body p {
+  margin: 0;
+  color: #4b5563;
+}
+
+.label-import-dialog-body textarea {
+  width: 100%;
+  min-height: 260px;
+  flex: 1 1 auto;
+  font: 12px/1.5 monospace;
+  padding: 10px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  resize: vertical;
+  background: #fff;
+  color: #111827;
+}
+
+.label-import-error {
+  color: #b91c1c;
+  font-size: 13px;
+  min-height: 18px;
+}
+
+.label-import-dialog .panel-actions {
+  margin: 0;
+  padding: 14px 20px 18px;
+}
+
+.label-import-dialog .panel-actions button {
+  flex: 0 0 auto;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -4426,6 +4484,9 @@ body.is-resizing-sidebar {
 
 .categories-actions {
   margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .folder-actions {

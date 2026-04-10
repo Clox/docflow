@@ -556,6 +556,7 @@
       <div id="labels-list" class="categories-list"></div>
       <div class="categories-actions">
         <button id="labels-add-row" type="button">Lägg till etikett</button>
+        <button id="labels-import-row" type="button">Importera etikett</button>
       </div>
     </div>
     <div id="labels-view-system" class="archive-view hidden">

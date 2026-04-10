@@ -7218,6 +7218,18 @@ function bbox_horizontal_overlap(array $labelBbox, array $candidateBbox): float
     );
 }
 
+function bbox_best_horizontal_alignment_diff(array $labelBbox, array $candidateBbox): float
+{
+    $labelCenter = bbox_center_point($labelBbox);
+    $candidateCenter = bbox_center_point($candidateBbox);
+
+    return min(
+        abs((float) ($candidateBbox['x0'] ?? 0.0) - (float) ($labelBbox['x0'] ?? 0.0)),
+        abs((float) ($candidateCenter['x'] ?? 0.0) - (float) ($labelCenter['x'] ?? 0.0)),
+        abs((float) ($candidateBbox['x1'] ?? 0.0) - (float) ($labelBbox['x1'] ?? 0.0))
+    );
+}
+
 function bboxes_overlap(array $left, array $right): bool
 {
     $overlapX = min((float) ($left['x1'] ?? 0.0), (float) ($right['x1'] ?? 0.0))
@@ -7469,10 +7481,7 @@ function candidate_position_penalty_details(
         ];
     }
 
-    $horizontalOverlap = bbox_horizontal_overlap($labelBbox, $candidateBbox);
-    $diff = $horizontalOverlap > 0.0
-        ? 0.0
-        : abs((float) ($candidateCenter['x'] ?? 0.0) - (float) ($labelCenter['x'] ?? 0.0));
+    $diff = bbox_best_horizontal_alignment_diff($labelBbox, $candidateBbox);
     $normalizedDiff = $lineHeight > 0.0 ? ($diff / $lineHeight) : 0.0;
     return [
         'penalty' => max(0.0, $normalizedDiff * (float) ($settings['downXOffsetPenalty'] ?? 0.0)),

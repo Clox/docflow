@@ -142,6 +142,7 @@ let archiveStructureApplyEl = null;
 let labelsListEl = null;
 let systemLabelEditorEl = null;
 let labelsAddRowEl = null;
+let labelsImportRowEl = null;
 let labelsCancelEl = null;
 let labelsApplyEl = null;
 let extractionFieldsEditorEl = null;
@@ -5926,6 +5927,96 @@ function showAnalysisOutdatedArchiveDialog() {
   });
 }
 
+function showLabelImportDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'settings-dialog label-import-dialog';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Importera etikett';
+
+    const body = document.createElement('div');
+    body.className = 'label-import-dialog-body';
+
+    const description = document.createElement('p');
+    description.textContent = 'Klistra in en etikett i samma JSON-format som kopiera-knappen exporterar.';
+
+    const textarea = document.createElement('textarea');
+    textarea.placeholder = '{\n  "name": "Överförmyndarnämnd",\n  "description": "…",\n  "minScore": 3,\n  "rules": [ ... ]\n}';
+    textarea.spellcheck = false;
+
+    const error = document.createElement('div');
+    error.className = 'label-import-error';
+
+    const actions = document.createElement('div');
+    actions.className = 'panel-actions';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'button-danger';
+    cancelButton.textContent = 'Avbryt';
+
+    const importButton = document.createElement('button');
+    importButton.type = 'button';
+    importButton.className = 'button-success';
+    importButton.textContent = 'Importera';
+
+    actions.append(cancelButton, importButton);
+    body.append(description, textarea, error);
+    dialog.append(title, body, actions);
+    overlay.appendChild(dialog);
+
+    const finish = (value = null) => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      overlay.remove();
+      resolve(value);
+    };
+
+    const submit = () => {
+      const result = parseImportedLabelJson(textarea.value);
+      if (!result || !result.label) {
+        error.textContent = result && typeof result.error === 'string'
+          ? result.error
+          : 'Importen misslyckades.';
+        textarea.focus();
+        return;
+      }
+      finish(result.label);
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        finish(null);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        submit();
+      }
+    };
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        finish(null);
+      }
+    });
+    cancelButton.addEventListener('click', () => finish(null));
+    importButton.addEventListener('click', submit);
+
+    document.addEventListener('keydown', onKeyDown, true);
+    document.body.appendChild(overlay);
+    textarea.focus();
+  });
+}
+
 let saveSelectedJobFieldsSeq = 0;
 
 function applyStateEntry(entry, options = {}) {
@@ -8143,10 +8234,20 @@ function bindSettingsPanelRefs(tabId) {
     labelsListEl = document.getElementById('labels-list');
     systemLabelEditorEl = document.getElementById('system-label-editor');
     labelsAddRowEl = document.getElementById('labels-add-row');
+    labelsImportRowEl = document.getElementById('labels-import-row');
     labelsCancelEl = document.getElementById('labels-cancel');
     labelsApplyEl = document.getElementById('labels-apply');
     labelsAddRowEl.addEventListener('click', () => {
       labelsDraft.push(defaultLabel());
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+    labelsImportRowEl.addEventListener('click', async () => {
+      const importedLabel = await showLabelImportDialog();
+      if (!importedLabel) {
+        return;
+      }
+      labelsDraft.push(importedLabel);
       renderLabelsEditor();
       updateSettingsActionButtons();
     });
@@ -10169,16 +10270,16 @@ function duplicateLabelIds(labels, systemLabels = systemLabelsDraft) {
   return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([id]) => id));
 }
 
-function labelsValidationError() {
-  const duplicates = duplicateLabelIds(labelsDraft, systemLabelsDraft);
+function labelsValidationErrorFor(labels, systemLabels = systemLabelsDraft) {
+  const duplicates = duplicateLabelIds(labels, systemLabels);
   if (duplicates.size > 0) {
     return `Etikett-id krockar: ${Array.from(duplicates).join(', ')}`;
   }
-  const blankLabel = labelsDraft.map(sanitizeLabel).find((label) => !label.name.trim() || !label.id.trim());
+  const blankLabel = labels.map(sanitizeLabel).find((label) => !label.name.trim() || !label.id.trim());
   if (blankLabel) {
     return 'Alla etiketter måste ha ett namn.';
   }
-  for (const label of labelsDraft.map(sanitizeLabel)) {
+  for (const label of labels.map(sanitizeLabel)) {
     const labelName = typeof label.name === 'string' && label.name.trim() !== '' ? label.name.trim() : 'Namnlös etikett';
     for (const rule of Array.isArray(label.rules) ? label.rules.map(sanitizeLabelRule) : []) {
       if (rule.type === 'sender_is') {
@@ -10195,6 +10296,81 @@ function labelsValidationError() {
     }
   }
   return '';
+}
+
+function labelsValidationError() {
+  return labelsValidationErrorFor(labelsDraft, systemLabelsDraft);
+}
+
+function singleLabelValidationError(label, existingLabels = labelsDraft, systemLabels = systemLabelsDraft) {
+  const sanitizedLabel = sanitizeLabel(label);
+  if (!sanitizedLabel.name.trim() || !sanitizedLabel.id.trim()) {
+    return 'Importerad etikett måste ha ett namn.';
+  }
+
+  const duplicateIds = duplicateLabelIds([sanitizedLabel, ...sanitizeLabels(existingLabels)], systemLabels);
+  if (duplicateIds.has(sanitizedLabel.id)) {
+    return `Etikett-id krockar: ${sanitizedLabel.id}`;
+  }
+
+  const labelName = sanitizedLabel.name.trim();
+  for (const rule of Array.isArray(sanitizedLabel.rules) ? sanitizedLabel.rules.map(sanitizeLabelRule) : []) {
+    if (rule.type === 'sender_is') {
+      if (!Number.isInteger(rule.senderId) || rule.senderId < 1) {
+        return `Etiketten "${labelName}" har en avsändarregel utan vald avsändare.`;
+      }
+    } else if (rule.type === 'field_exists') {
+      if (typeof rule.field !== 'string' || rule.field.trim() === '') {
+        return `Etiketten "${labelName}" har en fältregel utan valt datafält.`;
+      }
+    } else if (typeof rule.text !== 'string' || rule.text.trim() === '') {
+      return `Etiketten "${labelName}" har en textregel utan text.`;
+    }
+  }
+
+  return '';
+}
+
+function parseImportedLabelJson(text) {
+  const source = typeof text === 'string' ? text.trim() : '';
+  if (source === '') {
+    return {
+      error: 'Klistra in en etikett i JSON-format först.'
+    };
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(source);
+  } catch (error) {
+    return {
+      error: 'JSON kunde inte tolkas.'
+    };
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {
+      error: 'Importerad etikett måste vara ett JSON-objekt.'
+    };
+  }
+
+  if (!Array.isArray(parsed.rules) || parsed.rules.length === 0) {
+    return {
+      error: 'Importerad etikett måste innehålla minst en regel.'
+    };
+  }
+
+  const importedLabel = sanitizeLabel(parsed);
+  const validationError = singleLabelValidationError(importedLabel, labelsDraft, systemLabelsDraft);
+  if (validationError) {
+    return {
+      error: validationError
+    };
+  }
+
+  return {
+    label: importedLabel
+  };
 }
 
 function sanitizeFilenameTemplateParts(parts, depth = 0) {
