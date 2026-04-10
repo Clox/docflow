@@ -740,6 +740,7 @@ function system_label_definitions(): array
     return [
         'invoice' => [
             'name' => 'Faktura',
+            'description' => 'Dokument som är en faktura eller betalningsavi.',
             'minScore' => 15,
             'rules' => [
                 ['type' => 'text', 'text' => 'faktura', 'score' => 4],
@@ -757,6 +758,7 @@ function system_label_definitions(): array
         ],
         'autogiro' => [
             'name' => 'Autogiro',
+            'description' => 'Dokument som rör autogiro eller automatisk betalning.',
             'minScore' => 3,
             'rules' => [
                 ['type' => 'text', 'text' => 'autogiro', 'score' => 3],
@@ -770,19 +772,37 @@ function normalize_archive_rule(mixed $input, array $options = []): array
     $rule = is_array($input) ? $input : [];
     $allowLabel = ($options['allowLabel'] ?? false) === true;
     $type = is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text';
-    if ($type === 'label' && !$allowLabel) {
-        $type = 'text';
-    } elseif ($type !== 'label') {
+    if ($type === 'label') {
+        if (!$allowLabel) {
+            $type = 'text';
+        }
+    } elseif (!in_array($type, ['text', 'sender_is', 'sender_name_contains', 'field_exists'], true)) {
         $type = 'text';
     }
 
     $text = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
     $labelId = is_string($rule['labelId'] ?? null) ? trim((string) $rule['labelId']) : '';
+    $field = is_string($rule['field'] ?? null) ? trim((string) $rule['field']) : '';
+    $senderId = null;
+    $senderIdRaw = $rule['senderId'] ?? null;
+    if (is_int($senderIdRaw)) {
+        $senderId = $senderIdRaw > 0 ? $senderIdRaw : null;
+    } elseif (is_float($senderIdRaw)) {
+        $senderId = (int) floor($senderIdRaw);
+        $senderId = $senderId > 0 ? $senderId : null;
+    } elseif (is_string($senderIdRaw) && trim($senderIdRaw) !== '') {
+        $parsedSenderId = filter_var(trim($senderIdRaw), FILTER_VALIDATE_INT);
+        if ($parsedSenderId !== false && (int) $parsedSenderId > 0) {
+            $senderId = (int) $parsedSenderId;
+        }
+    }
 
     return [
         'type' => $type,
-        'text' => $type === 'text' ? $text : '',
+        'text' => in_array($type, ['text', 'sender_name_contains'], true) ? $text : '',
         'labelId' => $type === 'label' ? $labelId : '',
+        'senderId' => $type === 'sender_is' ? $senderId : null,
+        'field' => $type === 'field_exists' ? $field : '',
         'score' => positive_int($rule['score'] ?? 1, 1),
     ];
 }
@@ -1519,6 +1539,10 @@ function normalize_system_label_with_defaults(string $key, mixed $input, array $
     if ($name === '') {
         $name = is_string($defaults['name'] ?? null) ? trim((string) $defaults['name']) : '';
     }
+    $description = is_string($label['description'] ?? null) ? trim((string) $label['description']) : '';
+    if ($description === '') {
+        $description = is_string($defaults['description'] ?? null) ? trim((string) $defaults['description']) : '';
+    }
 
     $defaultMinScore = positive_int($defaults['minScore'] ?? 1, 1);
     $defaultRules = [];
@@ -1555,6 +1579,7 @@ function normalize_system_label_with_defaults(string $key, mixed $input, array $
         'id' => slugify_text($name, '-', 'label'),
         'systemLabelKey' => $key,
         'name' => $name,
+        'description' => $description,
         'isSystemLabel' => true,
         'minScore' => positive_int($label['minScore'] ?? $defaultMinScore, $defaultMinScore),
         'rules' => $rules,
@@ -1588,6 +1613,7 @@ function normalize_label_definition(array $input): ?array
     if ($name === '') {
         return null;
     }
+    $description = is_string($input['description'] ?? null) ? trim((string) $input['description']) : '';
 
     $rulesIn = $input['rules'] ?? [];
     $rules = [];
@@ -1604,6 +1630,7 @@ function normalize_label_definition(array $input): ?array
     return [
         'id' => slugify_text($name, '-', 'label'),
         'name' => $name,
+        'description' => $description,
         'minScore' => positive_int($input['minScore'] ?? 1, 1),
         'rules' => $rules,
     ];
@@ -5964,12 +5991,171 @@ function normalize_for_matching(string $text, array $replacementMap): string
     return strtr($normalized, $replacementMap);
 }
 
+function build_label_matching_field_name_map(array $fields): array
+{
+    $names = [];
+    foreach ($fields as $field) {
+        if (!is_array($field)) {
+            continue;
+        }
+        $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+        $name = is_string($field['name'] ?? null) ? trim((string) $field['name']) : '';
+        if ($key === '' || $name === '' || isset($names[$key])) {
+            continue;
+        }
+        $names[$key] = $name;
+    }
+    return $names;
+}
+
+function resolve_label_matching_sender_context(array $fieldValues): array
+{
+    sync_named_sender_identifier_links();
+
+    $organizationNumbers = normalize_auto_archiving_field_value_list($fieldValues['organisationsnummer'] ?? null);
+    $bankgiroValues = normalize_auto_archiving_field_value_list($fieldValues['bankgiro'] ?? null);
+    $plusgiroValues = normalize_auto_archiving_field_value_list($fieldValues['plusgiro'] ?? null);
+    $senderRowsById = cached_sender_editor_rows_by_id();
+
+    $normalizedOrganizationNumbers = [];
+    foreach ($organizationNumbers as $organizationNumber) {
+        $normalized = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber((string) $organizationNumber);
+        if ($normalized !== null) {
+            $normalizedOrganizationNumbers[$normalized] = true;
+        }
+    }
+
+    $normalizedBankgiroValues = [];
+    foreach ($bankgiroValues as $bankgiro) {
+        $normalized = \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro((string) $bankgiro);
+        if ($normalized !== null) {
+            $normalizedBankgiroValues[$normalized] = true;
+        }
+    }
+
+    $normalizedPlusgiroValues = [];
+    foreach ($plusgiroValues as $plusgiro) {
+        $normalized = \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro((string) $plusgiro);
+        if ($normalized !== null) {
+            $normalizedPlusgiroValues[$normalized] = true;
+        }
+    }
+
+    $senderIds = [];
+    foreach ($organizationNumbers as $organizationNumber) {
+        $observedRow = observed_sender_organization_summary_row((string) $organizationNumber);
+        $senderId = isset($observedRow['senderId']) ? (int) $observedRow['senderId'] : 0;
+        if ($senderId > 0) {
+            $senderIds[$senderId] = true;
+        }
+    }
+    foreach ($bankgiroValues as $bankgiro) {
+        $observedRow = observed_sender_payment_summary_row('bankgiro', (string) $bankgiro);
+        $senderId = isset($observedRow['senderId']) ? (int) $observedRow['senderId'] : 0;
+        if ($senderId > 0) {
+            $senderIds[$senderId] = true;
+        }
+    }
+    foreach ($plusgiroValues as $plusgiro) {
+        $observedRow = observed_sender_payment_summary_row('plusgiro', (string) $plusgiro);
+        $senderId = isset($observedRow['senderId']) ? (int) $observedRow['senderId'] : 0;
+        if ($senderId > 0) {
+            $senderIds[$senderId] = true;
+        }
+    }
+
+    $candidates = [];
+    foreach (array_keys($senderIds) as $senderId) {
+        $senderRow = $senderRowsById[$senderId] ?? null;
+        if (!is_array($senderRow)) {
+            continue;
+        }
+        $name = is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '';
+        if ($name === '') {
+            continue;
+        }
+
+        $strongMatchCount = 0;
+        $organizationRows = is_array($senderRow['organizationNumbers'] ?? null) ? $senderRow['organizationNumbers'] : [];
+        foreach ($organizationRows as $organizationRow) {
+            if (!is_array($organizationRow)) {
+                continue;
+            }
+            $normalizedNumber = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber((string) ($organizationRow['organizationNumber'] ?? ''));
+            if ($normalizedNumber !== null && isset($normalizedOrganizationNumbers[$normalizedNumber])) {
+                $strongMatchCount++;
+                break;
+            }
+        }
+
+        $paymentRows = is_array($senderRow['paymentNumbers'] ?? null) ? $senderRow['paymentNumbers'] : [];
+        foreach ($paymentRows as $paymentRow) {
+            if (!is_array($paymentRow)) {
+                continue;
+            }
+            $paymentType = is_string($paymentRow['type'] ?? null) ? trim(strtolower((string) $paymentRow['type'])) : 'bankgiro';
+            $normalizedNumber = $paymentType === 'plusgiro'
+                ? \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro((string) ($paymentRow['number'] ?? ''))
+                : \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro((string) ($paymentRow['number'] ?? ''));
+            if ($normalizedNumber === null) {
+                continue;
+            }
+            if (
+                ($paymentType === 'plusgiro' && isset($normalizedPlusgiroValues[$normalizedNumber]))
+                || ($paymentType !== 'plusgiro' && isset($normalizedBankgiroValues[$normalizedNumber]))
+            ) {
+                $strongMatchCount++;
+            }
+        }
+
+        $candidates[] = [
+            'senderId' => $senderId,
+            'name' => $name,
+            'strongMatchCount' => $strongMatchCount,
+        ];
+    }
+
+    usort($candidates, static function (array $left, array $right): int {
+        $strongCompare = (int) ($right['strongMatchCount'] ?? 0) <=> (int) ($left['strongMatchCount'] ?? 0);
+        if ($strongCompare !== 0) {
+            return $strongCompare;
+        }
+        return strcmp(
+            strtolower((string) ($left['name'] ?? '')),
+            strtolower((string) ($right['name'] ?? ''))
+        );
+    });
+
+    $senderNamesById = [];
+    foreach ($senderRowsById as $senderId => $senderRow) {
+        if (!is_array($senderRow)) {
+            continue;
+        }
+        $name = is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '';
+        if ($name !== '') {
+            $senderNamesById[(int) $senderId] = $name;
+        }
+    }
+
+    $first = $candidates[0] ?? null;
+    return [
+        'senderId' => is_array($first) ? (int) ($first['senderId'] ?? 0) : 0,
+        'senderName' => is_array($first) && is_string($first['name'] ?? null) ? trim((string) $first['name']) : '',
+        'senderNamesById' => $senderNamesById,
+    ];
+}
+
 function find_scored_rule_signal_matches(string $ocrText, array $entities, array $replacementMap, array $context = []): array
 {
     $normalizedOcr = normalize_for_matching($ocrText, $replacementMap);
     $inverseMap = build_inverse_single_char_map($replacementMap);
     $matches = [];
     $matchedLabelsById = is_array($context['matchedLabelsById'] ?? null) ? $context['matchedLabelsById'] : [];
+    $matchedSenderId = isset($context['senderId']) ? (int) $context['senderId'] : 0;
+    $matchedSenderName = is_string($context['senderName'] ?? null) ? trim((string) $context['senderName']) : '';
+    $senderNamesById = is_array($context['senderNamesById'] ?? null) ? $context['senderNamesById'] : [];
+    $fieldValues = is_array($context['fieldValues'] ?? null) ? $context['fieldValues'] : [];
+    $fieldNamesByKey = is_array($context['fieldNamesByKey'] ?? null) ? $context['fieldNamesByKey'] : [];
 
     foreach ($entities as $entityIndex => $entity) {
         if (!is_array($entity)) {
@@ -6006,6 +6192,8 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
             $ruleType = is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text';
             $ruleText = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
             $ruleLabelId = is_string($rule['labelId'] ?? null) ? trim((string) $rule['labelId']) : '';
+            $ruleSenderId = isset($rule['senderId']) ? (int) $rule['senderId'] : 0;
+            $ruleField = is_string($rule['field'] ?? null) ? trim((string) $rule['field']) : '';
             $ruleScore = positive_int($rule['score'] ?? 1, 1);
             $sourceText = '';
             $displayText = $ruleText;
@@ -6018,6 +6206,38 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
                 $matchedLabelName = is_string($matchedLabel['name'] ?? null) ? trim((string) $matchedLabel['name']) : '';
                 $sourceText = $matchedLabelName !== '' ? $matchedLabelName : $ruleLabelId;
                 $displayText = 'Har etikett: ' . $sourceText;
+            } elseif ($ruleType === 'sender_is') {
+                if ($ruleSenderId < 1 || $matchedSenderId < 1 || $ruleSenderId !== $matchedSenderId) {
+                    continue;
+                }
+                $senderName = is_string($senderNamesById[$ruleSenderId] ?? null)
+                    ? trim((string) $senderNamesById[$ruleSenderId])
+                    : '';
+                $sourceText = $matchedSenderName !== '' ? $matchedSenderName : ($senderName !== '' ? $senderName : (string) $ruleSenderId);
+                $displayText = 'Avsändare är: ' . ($senderName !== '' ? $senderName : (string) $ruleSenderId);
+            } elseif ($ruleType === 'sender_name_contains') {
+                if ($ruleText === '' || $matchedSenderName === '') {
+                    continue;
+                }
+                $ruleTextLower = normalize_for_matching($ruleText, $replacementMap);
+                $senderNameLower = normalize_for_matching($matchedSenderName, $replacementMap);
+                if (!str_contains($senderNameLower, $ruleTextLower)) {
+                    continue;
+                }
+                $sourceText = $matchedSenderName;
+                $displayText = 'Avsändarnamn innehåller: ' . $ruleText;
+            } elseif ($ruleType === 'field_exists') {
+                if ($ruleField === '') {
+                    continue;
+                }
+                $fieldValueList = normalize_auto_archiving_field_value_list($fieldValues[$ruleField] ?? null);
+                if ($fieldValueList === []) {
+                    continue;
+                }
+                $fieldName = is_string($fieldNamesByKey[$ruleField] ?? null) ? trim((string) $fieldNamesByKey[$ruleField]) : '';
+                $firstValue = $fieldValueList[0] ?? null;
+                $sourceText = is_scalar($firstValue) ? trim((string) $firstValue) : ($fieldName !== '' ? $fieldName : $ruleField);
+                $displayText = 'Fält finns: ' . ($fieldName !== '' ? $fieldName : $ruleField);
             } else {
                 if ($ruleText === '') {
                     continue;
@@ -6035,6 +6255,8 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
                 'type' => $ruleType,
                 'text' => $displayText,
                 'labelId' => $ruleLabelId,
+                'senderId' => $ruleType === 'sender_is' ? $ruleSenderId : null,
+                'field' => $ruleType === 'field_exists' ? $ruleField : '',
                 'sourceText' => $sourceText,
                 'score' => $ruleScore,
             ];
@@ -10280,7 +10502,8 @@ function calculate_auto_archiving_result_from_text(
     array $clients,
     array $senders,
     array $replacementMap,
-    ?array $matchingPayload = null
+    ?array $matchingPayload = null,
+    string $jobDir = ''
 ): array {
     $resolvedMatchingPayload = is_array($matchingPayload) ? $matchingPayload : load_matching_settings_payload();
     $positionSettings = normalize_matching_position_adjustment_settings(
@@ -10296,7 +10519,6 @@ function calculate_auto_archiving_result_from_text(
         is_array($rules['fields'] ?? null) ? $rules['fields'] : []
     ));
 
-    $systemLabelMatches = find_incremental_label_matches($ocrText, $systemLabels, $replacementMap);
     $configuredFieldResults = extract_configured_text_field_results(
         split_lines_for_matching($ocrText),
         $replacementMap,
@@ -10307,6 +10529,7 @@ function calculate_auto_archiving_result_from_text(
     $configuredFieldValues = simplify_extraction_field_values($configuredFieldResults);
     $configuredFieldMeta = simplify_extraction_field_meta($configuredFieldResults);
     $fieldPartitions = partition_archiving_field_values($configuredFieldValues, $rules);
+    $fieldNamesByKey = build_label_matching_field_name_map($configuredFields);
 
     $matchedClientDirName = match_client_dir_name($ocrText, $clients);
     $preselectedClient = null;
@@ -10316,10 +10539,38 @@ function calculate_auto_archiving_result_from_text(
         ];
     }
 
-    $preselectedSender = null;
-    $matchedSenderId = null;
+    $senderContext = resolve_label_matching_sender_context($configuredFieldValues);
+    $matchedSenderId = ($senderContext['senderId'] ?? 0) > 0 ? (int) $senderContext['senderId'] : null;
+    $preselectedSender = $matchedSenderId !== null
+        ? [
+            'id' => $matchedSenderId,
+            'name' => is_string($senderContext['senderName'] ?? null) ? trim((string) $senderContext['senderName']) : '',
+        ]
+        : null;
+    if ($jobDir !== '') {
+        $senderSummary = build_job_sender_summary([
+            'extractionFields' => $configuredFieldValues,
+        ], $jobDir, null, null);
+        $senderSelection = single_preselected_sender_from_summary($senderSummary);
+        $matchedSenderId = isset($senderSelection['matchedSenderId']) && (int) ($senderSelection['matchedSenderId'] ?? 0) > 0
+            ? (int) $senderSelection['matchedSenderId']
+            : null;
+        $preselectedSender = is_array($senderSelection['preselectedSender'] ?? null)
+            ? $senderSelection['preselectedSender']
+            : null;
+    }
 
+    $labelMatchContext = [
+        'senderId' => $matchedSenderId,
+        'senderName' => is_array($preselectedSender) ? (string) ($preselectedSender['name'] ?? '') : '',
+        'senderNamesById' => is_array($senderContext['senderNamesById'] ?? null) ? $senderContext['senderNamesById'] : [],
+        'fieldValues' => $configuredFieldValues,
+        'fieldNamesByKey' => $fieldNamesByKey,
+    ];
+
+    $systemLabelMatches = find_incremental_label_matches($ocrText, $systemLabels, $replacementMap, $labelMatchContext);
     $labelMatches = find_incremental_label_matches($ocrText, $labels, $replacementMap, [
+        ...$labelMatchContext,
         'matchedLabelsById' => matched_labels_by_id($systemLabelMatches),
     ]);
     $matchedLabelsById = matched_labels_by_id(array_merge($systemLabelMatches, $labelMatches));
@@ -10397,7 +10648,8 @@ function calculate_auto_archiving_result_for_job(array $config, string $jobId, ?
         load_clients(),
         load_senders(),
         $replacementMap,
-        $matchingPayload
+        $matchingPayload,
+        $jobDir
     );
 }
 
@@ -12307,7 +12559,8 @@ function process_claimed_job(
         $clients,
         $senders,
         $replacementMap,
-        $matchingPayload
+        $matchingPayload,
+        $jobDir
     );
 
     observe_extracted_sender_identifiers($analysisPayload['extractionFieldResults']);
