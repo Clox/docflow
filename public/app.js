@@ -106,6 +106,8 @@ let matchingAddRowEl = null;
 let matchingCancelEl = null;
 let matchingApplyEl = null;
 let matchingNoisePenaltyEl = null;
+let matchingTrailingDelimiterPenaltyEl = null;
+let matchingOtherMatchKeyPenaltyEl = null;
 let matchingRightYOffsetPenaltyEl = null;
 let matchingDownXOffsetPenaltyEl = null;
 let ocrSkipExistingTextEl = null;
@@ -2018,7 +2020,11 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
                 between: typeof match.between === 'string' ? match.between : '',
                 searchTerm: typeof match.searchTerm === 'string' ? match.searchTerm : '',
                 confidence: Number.isFinite(Number(match.confidence)) ? Number(match.confidence) : null,
+                baseConfidence: Number.isFinite(Number(match.baseConfidence)) ? Number(match.baseConfidence) : null,
+                finalConfidence: Number.isFinite(Number(match.finalConfidence)) ? Number(match.finalConfidence) : null,
                 noisePenalty: Number.isFinite(Number(match.noisePenalty)) ? Number(match.noisePenalty) : null,
+                trailingDelimiterPenalty: Number.isFinite(Number(match.trailingDelimiterPenalty)) ? Number(match.trailingDelimiterPenalty) : null,
+                otherMatchKeyPenalty: Number.isFinite(Number(match.otherMatchKeyPenalty)) ? Number(match.otherMatchKeyPenalty) : null,
                 positionPenalty: Number.isFinite(Number(match.positionPenalty)) ? Number(match.positionPenalty) : (Number.isFinite(Number(match.directionPenalty)) ? Number(match.directionPenalty) : null),
                 positionPenaltyAxis: typeof match.positionPenaltyAxis === 'string' ? match.positionPenaltyAxis : '',
                 mainDirection: typeof match.mainDirection === 'string' ? match.mainDirection : '',
@@ -2061,7 +2067,11 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
               between: typeof field.between === 'string' ? field.between : '',
               searchTerm: '',
               confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
+              baseConfidence: Number.isFinite(Number(field.baseConfidence)) ? Number(field.baseConfidence) : null,
+              finalConfidence: Number.isFinite(Number(field.finalConfidence)) ? Number(field.finalConfidence) : null,
               noisePenalty: Number.isFinite(Number(field.noisePenalty)) ? Number(field.noisePenalty) : null,
+              trailingDelimiterPenalty: Number.isFinite(Number(field.trailingDelimiterPenalty)) ? Number(field.trailingDelimiterPenalty) : null,
+              otherMatchKeyPenalty: Number.isFinite(Number(field.otherMatchKeyPenalty)) ? Number(field.otherMatchKeyPenalty) : null,
               positionPenalty: Number.isFinite(Number(field.positionPenalty)) ? Number(field.positionPenalty) : (Number.isFinite(Number(field.directionPenalty)) ? Number(field.directionPenalty) : null),
               positionPenaltyAxis: typeof field.positionPenaltyAxis === 'string' ? field.positionPenaltyAxis : '',
               mainDirection: typeof field.mainDirection === 'string' ? field.mainDirection : '',
@@ -2469,11 +2479,26 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
   };
   const appendMatchPenalties = (cell, row) => {
     const parts = [];
+    const formatPenaltyPercent = (value) =>
+      `${(value * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`;
+
     if (typeof row?.noisePenalty === 'number' && Number.isFinite(row.noisePenalty) && row.noisePenalty > 0) {
       const noiseEl = document.createElement('span');
       noiseEl.className = 'matches-penalty-text';
-      noiseEl.textContent = `Brus -${(row.noisePenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`;
+      noiseEl.textContent = `Brus -${formatPenaltyPercent(row.noisePenalty)}`;
       parts.push(noiseEl);
+    }
+    if (typeof row?.trailingDelimiterPenalty === 'number' && Number.isFinite(row.trailingDelimiterPenalty) && row.trailingDelimiterPenalty > 0) {
+      const delimiterEl = document.createElement('span');
+      delimiterEl.className = 'matches-penalty-text';
+      delimiterEl.textContent = `Avslutstecken -${formatPenaltyPercent(row.trailingDelimiterPenalty)}`;
+      parts.push(delimiterEl);
+    }
+    if (typeof row?.otherMatchKeyPenalty === 'number' && Number.isFinite(row.otherMatchKeyPenalty) && row.otherMatchKeyPenalty > 0) {
+      const otherKeyEl = document.createElement('span');
+      otherKeyEl.className = 'matches-penalty-text';
+      otherKeyEl.textContent = `Annan nyckel -${formatPenaltyPercent(row.otherMatchKeyPenalty)}`;
+      parts.push(otherKeyEl);
     }
     if (typeof row?.positionPenalty === 'number' && Number.isFinite(row.positionPenalty) && row.positionPenalty > 0) {
       const positionEl = document.createElement('span');
@@ -2485,7 +2510,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
       } else if (row.positionPenaltyAxis === 'invalid') {
         label = 'Fel riktning';
       }
-      positionEl.textContent = `${label} -${(row.positionPenalty * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`;
+      positionEl.textContent = `${label} -${formatPenaltyPercent(row.positionPenalty)}`;
       parts.push(positionEl);
     }
 
@@ -5514,6 +5539,75 @@ function formatFilenameAmount(value) {
   });
 }
 
+function normalizeFilenameIdentifierDigits(value) {
+  return digitsOnly(value);
+}
+
+function buildFilenameIdentifierValueList(extractionFields, key) {
+  const field = extractionFields && typeof extractionFields === 'object' ? extractionFields[key] : null;
+  const values = Array.isArray(field)
+    ? field
+    : (field && typeof field === 'object'
+      ? (Array.isArray(field.values)
+        ? field.values
+        : (Object.prototype.hasOwnProperty.call(field, 'value') ? [field.value] : []))
+      : (field !== undefined && field !== null ? [field] : []));
+  return values
+    .map((value) => String(value ?? '').trim())
+    .filter((value) => value !== '');
+}
+
+function senderPaymentNameForFilenameValues(sender, extractionFields, type) {
+  if (!sender || typeof sender !== 'object') {
+    return '';
+  }
+  const typeKey = type === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+  const fieldValues = buildFilenameIdentifierValueList(extractionFields, typeKey);
+  if (fieldValues.length === 0) {
+    return '';
+  }
+  const normalizedValues = new Set(fieldValues.map(normalizeFilenameIdentifierDigits).filter((value) => value !== ''));
+  if (normalizedValues.size === 0) {
+    return '';
+  }
+  const paymentNumbers = Array.isArray(sender.paymentNumbers) ? sender.paymentNumbers : [];
+  const match = paymentNumbers.find((payment) => {
+    if (!payment || typeof payment !== 'object') {
+      return false;
+    }
+    const paymentType = String(payment.type || '').trim().toLowerCase() === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+    if (paymentType !== typeKey) {
+      return false;
+    }
+    const normalized = normalizeFilenameIdentifierDigits(payment.number);
+    return normalized !== '' && normalizedValues.has(normalized);
+  });
+  return match && typeof match.payeeName === 'string' ? match.payeeName.trim() : '';
+}
+
+function senderOrganizationNameForFilenameValues(sender, extractionFields) {
+  if (!sender || typeof sender !== 'object') {
+    return '';
+  }
+  const fieldValues = buildFilenameIdentifierValueList(extractionFields, 'organisationsnummer');
+  if (fieldValues.length === 0) {
+    return '';
+  }
+  const normalizedValues = new Set(fieldValues.map(normalizeFilenameIdentifierDigits).filter((value) => value !== ''));
+  if (normalizedValues.size === 0) {
+    return '';
+  }
+  const organizationNumbers = Array.isArray(sender.organizationNumbers) ? sender.organizationNumbers : [];
+  const match = organizationNumbers.find((organization) => {
+    if (!organization || typeof organization !== 'object') {
+      return false;
+    }
+    const normalized = normalizeFilenameIdentifierDigits(organization.organizationNumber);
+    return normalized !== '' && normalizedValues.has(normalized);
+  });
+  return match && typeof match.organizationName === 'string' ? match.organizationName.trim() : '';
+}
+
 function buildFilenameFieldValues(job) {
   if (!job) {
     return new Map();
@@ -5541,6 +5635,9 @@ function buildFilenameFieldValues(job) {
   setValue('client', clientDirName);
   setValue('main_client', clientDirName);
   setValue('sender', sender && sender.name);
+  setValue('bankgiro_name', senderPaymentNameForFilenameValues(sender, extractionFields, 'bankgiro'));
+  setValue('plusgiro_name', senderPaymentNameForFilenameValues(sender, extractionFields, 'plusgiro'));
+  setValue('organization_number_name', senderOrganizationNameForFilenameValues(sender, extractionFields));
 
   const firstFieldValue = (value) => {
     if (Array.isArray(value)) {
@@ -5593,6 +5690,9 @@ function buildFilenameFieldValues(job) {
   if (labelNames.length > 0) {
     values.set('__labels', labelNames);
   }
+  if (labelIds.length > 0) {
+    values.set('__labelIds', Array.from(new Set(labelIds)));
+  }
 
   return values;
 }
@@ -5643,6 +5743,28 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
       }
       result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
       result += value;
+      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
+      return;
+    }
+
+    if (part.type === 'ifLabels') {
+      const selectedLabelIds = Array.isArray(fieldValues.get('__labelIds'))
+        ? fieldValues.get('__labelIds').map((item) => String(item || '').trim()).filter((item) => item !== '')
+        : [];
+      const conditionLabelIds = normalizeLabelIdList(part.labelIds);
+      const mode = sanitizeIfLabelsMode(part.mode);
+      const isTrue = conditionLabelIds.length < 1
+        ? false
+        : (mode === 'all'
+          ? conditionLabelIds.every((labelId) => selectedLabelIds.includes(labelId))
+          : conditionLabelIds.some((labelId) => selectedLabelIds.includes(labelId)));
+      const branchParts = isTrue ? (part.thenParts || []) : (part.elseParts || []);
+      const resolved = evaluateFilenameTemplateParts(branchParts, fieldValues);
+      if (resolved === '') {
+        return;
+      }
+      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
+      result += resolved;
       result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
       return;
     }
@@ -8018,6 +8140,8 @@ function bindSettingsPanelRefs(tabId) {
     matchingCancelEl = document.getElementById('matching-cancel');
     matchingApplyEl = document.getElementById('matching-apply');
     matchingNoisePenaltyEl = document.getElementById('matching-noise-penalty');
+    matchingTrailingDelimiterPenaltyEl = document.getElementById('matching-trailing-delimiter-penalty');
+    matchingOtherMatchKeyPenaltyEl = document.getElementById('matching-other-match-key-penalty');
     matchingRightYOffsetPenaltyEl = document.getElementById('matching-right-y-offset-penalty');
     matchingDownXOffsetPenaltyEl = document.getElementById('matching-down-x-offset-penalty');
     const bindMatchingPenaltyInput = (inputEl, key) => {
@@ -8035,6 +8159,8 @@ function bindSettingsPanelRefs(tabId) {
       });
     };
     bindMatchingPenaltyInput(matchingNoisePenaltyEl, 'noisePenaltyPerCharacter');
+    bindMatchingPenaltyInput(matchingTrailingDelimiterPenaltyEl, 'trailingDelimiterPenalty');
+    bindMatchingPenaltyInput(matchingOtherMatchKeyPenaltyEl, 'otherMatchKeyPenalty');
     bindMatchingPenaltyInput(matchingRightYOffsetPenaltyEl, 'rightYOffsetPenalty');
     bindMatchingPenaltyInput(matchingDownXOffsetPenaltyEl, 'downXOffsetPenalty');
     matchingAddRowEl.addEventListener('click', () => {
@@ -9145,6 +9271,8 @@ function defaultReplacement() {
 function defaultMatchingPositionAdjustmentSettings() {
   return {
     noisePenaltyPerCharacter: 0.01,
+    trailingDelimiterPenalty: 0.25,
+    otherMatchKeyPenalty: 0.5,
     rightYOffsetPenalty: 0.25,
     downXOffsetPenalty: 0.25
   };
@@ -9186,6 +9314,8 @@ function sanitizeMatchingPositionAdjustmentSettings(value) {
   const defaults = defaultMatchingPositionAdjustmentSettings();
   return {
     noisePenaltyPerCharacter: clampMatchingDecimal(input.noisePenaltyPerCharacter, defaults.noisePenaltyPerCharacter, 1),
+    trailingDelimiterPenalty: clampMatchingDecimal(input.trailingDelimiterPenalty, defaults.trailingDelimiterPenalty, null),
+    otherMatchKeyPenalty: clampMatchingDecimal(input.otherMatchKeyPenalty, defaults.otherMatchKeyPenalty, null),
     rightYOffsetPenalty: clampMatchingDecimal(
       input.rightYOffsetPenalty ?? input.downRightPenalty,
       defaults.rightYOffsetPenalty,
@@ -10385,6 +10515,28 @@ function sanitizeFilenameTemplateCandidateParts(parts, depth = 0) {
     .filter((part) => part && typeof part === 'object' && part.type !== 'text');
 }
 
+function normalizeLabelIdList(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const normalized = [];
+  values.forEach((value) => {
+    const labelId = typeof value === 'string' ? value.trim() : '';
+    if (!labelId || seen.has(labelId)) {
+      return;
+    }
+    seen.add(labelId);
+    normalized.push(labelId);
+  });
+  return normalized;
+}
+
+function sanitizeIfLabelsMode(value) {
+  return value === 'all' ? 'all' : 'any';
+}
+
 function sanitizeFilenameTemplatePart(part, depth = 0) {
   const input = part && typeof part === 'object' ? part : null;
   if (!input || depth > 6) {
@@ -10425,6 +10577,17 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
     return {
       type: 'firstAvailable',
       parts: sanitizeFilenameTemplateCandidateParts(input.parts, depth + 1),
+      prefixParts,
+      suffixParts,
+    };
+  }
+  if (type === 'ifLabels') {
+    return {
+      type: 'ifLabels',
+      mode: sanitizeIfLabelsMode(input.mode),
+      labelIds: normalizeLabelIdList(input.labelIds),
+      thenParts: sanitizeFilenameTemplateParts(input.thenParts, depth + 1),
+      elseParts: sanitizeFilenameTemplateParts(input.elseParts, depth + 1),
       prefixParts,
       suffixParts,
     };
@@ -10478,6 +10641,17 @@ function defaultFilenameTemplatePart(type = 'text') {
     return {
       type: 'firstAvailable',
       parts: [],
+      prefixParts: [],
+      suffixParts: [],
+    };
+  }
+  if (type === 'ifLabels') {
+    return {
+      type: 'ifLabels',
+      mode: 'any',
+      labelIds: [],
+      thenParts: [],
+      elseParts: [],
       prefixParts: [],
       suffixParts: [],
     };
@@ -10743,7 +10917,7 @@ function filenameTemplateSystemFieldTitle(fieldKey, fieldName) {
 
 function filenameTemplateSystemFieldOptions() {
   const seenKeys = new Set();
-  return sanitizeExtractionFields(systemExtractionFieldsDraft)
+  const options = sanitizeExtractionFields(systemExtractionFieldsDraft)
     .map((field, index) => sanitizeExtractionField(field, index))
     .filter((field) => {
       const key = typeof field.key === 'string' ? field.key.trim() : '';
@@ -10760,6 +10934,35 @@ function filenameTemplateSystemFieldOptions() {
       tone: 'system',
       title: filenameTemplateSystemFieldTitle(field.key, field.name),
     }));
+
+  [
+    {
+      key: 'bankgiro_name',
+      label: 'Bankgiro-namn',
+      tone: 'system',
+      title: 'Lägger till namnet som är kopplat till dokumentets bankgiro.',
+    },
+    {
+      key: 'plusgiro_name',
+      label: 'Plusgiro-namn',
+      tone: 'system',
+      title: 'Lägger till namnet som är kopplat till dokumentets plusgiro.',
+    },
+    {
+      key: 'organization_number_name',
+      label: 'Org.nr.-namn',
+      tone: 'system',
+      title: 'Lägger till namnet som är kopplat till dokumentets organisationsnummer.',
+    },
+  ].forEach((option) => {
+    if (seenKeys.has(option.key)) {
+      return;
+    }
+    seenKeys.add(option.key);
+    options.push(option);
+  });
+
+  return options;
 }
 
 function filenameTemplateDataFieldOptions() {
@@ -10812,6 +11015,233 @@ function filenameTemplateLabelNameById(labelId) {
   return match ? match.name : normalizedId;
 }
 
+let filenameTemplateLabelPickerCounter = 0;
+
+function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options = {}) {
+  filenameTemplateLabelPickerCounter += 1;
+  const optionIdPrefix = `filename-template-label-picker-${filenameTemplateLabelPickerCounter}`;
+  const state = {
+    filterText: '',
+    dropdownOpen: false,
+    activeOptionIndex: -1,
+    selectedIds: normalizeLabelIdList(selectedLabelIds),
+  };
+  const placeholder = typeof options.placeholder === 'string' && options.placeholder.trim() !== ''
+    ? options.placeholder.trim()
+    : 'Lägg till etikett...';
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'filename-template-label-picker';
+
+  const combobox = document.createElement('div');
+  combobox.className = 'job-labels-combobox filename-template-label-picker-combobox';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'job-labels-combobox-input filename-template-label-picker-input';
+  input.placeholder = placeholder;
+  input.autocomplete = 'off';
+  input.setAttribute('aria-label', placeholder);
+
+  const list = document.createElement('div');
+  list.className = 'job-labels-combobox-list filename-template-label-picker-list';
+  list.setAttribute('role', 'listbox');
+
+  const selected = document.createElement('div');
+  selected.className = 'job-labels-selected filename-template-label-picker-selected';
+
+  const syncScrollPopoverState = () => {
+    const scrollContainer = wrapper.closest('.filename-template-inline-scroll');
+    if (!(scrollContainer instanceof HTMLElement)) {
+      return;
+    }
+    scrollContainer.classList.toggle('has-floating-popover', state.dropdownOpen === true);
+  };
+
+  const filteredOptions = () => {
+    const normalizedFilter = state.filterText.trim().toLocaleLowerCase('sv');
+    const selectedSet = new Set(state.selectedIds);
+    return filenameTemplateLabelDefinitions().filter((option) => {
+      if (selectedSet.has(option.id)) {
+        return false;
+      }
+      if (normalizedFilter === '') {
+        return true;
+      }
+      return option.name.toLocaleLowerCase('sv').includes(normalizedFilter)
+        || option.id.toLocaleLowerCase('sv').includes(normalizedFilter);
+    });
+  };
+
+  const syncActiveDescendant = (optionsList) => {
+    if (state.activeOptionIndex >= 0 && state.activeOptionIndex < optionsList.length) {
+      input.setAttribute('aria-activedescendant', `${optionIdPrefix}-option-${state.activeOptionIndex}`);
+      return;
+    }
+    input.removeAttribute('aria-activedescendant');
+  };
+
+  const commitSelection = (labelId) => {
+    const nextIds = normalizeLabelIdList([...state.selectedIds, labelId]);
+    state.selectedIds = nextIds;
+    state.filterText = '';
+    input.value = '';
+    state.dropdownOpen = false;
+    state.activeOptionIndex = -1;
+    if (typeof onChange === 'function') {
+      onChange(nextIds);
+    }
+    render();
+  };
+
+  const render = () => {
+    const optionsList = filteredOptions();
+    if (optionsList.length < 1) {
+      state.activeOptionIndex = -1;
+    } else if (state.activeOptionIndex < 0 || state.activeOptionIndex >= optionsList.length) {
+      state.activeOptionIndex = 0;
+    }
+
+    selected.replaceChildren();
+    selected.classList.toggle('is-empty', state.selectedIds.length < 1);
+    if (state.selectedIds.length < 1) {
+      selected.textContent = 'Inga etiketter valda.';
+    } else {
+      state.selectedIds.forEach((labelId) => {
+        const chipEl = document.createElement('span');
+        chipEl.className = 'job-labels-selected-chip';
+
+        const textEl = document.createElement('span');
+        textEl.className = 'job-labels-selected-chip-text';
+        textEl.textContent = filenameTemplateLabelNameById(labelId);
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'job-labels-selected-chip-remove';
+        removeButton.setAttribute('aria-label', `Ta bort etiketten ${filenameTemplateLabelNameById(labelId)}`);
+        removeButton.textContent = '✕';
+        removeButton.addEventListener('click', (event) => {
+          event.preventDefault();
+          state.selectedIds = state.selectedIds.filter((candidate) => candidate !== labelId);
+          if (typeof onChange === 'function') {
+            onChange(state.selectedIds);
+          }
+          render();
+        });
+
+        chipEl.append(textEl, removeButton);
+        selected.appendChild(chipEl);
+      });
+    }
+
+    list.replaceChildren();
+    list.classList.toggle('is-open', state.dropdownOpen);
+    if (state.dropdownOpen) {
+      if (optionsList.length < 1) {
+        const emptyEl = document.createElement('div');
+        emptyEl.className = 'job-labels-combobox-empty';
+        emptyEl.textContent = state.filterText.trim() === '' ? 'Inga fler etiketter.' : 'Ingen träff.';
+        list.appendChild(emptyEl);
+      } else {
+        optionsList.forEach((option, index) => {
+          const optionButton = document.createElement('button');
+          optionButton.type = 'button';
+          optionButton.className = 'job-labels-combobox-option';
+          optionButton.id = `${optionIdPrefix}-option-${index}`;
+          optionButton.textContent = option.name;
+          optionButton.setAttribute('role', 'option');
+          optionButton.setAttribute('aria-selected', index === state.activeOptionIndex ? 'true' : 'false');
+          optionButton.classList.toggle('is-active', index === state.activeOptionIndex);
+          optionButton.tabIndex = -1;
+          optionButton.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+          });
+          optionButton.addEventListener('mouseenter', () => {
+            state.activeOptionIndex = index;
+            syncActiveDescendant(optionsList);
+            Array.from(list.querySelectorAll('.job-labels-combobox-option')).forEach((node, nodeIndex) => {
+              const isActive = nodeIndex === state.activeOptionIndex;
+              node.classList.toggle('is-active', isActive);
+              node.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            });
+          });
+          optionButton.addEventListener('click', () => {
+            commitSelection(option.id);
+          });
+          list.appendChild(optionButton);
+        });
+      }
+    }
+
+    syncActiveDescendant(optionsList);
+    syncScrollPopoverState();
+  };
+
+  input.addEventListener('focus', () => {
+    state.dropdownOpen = true;
+    render();
+  });
+  input.addEventListener('click', () => {
+    state.dropdownOpen = true;
+    render();
+  });
+  input.addEventListener('input', () => {
+    state.filterText = input.value;
+    state.dropdownOpen = true;
+    render();
+  });
+  input.addEventListener('keydown', (event) => {
+    const optionsList = filteredOptions();
+    if (event.key === 'ArrowDown') {
+      if (!state.dropdownOpen) {
+        state.dropdownOpen = true;
+      } else if (optionsList.length > 0) {
+        state.activeOptionIndex = state.activeOptionIndex >= optionsList.length - 1 ? 0 : state.activeOptionIndex + 1;
+      }
+      event.preventDefault();
+      render();
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      if (!state.dropdownOpen) {
+        state.dropdownOpen = true;
+      } else if (optionsList.length > 0) {
+        state.activeOptionIndex = state.activeOptionIndex <= 0 ? optionsList.length - 1 : state.activeOptionIndex - 1;
+      }
+      event.preventDefault();
+      render();
+      return;
+    }
+    if (event.key === 'Enter') {
+      if (state.dropdownOpen && optionsList.length > 0 && state.activeOptionIndex >= 0) {
+        event.preventDefault();
+        commitSelection(optionsList[state.activeOptionIndex].id);
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      state.dropdownOpen = false;
+      state.activeOptionIndex = -1;
+      render();
+      event.stopPropagation();
+    }
+  });
+  wrapper.addEventListener('focusout', () => {
+    window.requestAnimationFrame(() => {
+      if (!wrapper.contains(document.activeElement)) {
+        state.dropdownOpen = false;
+        state.activeOptionIndex = -1;
+        render();
+      }
+    });
+  });
+
+  combobox.append(input, list);
+  wrapper.append(combobox, selected);
+  render();
+  return wrapper;
+}
+
 function filenameTemplateInsertOptions() {
   return [
     ...filenameTemplateSystemFieldOptions().map((field) => ({
@@ -10821,12 +11251,6 @@ function filenameTemplateInsertOptions() {
       tone: field.tone,
       title: field.title,
     })),
-    {
-      type: 'folder',
-      label: 'Mapp',
-      tone: 'folder',
-      title: 'Lägger till dokumentets valda mapp i mallen.',
-    },
     {
       type: 'dataField',
       label: 'Datafält',
@@ -10844,6 +11268,12 @@ function filenameTemplateInsertOptions() {
       label: 'Första tillgängliga',
       tone: 'special',
       title: 'Använder den första kandidaten som faktiskt har ett värde.',
+    },
+    {
+      type: 'ifLabels',
+      label: 'Om etikett',
+      tone: 'special',
+      title: 'Renderar olika innehåll beroende på om någon av de valda etiketterna finns.',
     },
   ];
 }
@@ -11177,6 +11607,12 @@ function renderMatchingEditor() {
 function syncMatchingPositionAdjustmentInputs() {
   if (matchingNoisePenaltyEl) {
     matchingNoisePenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.noisePenaltyPerCharacter, 1);
+  }
+  if (matchingTrailingDelimiterPenaltyEl) {
+    matchingTrailingDelimiterPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.trailingDelimiterPenalty, null);
+  }
+  if (matchingOtherMatchKeyPenaltyEl) {
+    matchingOtherMatchKeyPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.otherMatchKeyPenalty, null);
   }
   if (matchingRightYOffsetPenaltyEl) {
     matchingRightYOffsetPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.rightYOffsetPenalty, null);
@@ -13183,9 +13619,9 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
 
     if (part.type === 'folder') {
       return {
-        label: 'Mapp',
+        label: 'Mapp (legacy)',
         tone: 'folder',
-        title: 'Lägger till dokumentets valda mapp i mallen.',
+        title: 'Legacy-chip från äldre mallar. Använd inte detta i nya mallar.',
       };
     }
     if (part.type === 'dataField') {
@@ -13218,6 +13654,16 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
         label: 'Första tillgängliga',
         tone: 'special',
         title: 'Använder den första kandidaten som faktiskt har ett värde.',
+      };
+    }
+    if (part.type === 'ifLabels') {
+      const conditionMode = sanitizeIfLabelsMode(part.mode);
+      return {
+        label: 'Om etikett',
+        tone: 'special',
+        title: conditionMode === 'all'
+          ? 'Renderar innehåll när alla valda etiketterna finns, annars valfritt alternativt innehåll.'
+          : 'Renderar innehåll när någon av de valda etiketterna finns, annars valfritt alternativt innehåll.',
       };
     }
     return {
@@ -14259,6 +14705,9 @@ let activeEditable = null;
 
     const center = document.createElement('span');
     center.className = `filename-template-inline-token-center filename-template-inline-token-center--${meta.tone || 'data'}`;
+    if (tokenPart.type === 'ifLabels') {
+      center.classList.add('filename-template-inline-token-center--stacked');
+    }
 
     const label = document.createElement('span');
     label.className = `filename-template-inline-token filename-template-inline-token--${meta.tone || 'data'}`;
@@ -14273,7 +14722,6 @@ let activeEditable = null;
     labelTextInner.textContent = meta.label;
     labelText.appendChild(labelTextInner);
     label.appendChild(labelText);
-    center.appendChild(label);
 
     const syncPartControlChange = () => {
       writeTokenPartState(token, tokenPart);
@@ -14328,12 +14776,67 @@ let activeEditable = null;
         syncPartControlChange();
       });
       center.appendChild(separatorInput);
+    } else if (tokenPart.type === 'ifLabels') {
+      const headerRow = document.createElement('div');
+      headerRow.className = 'filename-template-inline-token-header-row';
+      headerRow.appendChild(label);
+
+      const modeSelect = document.createElement('select');
+      modeSelect.className = 'filename-template-inline-token-select filename-template-inline-token-select--mode';
+      [
+        ['any', 'Någon'],
+        ['all', 'Alla'],
+      ].forEach(([value, labelText]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = labelText;
+        modeSelect.appendChild(option);
+      });
+      modeSelect.value = sanitizeIfLabelsMode(tokenPart.mode);
+      tokenPart.mode = modeSelect.value;
+      modeSelect.title = 'Välj om någon eller alla valda etiketter måste finnas.';
+      modeSelect.addEventListener('change', () => {
+        tokenPart.mode = sanitizeIfLabelsMode(modeSelect.value);
+        syncPartControlChange();
+      });
+      headerRow.appendChild(createFloatingField('Matcha', modeSelect, 'filename-template-inline-token-floating-field filename-template-inline-token-floating-field--header'));
+      center.appendChild(headerRow);
+
+      const labelPicker = createFilenameTemplateLabelPicker(tokenPart.labelIds, (nextLabelIds) => {
+        tokenPart.labelIds = normalizeLabelIdList(nextLabelIds);
+        syncPartControlChange();
+      }, {
+        placeholder: 'Lägg till etikett...',
+      });
+      center.appendChild(createFloatingField('Etiketter', labelPicker, 'filename-template-inline-token-floating-field'));
+
+      center.appendChild(createFloatingField(
+        'Om sant',
+        buildSlotEditor(
+          tokenPart.thenParts,
+          '',
+          'filename-template-inline-token-slot--branch'
+        ),
+        'filename-template-inline-token-floating-field filename-template-inline-token-branch-field'
+      ));
+
+      center.appendChild(createFloatingField(
+        'Om falskt',
+        buildSlotEditor(
+          tokenPart.elseParts,
+          '',
+          'filename-template-inline-token-slot--branch'
+        ),
+        'filename-template-inline-token-floating-field filename-template-inline-token-branch-field'
+      ));
     } else if (tokenPart.type === 'firstAvailable') {
       center.appendChild(buildSlotEditor(
         tokenPart.parts,
         'Kandidater',
         'filename-template-inline-token-slot--candidates'
       ));
+    } else {
+      center.appendChild(label);
     }
 
     shell.appendChild(center);

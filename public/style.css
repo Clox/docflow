@@ -4172,6 +4172,10 @@ body.is-resizing-sidebar {
   cursor: text;
 }
 
+.filename-template-inline-scroll.has-floating-popover {
+  overflow: visible;
+}
+
 .filename-template-inline-flow {
   display: block;
   min-height: 42px;
@@ -4390,6 +4394,17 @@ body.is-resizing-sidebar {
   box-shadow: inset 1px 0 0 rgba(148, 163, 184, .45), inset -1px 0 0 rgba(148, 163, 184, .45);
 }
 
+.filename-template-inline-token-center--stacked {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  min-width: 260px;
+  padding-top: 4px;
+  padding-bottom: 6px;
+  border-radius: 18px;
+}
+
 .filename-template-inline-token-center--system {
   background: #f1f5f9;
   box-shadow: inset 1px 0 0 #cbd5e1, inset -1px 0 0 #cbd5e1;
@@ -4470,6 +4485,90 @@ body.is-resizing-sidebar {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.88);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.filename-template-inline-token-center .filename-template-inline-token-slot--branch.is-slot {
+  min-height: 22px;
+  width: 100%;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid rgba(100, 116, 139, .7);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.filename-template-inline-token-select--mode {
+  min-width: 96px;
+}
+
+.filename-template-inline-token-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filename-template-inline-token-header-row > .filename-template-inline-token {
+  flex: 0 0 auto;
+}
+
+.filename-template-inline-token-header-row > .filename-template-inline-token-floating-field--header {
+  flex: 0 0 112px;
+}
+
+.filename-template-inline-token-floating-field {
+  width: 100%;
+  min-width: 0;
+}
+
+.filename-template-inline-token-floating-field--header {
+  margin-top: 0;
+}
+
+.filename-template-inline-token-floating-field--header > .floating-input-label {
+  background: #fff4e7;
+}
+
+.filename-template-inline-token-floating-field > .filename-template-inline-token-select,
+.filename-template-inline-token-floating-field > .filename-template-label-picker,
+.filename-template-inline-token-floating-field > .filename-template-inline-token-slot,
+.filename-template-inline-token-floating-field > .filename-template-inline-token-slot-wrap {
+  display: block;
+  width: 100%;
+}
+
+.filename-template-inline-token-floating-field > .filename-template-inline-token-slot-wrap > .filename-template-inline-token-slot,
+.filename-template-inline-token-floating-field > .filename-template-inline-token-slot {
+  width: 100%;
+}
+
+.filename-template-label-picker {
+  display: grid;
+  grid-template-columns: minmax(124px, 156px) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.filename-template-label-picker .job-labels-combobox-list {
+  top: calc(100% + 6px);
+  bottom: auto;
+  z-index: 15;
+}
+
+.filename-template-label-picker-selected {
+  margin-top: 0;
+  gap: 6px;
+  max-height: 116px;
+  align-self: center;
+}
+
+.filename-template-label-picker-selected.is-empty {
+  min-height: 0;
+}
+
+.filename-template-label-picker-selected.is-empty,
+.filename-template-label-picker-selected .job-labels-selected-chip-text {
+  font-size: 12px;
 }
 
 .filename-template-chip {

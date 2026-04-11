@@ -108,7 +108,11 @@ try {
                         ? (string) $match['matchText']
                         : (is_string($match['raw'] ?? null) ? (string) $match['raw'] : ''),
                     'confidence' => $confidence,
+                    'baseConfidence' => is_numeric($match['baseConfidence'] ?? null) ? (float) $match['baseConfidence'] : $confidence,
+                    'finalConfidence' => is_numeric($match['finalConfidence'] ?? null) ? (float) $match['finalConfidence'] : $confidence,
                     'noisePenalty' => is_numeric($match['noisePenalty'] ?? null) ? (float) $match['noisePenalty'] : null,
+                    'trailingDelimiterPenalty' => is_numeric($match['trailingDelimiterPenalty'] ?? null) ? (float) $match['trailingDelimiterPenalty'] : null,
+                    'otherMatchKeyPenalty' => is_numeric($match['otherMatchKeyPenalty'] ?? null) ? (float) $match['otherMatchKeyPenalty'] : null,
                     'positionPenalty' => is_numeric($match['positionPenalty'] ?? null) ? (float) $match['positionPenalty'] : (is_numeric($match['directionPenalty'] ?? null) ? (float) $match['directionPenalty'] : null),
                     'positionPenaltyAxis' => is_string($match['positionPenaltyAxis'] ?? null) ? trim((string) $match['positionPenaltyAxis']) : '',
                     'mainDirection' => is_string($match['mainDirection'] ?? null) ? trim((string) $match['mainDirection']) : '',
@@ -201,7 +205,11 @@ try {
                                 ? (string) $legacyField['matchText']
                                 : ($index === 0 && is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''))),
                     'confidence' => $fallbackConfidence,
+                    'baseConfidence' => $index === 0 && is_numeric($firstMatch['baseConfidence'] ?? null) ? (float) $firstMatch['baseConfidence'] : $fallbackConfidence,
+                    'finalConfidence' => $index === 0 && is_numeric($firstMatch['finalConfidence'] ?? null) ? (float) $firstMatch['finalConfidence'] : $fallbackConfidence,
                     'noisePenalty' => $index === 0 && is_numeric($firstMatch['noisePenalty'] ?? null) ? (float) $firstMatch['noisePenalty'] : null,
+                    'trailingDelimiterPenalty' => $index === 0 && is_numeric($firstMatch['trailingDelimiterPenalty'] ?? null) ? (float) $firstMatch['trailingDelimiterPenalty'] : null,
+                    'otherMatchKeyPenalty' => $index === 0 && is_numeric($firstMatch['otherMatchKeyPenalty'] ?? null) ? (float) $firstMatch['otherMatchKeyPenalty'] : null,
                     'positionPenalty' => $index === 0 && is_numeric($firstMatch['positionPenalty'] ?? null) ? (float) $firstMatch['positionPenalty'] : ($index === 0 && is_numeric($firstMatch['directionPenalty'] ?? null) ? (float) $firstMatch['directionPenalty'] : null),
                     'positionPenaltyAxis' => $index === 0 && is_string($firstMatch['positionPenaltyAxis'] ?? null) ? trim((string) $firstMatch['positionPenaltyAxis']) : '',
                     'mainDirection' => $index === 0 && is_string($firstMatch['mainDirection'] ?? null) ? trim((string) $firstMatch['mainDirection']) : '',

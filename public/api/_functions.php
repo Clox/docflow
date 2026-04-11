@@ -835,6 +835,11 @@ function normalize_label_id_list(mixed $input): array
     return $labelIds;
 }
 
+function normalize_if_labels_mode(mixed $input): string
+{
+    return is_string($input) && trim($input) === 'all' ? 'all' : 'any';
+}
+
 function slugify_text(string $value, string $separator = '-', string $fallback = ''): string
 {
     $safeSeparator = $separator === '_' ? '_' : '-';
@@ -981,6 +986,18 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
         return [
             'type' => 'firstAvailable',
             'parts' => normalize_filename_template_candidate_parts($input['parts'] ?? [], $depth + 1),
+            'prefixParts' => $prefixParts,
+            'suffixParts' => $suffixParts,
+        ];
+    }
+
+    if ($type === 'ifLabels') {
+        return [
+            'type' => 'ifLabels',
+            'mode' => normalize_if_labels_mode($input['mode'] ?? null),
+            'labelIds' => normalize_label_id_list($input['labelIds'] ?? null),
+            'thenParts' => normalize_filename_template_parts($input['thenParts'] ?? [], $depth + 1),
+            'elseParts' => normalize_filename_template_parts($input['elseParts'] ?? [], $depth + 1),
             'prefixParts' => $prefixParts,
             'suffixParts' => $suffixParts,
         ];
@@ -2341,12 +2358,36 @@ function filename_template_part_review_label(array $part, array $nameMaps): stri
         $resolved = $nameMaps[$type][$key] ?? $key;
         $label = $resolved !== '' ? $resolved : ($type === 'systemField' ? 'Systemdatafält' : 'Datafält');
     } elseif ($type === 'folder') {
-        $label = 'Mapp';
+        $label = 'Mapp (legacy)';
     } elseif ($type === 'labels') {
         $separator = is_string($part['separator'] ?? null) ? (string) $part['separator'] : ', ';
         $label = $separator === ', '
             ? 'Etiketter'
             : sprintf('Etiketter (separator: %s)', $separator);
+    } elseif ($type === 'ifLabels') {
+        $resolvedLabelNames = [];
+        foreach (normalize_label_id_list($part['labelIds'] ?? null) as $labelId) {
+            $resolvedLabelNames[] = $nameMaps['label'][$labelId] ?? $labelId;
+        }
+        $modeLabel = normalize_if_labels_mode($part['mode'] ?? null) === 'all' ? 'alla etiketter' : 'någon etikett';
+        $thenLabel = trim(filename_template_parts_review_label(
+            is_array($part['thenParts'] ?? null) ? $part['thenParts'] : [],
+            $nameMaps
+        ));
+        $elseLabel = trim(filename_template_parts_review_label(
+            is_array($part['elseParts'] ?? null) ? $part['elseParts'] : [],
+            $nameMaps
+        ));
+        $label = 'Om etikett (' . $modeLabel . ')';
+        if ($resolvedLabelNames !== []) {
+            $label .= ': ' . implode(' / ', array_filter($resolvedLabelNames, static fn ($value): bool => is_string($value) && trim($value) !== ''));
+        }
+        if ($thenLabel !== '') {
+            $label .= ' ? ' . $thenLabel;
+        }
+        if ($elseLabel !== '') {
+            $label .= ' : ' . $elseLabel;
+        }
     } elseif ($type === 'firstAvailable') {
         $candidateLabels = [];
         foreach (is_array($part['parts'] ?? null) ? $part['parts'] : [] as $candidate) {
@@ -2395,6 +2436,7 @@ function filename_template_review_name_maps(array $activeRules, array $draftRule
 {
     $dataFieldNames = [];
     $systemFieldNames = [];
+    $labelNames = [];
     foreach ([$activeRules, $draftRules] as $rules) {
         foreach (['fields', 'predefinedFields'] as $groupKey) {
             foreach (is_array($rules[$groupKey] ?? null) ? $rules[$groupKey] : [] as $field) {
@@ -2418,11 +2460,32 @@ function filename_template_review_name_maps(array $activeRules, array $draftRule
                 $systemFieldNames[$key] = $name;
             }
         }
+        foreach (array_merge(
+            array_values(array_filter(is_array($rules['systemLabels'] ?? null) ? $rules['systemLabels'] : [], static fn ($label): bool => is_array($label))),
+            array_values(array_filter(is_array($rules['labels'] ?? null) ? $rules['labels'] : [], static fn ($label): bool => is_array($label)))
+        ) as $label) {
+            $id = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+            $name = is_string($label['name'] ?? null) ? trim((string) $label['name']) : '';
+            if ($id !== '' && $name !== '' && !isset($labelNames[$id])) {
+                $labelNames[$id] = $name;
+            }
+        }
+    }
+
+    foreach ([
+        'bankgiro_name' => 'Bankgiro-namn',
+        'plusgiro_name' => 'Plusgiro-namn',
+        'organization_number_name' => 'Org.nr.-namn',
+    ] as $key => $name) {
+        if (!isset($systemFieldNames[$key])) {
+            $systemFieldNames[$key] = $name;
+        }
     }
 
     return [
         'dataField' => $dataFieldNames,
         'systemField' => $systemFieldNames,
+        'label' => $labelNames,
     ];
 }
 
@@ -2844,6 +2907,8 @@ function default_matching_position_adjustment_settings(): array
 {
     return [
         'noisePenaltyPerCharacter' => 0.01,
+        'trailingDelimiterPenalty' => 0.25,
+        'otherMatchKeyPenalty' => 0.5,
         'rightYOffsetPenalty' => 0.25,
         'downXOffsetPenalty' => 0.25,
     ];
@@ -2886,6 +2951,16 @@ function normalize_matching_position_adjustment_settings(?array $input): array
         'noisePenaltyPerCharacter' => normalize_matching_decimal_setting(
             $source['noisePenaltyPerCharacter'] ?? $source['noise_penalty_per_character'] ?? null,
             $defaults['noisePenaltyPerCharacter']
+        ),
+        'trailingDelimiterPenalty' => normalize_matching_decimal_setting(
+            $source['trailingDelimiterPenalty'] ?? $source['trailing_delimiter_penalty'] ?? null,
+            $defaults['trailingDelimiterPenalty'],
+            null
+        ),
+        'otherMatchKeyPenalty' => normalize_matching_decimal_setting(
+            $source['otherMatchKeyPenalty'] ?? $source['other_match_key_penalty'] ?? null,
+            $defaults['otherMatchKeyPenalty'],
+            null
         ),
         'rightYOffsetPenalty' => normalize_matching_decimal_setting(
             $source['rightYOffsetPenalty'] ?? $source['right_y_offset_penalty'] ?? $source['downRightPenalty'] ?? $source['down_right_penalty'] ?? null,
@@ -7617,17 +7692,107 @@ function candidate_position_penalty_details(
     ];
 }
 
+function normalized_field_matching_text(mixed $value): string
+{
+    if (!is_scalar($value)) {
+        return '';
+    }
+
+    $text = trim((string) $value);
+    if ($text === '') {
+        return '';
+    }
+
+    return normalize_inline_whitespace(lowercase_text($text));
+}
+
+function normalized_field_matching_key_text(mixed $value): string
+{
+    $normalized = normalized_field_matching_text($value);
+    if ($normalized === '') {
+        return '';
+    }
+
+    $stripped = preg_replace('/[:;]+\s*\z/u', '', $normalized);
+    if (!is_string($stripped)) {
+        return $normalized;
+    }
+
+    return trim($stripped);
+}
+
+function candidate_trailing_delimiter_penalty(?string $candidateSpanText, array $settings): float
+{
+    $text = is_string($candidateSpanText) ? trim($candidateSpanText) : '';
+    if ($text === '') {
+        return 0.0;
+    }
+
+    if (@preg_match('/[:;]\z/u', $text) !== 1) {
+        return 0.0;
+    }
+
+    return max(0.0, (float) ($settings['trailingDelimiterPenalty'] ?? 0.0));
+}
+
+function extraction_field_match_candidate_lookup_text(array $match): string
+{
+    $candidates = [
+        is_string($match['matchText'] ?? null) ? (string) $match['matchText'] : null,
+        is_string($match['raw'] ?? null) ? (string) $match['raw'] : null,
+        is_scalar($match['value'] ?? null) ? (string) $match['value'] : null,
+    ];
+
+    foreach ($candidates as $candidate) {
+        $normalized = normalized_field_matching_key_text($candidate);
+        if ($normalized !== '') {
+            return $normalized;
+        }
+    }
+
+    return '';
+}
+
+function sort_extraction_field_matches_by_confidence(array $matches): array
+{
+    usort($matches, static function (array $left, array $right): int {
+        $leftConfidence = isset($left['finalConfidence']) && is_numeric($left['finalConfidence'])
+            ? (float) $left['finalConfidence']
+            : (isset($left['confidence']) ? (float) $left['confidence'] : (isset($left['baseConfidence']) ? (float) $left['baseConfidence'] : 0.0));
+        $rightConfidence = isset($right['finalConfidence']) && is_numeric($right['finalConfidence'])
+            ? (float) $right['finalConfidence']
+            : (isset($right['confidence']) ? (float) $right['confidence'] : (isset($right['baseConfidence']) ? (float) $right['baseConfidence'] : 0.0));
+        $confidenceCompare = $rightConfidence <=> $leftConfidence;
+        if ($confidenceCompare !== 0) {
+            return $confidenceCompare;
+        }
+
+        $lineCompare = ((int) ($left['lineIndex'] ?? PHP_INT_MAX)) <=> ((int) ($right['lineIndex'] ?? PHP_INT_MAX));
+        if ($lineCompare !== 0) {
+            return $lineCompare;
+        }
+
+        return ((int) ($left['start'] ?? PHP_INT_MAX)) <=> ((int) ($right['start'] ?? PHP_INT_MAX));
+    });
+
+    return array_values($matches);
+}
+
 function candidate_confidence_score(
     array $components
 ): float
 {
     $base = isset($components['base']) && is_numeric($components['base']) ? (float) $components['base'] : 1.0;
     $noisePenalty = isset($components['noisePenalty']) && is_numeric($components['noisePenalty']) ? (float) $components['noisePenalty'] : 0.0;
+    $trailingDelimiterPenalty = isset($components['trailingDelimiterPenalty']) && is_numeric($components['trailingDelimiterPenalty'])
+        ? (float) $components['trailingDelimiterPenalty']
+        : 0.0;
     $positionPenalty = isset($components['positionPenalty']) && is_numeric($components['positionPenalty']) ? (float) $components['positionPenalty'] : 0.0;
     $contentPenalty = isset($components['contentPenalty']) && is_numeric($components['contentPenalty']) ? (float) $components['contentPenalty'] : 0.0;
 
     $confidence = $base;
     $confidence *= max(0.0, 1.0 - clamp_confidence($noisePenalty));
+    $confidence *= max(0.0, 1.0 - clamp_confidence($trailingDelimiterPenalty));
     $confidence *= max(0.0, 1.0 - clamp_confidence($positionPenalty));
     $confidence -= max(0.0, $contentPenalty);
 
@@ -7671,6 +7836,7 @@ function candidate_confidence_components(
     ));
     $noiseCharacters = is_int($noiseDetails['characterCount'] ?? null) ? (int) $noiseDetails['characterCount'] : 0;
     $noisePenalty = min(1.0, $noiseCharacters * (float) $settings['noisePenaltyPerCharacter']);
+    $trailingDelimiterPenalty = candidate_trailing_delimiter_penalty($candidateSpanText, $settings);
 
     $positionPenaltyDetails = candidate_position_penalty_details(
         $hit,
@@ -7689,6 +7855,7 @@ function candidate_confidence_components(
     return [
         'base' => $base,
         'noisePenalty' => clamp_confidence($noisePenalty),
+        'trailingDelimiterPenalty' => max(0.0, $trailingDelimiterPenalty),
         'positionPenalty' => max(0.0, (float) ($positionPenaltyDetails['penalty'] ?? 0.0)),
         'positionPenaltyAxis' => is_string($positionPenaltyDetails['axis'] ?? null) ? (string) $positionPenaltyDetails['axis'] : null,
         'mainDirection' => is_string($positionPenaltyDetails['mainDirection'] ?? null) ? (string) $positionPenaltyDetails['mainDirection'] : null,
@@ -9275,16 +9442,24 @@ function add_extraction_field_match(
     ?string $noiseText = null,
     ?string $labelText = null,
     ?int $labelLineIndex = null,
-    ?array $noiseSegments = null
+    ?array $noiseSegments = null,
+    ?float $trailingDelimiterPenalty = null,
+    ?float $otherMatchKeyPenalty = null,
+    ?float $baseConfidence = null,
+    ?float $finalConfidence = null
 ): void {
     if ($lineIndex < 0 || $start < 0 || $value === null) {
         return;
     }
 
     $key = extraction_field_match_storage_key($lineIndex, $start, $value, $raw);
+    $resolvedBaseConfidence = clamp_confidence(is_numeric($baseConfidence) ? (float) $baseConfidence : $confidence);
+    $resolvedFinalConfidence = clamp_confidence(is_numeric($finalConfidence) ? (float) $finalConfidence : $resolvedBaseConfidence);
     $candidate = [
         'value' => $value,
-        'confidence' => clamp_confidence($confidence),
+        'baseConfidence' => $resolvedBaseConfidence,
+        'finalConfidence' => $resolvedFinalConfidence,
+        'confidence' => $resolvedFinalConfidence,
         'lineIndex' => $lineIndex,
         'source' => $source,
         'raw' => $raw,
@@ -9305,8 +9480,14 @@ function add_extraction_field_match(
     if (is_numeric($noisePenalty)) {
         $candidate['noisePenalty'] = clamp_confidence((float) $noisePenalty);
     }
+    if (is_numeric($trailingDelimiterPenalty)) {
+        $candidate['trailingDelimiterPenalty'] = max(0.0, (float) $trailingDelimiterPenalty);
+    }
     if (is_numeric($positionPenalty)) {
         $candidate['positionPenalty'] = max(0.0, (float) $positionPenalty);
+    }
+    if (is_numeric($otherMatchKeyPenalty)) {
+        $candidate['otherMatchKeyPenalty'] = max(0.0, (float) $otherMatchKeyPenalty);
     }
     if (is_string($positionPenaltyAxis) && trim($positionPenaltyAxis) !== '') {
         $candidate['positionPenaltyAxis'] = trim($positionPenaltyAxis);
@@ -9359,7 +9540,10 @@ function add_extraction_field_match(
         }
     }
 
-    if (!isset($matchesByKey[$key]) || (float) ($matchesByKey[$key]['confidence'] ?? 0.0) < $candidate['confidence']) {
+    $storedConfidence = isset($matchesByKey[$key]['finalConfidence']) && is_numeric($matchesByKey[$key]['finalConfidence'])
+        ? (float) $matchesByKey[$key]['finalConfidence']
+        : (float) ($matchesByKey[$key]['confidence'] ?? 0.0);
+    if (!isset($matchesByKey[$key]) || $storedConfidence < $candidate['finalConfidence']) {
         $matchesByKey[$key] = $candidate;
     }
 }
@@ -9377,7 +9561,13 @@ function sort_extraction_field_matches(array $matches): array
             return $startCompare;
         }
 
-        $confidenceCompare = ((float) ($right['confidence'] ?? 0.0)) <=> ((float) ($left['confidence'] ?? 0.0));
+        $leftConfidence = isset($left['finalConfidence']) && is_numeric($left['finalConfidence'])
+            ? (float) $left['finalConfidence']
+            : (float) ($left['confidence'] ?? ($left['baseConfidence'] ?? 0.0));
+        $rightConfidence = isset($right['finalConfidence']) && is_numeric($right['finalConfidence'])
+            ? (float) $right['finalConfidence']
+            : (float) ($right['confidence'] ?? ($right['baseConfidence'] ?? 0.0));
+        $confidenceCompare = $rightConfidence <=> $leftConfidence;
         if ($confidenceCompare !== 0) {
             return $confidenceCompare;
         }
@@ -9466,7 +9656,8 @@ function collect_labeled_candidate_matches(
                         is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
                         $matchedLabelText,
                         $hitIndex,
-                        is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null
+                        is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null,
+                        is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null
                     );
                 }
             }
@@ -9521,7 +9712,8 @@ function collect_labeled_candidate_matches(
                     is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
                     $matchedLabelText,
                     $hitIndex,
-                    is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null
+                    is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null,
+                    is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null
                 );
             }
         }
@@ -9585,13 +9777,130 @@ function collect_labeled_candidate_matches(
                     is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
                     $matchedLabelText,
                     $hitIndex,
-                    is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null
+                    is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null,
+                    is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null
                 );
             }
         }
     }
 
     return sort_extraction_field_matches(array_values($matchesByKey));
+}
+
+function apply_cross_matching_key_penalties(array $results, array $positionSettings = []): array
+{
+    $settings = normalize_matching_position_adjustment_settings($positionSettings);
+    $weight = max(0.0, (float) ($settings['otherMatchKeyPenalty'] ?? 0.0));
+
+    $labelsByText = [];
+    foreach ($results as $fieldKey => $result) {
+        if (!is_array($result) || !is_array($result['matches'] ?? null)) {
+            continue;
+        }
+
+        foreach (array_values($result['matches']) as $matchIndex => $match) {
+            if (!is_array($match)) {
+                continue;
+            }
+
+            $baseConfidence = isset($match['baseConfidence']) && is_numeric($match['baseConfidence'])
+                ? clamp_confidence((float) $match['baseConfidence'])
+                : clamp_confidence((float) ($match['confidence'] ?? 0.0));
+            $labelText = normalized_field_matching_key_text($match['labelText'] ?? null);
+            if ($labelText === '') {
+                continue;
+            }
+
+            $matchId = (string) $fieldKey . '|' . (string) $matchIndex;
+            $labelsByText[$labelText][] = [
+                'id' => $matchId,
+                'baseConfidence' => $baseConfidence,
+            ];
+        }
+    }
+
+    foreach ($results as $fieldKey => &$result) {
+        if (!is_array($result) || !is_array($result['matches'] ?? null)) {
+            continue;
+        }
+
+        foreach (array_values($result['matches']) as $matchIndex => $match) {
+            if (!is_array($match)) {
+                continue;
+            }
+
+            $baseConfidence = isset($match['baseConfidence']) && is_numeric($match['baseConfidence'])
+                ? clamp_confidence((float) $match['baseConfidence'])
+                : clamp_confidence((float) ($match['confidence'] ?? 0.0));
+            $match['baseConfidence'] = $baseConfidence;
+            $match['finalConfidence'] = $baseConfidence;
+            $match['confidence'] = $baseConfidence;
+
+            if ($weight <= 0.0 || $labelsByText === []) {
+                $result['matches'][$matchIndex] = $match;
+                continue;
+            }
+
+            $candidateText = extraction_field_match_candidate_lookup_text($match);
+            if ($candidateText === '' || !isset($labelsByText[$candidateText])) {
+                $result['matches'][$matchIndex] = $match;
+                continue;
+            }
+
+            $matchId = (string) $fieldKey . '|' . (string) $matchIndex;
+            $otherConfidence = 0.0;
+            foreach ($labelsByText[$candidateText] as $labelMatch) {
+                if (!is_array($labelMatch) || ($labelMatch['id'] ?? '') === $matchId) {
+                    continue;
+                }
+                $otherConfidence = max($otherConfidence, clamp_confidence((float) ($labelMatch['baseConfidence'] ?? 0.0)));
+            }
+
+            if ($otherConfidence <= 0.0) {
+                $result['matches'][$matchIndex] = $match;
+                continue;
+            }
+
+            $penalty = max(0.0, $otherConfidence * $weight);
+            $match['otherMatchKeyPenalty'] = $penalty;
+            $match['finalConfidence'] = clamp_confidence(
+                $baseConfidence
+                * max(0.0, 1.0 - clamp_confidence($penalty))
+            );
+            $match['confidence'] = $match['finalConfidence'];
+            $result['matches'][$matchIndex] = $match;
+        }
+
+        $rankedMatches = sort_extraction_field_matches_by_confidence(array_values(array_filter(
+            $result['matches'],
+            static fn ($match): bool => is_array($match)
+        )));
+        $result['matches'] = $rankedMatches;
+        $result['values'] = array_values(array_map(
+            static fn (array $match): mixed => $match['value'] ?? null,
+            $rankedMatches
+        ));
+        $primaryMatch = is_array($rankedMatches[0] ?? null) ? $rankedMatches[0] : null;
+        if (is_array($primaryMatch)) {
+            $result['value'] = $primaryMatch['value'] ?? null;
+            $result['baseConfidence'] = isset($primaryMatch['baseConfidence']) ? clamp_confidence((float) $primaryMatch['baseConfidence']) : 0.0;
+            $result['finalConfidence'] = isset($primaryMatch['finalConfidence']) ? clamp_confidence((float) $primaryMatch['finalConfidence']) : (isset($primaryMatch['confidence']) ? clamp_confidence((float) $primaryMatch['confidence']) : 0.0);
+            $result['confidence'] = $result['finalConfidence'];
+            $result['lineIndex'] = is_int($primaryMatch['lineIndex'] ?? null) ? (int) $primaryMatch['lineIndex'] : null;
+            $result['source'] = is_string($primaryMatch['source'] ?? null) ? (string) $primaryMatch['source'] : 'none';
+            $result['raw'] = is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null;
+            $result['matchText'] = is_string($primaryMatch['matchText'] ?? null)
+                ? (string) $primaryMatch['matchText']
+                : (is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null);
+        } else {
+            $result['baseConfidence'] = 0.0;
+            $result['finalConfidence'] = 0.0;
+            $result['confidence'] = 0.0;
+        }
+    }
+    unset($result);
+
+    return $results;
 }
 
 function document_date_result_matches(array $result): array
@@ -10078,6 +10387,7 @@ function extract_configured_text_field_results(
             $resolvedMatches[] = $resolvedMatch;
         }
 
+        $resolvedMatches = sort_extraction_field_matches_by_confidence($resolvedMatches);
         $resolvedValues = array_values(array_map(
             static fn (array $match): mixed => $match['value'] ?? null,
             $resolvedMatches
@@ -10094,6 +10404,12 @@ function extract_configured_text_field_results(
             'confidence' => is_array($primaryMatch) && isset($primaryMatch['confidence'])
                 ? clamp_confidence((float) $primaryMatch['confidence'])
                 : 0.0,
+            'baseConfidence' => is_array($primaryMatch) && isset($primaryMatch['baseConfidence'])
+                ? clamp_confidence((float) $primaryMatch['baseConfidence'])
+                : (is_array($primaryMatch) && isset($primaryMatch['confidence']) ? clamp_confidence((float) $primaryMatch['confidence']) : 0.0),
+            'finalConfidence' => is_array($primaryMatch) && isset($primaryMatch['finalConfidence'])
+                ? clamp_confidence((float) $primaryMatch['finalConfidence'])
+                : (is_array($primaryMatch) && isset($primaryMatch['confidence']) ? clamp_confidence((float) $primaryMatch['confidence']) : 0.0),
             'lineIndex' => is_array($primaryMatch) && is_int($primaryMatch['lineIndex'] ?? null) ? (int) $primaryMatch['lineIndex'] : null,
             'source' => is_array($primaryMatch) && is_string($primaryMatch['source'] ?? null) ? (string) $primaryMatch['source'] : 'none',
             'raw' => is_array($primaryMatch) && is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null,
@@ -10109,7 +10425,7 @@ function extract_configured_text_field_results(
         }
     }
 
-    return $results;
+    return apply_cross_matching_key_penalties($results, $positionSettings);
 }
 
 function simplify_extraction_field_values(array $results): array
@@ -10159,6 +10475,15 @@ function simplify_extraction_field_meta(array $results): array
         if (array_key_exists('matchedRuleSetIndex', $result) && is_int($result['matchedRuleSetIndex'])) {
             $fieldMeta['matchedRuleSetIndex'] = (int) $result['matchedRuleSetIndex'];
         }
+        if (isset($result['confidence'])) {
+            $fieldMeta['confidence'] = clamp_confidence((float) $result['confidence']);
+        }
+        if (isset($result['baseConfidence'])) {
+            $fieldMeta['baseConfidence'] = clamp_confidence((float) $result['baseConfidence']);
+        }
+        if (isset($result['finalConfidence'])) {
+            $fieldMeta['finalConfidence'] = clamp_confidence((float) $result['finalConfidence']);
+        }
         if (is_array($result['matches'] ?? null)) {
             $fieldMeta['matches'] = array_values(array_map(
                 static function (array $match): array {
@@ -10170,6 +10495,8 @@ function simplify_extraction_field_meta(array $results): array
                         'labelText' => is_string($match['labelText'] ?? null) ? trim((string) $match['labelText']) : null,
                         'between' => is_string($match['between'] ?? null) ? (string) $match['between'] : null,
                         'confidence' => isset($match['confidence']) ? clamp_confidence((float) $match['confidence']) : 0.0,
+                        'baseConfidence' => isset($match['baseConfidence']) ? clamp_confidence((float) $match['baseConfidence']) : (isset($match['confidence']) ? clamp_confidence((float) $match['confidence']) : 0.0),
+                        'finalConfidence' => isset($match['finalConfidence']) ? clamp_confidence((float) $match['finalConfidence']) : (isset($match['confidence']) ? clamp_confidence((float) $match['confidence']) : 0.0),
                         'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : null,
                         'labelLineIndex' => is_int($match['labelLineIndex'] ?? null) ? (int) $match['labelLineIndex'] : null,
                         'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : null,
@@ -10178,6 +10505,8 @@ function simplify_extraction_field_meta(array $results): array
                         'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : null,
                         'score' => is_numeric($match['score'] ?? null) ? (float) $match['score'] : null,
                         'noisePenalty' => is_numeric($match['noisePenalty'] ?? null) ? clamp_confidence((float) $match['noisePenalty']) : null,
+                        'trailingDelimiterPenalty' => is_numeric($match['trailingDelimiterPenalty'] ?? null) ? max(0.0, (float) $match['trailingDelimiterPenalty']) : null,
+                        'otherMatchKeyPenalty' => is_numeric($match['otherMatchKeyPenalty'] ?? null) ? max(0.0, (float) $match['otherMatchKeyPenalty']) : null,
                         'positionPenalty' => is_numeric($match['positionPenalty'] ?? null) ? max(0.0, (float) $match['positionPenalty']) : (is_numeric($match['directionPenalty'] ?? null) ? max(0.0, (float) $match['directionPenalty']) : null),
                         'positionPenaltyAxis' => is_string($match['positionPenaltyAxis'] ?? null) ? trim((string) $match['positionPenaltyAxis']) : null,
                         'mainDirection' => is_string($match['mainDirection'] ?? null) ? trim((string) $match['mainDirection']) : null,
@@ -10373,6 +10702,37 @@ function evaluate_filename_template_parts_backend(array $parts, array $fieldValu
             continue;
         }
 
+        if ($type === 'ifLabels') {
+            $selectedLabelIds = array_values(array_filter(array_map(
+                static fn ($value): string => is_scalar($value) ? trim((string) $value) : '',
+                is_array($fieldValues['__labelIds'] ?? null) ? $fieldValues['__labelIds'] : []
+            ), static fn (string $value): bool => $value !== ''));
+            $selectedLabelIds = array_values(array_unique($selectedLabelIds));
+            $conditionLabelIds = normalize_label_id_list($part['labelIds'] ?? null);
+            $mode = normalize_if_labels_mode($part['mode'] ?? null);
+            $conditionMatched = $conditionLabelIds !== []
+                && ($mode === 'all'
+                    ? count(array_diff($conditionLabelIds, $selectedLabelIds)) === 0
+                    : count(array_intersect($conditionLabelIds, $selectedLabelIds)) > 0);
+            $branchParts = $conditionMatched
+                ? (is_array($part['thenParts'] ?? null) ? $part['thenParts'] : [])
+                : (is_array($part['elseParts'] ?? null) ? $part['elseParts'] : []);
+            $resolved = evaluate_filename_template_parts_backend($branchParts, $fieldValues);
+            if ($resolved === '') {
+                continue;
+            }
+            $result .= evaluate_filename_template_parts_backend(
+                is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [],
+                $fieldValues
+            );
+            $result .= $resolved;
+            $result .= evaluate_filename_template_parts_backend(
+                is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [],
+                $fieldValues
+            );
+            continue;
+        }
+
         if ($type === 'firstAvailable') {
             $resolved = '';
             foreach (is_array($part['parts'] ?? null) ? $part['parts'] : [] as $candidatePart) {
@@ -10440,6 +10800,108 @@ function build_auto_archiving_filename_label_names(array $autoResult, array $rul
     return array_values(array_filter($labelNames, static fn (string $value): bool => $value !== ''));
 }
 
+function auto_archiving_field_string_values(array $fields, string $key): array
+{
+    return array_values(array_filter(array_map(
+        static fn ($value): string => is_scalar($value) ? trim((string) $value) : '',
+        normalize_auto_archiving_field_value_list($fields[$key] ?? null)
+    ), static fn (string $value): bool => $value !== ''));
+}
+
+function auto_archiving_sender_payment_name(?array $sender, array $allFields, string $type): ?string
+{
+    $values = auto_archiving_field_string_values($allFields, $type === 'plusgiro' ? 'plusgiro' : 'bankgiro');
+    if ($values === []) {
+        return null;
+    }
+
+    foreach ($values as $value) {
+        $observed = observed_sender_payment_summary_row($type, $value);
+        $observedName = is_string($observed['payeeName'] ?? null) ? trim((string) $observed['payeeName']) : '';
+        if ($observedName !== '') {
+            return $observedName;
+        }
+    }
+
+    $paymentRows = is_array($sender['paymentNumbers'] ?? null) ? $sender['paymentNumbers'] : [];
+    foreach ($values as $value) {
+        $normalizedValue = $type === 'plusgiro'
+            ? \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($value)
+            : \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($value);
+        if ($normalizedValue === null) {
+            $normalizedValue = preg_replace('/\D+/', '', $value);
+        }
+        if ($normalizedValue === null) {
+            continue;
+        }
+
+        foreach ($paymentRows as $paymentRow) {
+            if (!is_array($paymentRow)) {
+                continue;
+            }
+            $paymentType = is_string($paymentRow['type'] ?? null) ? trim(strtolower((string) $paymentRow['type'])) : 'bankgiro';
+            if ($paymentType !== $type) {
+                continue;
+            }
+            $normalizedRowValue = $paymentType === 'plusgiro'
+                ? \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro((string) ($paymentRow['number'] ?? ''))
+                : \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro((string) ($paymentRow['number'] ?? ''));
+            if ($normalizedRowValue === null) {
+                $normalizedRowValue = preg_replace('/\D+/', '', (string) ($paymentRow['number'] ?? ''));
+            }
+            $payeeName = is_string($paymentRow['payeeName'] ?? null) ? trim((string) $paymentRow['payeeName']) : '';
+            if ($normalizedRowValue !== null && $normalizedRowValue === $normalizedValue && $payeeName !== '') {
+                return $payeeName;
+            }
+        }
+    }
+
+    return null;
+}
+
+function auto_archiving_sender_organization_name(?array $sender, array $allFields): ?string
+{
+    $values = auto_archiving_field_string_values($allFields, 'organisationsnummer');
+    if ($values === []) {
+        return null;
+    }
+
+    foreach ($values as $value) {
+        $observed = observed_sender_organization_summary_row($value);
+        $observedName = is_string($observed['organizationName'] ?? null) ? trim((string) $observed['organizationName']) : '';
+        if ($observedName !== '') {
+            return $observedName;
+        }
+    }
+
+    $organizationRows = is_array($sender['organizationNumbers'] ?? null) ? $sender['organizationNumbers'] : [];
+    foreach ($values as $value) {
+        $normalizedValue = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($value);
+        if ($normalizedValue === null) {
+            $normalizedValue = preg_replace('/\D+/', '', $value);
+        }
+        if ($normalizedValue === null) {
+            continue;
+        }
+
+        foreach ($organizationRows as $organizationRow) {
+            if (!is_array($organizationRow)) {
+                continue;
+            }
+            $normalizedRowValue = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber((string) ($organizationRow['organizationNumber'] ?? ''));
+            if ($normalizedRowValue === null) {
+                $normalizedRowValue = preg_replace('/\D+/', '', (string) ($organizationRow['organizationNumber'] ?? ''));
+            }
+            $organizationName = is_string($organizationRow['organizationName'] ?? null) ? trim((string) $organizationRow['organizationName']) : '';
+            if ($normalizedRowValue !== null && $normalizedRowValue === $normalizedValue && $organizationName !== '') {
+                return $organizationName;
+            }
+        }
+    }
+
+    return null;
+}
+
 function build_auto_archiving_filename_field_values(array $autoResult, array $senders, array $foldersById, array $rules): array
 {
     $values = [];
@@ -10467,6 +10929,9 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
     $setValue($values, 'client', $clientId);
     $setValue($values, 'main_client', $clientId);
     $setValue($values, 'sender', is_array($sender) ? ($sender['name'] ?? null) : null);
+    $setValue($values, 'bankgiro_name', auto_archiving_sender_payment_name($sender, $allFields, 'bankgiro'));
+    $setValue($values, 'plusgiro_name', auto_archiving_sender_payment_name($sender, $allFields, 'plusgiro'));
+    $setValue($values, 'organization_number_name', auto_archiving_sender_organization_name($sender, $allFields));
 
     if (array_key_exists('amount', $allFields)) {
         $amount = first_auto_archiving_field_value($allFields['amount']);
@@ -10507,6 +10972,13 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
     $labelNames = build_auto_archiving_filename_label_names($autoResult, $rules);
     if ($labelNames !== []) {
         $values['__labels'] = $labelNames;
+    }
+    $labelIds = array_values(array_filter(array_map(
+        static fn ($value): string => is_string($value) ? trim((string) $value) : '',
+        is_array($autoResult['labels'] ?? null) ? $autoResult['labels'] : []
+    ), static fn (string $value): bool => $value !== ''));
+    if ($labelIds !== []) {
+        $values['__labelIds'] = array_values(array_unique($labelIds));
     }
 
     return $values;

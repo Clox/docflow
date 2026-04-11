@@ -372,12 +372,26 @@
     <h3>Textmatchning</h3>
     <div class="matching-threshold-section">
       <h4>Positionsbaserad säkerhetsjustering</h4>
-      <p>Hur säkerheten justeras utifrån brus mellan nyckel och värde samt deras axelbaserade positionsavvikelse i dokumentet.</p>
+      <p>Hur säkerheten justeras utifrån brus, avslutstecken, nyckelkrockar mellan matchningar och axelbaserad positionsavvikelse i dokumentet.</p>
       <div class="matching-threshold-row">
         <div class="matching-threshold-field">
           <label class="settings-label" for="matching-noise-penalty">Straff per brus-tecken</label>
           <div class="matching-percent-field">
             <input id="matching-noise-penalty" type="number" min="0" max="100" step="0.1" inputmode="decimal">
+            <span>%</span>
+          </div>
+        </div>
+        <div class="matching-threshold-field">
+          <label class="settings-label" for="matching-trailing-delimiter-penalty">Straff när värdet slutar på kolon eller semikolon</label>
+          <div class="matching-percent-field">
+            <input id="matching-trailing-delimiter-penalty" type="number" min="0" step="0.1" inputmode="decimal">
+            <span>%</span>
+          </div>
+        </div>
+        <div class="matching-threshold-field">
+          <label class="settings-label" for="matching-other-match-key-penalty">Straff när värdet också är nyckel i annan matching</label>
+          <div class="matching-percent-field">
+            <input id="matching-other-match-key-penalty" type="number" min="0" step="0.1" inputmode="decimal">
             <span>%</span>
           </div>
         </div>
