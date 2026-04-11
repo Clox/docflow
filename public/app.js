@@ -7186,29 +7186,25 @@ function escapeHtml(text) {
     .replace(/>/g, '&gt;');
 }
 
+function escapeRegexPattern(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function whitespaceFlexibleRegexPattern(value) {
+  return String(value || '').replace(/\s+/gu, '\\s+');
+}
+
+function buildOcrSearchRegex(query, useRegex) {
+  const source = useRegex ? String(query || '') : escapeRegexPattern(query);
+  return new RegExp(whitespaceFlexibleRegexPattern(source), 'gimu');
+}
+
 function buildOcrSearchMatches(text, query, useRegex) {
   if (!query) {
     return [];
   }
 
-  if (!useRegex) {
-    const matches = [];
-    let startIndex = 0;
-    while (startIndex <= text.length) {
-      const foundIndex = text.indexOf(query, startIndex);
-      if (foundIndex < 0) {
-        break;
-      }
-      matches.push({
-        start: foundIndex,
-        end: foundIndex + query.length
-      });
-      startIndex = foundIndex + Math.max(query.length, 1);
-    }
-    return matches;
-  }
-
-  const regex = new RegExp(query, 'gm');
+  const regex = buildOcrSearchRegex(query, useRegex);
   const matches = [];
   let found;
   while ((found = regex.exec(text)) !== null) {
@@ -10030,6 +10026,7 @@ function sanitizeRule(rule) {
   return {
     type,
     text: (type === 'text' || type === 'sender_name_contains') && typeof input.text === 'string' ? input.text : '',
+    isRegex: type === 'text' && input.isRegex === true,
     senderId: type === 'sender_is' && Number.isInteger(senderId) && senderId > 0 ? senderId : null,
     field: type === 'field_exists' && typeof input.field === 'string' ? input.field : '',
     score: sanitizePositiveInt(input.score, 1)
@@ -10503,6 +10500,7 @@ function defaultExtractionFieldRuleSet() {
   return {
     requiresSearchTerms: true,
     searchTerms: [''],
+    isRegex: false,
     valuePattern: '',
     normalizationType: 'none',
     normalizationChars: '',
@@ -10571,6 +10569,7 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
       ? input.requiresSearchTerms !== false
       : searchTerms.length > 0,
     searchTerms,
+    isRegex: hasExplicitRuleSet ? input.isRegex === true : legacy.isRegex === true,
     valuePattern,
     normalizationType: sanitizeExtractionFieldNormalizationType(
       hasExplicitRuleSet ? input.normalizationType : legacy.normalizationType
@@ -12124,6 +12123,20 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       searchTermsField.appendChild(searchTermsList);
       ruleFields.appendChild(searchTermsField);
 
+      const searchRegexLabel = document.createElement('label');
+      searchRegexLabel.className = 'extraction-field-rule-set-toggle';
+      const searchRegexCheckbox = document.createElement('input');
+      searchRegexCheckbox.type = 'checkbox';
+      searchRegexCheckbox.checked = ruleSet.isRegex === true;
+      const searchRegexText = document.createElement('span');
+      searchRegexText.textContent = 'Sökord är regex';
+      searchRegexLabel.appendChild(searchRegexCheckbox);
+      searchRegexLabel.appendChild(searchRegexText);
+      const searchRegexField = document.createElement('div');
+      searchRegexField.className = 'floating-input-group extraction-field-rule-set-toggle-field';
+      searchRegexField.appendChild(searchRegexLabel);
+      ruleFields.appendChild(searchRegexField);
+
       const valuePatternInput = document.createElement('input');
       valuePatternInput.type = 'text';
       valuePatternInput.placeholder = 'Ex: "\\d{6}[- ]?\\d{4}"';
@@ -12165,14 +12178,17 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const syncRuleSetUi = () => {
         const normalizationType = sanitizeExtractionFieldNormalizationType(normalizationTypeSelect.value);
         collection[index].ruleSets[ruleSetIndex].requiresSearchTerms = requiresSearchTermsCheckbox.checked;
+        collection[index].ruleSets[ruleSetIndex].isRegex = searchRegexCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].normalizationType = normalizationType;
         collection[index].ruleSets[ruleSetIndex].normalizationChars = normalizationCharsInput.value;
         searchTermsField.hidden = !requiresSearchTermsCheckbox.checked;
+        searchRegexField.hidden = !requiresSearchTermsCheckbox.checked;
         normalizationCharsField.hidden = normalizationType === 'none';
         updateSettingsActionButtons();
       };
 
       requiresSearchTermsCheckbox.addEventListener('change', syncRuleSetUi);
+      searchRegexCheckbox.addEventListener('change', syncRuleSetUi);
       normalizationTypeSelect.addEventListener('change', syncRuleSetUi);
       normalizationCharsInput.addEventListener('input', syncRuleSetUi);
 
@@ -12427,6 +12443,7 @@ function serializeLabelRuleForClipboard(rule) {
   return {
     type: 'text',
     text: sanitized.text,
+    isRegex: sanitized.isRegex === true,
     score: sanitized.score
   };
 }
@@ -12786,6 +12803,29 @@ function renderSingleLabelEditor(container, options = {}) {
       ruleFields.appendChild(createFloatingField('Fält', fieldSelect));
     } else {
       ruleFields.appendChild(createFloatingField(rule.type === 'sender_name_contains' ? 'Text' : 'Regeltext', textInput));
+      if (rule.type === 'text') {
+        const regexLabel = document.createElement('label');
+        regexLabel.className = 'extraction-field-rule-set-toggle';
+        const regexCheckbox = document.createElement('input');
+        regexCheckbox.type = 'checkbox';
+        regexCheckbox.checked = rule.isRegex === true;
+        const regexText = document.createElement('span');
+        regexText.textContent = 'Regex';
+        regexLabel.appendChild(regexCheckbox);
+        regexLabel.appendChild(regexText);
+        const regexField = document.createElement('div');
+        regexField.className = 'floating-input-group extraction-field-rule-set-toggle-field';
+        regexField.appendChild(regexLabel);
+        ruleFields.appendChild(regexField);
+        regexCheckbox.addEventListener('change', () => {
+          const draft = currentLabelDraftForEditor(options);
+          if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
+            return;
+          }
+          draft.rules[ruleIndex].isRegex = regexCheckbox.checked;
+          updateSettingsActionButtons();
+        });
+      }
     }
     ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));
     ruleFields.appendChild(removeRuleButton);
