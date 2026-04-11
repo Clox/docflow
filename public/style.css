@@ -4172,10 +4172,6 @@ body.is-resizing-sidebar {
   cursor: text;
 }
 
-.filename-template-inline-scroll.has-floating-popover {
-  overflow: visible;
-}
-
 .filename-template-inline-flow {
   display: block;
   min-height: 42px;
@@ -4530,10 +4526,14 @@ body.is-resizing-sidebar {
 }
 
 .filename-template-inline-token-floating-field > .filename-template-inline-token-select,
-.filename-template-inline-token-floating-field > .filename-template-label-picker,
 .filename-template-inline-token-floating-field > .filename-template-inline-token-slot,
 .filename-template-inline-token-floating-field > .filename-template-inline-token-slot-wrap {
   display: block;
+  width: 100%;
+}
+
+.filename-template-inline-token-floating-field > .filename-template-label-picker {
+  display: flex;
   width: 100%;
 }
 
@@ -4543,19 +4543,33 @@ body.is-resizing-sidebar {
 }
 
 .filename-template-label-picker {
-  display: grid;
-  grid-template-columns: minmax(124px, 156px) minmax(0, 1fr);
+  display: flex;
+  flex-wrap: nowrap;
   align-items: start;
   gap: 8px;
+  min-width: 0;
+}
+
+.filename-template-label-picker-combobox {
+  flex: 0 0 148px;
+  min-width: 148px;
+  max-width: 148px;
 }
 
 .filename-template-label-picker .job-labels-combobox-list {
-  top: calc(100% + 6px);
+  top: 0;
+  left: 0;
+  right: auto;
   bottom: auto;
-  z-index: 15;
+  min-width: 260px;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 48px));
+  z-index: 1000;
 }
 
 .filename-template-label-picker-selected {
+  flex: 1 1 auto;
+  min-width: 0;
   margin-top: 0;
   gap: 6px;
   max-height: 116px;

@@ -11049,13 +11049,57 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
 
   const selected = document.createElement('div');
   selected.className = 'job-labels-selected filename-template-label-picker-selected';
+  let listPortalMounted = false;
+  let detachFloatingListeners = null;
 
-  const syncScrollPopoverState = () => {
-    const scrollContainer = wrapper.closest('.filename-template-inline-scroll');
-    if (!(scrollContainer instanceof HTMLElement)) {
+  const positionFloatingList = () => {
+    if (!(document.body instanceof HTMLElement) || !listPortalMounted) {
       return;
     }
-    scrollContainer.classList.toggle('has-floating-popover', state.dropdownOpen === true);
+    const rect = combobox.getBoundingClientRect();
+    list.style.position = 'fixed';
+    list.style.top = `${Math.round(rect.bottom + 6)}px`;
+    list.style.left = `${Math.round(rect.left)}px`;
+    list.style.right = 'auto';
+    list.style.bottom = 'auto';
+    list.style.minWidth = `${Math.max(Math.round(rect.width), 260)}px`;
+    list.style.maxWidth = `min(420px, calc(100vw - 48px))`;
+    list.style.zIndex = '1000';
+  };
+
+  const mountFloatingList = () => {
+    if (!(document.body instanceof HTMLElement)) {
+      return;
+    }
+    if (!listPortalMounted) {
+      document.body.appendChild(list);
+      listPortalMounted = true;
+    }
+    positionFloatingList();
+    if (!detachFloatingListeners) {
+      const reposition = () => {
+        if (state.dropdownOpen) {
+          positionFloatingList();
+        }
+      };
+      window.addEventListener('resize', reposition);
+      window.addEventListener('scroll', reposition, true);
+      detachFloatingListeners = () => {
+        window.removeEventListener('resize', reposition);
+        window.removeEventListener('scroll', reposition, true);
+      };
+    }
+  };
+
+  const unmountFloatingList = () => {
+    if (detachFloatingListeners) {
+      detachFloatingListeners();
+      detachFloatingListeners = null;
+    }
+    if (listPortalMounted && list.parentElement) {
+      list.parentElement.removeChild(list);
+    }
+    listPortalMounted = false;
   };
 
   const filteredOptions = () => {
@@ -11137,6 +11181,7 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
     list.replaceChildren();
     list.classList.toggle('is-open', state.dropdownOpen);
     if (state.dropdownOpen) {
+      mountFloatingList();
       if (optionsList.length < 1) {
         const emptyEl = document.createElement('div');
         emptyEl.className = 'job-labels-combobox-empty';
@@ -11171,10 +11216,12 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
           list.appendChild(optionButton);
         });
       }
+      positionFloatingList();
+    } else {
+      unmountFloatingList();
     }
 
     syncActiveDescendant(optionsList);
-    syncScrollPopoverState();
   };
 
   input.addEventListener('focus', () => {
@@ -11236,7 +11283,7 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
     });
   });
 
-  combobox.append(input, list);
+  combobox.appendChild(input);
   wrapper.append(combobox, selected);
   render();
   return wrapper;
