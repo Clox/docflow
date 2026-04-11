@@ -203,10 +203,7 @@
           </div>
           <div id="ocr-search-bar" class="ocr-search-bar hidden">
             <input id="ocr-search-input" type="text" placeholder="Sök i OCR">
-            <label class="ocr-search-toggle" for="ocr-search-regex">
-              <input id="ocr-search-regex" type="checkbox">
-              <span>Regex</span>
-            </label>
+            <input id="ocr-search-regex" type="checkbox" hidden>
             <button id="ocr-search-prev" type="button" aria-label="Föregående träff">↑</button>
             <button id="ocr-search-next" type="button" aria-label="Nästa träff">↓</button>
             <span id="ocr-search-status" class="ocr-search-status"></span>

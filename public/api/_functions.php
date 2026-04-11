@@ -1208,6 +1208,63 @@ function normalize_extraction_field_aliases(mixed $input, string $legacyFallback
     return $aliases;
 }
 
+function normalize_extraction_field_search_term_item(mixed $input, bool $legacyIsRegex = false): ?array
+{
+    $text = '';
+    $isRegex = $legacyIsRegex;
+
+    if (is_array($input)) {
+        $text = is_string($input['text'] ?? null)
+            ? (string) $input['text']
+            : (is_string($input['value'] ?? null) ? (string) $input['value'] : '');
+        $isRegex = normalize_extraction_field_is_regex($input['isRegex'] ?? $legacyIsRegex);
+    } elseif (is_string($input) || is_numeric($input)) {
+        $text = (string) $input;
+    }
+
+    $text = normalize_inline_whitespace($text);
+    if ($text === '') {
+        return null;
+    }
+
+    return [
+        'text' => $text,
+        'isRegex' => $isRegex,
+    ];
+}
+
+function normalize_extraction_field_search_terms(mixed $input, bool $legacyIsRegex = false, string $legacyFallback = ''): array
+{
+    $values = [];
+    if (is_array($input)) {
+        $values = $input;
+    } elseif (is_string($input) || is_numeric($input)) {
+        $values = [(string) $input];
+    }
+
+    $searchTerms = [];
+    $seen = [];
+    foreach ($values as $value) {
+        $term = normalize_extraction_field_search_term_item($value, $legacyIsRegex);
+        if (!is_array($term)) {
+            continue;
+        }
+        $key = extraction_field_alias_key((string) $term['text']) . '|' . (($term['isRegex'] ?? false) === true ? '1' : '0');
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $searchTerms[] = $term;
+    }
+
+    $fallback = normalize_extraction_field_search_term_item($legacyFallback, $legacyIsRegex);
+    if ($searchTerms === [] && is_array($fallback)) {
+        $searchTerms[] = $fallback;
+    }
+
+    return $searchTerms;
+}
+
 function normalize_extraction_field_is_regex(mixed $value): bool
 {
     return $value === true || $value === 1 || $value === '1';
@@ -1252,11 +1309,12 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             || $row['requiresSearchTerms'] === true
             || $row['requiresSearchTerms'] === 1
             || $row['requiresSearchTerms'] === '1';
-        $searchTerms = normalize_extraction_field_aliases($row['searchTerms'] ?? null);
+        $legacyIsRegex = normalize_extraction_field_is_regex($row['isRegex'] ?? false);
+        $searchTerms = normalize_extraction_field_search_terms($row['searchTerms'] ?? null, $legacyIsRegex);
         $normalized[] = default_extraction_field_rule_set([
             'requiresSearchTerms' => $requiresSearchTerms,
             'searchTerms' => $searchTerms,
-            'isRegex' => normalize_extraction_field_is_regex($row['isRegex'] ?? false),
+            'isRegex' => false,
             'valuePattern' => is_string($row['valuePattern'] ?? null)
                 ? trim((string) $row['valuePattern'])
                 : (
@@ -1277,13 +1335,14 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
     $legacyPattern = is_string($legacy['searchString'] ?? null)
         ? trim((string) $legacy['searchString'])
         : (is_string($legacy['query'] ?? null) ? trim((string) $legacy['query']) : '');
-    $legacyAliases = normalize_extraction_field_aliases($legacy['aliases'] ?? null, $legacyPattern);
+    $legacyIsRegex = normalize_extraction_field_is_regex($legacy['isRegex'] ?? false);
+    $legacyAliases = normalize_extraction_field_search_terms($legacy['aliases'] ?? null, $legacyIsRegex, $legacyPattern);
     $requiresSearchTerms = $legacyAliases !== [];
     if ($legacyPattern !== '' || $legacyAliases !== [] || $legacy !== []) {
         return [default_extraction_field_rule_set([
             'requiresSearchTerms' => $requiresSearchTerms,
             'searchTerms' => $requiresSearchTerms ? $legacyAliases : [],
-            'isRegex' => normalize_extraction_field_is_regex($legacy['isRegex'] ?? false),
+            'isRegex' => false,
             'valuePattern' => $legacyPattern,
             'normalizationType' => normalize_extraction_field_normalization_type($legacy['normalizationType'] ?? null),
             'normalizationChars' => normalize_extraction_field_normalization_chars($legacy['normalizationChars'] ?? null),
@@ -6647,17 +6706,28 @@ function find_label_hits(array $lines, array $labels, array $replacementMap, boo
 {
     $compiled = [];
     foreach ($labels as $label) {
-        if (!is_string($label)) {
+        $labelText = '';
+        $labelIsRegex = $isRegex;
+        if (is_array($label)) {
+            $labelText = is_string($label['text'] ?? null)
+                ? (string) $label['text']
+                : (is_string($label['label'] ?? null) ? (string) $label['label'] : '');
+            $labelIsRegex = normalize_extraction_field_is_regex($label['isRegex'] ?? $isRegex);
+        } elseif (is_string($label) || is_numeric($label)) {
+            $labelText = (string) $label;
+        }
+
+        if ($labelText === '') {
             continue;
         }
 
-        $pattern = build_data_field_search_term_regex($label, $replacementMap, $isRegex);
+        $pattern = build_data_field_search_term_regex($labelText, $replacementMap, $labelIsRegex);
         if (!is_string($pattern)) {
             continue;
         }
 
         $compiled[] = [
-            'label' => $label,
+            'label' => $labelText,
             'pattern' => $pattern,
         ];
     }
@@ -9665,14 +9735,13 @@ function extract_swift_field_result(array $lines, array $replacementMap): array
 
 function extract_generic_text_field_result(
     array $lines,
-    array $aliases,
+    array $searchTerms,
     string $searchString,
-    bool $isRegex,
     array $replacementMap,
     array $positionSettings = [],
     array $lineGeometries = []
 ): array {
-    $resolvedAliases = normalize_extraction_field_aliases($aliases);
+    $resolvedAliases = normalize_extraction_field_search_terms($searchTerms);
     if ($resolvedAliases === []) {
         return empty_extraction_field_result();
     }
@@ -9686,8 +9755,7 @@ function extract_generic_text_field_result(
             'generic_text_segment_candidates_from_text',
             1,
             $positionSettings,
-            $lineGeometries,
-            $isRegex
+            $lineGeometries
         );
         return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
     }
@@ -9701,22 +9769,20 @@ function extract_generic_text_field_result(
         },
         1,
         $positionSettings,
-        $lineGeometries,
-        $isRegex
+        $lineGeometries
     );
     return ($result['value'] ?? null) !== null ? $result : empty_extraction_field_result();
 }
 
 function extract_generic_text_field_matches(
     array $lines,
-    array $aliases,
+    array $searchTerms,
     string $searchString,
-    bool $isRegex,
     array $replacementMap,
     array $positionSettings = [],
     array $lineGeometries = []
 ): array {
-    $resolvedAliases = normalize_extraction_field_aliases($aliases);
+    $resolvedAliases = normalize_extraction_field_search_terms($searchTerms);
     if ($resolvedAliases === []) {
         return [];
     }
@@ -9730,8 +9796,7 @@ function extract_generic_text_field_matches(
             'generic_text_segment_candidates_from_text',
             1,
             $positionSettings,
-            $lineGeometries,
-            $isRegex
+            $lineGeometries
         );
     }
 
@@ -9744,8 +9809,7 @@ function extract_generic_text_field_matches(
         },
         1,
         $positionSettings,
-        $lineGeometries,
-        $isRegex
+        $lineGeometries
     );
 }
 
@@ -9843,7 +9907,10 @@ function extract_configured_rule_set_field_matches(
         || $ruleSet['requiresSearchTerms'] === true
         || $ruleSet['requiresSearchTerms'] === 1
         || $ruleSet['requiresSearchTerms'] === '1';
-    $searchTerms = normalize_extraction_field_aliases($ruleSet['searchTerms'] ?? null);
+    $searchTerms = normalize_extraction_field_search_terms(
+        $ruleSet['searchTerms'] ?? null,
+        normalize_extraction_field_is_regex($ruleSet['isRegex'] ?? false)
+    );
     $valuePattern = is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '';
 
     if (!$requiresSearchTerms) {
@@ -9854,13 +9921,10 @@ function extract_configured_rule_set_field_matches(
         return [];
     }
 
-    $searchTermsIsRegex = normalize_extraction_field_is_regex($ruleSet['isRegex'] ?? false);
-
     return extract_generic_text_field_matches(
         $lines,
         $searchTerms,
         $valuePattern,
-        $searchTermsIsRegex,
         $replacementMap,
         $positionSettings,
         $lineGeometries
@@ -9879,7 +9943,10 @@ function extract_configured_rule_set_field_result(
         || $ruleSet['requiresSearchTerms'] === true
         || $ruleSet['requiresSearchTerms'] === 1
         || $ruleSet['requiresSearchTerms'] === '1';
-    $searchTerms = normalize_extraction_field_aliases($ruleSet['searchTerms'] ?? null);
+    $searchTerms = normalize_extraction_field_search_terms(
+        $ruleSet['searchTerms'] ?? null,
+        normalize_extraction_field_is_regex($ruleSet['isRegex'] ?? false)
+    );
     $valuePattern = is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '';
 
     if (!$requiresSearchTerms) {
@@ -9890,13 +9957,10 @@ function extract_configured_rule_set_field_result(
         return empty_extraction_field_result();
     }
 
-    $searchTermsIsRegex = normalize_extraction_field_is_regex($ruleSet['isRegex'] ?? false);
-
     return extract_generic_text_field_result(
         $lines,
         $searchTerms,
         $valuePattern,
-        $searchTermsIsRegex,
         $replacementMap,
         $positionSettings,
         $lineGeometries

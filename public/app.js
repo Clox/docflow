@@ -10499,7 +10499,7 @@ function defaultExtractionField() {
 function defaultExtractionFieldRuleSet() {
   return {
     requiresSearchTerms: true,
-    searchTerms: [''],
+    searchTerms: [{ text: '', isRegex: false }],
     isRegex: false,
     valuePattern: '',
     normalizationType: 'none',
@@ -10540,6 +10540,60 @@ function sanitizeExtractionFieldNormalizationType(value) {
   return normalized === 'whitelist' || normalized === 'blacklist' ? normalized : 'none';
 }
 
+function sanitizeExtractionFieldSearchTerm(term, legacyIsRegex = false) {
+  if (term && typeof term === 'object' && !Array.isArray(term)) {
+    const text = String(term.text || term.value || '').trim();
+    if (!text) {
+      return null;
+    }
+    return {
+      text,
+      isRegex: term.isRegex === true,
+    };
+  }
+
+  if (typeof term === 'string' || typeof term === 'number') {
+    const text = String(term || '').trim();
+    if (!text) {
+      return null;
+    }
+    return {
+      text,
+      isRegex: legacyIsRegex === true,
+    };
+  }
+
+  return null;
+}
+
+function sanitizeExtractionFieldSearchTermsInput(searchTerms, legacyFallback = '', legacyIsRegex = false) {
+  const values = Array.isArray(searchTerms)
+    ? searchTerms
+    : ((typeof searchTerms === 'string' || typeof searchTerms === 'number') ? [searchTerms] : []);
+  const normalized = [];
+  const seen = new Set();
+
+  values.forEach((value) => {
+    const searchTerm = sanitizeExtractionFieldSearchTerm(value, legacyIsRegex);
+    if (!searchTerm) {
+      return;
+    }
+    const dedupeKey = `${searchTerm.text.toLowerCase()}|${searchTerm.isRegex ? '1' : '0'}`;
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+    seen.add(dedupeKey);
+    normalized.push(searchTerm);
+  });
+
+  const fallback = sanitizeExtractionFieldSearchTerm(legacyFallback, legacyIsRegex);
+  if (normalized.length === 0 && fallback) {
+    normalized.push(fallback);
+  }
+
+  return normalized;
+}
+
 function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
   const input = ruleSet && typeof ruleSet === 'object' ? ruleSet : {};
   const legacy = legacyField && typeof legacyField === 'object' ? legacyField : {};
@@ -10550,9 +10604,11 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
   const legacyAliasesFallback = !Array.isArray(legacy.aliases) && String(legacySearchString || '').trim() !== ''
     ? legacySearchString
     : '';
-  const searchTerms = sanitizeExtractionFieldAliasesInput(
+  const legacyIsRegex = hasExplicitRuleSet ? input.isRegex === true : legacy.isRegex === true;
+  const searchTerms = sanitizeExtractionFieldSearchTermsInput(
     hasExplicitRuleSet ? input.searchTerms : legacy.aliases,
-    hasExplicitRuleSet ? '' : legacyAliasesFallback
+    hasExplicitRuleSet ? '' : legacyAliasesFallback,
+    legacyIsRegex
   );
   let valuePattern = typeof input.valuePattern === 'string'
     ? input.valuePattern
@@ -10569,7 +10625,7 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
       ? input.requiresSearchTerms !== false
       : searchTerms.length > 0,
     searchTerms,
-    isRegex: hasExplicitRuleSet ? input.isRegex === true : legacy.isRegex === true,
+    isRegex: false,
     valuePattern,
     normalizationType: sanitizeExtractionFieldNormalizationType(
       hasExplicitRuleSet ? input.normalizationType : legacy.normalizationType
@@ -10595,8 +10651,9 @@ function sanitizeExtractionFieldRuleSets(ruleSets, legacyField = null) {
 function extractionFieldSearchTermsForEditor(ruleSet) {
   const sanitized = sanitizeExtractionFieldRuleSet(ruleSet);
   const searchTerms = Array.isArray(sanitized.searchTerms) ? [...sanitized.searchTerms] : [];
-  if (searchTerms.length === 0 || String(searchTerms[searchTerms.length - 1] || '').trim() !== '') {
-    searchTerms.push('');
+  const lastSearchTerm = searchTerms[searchTerms.length - 1] || null;
+  if (!lastSearchTerm || String(lastSearchTerm.text || '').trim() !== '') {
+    searchTerms.push({ text: '', isRegex: false });
   }
   return searchTerms;
 }
@@ -10659,13 +10716,14 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
   };
 }
 
-function syncExtractionFieldAliasInputSize(input) {
+function syncExtractionFieldAliasInputSize(input, accessoryCount = 0) {
   if (!(input instanceof HTMLInputElement)) {
     return;
   }
   const sample = String(input.value || input.placeholder || '');
   const contentLength = Array.from(sample).length;
-  input.size = Math.max(8, Math.min(28, contentLength + 1));
+  const accessoryChars = Math.max(0, Number(accessoryCount) || 0);
+  input.size = Math.max(12, Math.min(40, contentLength + 1 + accessoryChars));
 }
 
 function sanitizeExtractionFields(fields) {
@@ -10825,6 +10883,96 @@ function createFloatingField(labelText, inputEl, extraClass = '') {
   wrapper.appendChild(label);
   wrapper.appendChild(inputEl);
   return wrapper;
+}
+
+function setRegexToggleButtonState(buttonEl, isActive) {
+  if (!(buttonEl instanceof HTMLButtonElement)) {
+    return;
+  }
+  buttonEl.classList.toggle('is-active', isActive);
+  buttonEl.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+}
+
+function createRegexToggleButton(options = {}) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'inline-regex-toggle';
+  button.textContent = '.*';
+  button.title = typeof options.title === 'string' && options.title.trim() !== '' ? options.title.trim() : 'Regex';
+  button.setAttribute('aria-label', button.title);
+
+  const getActive = typeof options.getActive === 'function'
+    ? options.getActive
+    : () => options.isActive === true;
+  const setActive = typeof options.setActive === 'function' ? options.setActive : null;
+
+  const sync = () => {
+    setRegexToggleButtonState(button, getActive() === true);
+  };
+
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    const next = !(getActive() === true);
+    if (setActive) {
+      setActive(next);
+    }
+    sync();
+  });
+
+  sync();
+  button.syncState = sync;
+  return button;
+}
+
+function createInlineInputWithAccessories(inputEl, accessories = [], extraClass = '') {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'inline-input-wrap' + (extraClass ? ' ' + extraClass : '');
+  inputEl.classList.add('inline-input-control');
+
+  const accessoryWrap = document.createElement('div');
+  accessoryWrap.className = 'inline-input-accessories';
+
+  accessories.forEach((accessory) => {
+    if (!(accessory instanceof HTMLElement)) {
+      return;
+    }
+    accessoryWrap.appendChild(accessory);
+  });
+
+  const accessoryCount = accessoryWrap.childElementCount;
+  const accessoriesWidth = accessoryCount > 0
+    ? 8 + (accessoryCount * 24) + ((accessoryCount - 1) * 4)
+    : 0;
+  wrapper.style.setProperty('--inline-input-accessories-width', `${accessoriesWidth}px`);
+
+  wrapper.appendChild(inputEl);
+  wrapper.appendChild(accessoryWrap);
+  return wrapper;
+}
+
+function createRegexToggleInput(inputEl, options = {}, extraClass = '') {
+  const regexButton = createRegexToggleButton(options);
+  const wrapper = createInlineInputWithAccessories(inputEl, [regexButton], extraClass);
+  return {
+    wrapper,
+    button: regexButton,
+  };
+}
+
+if (ocrSearchBarEl instanceof HTMLElement && ocrSearchInputEl instanceof HTMLInputElement && ocrSearchRegexEl instanceof HTMLInputElement) {
+  const { wrapper: ocrSearchInputWrap, button: ocrSearchRegexButton } = createRegexToggleInput(ocrSearchInputEl, {
+    getActive: () => ocrSearchRegexEl.checked === true,
+    setActive: (next) => {
+      ocrSearchRegexEl.checked = next === true;
+      refreshOcrSearch();
+    },
+  }, 'ocr-search-input-wrap');
+  ocrSearchBarEl.insertBefore(ocrSearchInputWrap, ocrSearchPrevEl);
+  ocrSearchRegexEl.addEventListener('change', () => {
+    if (typeof ocrSearchRegexButton.syncState === 'function') {
+      ocrSearchRegexButton.syncState();
+    }
+  });
 }
 
 function createTreeRow(options = {}) {
@@ -12044,42 +12192,64 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const searchTermValues = extractionFieldSearchTermsForEditor(ruleSet);
 
       const syncSearchTermsToDraft = () => {
-        collection[index].ruleSets[ruleSetIndex].searchTerms = sanitizeExtractionFieldAliasesInput(searchTermValues);
+        collection[index].ruleSets[ruleSetIndex].searchTerms = sanitizeExtractionFieldSearchTermsInput(searchTermValues);
         updateSettingsActionButtons();
       };
 
       const renderSearchTermRows = (focusIndex = null, selectionStart = null, selectionEnd = null) => {
         searchTermsList.innerHTML = '';
-        const nonEmptyCount = searchTermValues.filter((value) => String(value || '').trim() !== '').length;
+        const nonEmptyCount = searchTermValues.filter((value) => String(value && value.text ? value.text : '').trim() !== '').length;
 
         searchTermValues.forEach((searchTermValue, searchTermIndex) => {
           const searchTermRow = document.createElement('div');
           searchTermRow.className = 'extraction-field-alias-row';
-
-          const searchTermInputWrap = document.createElement('div');
-          searchTermInputWrap.className = 'extraction-field-alias-input-wrap';
+          const accessoryCount = searchTermIndex > 0 ? 2 : 1;
 
           const searchTermInput = document.createElement('input');
           searchTermInput.type = 'text';
           searchTermInput.placeholder = 'Ex: "org.nr"';
-          searchTermInput.value = searchTermValue;
+          searchTermInput.value = searchTermValue && typeof searchTermValue === 'object'
+            ? String(searchTermValue.text || '')
+            : String(searchTermValue || '');
           searchTermInput.dataset.searchTermIndex = String(searchTermIndex);
-          syncExtractionFieldAliasInputSize(searchTermInput);
+          syncExtractionFieldAliasInputSize(searchTermInput, accessoryCount);
           searchTermInput.addEventListener('input', () => {
-            searchTermValues[searchTermIndex] = searchTermInput.value;
-            syncExtractionFieldAliasInputSize(searchTermInput);
+            const current = searchTermValues[searchTermIndex] && typeof searchTermValues[searchTermIndex] === 'object'
+              ? searchTermValues[searchTermIndex]
+              : { text: '', isRegex: false };
+            current.text = searchTermInput.value;
+            searchTermValues[searchTermIndex] = current;
+            syncExtractionFieldAliasInputSize(searchTermInput, accessoryCount);
             syncSearchTermsToDraft();
             if (searchTermIndex === searchTermValues.length - 1 && searchTermInput.value.trim() !== '') {
               const nextSelectionStart = searchTermInput.selectionStart;
               const nextSelectionEnd = searchTermInput.selectionEnd;
-              searchTermValues.push('');
+              searchTermValues.push({ text: '', isRegex: false });
               renderSearchTermRows(searchTermIndex, nextSelectionStart, nextSelectionEnd);
             }
           });
 
-          searchTermInputWrap.appendChild(searchTermInput);
+          const regexButton = createRegexToggleButton({
+            getActive: () => {
+              const current = searchTermValues[searchTermIndex];
+              return !!(current && typeof current === 'object' && current.isRegex === true);
+            },
+            setActive: (next) => {
+              const current = searchTermValues[searchTermIndex] && typeof searchTermValues[searchTermIndex] === 'object'
+                ? searchTermValues[searchTermIndex]
+                : { text: '', isRegex: false };
+              current.isRegex = next === true;
+              searchTermValues[searchTermIndex] = current;
+              syncSearchTermsToDraft();
+              updateSettingsActionButtons();
+              const nextSelectionStart = searchTermInput.selectionStart;
+              const nextSelectionEnd = searchTermInput.selectionEnd;
+              renderSearchTermRows(searchTermIndex, nextSelectionStart, nextSelectionEnd);
+            },
+          });
+
+          const accessories = [regexButton];
           if (searchTermIndex > 0) {
-            searchTermInput.classList.add('has-inline-remove');
             const removeSearchTermButton = document.createElement('button');
             removeSearchTermButton.type = 'button';
             removeSearchTermButton.className = 'extraction-field-alias-remove';
@@ -12093,15 +12263,17 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
                 return;
               }
               searchTermValues.splice(searchTermIndex, 1);
-              if (searchTermValues.length === 0 || String(searchTermValues[searchTermValues.length - 1] || '').trim() !== '') {
-                searchTermValues.push('');
+              const lastTerm = searchTermValues[searchTermValues.length - 1] || null;
+              if (searchTermValues.length === 0 || String(lastTerm && lastTerm.text ? lastTerm.text : '').trim() !== '') {
+                searchTermValues.push({ text: '', isRegex: false });
               }
               syncSearchTermsToDraft();
               renderSearchTermRows();
             });
-            searchTermInputWrap.appendChild(removeSearchTermButton);
+            accessories.push(removeSearchTermButton);
           }
 
+          const searchTermInputWrap = createInlineInputWithAccessories(searchTermInput, accessories, 'extraction-field-alias-input-wrap');
           searchTermRow.appendChild(searchTermInputWrap);
           searchTermsList.appendChild(searchTermRow);
         });
@@ -12122,20 +12294,6 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       searchTermsField.appendChild(searchTermsLabel);
       searchTermsField.appendChild(searchTermsList);
       ruleFields.appendChild(searchTermsField);
-
-      const searchRegexLabel = document.createElement('label');
-      searchRegexLabel.className = 'extraction-field-rule-set-toggle';
-      const searchRegexCheckbox = document.createElement('input');
-      searchRegexCheckbox.type = 'checkbox';
-      searchRegexCheckbox.checked = ruleSet.isRegex === true;
-      const searchRegexText = document.createElement('span');
-      searchRegexText.textContent = 'Sökord är regex';
-      searchRegexLabel.appendChild(searchRegexCheckbox);
-      searchRegexLabel.appendChild(searchRegexText);
-      const searchRegexField = document.createElement('div');
-      searchRegexField.className = 'floating-input-group extraction-field-rule-set-toggle-field';
-      searchRegexField.appendChild(searchRegexLabel);
-      ruleFields.appendChild(searchRegexField);
 
       const valuePatternInput = document.createElement('input');
       valuePatternInput.type = 'text';
@@ -12178,17 +12336,14 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const syncRuleSetUi = () => {
         const normalizationType = sanitizeExtractionFieldNormalizationType(normalizationTypeSelect.value);
         collection[index].ruleSets[ruleSetIndex].requiresSearchTerms = requiresSearchTermsCheckbox.checked;
-        collection[index].ruleSets[ruleSetIndex].isRegex = searchRegexCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].normalizationType = normalizationType;
         collection[index].ruleSets[ruleSetIndex].normalizationChars = normalizationCharsInput.value;
         searchTermsField.hidden = !requiresSearchTermsCheckbox.checked;
-        searchRegexField.hidden = !requiresSearchTermsCheckbox.checked;
         normalizationCharsField.hidden = normalizationType === 'none';
         updateSettingsActionButtons();
       };
 
       requiresSearchTermsCheckbox.addEventListener('change', syncRuleSetUi);
-      searchRegexCheckbox.addEventListener('change', syncRuleSetUi);
       normalizationTypeSelect.addEventListener('change', syncRuleSetUi);
       normalizationCharsInput.addEventListener('input', syncRuleSetUi);
 
@@ -12802,29 +12957,24 @@ function renderSingleLabelEditor(container, options = {}) {
     } else if (rule.type === 'field_exists') {
       ruleFields.appendChild(createFloatingField('Fält', fieldSelect));
     } else {
-      ruleFields.appendChild(createFloatingField(rule.type === 'sender_name_contains' ? 'Text' : 'Regeltext', textInput));
       if (rule.type === 'text') {
-        const regexLabel = document.createElement('label');
-        regexLabel.className = 'extraction-field-rule-set-toggle';
-        const regexCheckbox = document.createElement('input');
-        regexCheckbox.type = 'checkbox';
-        regexCheckbox.checked = rule.isRegex === true;
-        const regexText = document.createElement('span');
-        regexText.textContent = 'Regex';
-        regexLabel.appendChild(regexCheckbox);
-        regexLabel.appendChild(regexText);
-        const regexField = document.createElement('div');
-        regexField.className = 'floating-input-group extraction-field-rule-set-toggle-field';
-        regexField.appendChild(regexLabel);
-        ruleFields.appendChild(regexField);
-        regexCheckbox.addEventListener('change', () => {
-          const draft = currentLabelDraftForEditor(options);
-          if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
-            return;
-          }
-          draft.rules[ruleIndex].isRegex = regexCheckbox.checked;
-          updateSettingsActionButtons();
+        const { wrapper: textInputWithRegex } = createRegexToggleInput(textInput, {
+          getActive: () => {
+            const draft = currentLabelDraftForEditor(options);
+            return !!(draft && Array.isArray(draft.rules) && draft.rules[ruleIndex] && draft.rules[ruleIndex].isRegex === true);
+          },
+          setActive: (next) => {
+            const draft = currentLabelDraftForEditor(options);
+            if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
+              return;
+            }
+            draft.rules[ruleIndex].isRegex = next === true;
+            updateSettingsActionButtons();
+          },
         });
+        ruleFields.appendChild(createFloatingField('Regeltext', textInputWithRegex));
+      } else {
+        ruleFields.appendChild(createFloatingField('Text', textInput));
       }
     }
     ruleFields.appendChild(createFloatingField('Poäng', scoreInput, 'score-field'));

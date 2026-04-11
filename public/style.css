@@ -1354,29 +1354,20 @@ body.is-resizing-sidebar {
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
 }
 
-#ocr-search-input {
+#ocr-search-bar .ocr-search-input-wrap {
   width: min(320px, 28vw);
   min-width: 180px;
+}
+
+#ocr-search-input {
+  width: 100%;
+  min-width: 0;
   font: inherit;
   padding: 6px 8px;
   border: 1px solid #ccc;
   border-radius: 4px;
   background: #fff;
   cursor: text;
-}
-
-.ocr-search-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: #444;
-  white-space: nowrap;
-  cursor: default;
-}
-
-.ocr-search-toggle input {
-  margin: 0;
 }
 
 #ocr-search-prev,
@@ -3874,6 +3865,71 @@ body.is-resizing-sidebar {
   width: 60px;
 }
 
+.inline-input-wrap {
+  --inline-input-accessories-width: 0px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.floating-input-group > .inline-input-wrap {
+  display: flex;
+  width: 100%;
+}
+
+.inline-input-control {
+  padding-right: calc(var(--inline-input-accessories-width) + 8px);
+}
+
+.inline-input-accessories {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.inline-input-accessories > * {
+  pointer-events: auto;
+}
+
+.inline-regex-toggle {
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #d0d7e2;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #64748b;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.inline-regex-toggle:hover {
+  background: #eef2f7;
+  border-color: #c0cad7;
+  color: #334155;
+}
+
+.inline-regex-toggle:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 1px;
+}
+
+.inline-regex-toggle.is-active {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #0f3d86;
+}
+
 .floating-input-label {
   position: absolute;
   top: 1px;
@@ -3907,31 +3963,23 @@ body.is-resizing-sidebar {
 }
 
 .extraction-field-alias-input-wrap {
-  position: relative;
   display: inline-flex;
   align-items: center;
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: 16ch;
+  max-width: min(100%, 40ch);
 }
 
 .extraction-field-alias-row input {
   width: auto;
-  min-width: 8ch;
-  max-width: min(100%, 28ch);
+  min-width: 12ch;
+  max-width: min(100%, 40ch);
   flex: 0 1 auto;
 }
 
-.extraction-field-alias-row input.has-inline-remove {
-  padding-right: 26px;
-}
-
 .extraction-field-alias-remove {
-  position: absolute;
-  top: 50%;
-  right: 6px;
-  transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
   background: transparent;

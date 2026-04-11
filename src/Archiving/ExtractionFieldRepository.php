@@ -295,10 +295,28 @@ final class ExtractionFieldRepository
             $resolvedSearchTerms = [];
             if (is_array($searchTerms)) {
                 foreach ($searchTerms as $searchTerm) {
+                    if (is_array($searchTerm)) {
+                        $text = is_string($searchTerm['text'] ?? null)
+                            ? trim((string) $searchTerm['text'])
+                            : (is_string($searchTerm['value'] ?? null) ? trim((string) $searchTerm['value']) : '');
+                        if ($text === '') {
+                            continue;
+                        }
+                        $resolvedSearchTerms[] = [
+                            'text' => $text,
+                            'isRegex' => ($searchTerm['isRegex'] ?? false) === true || ($searchTerm['isRegex'] ?? false) === 1 || ($searchTerm['isRegex'] ?? false) === '1',
+                        ];
+                        continue;
+                    }
+
                     if (!is_string($searchTerm) && !is_numeric($searchTerm)) {
                         continue;
                     }
-                    $resolvedSearchTerms[] = trim((string) $searchTerm);
+                    $text = trim((string) $searchTerm);
+                    if ($text === '') {
+                        continue;
+                    }
+                    $resolvedSearchTerms[] = $text;
                 }
             }
 
