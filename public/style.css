@@ -2881,6 +2881,7 @@ body.is-resizing-sidebar {
   background: #fff1f1;
 }
 
+#input-inbox-path,
 #output-base-path {
   width: 100%;
   font: inherit;

@@ -603,7 +603,16 @@
 
   <template id="settings-template-paths">
     <h3>Sökvägar</h3>
-    <p>Ange grundsökväg för utdata (din Huvudmän-mapp).</p>
+    <p>Ange sökvägen för in-mappen som läses av för nya jobb, samt grundsökväg för utdata.</p>
+    <label class="settings-label" for="input-inbox-path">In-mapp för nya jobb</label>
+    <input
+      id="input-inbox-path"
+      type="text"
+      placeholder="/absolute/path/to/inbox"
+      spellcheck="false"
+      autocorrect="off"
+      autocapitalize="off"
+    >
     <p>Det ska finnas en undermapp per huvudman, och varje mappnamn ska matcha huvudmannens <code>folderName</code>.</p>
     <label class="settings-label" for="output-base-path">Bas-sökväg för utdata</label>
     <input

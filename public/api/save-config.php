@@ -21,7 +21,8 @@ if (!is_array($payload)) {
 }
 
 if (
-    !array_key_exists('outputBaseDirectory', $payload)
+    !array_key_exists('inboxDirectory', $payload)
+    && !array_key_exists('outputBaseDirectory', $payload)
     && !array_key_exists('ocrSkipExistingText', $payload)
     && !array_key_exists('ocrOptimizeLevel', $payload)
     && !array_key_exists('ocrTextExtractionMethod', $payload)
@@ -34,6 +35,38 @@ if (
 }
 
 $nextOutputBaseDirectory = null;
+$nextInboxDirectory = null;
+if (array_key_exists('inboxDirectory', $payload)) {
+    if (!is_string($payload['inboxDirectory'])) {
+        json_response(['error' => 'Inbox path must be a string'], 400);
+        exit;
+    }
+
+    $inboxDirectory = trim((string) $payload['inboxDirectory']);
+    if ($inboxDirectory === '') {
+        json_response(['error' => 'Inbox path is required'], 400);
+        exit;
+    }
+
+    if ($inboxDirectory[0] !== DIRECTORY_SEPARATOR) {
+        json_response(['error' => 'Inbox path must be absolute'], 400);
+        exit;
+    }
+
+    ensure_directory($inboxDirectory);
+    if (!is_dir($inboxDirectory)) {
+        json_response(['error' => 'Inbox path does not exist'], 400);
+        exit;
+    }
+
+    if (!is_writable($inboxDirectory)) {
+        json_response(['error' => 'Inbox path is not writable'], 400);
+        exit;
+    }
+
+    $nextInboxDirectory = $inboxDirectory;
+}
+
 if (array_key_exists('outputBaseDirectory', $payload)) {
     if (!is_string($payload['outputBaseDirectory'])) {
         json_response(['error' => 'Base output path must be a string'], 400);
@@ -135,6 +168,9 @@ if (array_key_exists('chromeExtensionSuppressMissingNotice', $payload)) {
 
 try {
     $config = load_raw_config();
+    if ($nextInboxDirectory !== null) {
+        $config['inboxDirectory'] = $nextInboxDirectory;
+    }
     if ($nextOutputBaseDirectory !== null) {
         $config['outputBaseDirectory'] = $nextOutputBaseDirectory;
     }
@@ -159,6 +195,7 @@ try {
     save_raw_config($config);
     json_response([
         'ok' => true,
+        'inboxDirectory' => $config['inboxDirectory'] ?? '',
         'outputBaseDirectory' => $config['outputBaseDirectory'] ?? '',
         'ocrSkipExistingText' => (bool) ($config['ocrSkipExistingText'] ?? true),
         'ocrOptimizeLevel' => (int) ($config['ocrOptimizeLevel'] ?? 1),

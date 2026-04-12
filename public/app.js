@@ -174,6 +174,7 @@ let systemChromeExtensionPageEl = null;
 let systemChromeExtensionDirectoryEl = null;
 let systemChromeExtensionCopyPageEl = null;
 let systemChromeExtensionCopyDirectoryEl = null;
+let inputInboxPathEl = null;
 let outputBasePathEl = null;
 let pathsCancelEl = null;
 let pathsApplyEl = null;
@@ -320,6 +321,7 @@ let matchingBaselineJson = JSON.stringify({
   positionAdjustment: defaultMatchingPositionAdjustmentSettings()
 });
 let pathsBaselineValue = '';
+let inboxPathBaselineValue = '';
 let archiveStructureBaselineJson = JSON.stringify({
   archiveFolders: [],
 });
@@ -8469,13 +8471,18 @@ function bindSettingsPanelRefs(tabId) {
       }
     });
   } else if (tabId === 'paths') {
+    inputInboxPathEl = document.getElementById('input-inbox-path');
     outputBasePathEl = document.getElementById('output-base-path');
     pathsCancelEl = document.getElementById('paths-cancel');
     pathsApplyEl = document.getElementById('paths-apply');
+    inputInboxPathEl.addEventListener('input', () => {
+      updateSettingsActionButtons();
+    });
     outputBasePathEl.addEventListener('input', () => {
       updateSettingsActionButtons();
     });
     pathsCancelEl.addEventListener('click', () => {
+      inputInboxPathEl.value = inboxPathBaselineValue;
       outputBasePathEl.value = pathsBaselineValue;
       updateSettingsActionButtons();
     });
@@ -8903,10 +8910,11 @@ function isOcrProcessingDirty() {
 }
 
 function isPathsDirty() {
-  if (!outputBasePathEl) {
+  if (!outputBasePathEl || !inputInboxPathEl) {
     return false;
   }
-  return normalizedPathValue(outputBasePathEl.value) !== pathsBaselineValue;
+  return normalizedPathValue(outputBasePathEl.value) !== pathsBaselineValue
+    || normalizedPathValue(inputInboxPathEl.value) !== inboxPathBaselineValue;
 }
 
 function isSettingsTabDirty(tabId) {
@@ -15938,11 +15946,13 @@ async function loadPathSettings() {
   }
 
   const payload = await response.json();
-  if (!payload || typeof payload.outputBaseDirectory !== 'string') {
+  if (!payload || typeof payload.outputBaseDirectory !== 'string' || typeof payload.inboxDirectory !== 'string') {
     throw new Error('Ogiltigt svar för konfiguration');
   }
 
+  inputInboxPathEl.value = payload.inboxDirectory;
   outputBasePathEl.value = payload.outputBaseDirectory;
+  inboxPathBaselineValue = normalizedPathValue(payload.inboxDirectory);
   pathsBaselineValue = normalizedPathValue(payload.outputBaseDirectory);
   updateSettingsActionButtons();
 }
@@ -16314,7 +16324,10 @@ async function savePathSettings() {
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ outputBaseDirectory: outputBasePathEl.value })
+    body: JSON.stringify({
+      inboxDirectory: inputInboxPathEl.value,
+      outputBaseDirectory: outputBasePathEl.value
+    })
   });
 
   const payload = await response.json().catch(() => null);
@@ -16325,7 +16338,9 @@ async function savePathSettings() {
     throw new Error(message);
   }
 
+  inboxPathBaselineValue = normalizedPathValue(inputInboxPathEl.value);
   pathsBaselineValue = normalizedPathValue(outputBasePathEl.value);
+  inputInboxPathEl.value = inboxPathBaselineValue;
   outputBasePathEl.value = pathsBaselineValue;
   updateSettingsActionButtons();
 }
@@ -16826,6 +16841,7 @@ settingsTabEls.forEach((tabButton) => {
         renderSystemExtractionFieldsEditor();
       } else if (tabId === 'paths') {
         alert('Kunde inte ladda sökvägsinställningar.');
+        inboxPathBaselineValue = normalizedPathValue(inputInboxPathEl ? inputInboxPathEl.value : '');
         pathsBaselineValue = normalizedPathValue(outputBasePathEl ? outputBasePathEl.value : '');
       }
       updateSettingsActionButtons();
