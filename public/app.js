@@ -91,9 +91,7 @@ let sendersApplyEl = null;
 let sendersSortOrderEl = null;
 let sendersExpandAllEl = null;
 let sendersCollapseAllEl = null;
-let sendersPanelTabEls = [];
 let sendersViewSendersEl = null;
-let sendersViewUnlinkedEl = null;
 let sendersSelectedCountEl = null;
 let sendersClearSelectionEl = null;
 let sendersMergeSelectedEl = null;
@@ -314,7 +312,6 @@ let clientsBaselineJson = '[]';
 let clientDraftUiKeySeq = 1;
 let sendersBaselineJson = '[]';
 let sendersSortOrder = 'name';
-let activeSendersPanelTabId = 'senders';
 let senderDraftUiKeySeq = 1;
 let matchingBaselineJson = JSON.stringify({
   replacements: [],
@@ -8047,9 +8044,7 @@ function bindSettingsPanelRefs(tabId) {
     sendersSortOrderEl = document.getElementById('senders-sort-order');
     sendersExpandAllEl = document.getElementById('senders-expand-all');
     sendersCollapseAllEl = document.getElementById('senders-collapse-all');
-    sendersPanelTabEls = Array.from(document.querySelectorAll('[data-senders-panel-tab]'));
     sendersViewSendersEl = document.getElementById('senders-view-senders');
-    sendersViewUnlinkedEl = document.getElementById('senders-view-unlinked');
     sendersSelectedCountEl = document.getElementById('senders-selected-count');
     sendersClearSelectionEl = document.getElementById('senders-clear-selection');
     sendersMergeSelectedEl = document.getElementById('senders-merge-selected');
@@ -8061,12 +8056,7 @@ function bindSettingsPanelRefs(tabId) {
     if (String(sendersSortOrderEl.value || '') !== sendersSortOrder) {
       sendersSortOrder = String(sendersSortOrderEl.value || 'name');
     }
-    sendersPanelTabEls.forEach((button) => {
-      button.addEventListener('click', () => {
-        setSendersPanelTab(button.dataset.sendersPanelTab || 'senders');
-      });
-    });
-    setSendersPanelTab(activeSendersPanelTabId);
+    setSendersPanelTab();
     sendersAddRowEl.addEventListener('click', () => {
       sendersDraft.push(defaultSenderDraft());
       renderSendersEditor();
@@ -8686,7 +8676,6 @@ async function openSendersSettingsDirect() {
 
   openSettingsModal();
   setSettingsTab('senders');
-  activeSendersPanelTabId = 'senders';
 
   try {
     await ensureSettingsPanelReady('senders');
@@ -8696,7 +8685,7 @@ async function openSendersSettingsDirect() {
     sendersUnlinkedIdentifiers = [];
     sendersBaselineJson = normalizedSendersJson(sendersDraft);
     renderSendersEditor();
-    setSendersPanelTab(activeSendersPanelTabId);
+    setSendersPanelTab();
     updateSettingsActionButtons();
     return false;
   }
@@ -8718,7 +8707,7 @@ async function openSenderInRegister(senderId) {
     return;
   }
 
-  setSendersPanelTab('senders');
+  setSendersPanelTab();
   renderSendersEditor();
   const senderRow = sendersDraft.find((row) => Number.isInteger(row && row.id) && row.id === senderId) || null;
   if (!senderRow) {
@@ -9578,20 +9567,9 @@ function visibleUnlinkedSenderIdentifiers() {
   return sendersUnlinkedIdentifiers.filter((row) => !claimedKeys.has(row.key));
 }
 
-function setSendersPanelTab(tabId) {
-  activeSendersPanelTabId = tabId === 'unlinked' ? 'unlinked' : 'senders';
-  if (Array.isArray(sendersPanelTabEls)) {
-    sendersPanelTabEls.forEach((button) => {
-      const isActive = button.dataset.sendersPanelTab === activeSendersPanelTabId;
-      button.classList.toggle('active', isActive);
-      button.setAttribute('aria-selected', isActive ? 'true' : 'false');
-    });
-  }
+function setSendersPanelTab() {
   if (sendersViewSendersEl) {
-    sendersViewSendersEl.classList.toggle('hidden', activeSendersPanelTabId !== 'senders');
-  }
-  if (sendersViewUnlinkedEl) {
-    sendersViewUnlinkedEl.classList.toggle('hidden', activeSendersPanelTabId !== 'unlinked');
+    sendersViewSendersEl.classList.remove('hidden');
   }
 }
 
@@ -11041,6 +11019,9 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
   const wrapper = document.createElement('div');
   wrapper.className = 'filename-template-label-picker';
 
+  const flow = document.createElement('div');
+  flow.className = 'filename-template-label-picker-flow';
+
   const combobox = document.createElement('div');
   combobox.className = 'job-labels-combobox filename-template-label-picker-combobox';
 
@@ -11056,7 +11037,7 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
   list.setAttribute('role', 'listbox');
 
   const selected = document.createElement('div');
-  selected.className = 'job-labels-selected filename-template-label-picker-selected';
+  selected.className = 'filename-template-label-picker-selected';
   let listPortalMounted = false;
   let detachFloatingListeners = null;
 
@@ -11156,35 +11137,31 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
 
     selected.replaceChildren();
     selected.classList.toggle('is-empty', state.selectedIds.length < 1);
-    if (state.selectedIds.length < 1) {
-      selected.textContent = 'Inga etiketter valda.';
-    } else {
-      state.selectedIds.forEach((labelId) => {
-        const chipEl = document.createElement('span');
-        chipEl.className = 'job-labels-selected-chip';
+    state.selectedIds.forEach((labelId) => {
+      const chipEl = document.createElement('span');
+      chipEl.className = 'job-labels-selected-chip';
 
-        const textEl = document.createElement('span');
-        textEl.className = 'job-labels-selected-chip-text';
-        textEl.textContent = filenameTemplateLabelNameById(labelId);
+      const textEl = document.createElement('span');
+      textEl.className = 'job-labels-selected-chip-text';
+      textEl.textContent = filenameTemplateLabelNameById(labelId);
 
-        const removeButton = document.createElement('button');
-        removeButton.type = 'button';
-        removeButton.className = 'job-labels-selected-chip-remove';
-        removeButton.setAttribute('aria-label', `Ta bort etiketten ${filenameTemplateLabelNameById(labelId)}`);
-        removeButton.textContent = '✕';
-        removeButton.addEventListener('click', (event) => {
-          event.preventDefault();
-          state.selectedIds = state.selectedIds.filter((candidate) => candidate !== labelId);
-          if (typeof onChange === 'function') {
-            onChange(state.selectedIds);
-          }
-          render();
-        });
-
-        chipEl.append(textEl, removeButton);
-        selected.appendChild(chipEl);
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'job-labels-selected-chip-remove';
+      removeButton.setAttribute('aria-label', `Ta bort etiketten ${filenameTemplateLabelNameById(labelId)}`);
+      removeButton.textContent = '✕';
+      removeButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        state.selectedIds = state.selectedIds.filter((candidate) => candidate !== labelId);
+        if (typeof onChange === 'function') {
+          onChange(state.selectedIds);
+        }
+        render();
       });
-    }
+
+      chipEl.append(textEl, removeButton);
+      selected.appendChild(chipEl);
+    });
 
     list.replaceChildren();
     list.classList.toggle('is-open', state.dropdownOpen);
@@ -11290,9 +11267,16 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
       }
     });
   });
+  flow.addEventListener('click', (event) => {
+    if (event.target instanceof HTMLElement && event.target.closest('button')) {
+      return;
+    }
+    input.focus();
+  });
 
   combobox.appendChild(input);
-  wrapper.append(combobox, selected);
+  flow.append(selected, combobox);
+  wrapper.appendChild(flow);
   render();
   return wrapper;
 }
@@ -12011,13 +11995,6 @@ function renderUnlinkedSenderIdentifiers() {
   }
 
   const visibleRows = visibleUnlinkedSenderIdentifiers();
-  const unlinkedTabButton = Array.isArray(sendersPanelTabEls)
-    ? sendersPanelTabEls.find((button) => button.dataset.sendersPanelTab === 'unlinked')
-    : null;
-  if (unlinkedTabButton) {
-    unlinkedTabButton.textContent = `Okopplade uppgifter (${visibleRows.length})`;
-  }
-
   const fragment = document.createDocumentFragment();
 
   if (visibleRows.length === 0) {
@@ -15195,77 +15172,6 @@ function renderArchiveStructureEditor() {
     return button;
   };
 
-  const renderLabelConditionRows = (parentEl, labelIds, onChange, fieldLabel = 'Etikett') => {
-    const labelRows = sanitizeRuleLabelIds(labelIds).concat(['']);
-    labelRows.forEach((selectedLabelId, labelIndex) => {
-      const labelNode = document.createElement('div');
-      labelNode.className = 'tree-node tree-rule has-parent';
-      const labelRow = createTreeRow({ markerless: true });
-      const labelBody = document.createElement('div');
-      labelBody.className = 'tree-body rule-body';
-      appendTreeBodyIcon(labelBody, 'tree-body-icon tree-body-icon-rule');
-
-      const labelFields = document.createElement('div');
-      labelFields.className = 'rule-fields category-label-fields';
-      const labelSelect = document.createElement('select');
-      const placeholderOption = document.createElement('option');
-      placeholderOption.value = '';
-      placeholderOption.hidden = true;
-      const labelOptions = archiveRuleLabelOptions();
-      placeholderOption.textContent = labelOptions.length > 0 ? 'Välj etikett' : 'Inga etiketter';
-      labelSelect.appendChild(placeholderOption);
-      labelOptions.forEach((optionData) => {
-        const option = document.createElement('option');
-        option.value = optionData.value;
-        option.textContent = optionData.label;
-        labelSelect.appendChild(option);
-      });
-      labelSelect.value = selectedLabelId && labelOptions.some((option) => option.value === selectedLabelId)
-        ? selectedLabelId
-        : '';
-      const selectedOption = labelOptions.find((option) => option.value === labelSelect.value) || null;
-      labelSelect.title = selectedOption && selectedOption.description ? selectedOption.description : '';
-      labelSelect.addEventListener('change', () => {
-        const nextLabelIds = sanitizeRuleLabelIds(labelIds);
-        const selected = labelOptions.find((option) => option.value === labelSelect.value) || null;
-        labelSelect.title = selected && selected.description ? selected.description : '';
-        if (labelSelect.value) {
-          nextLabelIds[labelIndex] = labelSelect.value;
-        } else if (labelIndex < nextLabelIds.length) {
-          nextLabelIds.splice(labelIndex, 1);
-        }
-        onChange(sanitizeRuleLabelIds(nextLabelIds));
-        renderArchiveStructureEditor();
-        updateSettingsActionButtons();
-      });
-      labelFields.appendChild(createFloatingField(fieldLabel, labelSelect));
-
-      if (selectedLabelId) {
-        const removeLabelButton = document.createElement('button');
-        removeLabelButton.type = 'button';
-        removeLabelButton.className = 'archive-danger-button archive-compact-button';
-        removeLabelButton.textContent = 'Ta bort';
-        removeLabelButton.addEventListener('click', () => {
-          const nextLabelIds = sanitizeRuleLabelIds(labelIds);
-          nextLabelIds.splice(labelIndex, 1);
-          onChange(nextLabelIds);
-          renderArchiveStructureEditor();
-          updateSettingsActionButtons();
-        });
-        labelFields.appendChild(removeLabelButton);
-      } else {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'rule-remove-placeholder';
-        labelFields.appendChild(placeholder);
-      }
-
-      labelBody.appendChild(labelFields);
-      labelRow.appendChild(labelBody);
-      labelNode.appendChild(labelRow);
-      parentEl.appendChild(labelNode);
-    });
-  };
-
   const archiveFolderPathSortText = (folder) => {
     const template = sanitizeFilenameTemplate(folder && folder.pathTemplate && typeof folder.pathTemplate === 'object'
       ? folder.pathTemplate
@@ -15455,6 +15361,22 @@ function renderArchiveStructureEditor() {
       templateFields.appendChild(removeTemplateButton);
       templateBody.appendChild(templateFields);
 
+      const templateConditionsLabel = document.createElement('div');
+      templateConditionsLabel.className = 'archive-level-label';
+      templateConditionsLabel.textContent = 'Matchande etiketter';
+      templateBody.appendChild(templateConditionsLabel);
+      templateBody.appendChild(
+        createFilenameTemplateLabelPicker(
+        templateDraft.labelIds,
+        (nextLabelIds) => {
+          archiveFoldersDraft[folderIndex].filenameTemplates[templateIndex].labelIds = nextLabelIds;
+          updateSettingsActionButtons();
+        },
+        {
+          placeholder: 'Lägg till etikett...',
+        }
+      ));
+
       const templateLabel = document.createElement('div');
       templateLabel.className = 'archive-level-label';
       templateLabel.textContent = 'Filnamnsmall';
@@ -15470,20 +15392,6 @@ function renderArchiveStructureEditor() {
           { focusToolbar: true, autoFocus: false }
         )
       );
-
-      const templateConditions = createTreeChildren({ markerless: true });
-      const templateConditionsLabel = document.createElement('div');
-      templateConditionsLabel.className = 'archive-level-label';
-      templateConditionsLabel.textContent = 'Matchande etiketter';
-      templateConditions.appendChild(templateConditionsLabel);
-      renderLabelConditionRows(
-        templateConditions,
-        templateDraft.labelIds,
-        (nextLabelIds) => {
-          archiveFoldersDraft[folderIndex].filenameTemplates[templateIndex].labelIds = nextLabelIds;
-        }
-      );
-      templateBody.appendChild(templateConditions);
 
       templateRow.appendChild(templateBody);
       templateNode.appendChild(templateRow);
@@ -15935,7 +15843,7 @@ async function loadSendersSettings() {
   clearSenderSelections();
   closeSenderMergeOverlay();
   renderSendersEditor();
-  setSendersPanelTab(activeSendersPanelTabId);
+  setSendersPanelTab();
   updateSettingsActionButtons();
 }
 
@@ -16159,7 +16067,7 @@ async function saveSendersSettings() {
   clearSenderSelections();
   closeSenderMergeOverlay();
   renderSendersEditor();
-  setSendersPanelTab(activeSendersPanelTabId);
+  setSendersPanelTab();
   updateSettingsActionButtons();
   await fetchState({ refreshSenders: true });
 }

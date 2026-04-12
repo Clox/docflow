@@ -314,10 +314,6 @@
     <h3>Avsändare</h3>
     <p>Redigera avsändare som lagras i databasen. Fälten här styr listan i väljaren för avsändare och vilka dokumentidentifierare som kan matchas mot avsändaren.</p>
     <p>Om du tar bort en avsändare här tas även dess kopplade betalnummer bort ur databasen.</p>
-    <div class="archive-subtabs senders-subtabs" role="tablist" aria-label="Avsändarvyer">
-      <button class="archive-subtab active" data-senders-panel-tab="senders" type="button" role="tab" aria-selected="true">Avsändare</button>
-      <button class="archive-subtab" data-senders-panel-tab="unlinked" type="button" role="tab" aria-selected="false">Okopplade uppgifter (0)</button>
-    </div>
     <div id="senders-view-senders" class="archive-view">
       <div class="settings-group senders-toolbar">
         <div class="senders-toolbar-group">
@@ -343,9 +339,6 @@
         <button id="senders-add-row" type="button">Lägg till avsändare</button>
         <button id="senders-merge-selected" type="button" disabled>Slå ihop...</button>
       </div>
-    </div>
-    <div id="senders-view-unlinked" class="archive-view hidden">
-      <div id="senders-unlinked-list" class="categories-list senders-unlinked-list"></div>
     </div>
     <div id="sender-merge-overlay" class="modal-overlay hidden">
       <div class="settings-dialog sender-merge-dialog">

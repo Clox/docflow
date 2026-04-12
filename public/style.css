@@ -4534,7 +4534,7 @@ body.is-resizing-sidebar {
 }
 
 .filename-template-inline-token-floating-field > .filename-template-label-picker {
-  display: flex;
+  display: block;
   width: 100%;
 }
 
@@ -4544,17 +4544,46 @@ body.is-resizing-sidebar {
 }
 
 .filename-template-label-picker {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: start;
-  gap: 8px;
+  display: block;
   min-width: 0;
+  width: 100%;
+}
+
+.filename-template-label-picker-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  cursor: text;
+}
+
+.filename-template-label-picker-flow:focus-within {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
 
 .filename-template-label-picker-combobox {
-  flex: 0 0 148px;
-  min-width: 148px;
-  max-width: 148px;
+  flex: 0 1 160px;
+  min-width: 120px;
+  max-width: 180px;
+}
+
+.filename-template-label-picker-combobox .job-labels-combobox-input {
+  min-height: 24px;
+  padding: 4px 6px;
+}
+
+.filename-template-label-picker-combobox .job-labels-combobox-input,
+.filename-template-label-picker-combobox .job-labels-combobox-input:focus {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
 }
 
 .filename-template-label-picker .job-labels-combobox-list {
@@ -4569,19 +4598,18 @@ body.is-resizing-sidebar {
 }
 
 .filename-template-label-picker-selected {
+  display: flex;
   flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
   min-width: 0;
-  margin-top: 0;
   gap: 6px;
-  max-height: 116px;
-  align-self: center;
 }
 
 .filename-template-label-picker-selected.is-empty {
-  min-height: 0;
+  display: none;
 }
 
-.filename-template-label-picker-selected.is-empty,
 .filename-template-label-picker-selected .job-labels-selected-chip-text {
   font-size: 12px;
 }
