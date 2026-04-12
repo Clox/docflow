@@ -233,8 +233,8 @@
   </div>
 
   <div id="settings-modal" class="modal-overlay hidden">
-    <div class="settings-dialog">
-      <aside class="settings-nav">
+    <div id="settings-dialog" class="settings-dialog">
+      <aside id="settings-dialog-nav" class="settings-nav">
         <h2>Inställningar</h2>
         <div class="settings-nav-section">
           <div class="settings-nav-group-title">Register</div>
@@ -281,6 +281,7 @@
           <button id="settings-close" type="button">Stäng</button>
         </div>
       </section>
+      <button id="settings-dialog-resize-handle" class="settings-dialog-resize-handle" type="button" aria-label="Ändra storlek på inställningsfönstret" title="Ändra storlek"></button>
     </div>
   </div>
 

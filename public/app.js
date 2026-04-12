@@ -51,6 +51,8 @@ const appNoticesEl = document.getElementById('app-notices');
 const archivedReviewPanelEl = document.getElementById('archived-review-panel');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
+const settingsDialogEl = document.getElementById('settings-dialog');
+const settingsDialogResizeHandleEl = document.getElementById('settings-dialog-resize-handle');
 const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]'));
 const archivingReviewSettingsTabEl = document.querySelector('[data-settings-tab="archiving-review"]');
 const settingsPanelActionsHostEl = document.getElementById('settings-panel-actions-host');
@@ -378,6 +380,13 @@ const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_ARCHIVE_STRUCTURE_OPTION_VALUE = '__edit_archive_structure__';
 const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta', 'review']);
+const SETTINGS_DIALOG_MIN_WIDTH_PX = 720;
+const SETTINGS_DIALOG_MIN_HEIGHT_PX = 520;
+const SETTINGS_DIALOG_VIEWPORT_MARGIN_PX = 12;
+const SETTINGS_DIALOG_DRAG_HANDLE_HEIGHT_PX = 44;
+let settingsDialogLayout = null;
+let settingsDialogDragState = null;
+let settingsDialogResizeState = null;
 const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'processing', 'archived']);
 const SIDEBAR_LIST_SIZE_STORAGE_KEY = 'docflow.sidebar.listSizePercent';
 const DEFAULT_SIDEBAR_LIST_SIZE_PERCENT = 35;
@@ -7921,7 +7930,82 @@ function applyOptimisticReprocess(jobId, mode = 'post-ocr', options = {}) {
   return true;
 }
 
+function settingsDialogViewportBounds() {
+  const margin = SETTINGS_DIALOG_VIEWPORT_MARGIN_PX;
+  return {
+    margin,
+    width: Math.max(320, window.innerWidth - (margin * 2)),
+    height: Math.max(320, window.innerHeight - (margin * 2)),
+  };
+}
+
+function defaultSettingsDialogLayout() {
+  const bounds = settingsDialogViewportBounds();
+  const width = Math.min(980, bounds.width);
+  const height = Math.min(920, bounds.height);
+  return {
+    width,
+    height,
+    left: Math.round((window.innerWidth - width) / 2),
+    top: Math.round((window.innerHeight - height) / 2),
+  };
+}
+
+function clampSettingsDialogLayout(layout) {
+  const source = layout && typeof layout === 'object' ? layout : {};
+  const bounds = settingsDialogViewportBounds();
+  const width = Math.round(Math.min(
+    bounds.width,
+    Math.max(Math.min(SETTINGS_DIALOG_MIN_WIDTH_PX, bounds.width), Number(source.width) || defaultSettingsDialogLayout().width)
+  ));
+  const height = Math.round(Math.min(
+    bounds.height,
+    Math.max(Math.min(SETTINGS_DIALOG_MIN_HEIGHT_PX, bounds.height), Number(source.height) || defaultSettingsDialogLayout().height)
+  ));
+  const left = Math.round(Math.min(
+    window.innerWidth - bounds.margin - width,
+    Math.max(bounds.margin, Number(source.left))
+  ));
+  const top = Math.round(Math.min(
+    window.innerHeight - bounds.margin - height,
+    Math.max(bounds.margin, Number(source.top))
+  ));
+  return {
+    width,
+    height,
+    left: Number.isFinite(left) ? left : bounds.margin,
+    top: Number.isFinite(top) ? top : bounds.margin,
+  };
+}
+
+function applySettingsDialogLayout(layout) {
+  if (!(settingsDialogEl instanceof HTMLElement)) {
+    return;
+  }
+  const nextLayout = clampSettingsDialogLayout(layout || settingsDialogLayout || defaultSettingsDialogLayout());
+  settingsDialogLayout = nextLayout;
+  settingsDialogEl.style.width = `${nextLayout.width}px`;
+  settingsDialogEl.style.height = `${nextLayout.height}px`;
+  settingsDialogEl.style.left = `${nextLayout.left}px`;
+  settingsDialogEl.style.top = `${nextLayout.top}px`;
+}
+
+function restoreSettingsDialogLayout() {
+  applySettingsDialogLayout(settingsDialogLayout || defaultSettingsDialogLayout());
+}
+
+function stopSettingsDialogInteractions() {
+  settingsDialogDragState = null;
+  settingsDialogResizeState = null;
+  document.body.classList.remove('is-dragging-settings-dialog', 'is-resizing-settings-dialog');
+}
+
 function openSettingsModal() {
+  if (!settingsDialogLayout) {
+    restoreSettingsDialogLayout();
+  } else {
+    applySettingsDialogLayout(settingsDialogLayout);
+  }
   settingsModalEl.classList.remove('hidden');
 }
 
@@ -8747,6 +8831,7 @@ function closeSettingsModal(force = false) {
     return false;
   }
 
+  stopSettingsDialogInteractions();
   restoreSettingsFooterActions(activeSettingsFooterPanelId);
   if (settingsPanelActionsHostEl instanceof HTMLElement) {
     settingsPanelActionsHostEl.replaceChildren();
@@ -16673,7 +16758,19 @@ archiveActionEl.addEventListener('click', async () => {
 });
 
 settingsButtonEl.addEventListener('click', async () => {
-  await openClientsSettingsDirect();
+  if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
+    return;
+  }
+
+  const tabId = activeSettingsTabId || 'clients';
+  openSettingsModal();
+  setSettingsTab(tabId);
+
+  try {
+    await ensureSettingsPanelReady(tabId);
+  } catch (error) {
+    alert('Kunde inte ladda inställningar.');
+  }
 });
 
 settingsTabEls.forEach((tabButton) => {
@@ -16881,6 +16978,104 @@ settingsModalEl.addEventListener('click', (event) => {
   if (event.target === settingsModalEl) {
     closeSettingsModal();
   }
+});
+
+if (settingsDialogEl instanceof HTMLElement) {
+  settingsDialogEl.addEventListener('pointermove', (event) => {
+    const target = event.target;
+    const isInteractive = target instanceof HTMLElement && target.closest('button, input, select, textarea, a, label');
+    const rect = settingsDialogEl.getBoundingClientRect();
+    const isTopDragArea = (event.clientY - rect.top) <= SETTINGS_DIALOG_DRAG_HANDLE_HEIGHT_PX;
+    settingsDialogEl.style.cursor = !isInteractive && isTopDragArea ? 'move' : '';
+  });
+  settingsDialogEl.addEventListener('pointerleave', () => {
+    settingsDialogEl.style.cursor = '';
+  });
+  settingsDialogEl.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest('button, input, select, textarea, a, label')) {
+      return;
+    }
+    const rect = settingsDialogEl.getBoundingClientRect();
+    if ((event.clientY - rect.top) > SETTINGS_DIALOG_DRAG_HANDLE_HEIGHT_PX) {
+      return;
+    }
+    settingsDialogDragState = {
+      startX: event.clientX,
+      startY: event.clientY,
+      left: settingsDialogLayout ? settingsDialogLayout.left : rect.left,
+      top: settingsDialogLayout ? settingsDialogLayout.top : rect.top,
+    };
+    settingsDialogResizeState = null;
+    document.body.classList.add('is-dragging-settings-dialog');
+    event.preventDefault();
+  });
+}
+
+if (settingsDialogResizeHandleEl instanceof HTMLElement) {
+  settingsDialogResizeHandleEl.addEventListener('pointerdown', (event) => {
+    if (!(settingsDialogEl instanceof HTMLElement) || event.button !== 0) {
+      return;
+    }
+    const rect = settingsDialogEl.getBoundingClientRect();
+    settingsDialogResizeState = {
+      startX: event.clientX,
+      startY: event.clientY,
+      left: settingsDialogLayout ? settingsDialogLayout.left : rect.left,
+      top: settingsDialogLayout ? settingsDialogLayout.top : rect.top,
+      width: settingsDialogLayout ? settingsDialogLayout.width : rect.width,
+      height: settingsDialogLayout ? settingsDialogLayout.height : rect.height,
+    };
+    settingsDialogDragState = null;
+    document.body.classList.add('is-resizing-settings-dialog');
+    event.preventDefault();
+  });
+}
+
+document.addEventListener('pointermove', (event) => {
+  if (settingsDialogDragState) {
+    applySettingsDialogLayout({
+      ...settingsDialogLayout,
+      left: settingsDialogDragState.left + (event.clientX - settingsDialogDragState.startX),
+      top: settingsDialogDragState.top + (event.clientY - settingsDialogDragState.startY),
+    });
+    event.preventDefault();
+    return;
+  }
+
+  if (settingsDialogResizeState) {
+    applySettingsDialogLayout({
+      left: settingsDialogResizeState.left,
+      top: settingsDialogResizeState.top,
+      width: settingsDialogResizeState.width + (event.clientX - settingsDialogResizeState.startX),
+      height: settingsDialogResizeState.height + (event.clientY - settingsDialogResizeState.startY),
+    });
+    event.preventDefault();
+  }
+});
+
+document.addEventListener('pointerup', () => {
+  if (!settingsDialogDragState && !settingsDialogResizeState) {
+    return;
+  }
+  stopSettingsDialogInteractions();
+});
+
+document.addEventListener('pointercancel', () => {
+  if (!settingsDialogDragState && !settingsDialogResizeState) {
+    return;
+  }
+  stopSettingsDialogInteractions();
+});
+
+window.addEventListener('resize', () => {
+  if (!settingsDialogLayout) {
+    return;
+  }
+  applySettingsDialogLayout(settingsDialogLayout);
 });
 
 document.addEventListener('pointerdown', (event) => {
