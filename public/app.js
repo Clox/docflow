@@ -14850,6 +14850,7 @@ let activeEditable = null;
     };
 
     if (tokenPart.type === 'dataField') {
+      center.appendChild(label);
       const select = document.createElement('select');
       select.className = 'filename-template-inline-token-select';
       const options = filenameTemplateDataFieldOptions();
@@ -14879,6 +14880,7 @@ let activeEditable = null;
       });
       center.appendChild(select);
     } else if (tokenPart.type === 'labels') {
+      center.appendChild(label);
       const separatorInput = document.createElement('input');
       separatorInput.type = 'text';
       separatorInput.className = 'filename-template-inline-token-input';
@@ -14947,6 +14949,7 @@ let activeEditable = null;
         'filename-template-inline-token-floating-field filename-template-inline-token-branch-field'
       ));
     } else if (tokenPart.type === 'firstAvailable') {
+      center.appendChild(label);
       center.appendChild(buildSlotEditor(
         tokenPart.parts,
         'Kandidater',
