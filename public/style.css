@@ -4577,12 +4577,13 @@ body.is-resizing-sidebar {
 }
 
 .filename-template-label-picker-combobox {
-  flex: 0 1 160px;
-  min-width: 120px;
-  max-width: 180px;
+  flex: 1 1 11ch;
+  min-width: 11ch;
+  max-width: 220px;
 }
 
 .filename-template-label-picker-combobox .job-labels-combobox-input {
+  width: 100%;
   min-height: 24px;
   padding: 4px 6px;
 }
@@ -4607,7 +4608,7 @@ body.is-resizing-sidebar {
 
 .filename-template-label-picker-selected {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   flex-wrap: wrap;
   align-items: center;
   min-width: 0;
