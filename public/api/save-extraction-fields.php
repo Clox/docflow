@@ -32,21 +32,22 @@ try {
     $config = load_config();
     ensure_job_dispatcher_running($config);
     $state = load_archiving_rules_state();
-    $state['draftArchivingRules']['fields'] = normalize_extraction_fields($payload['fields']);
-    $state['draftArchivingRules']['predefinedFields'] = normalize_predefined_extraction_fields($payload['predefinedFields']);
-    $state['draftArchivingRules']['systemFields'] = normalize_system_extraction_fields($payload['systemFields']);
-    $stored = save_archiving_rules_state($state);
-    maybe_advance_draft_archiving_review_session($config, 10);
-    maybe_queue_archiving_rules_update_event($config);
+    $nextRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
+    $nextRules['fields'] = normalize_extraction_fields($payload['fields']);
+    $nextRules['predefinedFields'] = normalize_predefined_extraction_fields($payload['predefinedFields']);
+    $nextRules['systemFields'] = normalize_system_extraction_fields($payload['systemFields']);
+    $result = persist_active_archiving_rules_change($config, $nextRules, ['reason' => 'rules']);
+    $stored = is_array($result['stored'] ?? null) ? $result['stored'] : $state;
+    $activeRules = load_active_archiving_rules();
     json_response([
         'ok' => true,
-        'fields' => is_array($stored['draftArchivingRules']['fields'] ?? null) ? $stored['draftArchivingRules']['fields'] : [],
-        'predefinedFields' => is_array($stored['draftArchivingRules']['predefinedFields'] ?? null) ? $stored['draftArchivingRules']['predefinedFields'] : [],
-        'systemFields' => is_array($stored['draftArchivingRules']['systemFields'] ?? null) ? $stored['draftArchivingRules']['systemFields'] : [],
+        'fields' => is_array($activeRules['fields'] ?? null) ? $activeRules['fields'] : [],
+        'predefinedFields' => is_array($activeRules['predefinedFields'] ?? null) ? $activeRules['predefinedFields'] : [],
+        'systemFields' => is_array($activeRules['systemFields'] ?? null) ? $activeRules['systemFields'] : [],
         'archivingRules' => build_archiving_rules_state_payload($config),
         'lastEventId' => latest_job_event_id(),
         'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
-        'hasUnpublishedChanges' => json_encode($stored['activeArchivingRules'] ?? null) !== json_encode($stored['draftArchivingRules'] ?? null),
+        'reprocessedJobs' => is_array($result['reprocessedJobs'] ?? null) ? $result['reprocessedJobs'] : ['reprocessedJobIds' => [], 'reprocessedCount' => 0],
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

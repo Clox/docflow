@@ -248,7 +248,7 @@
         </div>
         <div class="settings-nav-section">
           <div class="settings-nav-group-title">Arkivering</div>
-          <button class="settings-tab" data-settings-tab="archiving-review" type="button">Granska regeländringar <span class="settings-tab-indicator" aria-hidden="true">●</span></button>
+          <button class="settings-tab" data-settings-tab="archiving-review" type="button">Uppdatera arkiverade dokument <span class="settings-tab-indicator" aria-hidden="true">●</span></button>
           <button class="settings-tab" data-settings-tab="archive-structure" type="button">Arkivstruktur</button>
           <button class="settings-tab" data-settings-tab="labels" type="button">Etiketter</button>
           <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
@@ -299,15 +299,14 @@
   </template>
 
   <template id="settings-template-archiving-review">
-    <h3>Granska regeländringar</h3>
-    <p>Jämför utkastet mot aktiva arkiveringsregler på redan arkiverade jobb. Analysen kör successivt och kan fortsätta även efter att reglerna aktiverats.</p>
+    <h3>Uppdatera arkiverade dokument</h3>
+    <p>Här kan du analysera hur nya arkiveringsregler påverkar redan arkiverade dokument och välja att uppdatera dem.</p>
     <div id="archiving-review-status" class="settings-inline-notice hidden"></div>
     <div id="archiving-review-summary" class="archiving-review-summary"></div>
     <div id="archiving-review-template-changes" class="archiving-review-template-changes"></div>
     <div id="archiving-review-jobs" class="archiving-review-jobs"></div>
     <div class="panel-actions">
-      <button id="archiving-review-reset-draft" class="button-danger" type="button">Kassera utkastet</button>
-      <button id="archiving-review-publish" class="button-success" type="button">Använd utkastet</button>
+      <button id="archiving-review-dev-bump" type="button" hidden>Dev: Höj arkiveringsversion</button>
     </div>
   </template>
 

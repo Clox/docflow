@@ -27,25 +27,22 @@ if (
 try {
     $config = load_config();
     ensure_job_dispatcher_running($config);
-    $state = load_archiving_rules_state();
     $archiveStructure = normalize_archive_structure_data($payload);
-    $state['draftArchivingRules']['archiveFolders'] = $archiveStructure['archiveFolders'];
-    $stored = save_archiving_rules_state($state);
-    maybe_advance_draft_archiving_review_session($config, 10);
-    maybe_queue_archiving_rules_update_event($config);
-    $draftRules = load_draft_archiving_rules();
+    $state = load_archiving_rules_state();
+    $nextRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
+    $nextRules['archiveFolders'] = $archiveStructure['archiveFolders'];
+    $result = persist_active_archiving_rules_change($config, $nextRules, ['reason' => 'rules']);
+    $stored = is_array($result['stored'] ?? null) ? $result['stored'] : $state;
+    $activeRules = load_active_archiving_rules();
     json_response([
         'ok' => true,
-        'archiveFolders' => is_array($draftRules['archiveFolders'] ?? null)
-            ? $draftRules['archiveFolders']
+        'archiveFolders' => is_array($activeRules['archiveFolders'] ?? null)
+            ? $activeRules['archiveFolders']
             : [],
         'archivingRules' => build_archiving_rules_state_payload($config),
         'lastEventId' => latest_job_event_id(),
         'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
-        'hasUnpublishedChanges' => archiving_rules_have_unpublished_changes(
-            is_array($stored['activeArchivingRules'] ?? null) ? $stored['activeArchivingRules'] : [],
-            is_array($draftRules ?? null) ? $draftRules : []
-        ),
+        'reprocessedJobs' => is_array($result['reprocessedJobs'] ?? null) ? $result['reprocessedJobs'] : ['reprocessedJobIds' => [], 'reprocessedCount' => 0],
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

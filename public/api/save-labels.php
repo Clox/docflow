@@ -50,19 +50,20 @@ try {
     }
 
     $state = load_archiving_rules_state();
-    $state['draftArchivingRules']['labels'] = $normalizedLabels;
-    $state['draftArchivingRules']['systemLabels'] = $normalizedSystemLabels;
-    $stored = save_archiving_rules_state($state);
-    maybe_advance_draft_archiving_review_session($config, 10);
-    maybe_queue_archiving_rules_update_event($config);
+    $nextRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
+    $nextRules['labels'] = $normalizedLabels;
+    $nextRules['systemLabels'] = $normalizedSystemLabels;
+    $result = persist_active_archiving_rules_change($config, $nextRules, ['reason' => 'rules']);
+    $stored = is_array($result['stored'] ?? null) ? $result['stored'] : $state;
+    $activeRules = load_active_archiving_rules();
     json_response([
         'ok' => true,
-        'labels' => is_array($stored['draftArchivingRules']['labels'] ?? null) ? $stored['draftArchivingRules']['labels'] : [],
-        'systemLabels' => is_array($stored['draftArchivingRules']['systemLabels'] ?? null) ? $stored['draftArchivingRules']['systemLabels'] : system_labels_template(),
+        'labels' => is_array($activeRules['labels'] ?? null) ? $activeRules['labels'] : [],
+        'systemLabels' => is_array($activeRules['systemLabels'] ?? null) ? $activeRules['systemLabels'] : system_labels_template(),
         'archivingRules' => build_archiving_rules_state_payload($config),
         'lastEventId' => latest_job_event_id(),
         'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),
-        'hasUnpublishedChanges' => json_encode($stored['activeArchivingRules'] ?? null) !== json_encode($stored['draftArchivingRules'] ?? null),
+        'reprocessedJobs' => is_array($result['reprocessedJobs'] ?? null) ? $result['reprocessedJobs'] : ['reprocessedJobIds' => [], 'reprocessedCount' => 0],
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 400);

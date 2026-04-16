@@ -50,13 +50,7 @@ try {
         'failedJobs' => $jobsPayload['failedJobs'],
         'senderPayeeLookupQueue' => build_sender_payee_lookup_queue_state_payload(1),
         'senderOrganizationLookupQueue' => build_sender_organization_lookup_queue_state_payload(1),
-        'archivingRules' => build_archiving_rules_state_payload(
-            $config,
-            count(array_filter(
-                is_array($jobsPayload['archivedJobs'] ?? null) ? $jobsPayload['archivedJobs'] : [],
-                static fn (array $job): bool => ($job['needsRuleReview'] ?? false) === true
-            ))
-        ),
+        'archivingRules' => build_archiving_rules_state_payload($config),
         'lastEventId' => latest_job_event_id(),
         'stateUpdateTransport' => (string) $config['stateUpdateTransport'],
     ];
@@ -87,17 +81,12 @@ try {
         ],
         'archivingRules' => [
             'activeVersion' => 1,
-            'hasUnpublishedChanges' => false,
-            'needsRuleReviewCount' => 0,
-            'publishedReview' => [
-                'status' => 'idle',
-                'analyzedCount' => 0,
-                'totalCount' => 0,
-            ],
-            'draftReview' => [
+            'hasPendingArchivedUpdates' => false,
+            'pendingArchivedUpdateCount' => 0,
+            'updateReview' => [
                 'activeArchivingRulesVersion' => 1,
-                'hasUnpublishedChanges' => false,
                 'changedSections' => [],
+                'templateChanges' => [],
                 'summary' => empty_archiving_review_summary(),
                 'jobs' => [],
                 'session' => [
@@ -107,6 +96,7 @@ try {
                     'foundCount' => 0,
                     'remainingCount' => 0,
                 ],
+                'reason' => '',
                 'signature' => '',
             ],
             'signature' => '',

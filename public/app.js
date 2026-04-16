@@ -159,8 +159,7 @@ let archivingReviewStatusEl = null;
 let archivingReviewSummaryEl = null;
 let archivingReviewTemplateChangesEl = null;
 let archivingReviewJobsEl = null;
-let archivingReviewResetDraftEl = null;
-let archivingReviewPublishEl = null;
+let archivingReviewDevBumpEl = null;
 let labelsTabEls = [];
 let labelsViewCustomEl = null;
 let labelsViewSystemEl = null;
@@ -197,19 +196,12 @@ let state = {
   archiveFolders: [],
   archivingRules: {
     activeVersion: 1,
-    hasUnpublishedChanges: false,
-    hasReviewRelevantChanges: false,
-    needsRuleReviewCount: 0,
-    publishedReview: {
-      status: 'idle',
-      analyzedCount: 0,
-      totalCount: 0
-    },
-    draftReview: {
+    hasPendingArchivedUpdates: false,
+    pendingArchivedUpdateCount: 0,
+    updateReview: {
       activeArchivingRulesVersion: 1,
-      hasUnpublishedChanges: false,
-      hasReviewRelevantChanges: false,
       changedSections: [],
+      templateChanges: [],
       summary: {
         testedJobs: 0,
         unchanged: 0,
@@ -225,6 +217,7 @@ let state = {
         foundCount: 0,
         remainingCount: 0
       },
+      reason: '',
       signature: ''
     },
     signature: ''
@@ -1529,8 +1522,8 @@ function updatePdfFrameWindow(jobId) {
   });
 }
 
-function draftAffectedArchivedJobIds() {
-  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.draftReview);
+function affectedArchivedJobIdsFromArchivingUpdate() {
+  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
   return new Set(
     (Array.isArray(payload.jobs) ? payload.jobs : [])
       .map((item) => item && typeof item.jobId === 'string' ? item.jobId : '')
@@ -1538,21 +1531,22 @@ function draftAffectedArchivedJobIds() {
   );
 }
 
-function jobHasDraftReviewChange(jobId) {
-  return typeof jobId === 'string' && jobId !== '' && draftAffectedArchivedJobIds().has(jobId);
+function jobHasArchivingUpdateChange(jobId) {
+  return typeof jobId === 'string' && jobId !== '' && affectedArchivedJobIdsFromArchivingUpdate().has(jobId);
 }
 
 function jobSupportsArchivedReview(job) {
-  return !!(job && job.archived === true && ((job.needsRuleReview === true) || jobHasDraftReviewChange(job.id)));
+  return !!(job && job.archived === true);
 }
 
 function jobsNeedingRuleReview() {
+  const affectedIds = affectedArchivedJobIdsFromArchivingUpdate();
   return (Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
-    .filter((job) => job && job.archived === true && job.needsRuleReview === true);
+    .filter((job) => job && job.archived === true && typeof job.id === 'string' && affectedIds.has(job.id));
 }
 
 function displayedArchivedReviewJobsForReadyMode() {
-  const draftJobIds = draftAffectedArchivedJobIds();
+  const affectedJobIds = affectedArchivedJobIdsFromArchivingUpdate();
   const jobsById = new Map(
     (Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
       .filter((job) => job && typeof job.id === 'string' && job.id !== '')
@@ -1564,7 +1558,7 @@ function displayedArchivedReviewJobsForReadyMode() {
       orderedIds.push(job.id);
     }
   });
-  Array.from(draftJobIds).forEach((jobId) => {
+  Array.from(affectedJobIds).forEach((jobId) => {
     if (!orderedIds.includes(jobId)) {
       orderedIds.push(jobId);
     }
@@ -3581,14 +3575,14 @@ function renderAppNotices() {
     );
   const showAllabolagOpenNotice = shouldShowAllabolagOpenNotice();
 
-  if (state.archivingRules && state.archivingRules.hasUnpublishedChanges === true) {
+  if (state.archivingRules && state.archivingRules.hasPendingArchivedUpdates === true) {
     const notice = document.createElement('div');
     notice.className = 'app-notice is-warning';
     const text = document.createElement('span');
-    text.textContent = 'Det finns ett utkast till arkiveringsregler som ännu inte är aktiverat.';
+    text.textContent = 'Arkiveringsregler har ändrats. Du kan uppdatera arkiverade dokument.';
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = 'Granska ändringar';
+    button.textContent = 'Uppdatera arkivering';
     button.addEventListener('click', () => {
       openArchivingReviewSettingsDirect();
     });
@@ -3678,29 +3672,6 @@ function renderAppNotices() {
     notices.push(notice);
   }
 
-  const needsRuleReviewCount = Array.isArray(state.archivedJobs)
-    ? state.archivedJobs.filter((job) => job && job.needsRuleReview === true).length
-    : (Number.parseInt(String(state.archivingRules?.needsRuleReviewCount || 0), 10) || 0);
-  if (needsRuleReviewCount > 0) {
-    const notice = document.createElement('div');
-    notice.className = 'app-notice is-info';
-    const text = document.createElement('span');
-    text.textContent = `${needsRuleReviewCount} arkiverade jobb behöver ses över mot aktuella regler.`;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = 'Visa jobb';
-    button.addEventListener('click', () => {
-      const firstReviewJob = jobsNeedingRuleReview()[0] || null;
-      setJobListMode('ready');
-      if (firstReviewJob && typeof firstReviewJob.id === 'string') {
-        applySelectedJobId(firstReviewJob.id);
-        setViewMode('review');
-      }
-    });
-    notice.append(text, button);
-    notices.push(notice);
-  }
-
   if (notices.length === 0) {
     appNoticesEl.classList.add('hidden');
     syncArchivingReviewTabIndicator();
@@ -3716,10 +3687,10 @@ function syncArchivingReviewTabIndicator() {
   if (!(archivingReviewSettingsTabEl instanceof HTMLElement)) {
     return;
   }
-  const hasChanges = state.archivingRules && state.archivingRules.hasUnpublishedChanges === true;
+  const hasChanges = state.archivingRules && state.archivingRules.hasPendingArchivedUpdates === true;
   archivingReviewSettingsTabEl.classList.toggle('has-unpublished-changes', hasChanges);
   archivingReviewSettingsTabEl.title = hasChanges
-    ? 'Det finns ett utkast till arkiveringsregler som ännu inte är aktiverat.'
+    ? 'Arkiverade dokument kan uppdateras mot aktuella regler.'
     : '';
 }
 
@@ -3730,8 +3701,6 @@ function deepCloneJson(value) {
 function emptyArchivingReviewPayload() {
   return {
     activeArchivingRulesVersion: 1,
-    hasUnpublishedChanges: false,
-    hasReviewRelevantChanges: false,
     changedSections: [],
     templateChanges: [],
     summary: {
@@ -3749,6 +3718,7 @@ function emptyArchivingReviewPayload() {
       foundCount: 0,
       remainingCount: 0,
     },
+    reason: '',
     signature: '',
   };
 }
@@ -3759,13 +3729,13 @@ function normalizeArchivingReviewPayload(payload) {
   const session = next.session && typeof next.session === 'object' ? next.session : {};
   const normalized = {
     activeArchivingRulesVersion: Number.parseInt(String(next.activeArchivingRulesVersion || 1), 10) || 1,
-    hasUnpublishedChanges: next.hasUnpublishedChanges === true,
-    hasReviewRelevantChanges: next.hasReviewRelevantChanges === true,
     changedSections: Array.isArray(next.changedSections) ? next.changedSections.filter((value) => typeof value === 'string' && value.trim()) : [],
     templateChanges: Array.isArray(next.templateChanges)
       ? next.templateChanges
         .filter((item) => item && typeof item === 'object')
         .map((item) => ({
+          filenameTemplateId: typeof item.filenameTemplateId === 'string' ? item.filenameTemplateId : '',
+          filenameTemplateName: typeof item.filenameTemplateName === 'string' ? item.filenameTemplateName : '',
           archiveFolderId: typeof item.archiveFolderId === 'string' ? item.archiveFolderId : '',
           archiveFolderName: typeof item.archiveFolderName === 'string' ? item.archiveFolderName : '',
           before: typeof item.before === 'string' ? item.before : '',
@@ -3787,6 +3757,7 @@ function normalizeArchivingReviewPayload(payload) {
       foundCount: Number.parseInt(String(session.foundCount || 0), 10) || 0,
       remainingCount: Number.parseInt(String(session.remainingCount || 0), 10) || 0,
     },
+    reason: typeof next.reason === 'string' ? next.reason : '',
     signature: typeof next.signature === 'string' ? next.signature : '',
   };
 
@@ -3801,23 +3772,15 @@ function normalizeArchivingRulesStatePayload(payload, fallback = state.archiving
   const next = payload && typeof payload === 'object' ? payload : {};
   return {
     activeVersion: Number.parseInt(String(next.activeVersion || fallback.activeVersion || 1), 10) || 1,
-    hasUnpublishedChanges: next.hasUnpublishedChanges === true,
-    hasReviewRelevantChanges: next.hasReviewRelevantChanges === true,
-    needsRuleReviewCount: Number.parseInt(String(next.needsRuleReviewCount || 0), 10) || 0,
-    publishedReview: next.publishedReview && typeof next.publishedReview === 'object'
-      ? {
-        status: typeof next.publishedReview.status === 'string' ? next.publishedReview.status : 'idle',
-        analyzedCount: Number.parseInt(String(next.publishedReview.analyzedCount || 0), 10) || 0,
-        totalCount: Number.parseInt(String(next.publishedReview.totalCount || 0), 10) || 0,
-      }
-      : fallback.publishedReview,
-    draftReview: normalizeArchivingReviewPayload(next.draftReview),
+    hasPendingArchivedUpdates: next.hasPendingArchivedUpdates === true,
+    pendingArchivedUpdateCount: Number.parseInt(String(next.pendingArchivedUpdateCount || 0), 10) || 0,
+    updateReview: normalizeArchivingReviewPayload(next.updateReview),
     signature: typeof next.signature === 'string' ? next.signature : '',
   };
 }
 
 function syncArchivingReviewPayloadFromState(force = false) {
-  const nextPayload = normalizeArchivingReviewPayload(state.archivingRules && state.archivingRules.draftReview);
+  const nextPayload = normalizeArchivingReviewPayload(state.archivingRules && state.archivingRules.updateReview);
   if (!force && archivingRulesReviewPayloadSignature === nextPayload.signature) {
     return;
   }
@@ -3911,8 +3874,8 @@ function ensureArchivedReviewDraft(jobId, payload) {
     return existing;
   }
 
-  const source = payload && payload.activeAutoResult && typeof payload.activeAutoResult === 'object'
-    ? payload.activeAutoResult
+  const source = payload && payload.currentAutoResult && typeof payload.currentAutoResult === 'object'
+    ? payload.currentAutoResult
     : {};
   const draft = {
     clientId: typeof source.clientId === 'string' ? source.clientId : '',
@@ -3993,13 +3956,12 @@ function buildArchivedReviewColumn(titleText) {
 
 async function saveArchivedReviewAction(action) {
   const selectedJob = findJobById(selectedJobId);
-  if (!selectedJob || selectedJob.archived !== true || selectedJob.needsRuleReview !== true) {
-    return;
-  }
-
   const payload = archivedJobReviewPayload && archivedJobReviewPayload.jobId === selectedJob.id
     ? archivedJobReviewPayload
     : null;
+  if (!selectedJob || selectedJob.archived !== true || !payload || payload.isActionable !== true) {
+    return;
+  }
   const draft = payload ? ensureArchivedReviewDraft(selectedJob.id, payload) : null;
 
   const body = {
@@ -4025,7 +3987,7 @@ async function saveArchivedReviewAction(action) {
   });
   const result = await response.json().catch(() => null);
   if (!response.ok || !result || result.ok !== true) {
-    throw new Error(result && typeof result.error === 'string' ? result.error : 'Kunde inte spara granskningsresultatet.');
+    throw new Error(result && typeof result.error === 'string' ? result.error : 'Kunde inte uppdatera den arkiverade posten.');
   }
 
   archivedReviewDraftByJobId.delete(selectedJob.id);
@@ -4034,7 +3996,8 @@ async function saveArchivedReviewAction(action) {
   loadedMatchesJobId = '';
   loadedOcrJobId = '';
   applyStateEntry(result.entry);
-  renderArchivedReviewPanel();
+  await fetchState({ force: true, refreshArchiveStructure: true });
+  await loadArchivedReview(selectedJob.id, true);
 }
 
 async function loadArchivedReview(jobId, force = false) {
@@ -4084,8 +4047,8 @@ async function loadArchivedReview(jobId, force = false) {
     _reviewStateSignature: reviewStateSignature,
     _draftSignature: JSON.stringify({
       archivedValue: payload && payload.archivedValue ? payload.archivedValue : null,
-      activeAutoResult: payload && payload.activeAutoResult ? payload.activeAutoResult : null,
-      draftAutoResult: payload && payload.draftAutoResult ? payload.draftAutoResult : null,
+      historicalAutoResult: payload && payload.historicalAutoResult ? payload.historicalAutoResult : null,
+      currentAutoResult: payload && payload.currentAutoResult ? payload.currentAutoResult : null,
       reviewStateSignature,
     }),
   };
@@ -4108,7 +4071,7 @@ function renderArchivedReviewPanel() {
   const payload = archivedJobReviewPayload && archivedJobReviewPayload.jobId === selectedJob.id
     ? archivedJobReviewPayload
     : null;
-  const reviewIsActionable = selectedJob.needsRuleReview === true;
+  const reviewIsActionable = payload && payload.isActionable === true;
 
   if (!payload || payload.loading === true) {
     archivedReviewPanelEl.textContent = 'Laddar jobbgranskning...';
@@ -4122,14 +4085,14 @@ function renderArchivedReviewPanel() {
   const header = document.createElement('div');
   header.className = 'archived-review-header';
   const title = document.createElement('h3');
-  title.textContent = 'Följ upp arkiverat jobb';
+  title.textContent = 'Uppdatera arkiverat jobb';
   const summary = document.createElement('div');
   summary.className = 'archived-review-summary-line';
   const classification = payload.classification && typeof payload.classification === 'object'
     ? String(payload.classification.type || 'info')
     : 'info';
   if (!reviewIsActionable) {
-    summary.textContent = 'Det här är en förhandsgranskning av hur utkastet skulle påverka jobbet.';
+    summary.textContent = 'Det här arkiverade jobbet påverkas inte av aktuella regler just nu.';
   } else {
     summary.textContent = classification === 'risk'
       ? 'Det nya förslaget avviker på punkter som bör granskas.'
@@ -4166,7 +4129,7 @@ function renderArchivedReviewPanel() {
   const columns = document.createElement('div');
   columns.className = 'archived-review-columns';
   const archivedColumn = buildArchivedReviewColumn('Arkiverat värde');
-  const proposedColumn = buildArchivedReviewColumn('Nytt föreslaget värde');
+  const proposedColumn = buildArchivedReviewColumn('Aktuellt föreslaget värde');
 
   const archivedValue = payload.archivedValue && typeof payload.archivedValue === 'object' ? payload.archivedValue : {};
   const addSelectPair = (labelText, archivedValueText, currentValue, options, onChange) => {
@@ -4364,7 +4327,7 @@ function renderArchivedReviewPanel() {
   if (!reviewIsActionable) {
     const previewNotice = document.createElement('div');
     previewNotice.className = 'archived-review-empty';
-    previewNotice.textContent = 'Det här jobbet kan följas upp här efter att reglerna aktiverats.';
+    previewNotice.textContent = 'Det här jobbet behöver inte uppdateras just nu.';
     actions.appendChild(previewNotice);
     wrapper.appendChild(actions);
     archivedReviewPanelEl.replaceChildren(wrapper);
@@ -4372,7 +4335,7 @@ function renderArchivedReviewPanel() {
   }
   const keepButton = document.createElement('button');
   keepButton.type = 'button';
-  keepButton.textContent = 'Behåll arkiveringen';
+  keepButton.textContent = 'Behåll nuvarande arkivering';
   keepButton.addEventListener('click', async () => {
     try {
       await saveArchivedReviewAction('keep');
@@ -4382,7 +4345,7 @@ function renderArchivedReviewPanel() {
   });
   const useNewButton = document.createElement('button');
   useNewButton.type = 'button';
-  useNewButton.textContent = 'Använd nya förslag';
+  useNewButton.textContent = 'Använd aktuell arkivering';
   useNewButton.addEventListener('click', async () => {
     try {
       await saveArchivedReviewAction('use-new');
@@ -4434,30 +4397,16 @@ function renderArchivingRuleReview(force = false) {
   archivingReviewTemplateChangesEl.innerHTML = '';
   archivingReviewJobsEl.innerHTML = '';
 
-  if (payload.hasUnpublishedChanges !== true) {
-    archivingReviewSummaryEl.classList.add('hidden');
-    archivingReviewTemplateChangesEl.classList.add('hidden');
-    archivingReviewStatusEl.classList.add('hidden');
-    archivingReviewStatusEl.replaceChildren();
-
-    const empty = document.createElement('div');
-    empty.className = 'matches-empty';
-    empty.textContent = 'Det finns inga ändringar av arkiveringsregler att granska.';
-    archivingReviewJobsEl.appendChild(empty);
-    updateSettingsActionButtons();
-    return;
-  }
-
   archivingReviewSummaryEl.classList.remove('hidden');
   if (templateChanges.length > 0) {
     archivingReviewTemplateChangesEl.classList.remove('hidden');
     templateChanges.forEach((change) => {
       const item = document.createElement('div');
       item.className = 'archiving-review-template-change';
-      const folderName = change.archiveFolderName || change.archiveFolderId || 'okänd mapp';
+      const templateName = change.filenameTemplateName || change.archiveFolderName || change.archiveFolderId || 'okänd filnamnsregel';
       const title = document.createElement('div');
       title.className = 'archiving-review-template-change-title';
-      title.textContent = `Filnamnsmall för mapp ${folderName} har ändrats.`;
+      title.textContent = `${templateName} har ändrats.`;
       const detail = document.createElement('div');
       detail.className = 'archiving-review-template-change-detail';
       detail.textContent = `Från: ${change.before || 'Tom filnamnsmall'}  Till: ${change.after || 'Tom filnamnsmall'}`;
@@ -4491,7 +4440,7 @@ function renderArchivingRuleReview(force = false) {
   lines.className = 'archiving-review-status-lines';
 
   const intro = document.createElement('div');
-  intro.textContent = 'Det finns ett utkast till arkiveringsregler.';
+  intro.textContent = 'Aktuella regler gäller redan för nya och ännu oarkiverade dokument. Här kan du analysera och uppdatera redan arkiverade dokument.';
   lines.appendChild(intro);
 
   if (Array.isArray(payload.changedSections) && payload.changedSections.length > 0) {
@@ -4510,12 +4459,14 @@ function renderArchivingRuleReview(force = false) {
   }
 
   const statusLine = document.createElement('div');
-  if (payload.hasReviewRelevantChanges !== true) {
-    statusLine.textContent = 'Det här utkastet innehåller inga ändringar som kräver granskning av gamla arkiverade jobb.';
-  } else if (sessionStatus === 'running') {
+  if (sessionStatus === 'running') {
     statusLine.textContent = `Analysen av arkiverade jobb pågår. ${analyzedCount} / ${totalCount} analyserade. ${foundCount} jobb hittade hittills. Fler jobb kan tillkomma medan analysen fortsätter.`;
+  } else if (totalCount === 0) {
+    statusLine.textContent = 'Det finns inga arkiverade jobb att analysera just nu.';
+  } else if (foundCount > 0) {
+    statusLine.textContent = `Analysen är klar. ${foundCount} arkiverade jobb påverkas av aktuella regler eller kod.`;
   } else {
-    statusLine.textContent = 'Analysen av arkiverade jobb är klar.';
+    statusLine.textContent = 'Analysen är klar. Inga arkiverade jobb påverkas just nu.';
   }
   lines.appendChild(statusLine);
 
@@ -4523,13 +4474,11 @@ function renderArchivingRuleReview(force = false) {
   if (jobs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
-    empty.textContent = payload.hasReviewRelevantChanges !== true
-      ? 'Det här utkastet påverkar inte gamla arkiverade jobb som behöver granskas.'
-      : sessionStatus === 'running'
+    empty.textContent = sessionStatus === 'running'
       ? 'Inga påverkade arkiverade jobb hittade ännu.'
       : totalCount === 0
-      ? 'Det finns inga arkiverade jobb att jämföra mot utkastet ännu.'
-      : 'Inga arkiverade jobb påverkas av utkastet just nu.';
+      ? 'Det finns inga arkiverade jobb att jämföra mot ännu.'
+      : 'Inga arkiverade jobb behöver uppdateras just nu.';
     archivingReviewJobsEl.appendChild(empty);
     updateSettingsActionButtons();
     return;
@@ -4583,24 +4532,22 @@ function renderArchivingRuleReview(force = false) {
   updateSettingsActionButtons();
 }
 
-async function resetArchivingRulesDraft() {
-  const response = await fetch('/api/reset-archiving-rules-draft.php', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: '{}'
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte kassera utkastet.');
+function watchReprocessedJobIdsFromPayload(payload) {
+  const reprocessedJobIds = Array.isArray(payload?.reprocessedJobs?.reprocessedJobIds)
+    ? payload.reprocessedJobs.reprocessedJobIds.filter((jobId) => typeof jobId === 'string' && jobId !== '')
+    : [];
+  if (reprocessedJobIds.length < 1) {
+    return;
   }
-  applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
-  await Promise.all([loadArchiveStructure(), loadLabels({ reload: true }), loadExtractionFields()]);
+  reprocessedJobIds.forEach((jobId) => {
+    reprocessWatchJobIds.add(jobId);
+  });
+  scheduleReprocessWatchPoll(1000);
+  scheduleStatePoll(0);
 }
 
-async function publishArchivingRules() {
-  const response = await fetch('/api/publish-archiving-rules.php', {
+async function bumpArchivingRulesVersionDev() {
+  const response = await fetch('/api/bump-archiving-rules-version.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -4609,34 +4556,12 @@ async function publishArchivingRules() {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte använda utkastet.');
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte höja arkiveringsversionen.');
   }
-
-  const reprocessedJobIds = Array.isArray(payload.reprocessedJobs && payload.reprocessedJobs.reprocessedJobIds)
-    ? payload.reprocessedJobs.reprocessedJobIds
-      .filter((jobId) => typeof jobId === 'string' && jobId !== '')
-    : [];
 
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   await Promise.all([loadArchiveStructure(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshArchiveStructure: true })]);
-  if (reprocessedJobIds.length > 0) {
-    reprocessedJobIds.forEach((jobId) => {
-      reprocessWatchJobIds.add(jobId);
-    });
-    scheduleReprocessWatchPoll(1000);
-    scheduleStatePoll(0);
-  }
-  const flaggedCount = payload.flaggedArchivedJobs && Number.isInteger(payload.flaggedArchivedJobs.flaggedCount)
-    ? payload.flaggedArchivedJobs.flaggedCount
-    : 0;
-  if (flaggedCount > 0) {
-    setJobListMode('ready');
-    const firstReviewJob = jobsNeedingRuleReview()[0] || null;
-    if (firstReviewJob && typeof firstReviewJob.id === 'string') {
-      applySelectedJobId(firstReviewJob.id);
-      setViewMode('review');
-    }
-  }
+  watchReprocessedJobIdsFromPayload(payload);
 }
 
 function ensureJobListNode(key, createNode) {
@@ -4761,7 +4686,7 @@ function updateReadyJobListItem(li, job) {
 
 function updateArchivedJobListItem(li, job) {
   li.className = 'job-item is-archived';
-  if (job.needsRuleReview === true) {
+  if (jobHasArchivingUpdateChange(job.id)) {
     li.classList.add('is-needs-review');
   }
   if (job.id === selectedJobId) {
@@ -4771,10 +4696,8 @@ function updateArchivedJobListItem(li, job) {
   li.dataset.jobId = job.id;
   li._nameEl.textContent = job.originalFilename;
 
-  const archivedLabel = job.needsRuleReview === true
-    ? `Behöver ses över${job.filename ? ' • ' + job.filename : ''}`
-    : jobHasDraftReviewChange(job.id)
-      ? `Påverkas av utkast${job.filename ? ' • ' + job.filename : ''}`
+  const archivedLabel = jobHasArchivingUpdateChange(job.id)
+    ? `Behöver uppdateras${job.filename ? ' • ' + job.filename : ''}`
     : (job.filename
       ? job.filename
       : (typeof job.archivedAt === 'string' && job.archivedAt ? job.archivedAt : ''));
@@ -6265,10 +6188,8 @@ function renderSelectedJobPanel() {
   if (selectedJob.archived === true && typeof selectedJob.archivedAt === 'string' && selectedJob.archivedAt) {
     appendLine('Arkiverat: ' + selectedJob.archivedAt.replace('T', ' ').replace(/([+-]\d{2}:\d{2}|Z)$/, '').trim());
   }
-  if (selectedJob.archived === true && selectedJob.needsRuleReview === true) {
-    appendLine('Behöver ses över enligt aktuella regler.', 'is-warning');
-  } else if (selectedJob.archived === true && jobHasDraftReviewChange(selectedJob.id)) {
-    appendLine('Påverkas av utkast till arkiveringsregler.', 'is-warning');
+  if (selectedJob.archived === true && jobHasArchivingUpdateChange(selectedJob.id)) {
+    appendLine('Arkiveringen kan uppdateras enligt aktuella regler.', 'is-warning');
   }
 
   selectedJobMetaEl.replaceChildren(...metaLines);
@@ -8528,22 +8449,20 @@ function bindSettingsPanelRefs(tabId) {
     archivingReviewSummaryEl = document.getElementById('archiving-review-summary');
     archivingReviewTemplateChangesEl = document.getElementById('archiving-review-template-changes');
     archivingReviewJobsEl = document.getElementById('archiving-review-jobs');
-    archivingReviewResetDraftEl = document.getElementById('archiving-review-reset-draft');
-    archivingReviewPublishEl = document.getElementById('archiving-review-publish');
-    archivingReviewResetDraftEl.addEventListener('click', async () => {
-      try {
-        await resetArchivingRulesDraft();
-      } catch (error) {
-        alert(error.message || 'Kunde inte kassera utkastet.');
+    archivingReviewDevBumpEl = document.getElementById('archiving-review-dev-bump');
+    if (archivingReviewDevBumpEl) {
+      const isDev = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      archivingReviewDevBumpEl.hidden = !isDev;
+      if (isDev) {
+        archivingReviewDevBumpEl.addEventListener('click', async () => {
+          try {
+            await bumpArchivingRulesVersionDev();
+          } catch (error) {
+            alert(error.message || 'Kunde inte höja arkiveringsversionen.');
+          }
+        });
       }
-    });
-    archivingReviewPublishEl.addEventListener('click', async () => {
-      try {
-        await publishArchivingRules();
-      } catch (error) {
-        alert(error.message || 'Kunde inte aktivera reglerna.');
-      }
-    });
+    }
   } else if (tabId === 'paths') {
     inputInboxPathEl = document.getElementById('input-inbox-path');
     outputBasePathEl = document.getElementById('output-base-path');
@@ -9052,7 +8971,7 @@ function panelActionButtonsForTab(tabId) {
 }
 
 function updateSettingsActionButtons() {
-  const reviewPayload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.draftReview);
+  const reviewPayload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
   const clientsLoading = loadingSettingsPanels.has('clients');
   const sendersLoading = loadingSettingsPanels.has('senders');
   const matchingLoading = loadingSettingsPanels.has('matching');
@@ -9072,8 +8991,6 @@ function updateSettingsActionButtons() {
   const labelsError = labelsValidationError();
   const extractionFieldsDirty = isExtractionFieldsDirty();
   const pathsDirty = isPathsDirty();
-  const hasUnpublishedArchivingChanges = reviewPayload.hasUnpublishedChanges === true;
-
   if (clientsCancelEl && clientsApplyEl) {
     clientsCancelEl.disabled = clientsLoading || !clientsDirty;
     clientsApplyEl.disabled = clientsLoading || !clientsDirty;
@@ -9111,9 +9028,8 @@ function updateSettingsActionButtons() {
     extractionFieldsApplyEl.disabled = extractionFieldsLoading || !extractionFieldsDirty;
   }
 
-  if (archivingReviewResetDraftEl && archivingReviewPublishEl) {
-    archivingReviewResetDraftEl.disabled = archivingReviewLoading || !hasUnpublishedArchivingChanges;
-    archivingReviewPublishEl.disabled = archivingReviewLoading || !hasUnpublishedArchivingChanges;
+  if (archivingReviewDevBumpEl) {
+    archivingReviewDevBumpEl.disabled = archivingReviewLoading;
   }
 
   if (pathsCancelEl && pathsApplyEl) {
@@ -16231,6 +16147,7 @@ async function saveArchiveStructure() {
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   renderArchiveStructureEditor();
+  watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
 }
 
@@ -16274,6 +16191,7 @@ async function saveLabels() {
     renderArchiveStructureEditor();
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
+  watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
 }
 
@@ -16311,6 +16229,7 @@ async function saveExtractionFields() {
     renderArchiveStructureEditor();
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
+  watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
 }
 
