@@ -35,13 +35,10 @@ try {
         }
     }
 
-    $job = update_job_user_fields($config, $jobId, $updates);
-    $entry = load_job_state_entry_by_id($config, $jobId);
+    update_job_user_fields($config, $jobId, $updates);
 
     json_response([
         'ok' => true,
-        'job' => $job,
-        'entry' => $entry,
     ]);
 } catch (Throwable $e) {
     json_response([

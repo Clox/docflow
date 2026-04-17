@@ -71,7 +71,7 @@ const selectedJobSenderLinkedInfoEl = document.getElementById('selected-job-send
 const selectedJobSenderUnknownSectionEl = document.getElementById('selected-job-sender-unknown-section');
 const selectedJobSenderUnknownInfoEl = document.getElementById('selected-job-sender-unknown-info');
 const selectedJobStatusEl = document.getElementById('selected-job-status');
-const selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
+let selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
 const dismissArchivedUpdateActionEl = document.getElementById('dismiss-archived-update-action');
 const selectedJobActionsWarningEl = document.getElementById('selected-job-actions-warning');
 const settingsPanelTemplateIds = {
@@ -96,8 +96,50 @@ function developmentUiEnabled() {
   return window.localStorage.getItem('docflowShowDevControls') === '1';
 }
 
-if (selectedJobReprocessEl instanceof HTMLButtonElement) {
-  selectedJobReprocessEl.hidden = !developmentUiEnabled();
+function reprocessUiEnabled() {
+  return window.localStorage.getItem('docflowShowDevControls') === '1';
+}
+
+function bindSelectedJobReprocessButton(buttonEl) {
+  if (!(buttonEl instanceof HTMLButtonElement) || buttonEl.dataset.bound === '1') {
+    return buttonEl;
+  }
+  buttonEl.dataset.bound = '1';
+  buttonEl.addEventListener('click', async (event) => {
+    if (event.ctrlKey || event.metaKey) {
+      await handleSelectedJobReprocess('full', { forceOcr: true });
+      return;
+    }
+    await handleSelectedJobReprocess('post-ocr');
+  });
+  return buttonEl;
+}
+
+function syncSelectedJobReprocessButton() {
+  const existing = document.getElementById('selected-job-reprocess');
+  if (reprocessUiEnabled()) {
+    if (existing instanceof HTMLButtonElement) {
+      selectedJobReprocessEl = bindSelectedJobReprocessButton(existing);
+      return selectedJobReprocessEl;
+    }
+    if (!(archiveActionEl instanceof HTMLButtonElement) || !(archiveActionEl.parentNode instanceof Node)) {
+      selectedJobReprocessEl = null;
+      return null;
+    }
+    const buttonEl = document.createElement('button');
+    buttonEl.id = 'selected-job-reprocess';
+    buttonEl.type = 'button';
+    buttonEl.disabled = true;
+    buttonEl.textContent = 'Analysera igen';
+    archiveActionEl.parentNode.insertBefore(buttonEl, archiveActionEl);
+    selectedJobReprocessEl = bindSelectedJobReprocessButton(buttonEl);
+    return selectedJobReprocessEl;
+  }
+  if (existing instanceof HTMLElement) {
+    existing.remove();
+  }
+  selectedJobReprocessEl = null;
+  return null;
 }
 
 let clientsListEl = null;
@@ -371,6 +413,7 @@ const selectedSenderByJobId = new Map();
 const selectedFolderByJobId = new Map();
 const selectedLabelIdsByJobId = new Map();
 const archivedReviewDraftByJobId = new Map();
+const archivedReviewPayloadByJobId = new Map();
 const filenameByJobId = new Map();
 const filenameSaveTimerByJobId = new Map();
 const lastKnownJobDisplayById = new Map();
@@ -1579,6 +1622,26 @@ function selectedArchivedReviewPayload(job) {
     && archivedJobReviewPayload.loading !== true
     ? archivedJobReviewPayload
     : null;
+}
+
+function archivedReviewCacheKey(job) {
+  return job && typeof job.id === 'string' ? job.id : '';
+}
+
+function cachedArchivedReviewPayload(job) {
+  const key = archivedReviewCacheKey(job);
+  if (!key) {
+    return null;
+  }
+  return archivedReviewPayloadByJobId.get(key) || null;
+}
+
+function archivedReviewPayloadIsCurrent(job, payload) {
+  if (!job || !payload || payload.jobId !== job.id) {
+    return false;
+  }
+  return payload._jobSignature === jobStateSignature(job)
+    && payload._reviewStateSignature === (typeof state.archivingRules?.signature === 'string' ? state.archivingRules.signature : '');
 }
 
 function archivedReviewSidebarEditable(job) {
@@ -2897,6 +2960,9 @@ function setJobListMode(mode, options = {}) {
   if (options.refreshSelection !== false) {
     refreshSelection();
   }
+  const selectedJob = findJobById(selectedJobId);
+  updateArchiveAction(selectedJob);
+  updateSelectedJobResetActions(selectedJob);
 }
 
 async function openArchivingReviewSettingsDirect() {
@@ -3943,7 +4009,11 @@ function syncArchivingReviewPayloadFromState(force = false) {
 }
 
 function applyArchivingRulesStatePayload(payload, options = {}) {
+  const previousSignature = typeof state.archivingRules?.signature === 'string' ? state.archivingRules.signature : '';
   state.archivingRules = normalizeArchivingRulesStatePayload(payload, state.archivingRules);
+  if (state.archivingRules.signature !== previousSignature) {
+    archivedReviewPayloadByJobId.clear();
+  }
   renderAppNotices();
   syncArchivingReviewTabIndicator();
   syncArchivingReviewPayloadFromState(options.forceRender === true);
@@ -4104,6 +4174,64 @@ function buildArchivedReviewColumn(titleText) {
   return column;
 }
 
+function enrichArchivedReviewPayload(job, payload) {
+  const reviewStateSignature = typeof state.archivingRules?.signature === 'string'
+    ? state.archivingRules.signature
+    : '';
+  return {
+    ...payload,
+    _jobSignature: jobStateSignature(job),
+    _reviewStateSignature: reviewStateSignature,
+    _draftSignature: JSON.stringify({
+      archivedValue: payload && payload.archivedValue ? payload.archivedValue : null,
+      historicalAutoResult: payload && payload.historicalAutoResult ? payload.historicalAutoResult : null,
+      currentAutoResult: payload && payload.currentAutoResult ? payload.currentAutoResult : null,
+      reviewStateSignature,
+    }),
+  };
+}
+
+async function fetchArchivedReviewPayload(job, options = {}) {
+  if (!job || !jobSupportsArchivedReview(job)) {
+    return null;
+  }
+  const force = options.force === true;
+  const cached = !force ? cachedArchivedReviewPayload(job) : null;
+  if (cached && archivedReviewPayloadIsCurrent(job, cached)) {
+    return cached;
+  }
+  const response = await fetch('/api/get-archived-job-review.php?id=' + encodeURIComponent(job.id), { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Kunde inte ladda jobbgranskningen.');
+  }
+  const payload = await response.json();
+  const enriched = enrichArchivedReviewPayload(job, payload);
+  archivedReviewPayloadByJobId.set(job.id, enriched);
+  return enriched;
+}
+
+function preloadArchivedReviewPayloadsAroundJob(jobId) {
+  if (currentJobListMode !== 'archived-review') {
+    return;
+  }
+  const jobs = displayedJobsForCurrentListMode();
+  const index = jobs.findIndex((job) => job && job.id === jobId);
+  if (index < 0) {
+    return;
+  }
+  [index - 1, index, index + 1].forEach((candidateIndex) => {
+    const job = jobs[candidateIndex] || null;
+    if (!job || !jobSupportsArchivedReview(job)) {
+      return;
+    }
+    const cached = cachedArchivedReviewPayload(job);
+    if (cached && archivedReviewPayloadIsCurrent(job, cached)) {
+      return;
+    }
+    fetchArchivedReviewPayload(job).catch(() => {});
+  });
+}
+
 function applyOptimisticArchivedReviewResolution(jobId, options = {}) {
   const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
   const remainingJobs = payload.jobs.filter((item) => !(item && item.jobId === jobId));
@@ -4137,6 +4265,79 @@ function applyOptimisticArchivedReviewResolution(jobId, options = {}) {
   state.archivingRules = {
     ...state.archivingRules,
     hasPendingArchivedUpdates: remainingJobs.length > 0 || nextPayload.session.status === 'running',
+    pendingArchivedUpdateCount: nextSummary.affected,
+    updateReview: nextPayload,
+  };
+  syncArchivingReviewPayloadFromState(true);
+  renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
+  refreshSelection();
+}
+
+function decrementArchivingReviewSummaryBucket(summary, type) {
+  if (!summary || typeof summary !== 'object') {
+    return summary;
+  }
+  if (type === 'improvement') {
+    summary.improvements = Math.max(0, (summary.improvements || 0) - 1);
+  } else if (type === 'risk') {
+    summary.risks = Math.max(0, (summary.risks || 0) - 1);
+  } else if (type === 'info') {
+    summary.info = Math.max(0, (summary.info || 0) - 1);
+  } else {
+    summary.unchanged = Math.max(0, (summary.unchanged || 0) - 1);
+  }
+  return summary;
+}
+
+function applyOptimisticArchivedReviewUnarchive(job) {
+  if (!job || typeof job.id !== 'string' || job.id === '') {
+    return;
+  }
+
+  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
+  const activeVersion = Number.parseInt(String(state.archivingRules?.activeVersion || 0), 10) || 0;
+  const payloadJob = payload.jobs.find((item) => item && item.jobId === job.id) || null;
+  const reviewPayload = archivedJobReviewPayload && archivedJobReviewPayload.jobId === job.id
+    ? archivedJobReviewPayload
+    : (cachedArchivedReviewPayload(job) || null);
+  const classificationType = payloadJob && payloadJob.classification && typeof payloadJob.classification.type === 'string'
+    ? payloadJob.classification.type
+    : (reviewPayload && reviewPayload.classification && typeof reviewPayload.classification.type === 'string'
+      ? reviewPayload.classification.type
+      : 'unchanged');
+  const dismissedForVersion = payloadJob
+    ? payloadJob.dismissedForVersion === true
+    : ((Number.parseInt(String(job.dismissedAnalysisVersion || 0), 10) || 0) === activeVersion);
+  const wasAffected = classificationType !== 'unchanged' && (!dismissedForVersion || payload.session.ignoreDismissed === true);
+  const remainingJobs = payload.jobs.filter((item) => !(item && item.jobId === job.id));
+  const nextSummary = decrementArchivingReviewSummaryBucket({
+    ...payload.summary,
+    archivedJobs: Math.max(0, (payload.summary.archivedJobs || payload.summary.testedJobs || 0) - 1),
+    testedJobs: Math.max(0, (payload.summary.testedJobs || 0) - 1),
+    affected: wasAffected ? Math.max(0, (payload.summary.affected || 0) - 1) : (payload.summary.affected || 0),
+    dismissed: dismissedForVersion ? Math.max(0, (payload.summary.dismissed || 0) - 1) : (payload.summary.dismissed || 0),
+  }, classificationType);
+  const nextPayload = {
+    ...payload,
+    jobs: remainingJobs,
+    summary: nextSummary,
+    session: {
+      ...payload.session,
+      foundCount: remainingJobs.length,
+    },
+    signature: '',
+  };
+
+  archivedReviewDraftByJobId.delete(job.id);
+  clearArchivedReviewEditorState(job.id);
+  archivedReviewPayloadByJobId.delete(job.id);
+  if (archivedJobReviewPayload && archivedJobReviewPayload.jobId === job.id) {
+    archivedJobReviewPayload = null;
+  }
+
+  state.archivingRules = {
+    ...state.archivingRules,
+    hasPendingArchivedUpdates: nextSummary.affected > 0 || nextPayload.session.status === 'running',
     pendingArchivedUpdateCount: nextSummary.affected,
     updateReview: nextPayload,
   };
@@ -4183,6 +4384,7 @@ async function saveArchivedReviewAction(action) {
 
   archivedReviewDraftByJobId.delete(selectedJob.id);
   clearArchivedReviewEditorState(selectedJob.id);
+  archivedReviewPayloadByJobId.delete(selectedJob.id);
   archivedJobReviewPayload = null;
   loadedMetaJobId = '';
   loadedMatchesJobId = '';
@@ -4212,14 +4414,20 @@ async function loadArchivedReview(jobId, force = false) {
     return;
   }
 
-  const reviewStateSignature = typeof state.archivingRules?.signature === 'string'
-    ? state.archivingRules.signature
-    : '';
-  if (!force && archivedJobReviewPayload && archivedJobReviewPayload.jobId === jobId && archivedJobReviewPayload._jobSignature === jobStateSignature(selectedJob)) {
-    if (archivedJobReviewPayload._reviewStateSignature === reviewStateSignature) {
-      renderArchivedReviewPanel();
-      return;
-    }
+  const cached = !force ? cachedArchivedReviewPayload(selectedJob) : null;
+  if (cached && archivedReviewPayloadIsCurrent(selectedJob, cached)) {
+    archivedJobReviewPayload = cached;
+    syncArchivedReviewEditorState(selectedJob, cached);
+    setClientForJob(selectedJob);
+    setSenderForJob(selectedJob);
+    setFolderForJob(selectedJob);
+    setLabelsForJob(selectedJob);
+    syncFilenameField(selectedJob);
+    updateArchiveAction(selectedJob);
+    updateSelectedJobResetActions(selectedJob);
+    renderArchivedReviewPanel();
+    preloadArchivedReviewPayloadsAroundJob(jobId);
+    return;
   }
 
   const requestSeq = ++archivedReviewRequestSeq;
@@ -4227,29 +4435,15 @@ async function loadArchivedReview(jobId, force = false) {
     jobId,
     loading: true,
     _jobSignature: jobStateSignature(selectedJob),
-    _reviewStateSignature: reviewStateSignature,
+    _reviewStateSignature: typeof state.archivingRules?.signature === 'string' ? state.archivingRules.signature : '',
   };
   renderArchivedReviewPanel();
 
-  const response = await fetch('/api/get-archived-job-review.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error('Kunde inte ladda jobbgranskningen.');
-  }
-  const payload = await response.json();
+  const payload = await fetchArchivedReviewPayload(selectedJob, { force });
   if (requestSeq !== archivedReviewRequestSeq) {
     return;
   }
-  archivedJobReviewPayload = {
-    ...payload,
-    _jobSignature: jobStateSignature(selectedJob),
-    _reviewStateSignature: reviewStateSignature,
-    _draftSignature: JSON.stringify({
-      archivedValue: payload && payload.archivedValue ? payload.archivedValue : null,
-      historicalAutoResult: payload && payload.historicalAutoResult ? payload.historicalAutoResult : null,
-      currentAutoResult: payload && payload.currentAutoResult ? payload.currentAutoResult : null,
-      reviewStateSignature,
-    }),
-  };
+  archivedJobReviewPayload = payload;
   syncArchivedReviewEditorState(selectedJob, archivedJobReviewPayload);
   setClientForJob(selectedJob);
   setSenderForJob(selectedJob);
@@ -4259,6 +4453,7 @@ async function loadArchivedReview(jobId, force = false) {
   updateArchiveAction(selectedJob);
   updateSelectedJobResetActions(selectedJob);
   renderArchivedReviewPanel();
+  preloadArchivedReviewPayloadsAroundJob(jobId);
 }
 
 function createArchivingReviewLabelChip(labelName) {
@@ -4460,9 +4655,12 @@ function renderArchivingRuleReview(force = false) {
       setViewMode('pdf');
     }
   });
+  const statusActions = document.createElement('div');
+  statusActions.className = 'panel-actions';
   const updateAllButton = document.createElement('button');
   updateAllButton.type = 'button';
-  updateAllButton.textContent = 'Uppdatera alla påverkade';
+  updateAllButton.textContent = 'Applicera nya regler på alla påverkade';
+  updateAllButton.title = 'Applicera de nya arkiveringsreglerna på alla påverkade arkiverade dokument';
   updateAllButton.disabled = foundCount < 1 || sessionStatus === 'running';
   updateAllButton.addEventListener('click', async () => {
     try {
@@ -4474,6 +4672,7 @@ function renderArchivingRuleReview(force = false) {
   const reanalyzeAllButton = document.createElement('button');
   reanalyzeAllButton.type = 'button';
   reanalyzeAllButton.textContent = 'Analysera om alla';
+  reanalyzeAllButton.title = 'Kör analysen igen och visa även dokument som tidigare har avfärdats';
   reanalyzeAllButton.disabled = sessionStatus === 'running' || totalCount < 1;
   reanalyzeAllButton.addEventListener('click', async () => {
     try {
@@ -4482,7 +4681,8 @@ function renderArchivingRuleReview(force = false) {
       alert(error.message || 'Kunde inte analysera om alla arkiverade dokument.');
     }
   });
-  actions.append(openListButton, updateAllButton, reanalyzeAllButton);
+  statusActions.append(openListButton, updateAllButton);
+  actions.append(reanalyzeAllButton);
   if (developmentUiEnabled()) {
     const devButton = document.createElement('button');
     devButton.type = 'button';
@@ -4514,9 +4714,9 @@ function renderArchivingRuleReview(force = false) {
     const hint = document.createElement('div');
     hint.className = 'archiving-review-status-lines';
     hint.textContent = 'Visar även tidigare avfärdade dokument för den aktuella versionen.';
-    archivingReviewStatusEl.replaceChildren(statusLine, hint);
+    archivingReviewStatusEl.replaceChildren(statusLine, hint, statusActions);
   } else {
-    archivingReviewStatusEl.replaceChildren(statusLine);
+    archivingReviewStatusEl.replaceChildren(statusLine, statusActions);
   }
   if (jobs.length === 0) {
     const empty = document.createElement('div');
@@ -4572,10 +4772,13 @@ function watchReprocessedJobIdsFromPayload(payload) {
     return;
   }
   reprocessedJobIds.forEach((jobId) => {
+    applyOptimisticReprocess(jobId, 'post-ocr', { forceOcr: false });
     reprocessWatchJobIds.add(jobId);
   });
   scheduleReprocessWatchPoll(1000);
-  scheduleStatePoll(0);
+  fetchState({ force: true, refreshArchiveStructure: true }).catch(() => {
+    scheduleStatePoll(0);
+  });
 }
 
 async function bumpArchivingRulesVersionDev() {
@@ -5158,6 +5361,21 @@ function proposedArchivingResultForJob(job) {
   return autoArchivingResultForJob(job);
 }
 
+function resetActionsModeActive() {
+  return currentJobListMode === 'ready' || currentJobListMode === 'archived-review';
+}
+
+function clientDisplayNameByDirName(dirName) {
+  const normalized = typeof dirName === 'string' ? dirName.trim() : '';
+  if (!normalized) {
+    return '';
+  }
+  const match = Array.isArray(state.clients)
+    ? state.clients.find((client) => client && typeof client.dirName === 'string' && client.dirName.trim() === normalized)
+    : null;
+  return match && typeof match.dirName === 'string' ? match.dirName.trim() : normalized;
+}
+
 function normalizeComparableLabelIds(value) {
   const list = Array.isArray(value) ? value : [];
   return Array.from(new Set(
@@ -5195,9 +5413,12 @@ function effectiveClientDirName(job) {
   if (!job) {
     return '';
   }
-  const localValue = selectedClientByJobId.get(job.id);
-  if (isKnownClient(localValue)) {
-    return localValue;
+  if (selectedClientByJobId.has(job.id)) {
+    const localValue = selectedClientByJobId.get(job.id);
+    if (isKnownClient(localValue)) {
+      return String(localValue).trim();
+    }
+    return '';
   }
   if (typeof job.selectedClientDirName === 'string' && isKnownClient(job.selectedClientDirName)) {
     return job.selectedClientDirName.trim();
@@ -5226,9 +5447,12 @@ function effectiveSenderId(job) {
   if (!job) {
     return '';
   }
-  const localValue = selectedSenderByJobId.get(job.id);
-  if (isKnownSender(localValue)) {
-    return localValue;
+  if (selectedSenderByJobId.has(job.id)) {
+    const localValue = selectedSenderByJobId.get(job.id);
+    if (isKnownSender(localValue)) {
+      return String(localValue).trim();
+    }
+    return '';
   }
   if (Number.isInteger(job.selectedSenderId) && job.selectedSenderId > 0 && isKnownSender(job.selectedSenderId)) {
     return String(job.selectedSenderId);
@@ -5405,23 +5629,73 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
   }
 
   if (fieldKey === 'client') {
-    applySelectedClientValue(typeof proposed.clientId === 'string' ? proposed.clientId.trim() : '');
+    const nextValue = typeof proposed.clientId === 'string' ? proposed.clientId.trim() : '';
+    if (!nextValue) {
+      selectedClientByJobId.delete(job.id);
+    } else {
+      selectedClientByJobId.set(job.id, nextValue);
+    }
+    setClientForJob(findJobById(job.id));
+    const currentJob = findJobById(job.id);
+    updateArchivedReviewDraftFromSidebar(currentJob);
+    syncFilenameField(currentJob);
+    updateArchiveAction(currentJob);
+    updateSelectedJobResetActions(currentJob);
     return;
   }
   if (fieldKey === 'sender') {
-    applySelectedSenderValue(proposed.senderId ? String(proposed.senderId).trim() : '');
+    const nextValue = proposed.senderId ? String(proposed.senderId).trim() : '';
+    if (!nextValue) {
+      selectedSenderByJobId.delete(job.id);
+    } else {
+      selectedSenderByJobId.set(job.id, nextValue);
+    }
+    setSenderForJob(findJobById(job.id));
+    const currentJob = findJobById(job.id);
+    updateArchivedReviewDraftFromSidebar(currentJob);
+    renderSelectedJobSenderSection(currentJob);
+    syncFilenameField(currentJob);
+    updateArchiveAction(currentJob);
+    updateSelectedJobResetActions(currentJob);
     return;
   }
   if (fieldKey === 'folder') {
-    applySelectedFolderValue(typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '');
+    const nextValue = typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '';
+    if (!nextValue) {
+      selectedFolderByJobId.delete(job.id);
+    } else {
+      selectedFolderByJobId.set(job.id, nextValue);
+    }
+    setFolderForJob(findJobById(job.id));
+    const currentJob = findJobById(job.id);
+    updateArchivedReviewDraftFromSidebar(currentJob);
+    syncFilenameField(currentJob);
+    updateArchiveAction(currentJob);
+    updateSelectedJobResetActions(currentJob);
     return;
   }
   if (fieldKey === 'filename') {
-    applySelectedFilenameValue(typeof proposed.filename === 'string' ? proposed.filename.trim() : '');
+    const nextValue = typeof proposed.filename === 'string' ? proposed.filename.trim() : '';
+    if (!nextValue) {
+      filenameByJobId.delete(job.id);
+    } else {
+      filenameByJobId.set(job.id, nextValue);
+    }
+    const currentJob = findJobById(job.id);
+    syncFilenameField(currentJob);
+    updateArchivedReviewDraftFromSidebar(currentJob);
+    updateArchiveAction(currentJob);
+    updateSelectedJobResetActions(currentJob);
     return;
   }
   if (fieldKey === 'labels') {
-    await persistSelectedJobLabelIds(normalizeComparableLabelIds(proposed.labels));
+    selectedLabelIdsByJobId.set(job.id, normalizeComparableLabelIds(proposed.labels));
+    const currentJob = findJobById(job.id);
+    updateArchivedReviewDraftFromSidebar(currentJob);
+    setLabelsForJob(currentJob);
+    syncFilenameField(currentJob);
+    updateArchiveAction(currentJob);
+    updateSelectedJobResetActions(currentJob);
   }
 }
 
@@ -5622,9 +5896,12 @@ function effectiveFolderId(job) {
   if (!job) {
     return '';
   }
-  const localValue = selectedFolderByJobId.get(job.id);
-  if (isKnownFolder(localValue)) {
-    return localValue;
+  if (selectedFolderByJobId.has(job.id)) {
+    const localValue = selectedFolderByJobId.get(job.id);
+    if (isKnownFolder(localValue)) {
+      return String(localValue).trim();
+    }
+    return '';
   }
   if (typeof job.selectedFolderId === 'string' && isKnownFolder(job.selectedFolderId)) {
     return job.selectedFolderId.trim();
@@ -5953,9 +6230,8 @@ function displayedFilenameForJob(job) {
   if (!job) {
     return '';
   }
-  const localValue = filenameByJobId.get(job.id);
-  if (localValue) {
-    return localValue;
+  if (filenameByJobId.has(job.id)) {
+    return String(filenameByJobId.get(job.id) || '').trim();
   }
   const filenameTemplate = findFilenameTemplateById(effectiveFilenameTemplateId(job));
   const template = filenameTemplate && filenameTemplate.template && typeof filenameTemplate.template === 'object'
@@ -6079,17 +6355,54 @@ function currentJobValuesDifferFromProposed(job) {
   };
 }
 
-function setFieldResetButtonVisibility(buttonEl, visible) {
+function proposedResetTooltip(fieldKey, job) {
+  const proposed = proposedArchivingResultForJob(job);
+  if (!proposed || typeof proposed !== 'object') {
+    return '';
+  }
+  if (fieldKey === 'client') {
+    const value = clientDisplayNameByDirName(typeof proposed.clientId === 'string' ? proposed.clientId.trim() : '');
+    return value ? `Återställ till föreslagen huvudman:\n${value}` : '';
+  }
+  if (fieldKey === 'sender') {
+    const sender = findSenderById(proposed.senderId);
+    const value = sender && typeof sender.name === 'string' && sender.name.trim() !== ''
+      ? sender.name.trim()
+      : (proposed.senderId ? String(proposed.senderId).trim() : '');
+    return value ? `Återställ till föreslagen avsändare:\n${value}` : '';
+  }
+  if (fieldKey === 'folder') {
+    const folder = findArchiveFolderById(typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '');
+    const value = archiveFolderDisplayName(folder) || (typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '');
+    return value ? `Återställ till föreslagen mapp:\n${value}` : '';
+  }
+  if (fieldKey === 'filename') {
+    const directValue = typeof proposed.filename === 'string' ? proposed.filename.trim() : '';
+    const value = directValue !== '' ? directValue : generateFilenameForJob(job);
+    return value ? `Återställ till föreslaget filnamn:\n${value}` : '';
+  }
+  if (fieldKey === 'labels') {
+    const names = normalizeComparableLabelIds(proposed.labels).map((labelId) => filenameTemplateLabelNameById(labelId)).filter((value) => value !== '');
+    const value = names.join(', ');
+    return value ? `Återställ till föreslagna etiketter:\n${value}` : '';
+  }
+  return '';
+}
+
+function setFieldResetButtonVisibility(buttonEl, visible, tooltipValue = '') {
   if (!(buttonEl instanceof HTMLButtonElement)) {
     return;
   }
   buttonEl.hidden = !visible;
-  buttonEl.disabled = !visible;
-  buttonEl.title = visible ? 'Återställ till automatiskt föreslaget värde' : '';
+  if (visible) {
+    buttonEl.title = tooltipValue;
+  } else {
+    buttonEl.title = '';
+  }
 }
 
 function updateSelectedJobResetActions(job) {
-  const editable = !!job && selectedJobArchivingEditable(job);
+  const editable = !!job && resetActionsModeActive() && selectedJobArchivingEditable(job) && !!proposedArchivingResultForJob(job);
   const diffs = editable ? currentJobValuesDifferFromProposed(job) : {
     client: false,
     sender: false,
@@ -6098,11 +6411,11 @@ function updateSelectedJobResetActions(job) {
     labels: false,
   };
 
-  setFieldResetButtonVisibility(resetClientActionEl, editable && diffs.client);
-  setFieldResetButtonVisibility(resetSenderActionEl, editable && diffs.sender);
-  setFieldResetButtonVisibility(resetFolderActionEl, editable && diffs.folder);
-  setFieldResetButtonVisibility(resetFilenameActionEl, editable && diffs.filename);
-  setFieldResetButtonVisibility(resetLabelsActionEl, editable && diffs.labels);
+  setFieldResetButtonVisibility(resetClientActionEl, editable && diffs.client, proposedResetTooltip('client', job));
+  setFieldResetButtonVisibility(resetSenderActionEl, editable && diffs.sender, proposedResetTooltip('sender', job));
+  setFieldResetButtonVisibility(resetFolderActionEl, editable && diffs.folder, proposedResetTooltip('folder', job));
+  setFieldResetButtonVisibility(resetFilenameActionEl, editable && diffs.filename, proposedResetTooltip('filename', job));
+  setFieldResetButtonVisibility(resetLabelsActionEl, editable && diffs.labels, proposedResetTooltip('labels', job));
 }
 
 function selectedJobAnalysisOutdated(job) {
@@ -6140,11 +6453,12 @@ function updateArchiveAction(job) {
   if (dismissArchivedUpdateActionEl instanceof HTMLButtonElement) {
     const archivedReviewMode = currentJobListMode === 'archived-review';
     dismissArchivedUpdateActionEl.hidden = !archivedReviewMode;
+    dismissArchivedUpdateActionEl.style.display = archivedReviewMode ? '' : 'none';
     dismissArchivedUpdateActionEl.textContent = 'Avfärda';
     dismissArchivedUpdateActionEl.disabled = true;
     dismissArchivedUpdateActionEl.title = archivedReviewMode
-      ? 'De föreslagna ändringarna ignoreras för dessa regler. Du kan analysera igen senare.'
-      : '';
+	? 'Ignorerar de föreslagna ändringarna för det här dokumentet.\nVisas inte längre bland arkiverade att granska, men kan visas igen om reglerna ändras eller om analysen körs om.'
+	: '';
   }
 
   if (!job) {
@@ -6217,10 +6531,6 @@ function showAnalysisOutdatedArchiveDialog() {
     const actions = document.createElement('div');
     actions.className = 'analysis-warning-dialog-actions';
 
-    const reprocessButton = document.createElement('button');
-    reprocessButton.type = 'button';
-    reprocessButton.textContent = 'Analysera igen';
-
     const archiveAnywayButton = document.createElement('button');
     archiveAnywayButton.type = 'button';
     archiveAnywayButton.textContent = 'Arkivera ändå';
@@ -6229,7 +6539,20 @@ function showAnalysisOutdatedArchiveDialog() {
     cancelButton.type = 'button';
     cancelButton.textContent = 'Avbryt';
 
-    actions.append(reprocessButton, archiveAnywayButton, cancelButton);
+    const reprocessButton = reprocessUiEnabled()
+      ? (() => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = 'Analysera igen';
+          return button;
+        })()
+      : null;
+
+    if (reprocessButton instanceof HTMLButtonElement) {
+      actions.append(reprocessButton, archiveAnywayButton, cancelButton);
+    } else {
+      actions.append(archiveAnywayButton, cancelButton);
+    }
     dialog.append(title, message, actions);
     overlay.appendChild(dialog);
 
@@ -6251,13 +6574,15 @@ function showAnalysisOutdatedArchiveDialog() {
         finish('cancel');
       }
     });
-    reprocessButton.addEventListener('click', () => finish('reprocess'));
+    if (reprocessButton instanceof HTMLButtonElement) {
+      reprocessButton.addEventListener('click', () => finish('reprocess'));
+    }
     archiveAnywayButton.addEventListener('click', () => finish('archive'));
     cancelButton.addEventListener('click', () => finish('cancel'));
 
     document.addEventListener('keydown', onKeyDown);
     document.body.appendChild(overlay);
-    reprocessButton.focus();
+    (reprocessButton instanceof HTMLButtonElement ? reprocessButton : archiveAnywayButton).focus();
   });
 }
 
@@ -6394,7 +6719,7 @@ async function saveSelectedJobFields(jobId, payload) {
   });
 
   const data = await response.json().catch(() => null);
-  if (!response.ok || !data || data.ok !== true || !data.job || typeof data.job !== 'object') {
+  if (!response.ok || !data || data.ok !== true) {
     const message = data && typeof data.error === 'string' ? data.error : 'Kunde inte spara jobbdata';
     throw new Error(message);
   }
@@ -6402,8 +6727,6 @@ async function saveSelectedJobFields(jobId, payload) {
   if (requestSeq !== saveSelectedJobFieldsSeq) {
     return;
   }
-
-  applyStateEntry(data.entry);
 }
 
 function scheduleFilenameSave(jobId, filename) {
@@ -6451,6 +6774,7 @@ function applySelectedFilenameValue(value) {
 }
 
 function renderSelectedJobPanel() {
+  const reprocessButtonEl = syncSelectedJobReprocessButton();
   const selectedJob = findJobById(selectedJobId);
   if (!selectedJob) {
     syncReviewViewModeAvailability(null, { allowFallback: false });
@@ -6463,8 +6787,10 @@ function renderSelectedJobPanel() {
     renderSelectedJobSenderSection(null);
     syncSelectedJobActionsWarning(null);
     setLabelsForJob(null);
-    selectedJobReprocessEl.disabled = true;
-    selectedJobReprocessEl.title = 'Markera ett jobb först.';
+    if (reprocessButtonEl instanceof HTMLButtonElement) {
+      reprocessButtonEl.disabled = true;
+      reprocessButtonEl.title = 'Markera ett jobb först.';
+    }
     syncFilenameField(null);
     updateArchiveAction(null);
     updateSelectedJobResetActions(null);
@@ -6503,16 +6829,18 @@ function renderSelectedJobPanel() {
   selectedJobMetaEl.replaceChildren(...metaLines);
   renderSelectedJobSenderSection(selectedJob);
   syncSelectedJobActionsWarning(selectedJob);
-  selectedJobReprocessEl.disabled = selectedJob.status === 'processing'
-    || selectedJob.archived === true
-    || (!selectedJob.hasReviewPdf && !selectedJob.hasSourcePdf);
-  selectedJobReprocessEl.title = selectedJobReprocessEl.disabled
-    ? (selectedJob.status === 'processing'
-      ? 'Jobbet bearbetas redan.'
-      : (selectedJob.archived === true
-        ? 'Arkiverade jobb kan inte köras om här.'
-        : 'Det finns varken review.pdf eller source.pdf att köra om från.'))
-    : 'Klicka för att analysera igen från review.pdf. Håll Ctrl nedtryckt för att tvinga en helomkörning från source.pdf.';
+  if (reprocessButtonEl instanceof HTMLButtonElement) {
+    reprocessButtonEl.disabled = selectedJob.status === 'processing'
+      || selectedJob.archived === true
+      || (!selectedJob.hasReviewPdf && !selectedJob.hasSourcePdf);
+    reprocessButtonEl.title = reprocessButtonEl.disabled
+      ? (selectedJob.status === 'processing'
+        ? 'Jobbet bearbetas redan.'
+        : (selectedJob.archived === true
+          ? 'Arkiverade jobb kan inte köras om här.'
+          : 'Det finns varken review.pdf eller source.pdf att köra om från.'))
+      : 'Klicka för att analysera igen från review.pdf. Håll Ctrl nedtryckt för att tvinga en helomkörning från source.pdf.';
+  }
   syncFilenameField(selectedJob);
   updateArchiveAction(selectedJob);
   updateSelectedJobResetActions(selectedJob);
@@ -7883,6 +8211,11 @@ function applyState(nextState) {
   Array.from(filenameByJobId.keys()).forEach((jobId) => {
     if (!validJobIds.has(jobId)) {
       filenameByJobId.delete(jobId);
+    }
+  });
+  Array.from(archivedReviewPayloadByJobId.keys()).forEach((jobId) => {
+    if (!validJobIds.has(jobId)) {
+      archivedReviewPayloadByJobId.delete(jobId);
     }
   });
 
@@ -12906,7 +13239,31 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
     removeButton.type = 'button';
     removeButton.className = 'category-remove';
     removeButton.textContent = 'Ta bort datafält';
-    removeButton.addEventListener('click', () => {
+    removeButton.addEventListener('click', async () => {
+      const fieldDraft = sanitizeExtractionField(collection[index], index);
+      const fieldKey = typeof fieldDraft.key === 'string' ? fieldDraft.key.trim() : '';
+      if (fieldKey !== '') {
+        try {
+          const response = await fetch('/api/check-extraction-field-removal.php', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              fieldKey,
+            })
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok || !payload || payload.ok !== true) {
+            throw new Error(payload && typeof payload.error === 'string'
+              ? payload.error
+              : 'Kunde inte kontrollera om datafältet kan tas bort.');
+          }
+        } catch (error) {
+          alert(error.message || 'Kunde inte ta bort datafältet.');
+          return;
+        }
+      }
       collection.splice(index, 1);
       renderExtractionFieldsEditor();
       renderSystemExtractionFieldsEditor();
@@ -13392,6 +13749,29 @@ function serializeLabelDraftForClipboard(options = {}) {
   return serialized;
 }
 
+async function ensureLabelRemovalAllowed(labelId) {
+  const normalizedLabelId = typeof labelId === 'string' ? labelId.trim() : '';
+  if (normalizedLabelId === '') {
+    return;
+  }
+
+  const response = await fetch('/api/check-label-removal.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      labelId: normalizedLabelId,
+    })
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error(payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Kunde inte kontrollera om etiketten kan tas bort.');
+  }
+}
+
 function renderSingleLabelEditor(container, options = {}) {
   if (!(container instanceof HTMLElement)) {
     return;
@@ -13528,9 +13908,16 @@ function renderSingleLabelEditor(container, options = {}) {
     removeButton.type = 'button';
     removeButton.className = 'category-remove';
     removeButton.textContent = 'Ta bort etikett';
-    removeButton.addEventListener('click', () => {
+    removeButton.addEventListener('click', async () => {
       const labelIndex = Number.isInteger(options.labelIndex) ? options.labelIndex : -1;
       if (labelIndex < 0) {
+        return;
+      }
+      const labelDraft = sanitizeLabel(labelsDraft[labelIndex]);
+      try {
+        await ensureLabelRemovalAllowed(labelDraft.id);
+      } catch (error) {
+        alert(error.message || 'Kunde inte ta bort etiketten.');
         return;
       }
       labelsDraft.splice(labelIndex, 1);
@@ -16990,6 +17377,9 @@ archiveActionEl.addEventListener('click', async () => {
     }
 
     filenameByJobId.delete(selectedJob.id);
+    if (action === 'restore') {
+      applyOptimisticArchivedReviewUnarchive(selectedJob);
+    }
     applyStateEntry(payload.entry);
   } catch (error) {
     restoreSelectedJobEditorState();
@@ -17115,14 +17505,6 @@ settingsTabEls.forEach((tabButton) => {
 
 settingsCloseEl.addEventListener('click', () => {
   closeSettingsModal();
-});
-
-selectedJobReprocessEl.addEventListener('click', async (event) => {
-  if (event.ctrlKey || event.metaKey) {
-    await handleSelectedJobReprocess('full', { forceOcr: true });
-    return;
-  }
-  await handleSelectedJobReprocess('post-ocr');
 });
 
 if (ocrShowPageImageEl) {

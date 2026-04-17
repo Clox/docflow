@@ -29,6 +29,7 @@ if (
 try {
     $config = load_config();
     ensure_job_dispatcher_running($config);
+    $currentRules = load_active_archiving_rules();
     $normalizedSystemLabels = normalize_system_labels($payload['systemLabels']);
     $systemLabelIds = [];
     foreach ($normalizedSystemLabels as $systemLabel) {
@@ -47,6 +48,55 @@ try {
         if ($id !== '' && isset($systemLabelIds[$id])) {
             throw new RuntimeException('Etikett-id krockar med systemetikett: ' . $id);
         }
+    }
+
+    $currentLabelNamesById = [];
+    foreach (array_merge(
+        is_array($currentRules['systemLabels'] ?? null) ? array_values($currentRules['systemLabels']) : [],
+        is_array($currentRules['labels'] ?? null) ? $currentRules['labels'] : []
+    ) as $label) {
+        if (!is_array($label)) {
+            continue;
+        }
+        $id = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+        if ($id === '') {
+            continue;
+        }
+        $currentLabelNamesById[$id] = is_string($label['name'] ?? null) && trim((string) $label['name']) !== ''
+            ? trim((string) $label['name'])
+            : $id;
+    }
+
+    $nextLabelIds = [];
+    foreach (array_merge(array_values($normalizedSystemLabels), $normalizedLabels) as $label) {
+        if (!is_array($label)) {
+            continue;
+        }
+        $id = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+        if ($id !== '') {
+            $nextLabelIds[$id] = true;
+        }
+    }
+
+    $removedLabelIds = array_values(array_filter(
+        array_keys($currentLabelNamesById),
+        static fn (string $labelId): bool => !isset($nextLabelIds[$labelId])
+    ));
+    if ($removedLabelIds !== []) {
+        $usageCounts = count_archived_documents_using_label_ids($config, $removedLabelIds);
+        foreach ($removedLabelIds as $labelId) {
+            $usageCount = (int) ($usageCounts[$labelId] ?? 0);
+            if ($usageCount < 1) {
+                continue;
+            }
+            $labelName = $currentLabelNamesById[$labelId] ?? $labelId;
+            throw new RuntimeException(sprintf(
+                'Går inte att ta bort etiketten "%s" eftersom den används i %d arkiverade dokument.',
+                $labelName,
+                $usageCount
+            ));
+        }
+        cleanup_unarchived_jobs_after_label_removal($config, $removedLabelIds);
     }
 
     $state = load_archiving_rules_state();

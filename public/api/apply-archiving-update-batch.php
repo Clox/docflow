@@ -44,7 +44,6 @@ try {
     json_response([
         'ok' => true,
         'updatedJobIds' => $updatedJobIds,
-        'archivingRules' => build_archiving_rules_state_payload($config),
     ]);
 } catch (Throwable $e) {
     json_response([

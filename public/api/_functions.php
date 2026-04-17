@@ -11656,10 +11656,10 @@ function archiving_review_label_change_item(string $labelName, bool $approvedHas
         return [
             'type' => $approvedHasLabel ? 'improvement' : 'info',
             'field' => 'labels',
-            'message' => ($approvedHasLabel ? 'Etikett tillagd' : 'Ny etikett tillagd') . ': ' . $labelName,
-            'messagePrefix' => $approvedHasLabel ? 'Etikett tillagd:' : 'Ny etikett tillagd:',
+            'message' => 'Etikett tillagd: ' . $labelName,
+            'messagePrefix' => 'Etikett tillagd:',
             'labelName' => $labelName,
-            'metaText' => $approvedHasLabel ? '' : 'ny',
+            'metaText' => '',
             'detail' => '',
         ];
     }
@@ -14715,6 +14715,330 @@ function load_job_state_entry_by_id(array $config, string $jobId): ?array
         return null;
     }
     return build_job_state_entry($config, $jobDir, $job);
+}
+
+function archived_job_uses_saved_label_id(array $job, string $labelId): bool
+{
+    $normalizedLabelId = is_string($labelId) ? trim($labelId) : '';
+    if ($normalizedLabelId === '' || (($job['archived'] ?? false) !== true)) {
+        return false;
+    }
+    $approved = current_approved_archiving_for_job($job);
+    return in_array($normalizedLabelId, normalize_stored_job_label_ids($approved['labels'] ?? null), true);
+}
+
+function count_archived_documents_using_label_ids(array $config, array $labelIds): array
+{
+    $normalizedLabelIds = array_values(array_unique(array_filter(array_map(
+        static fn ($value): string => is_string($value) ? trim($value) : '',
+        $labelIds
+    ), static fn (string $value): bool => $value !== '')));
+    $counts = [];
+    foreach ($normalizedLabelIds as $labelId) {
+        $counts[$labelId] = 0;
+    }
+    if ($normalizedLabelIds === []) {
+        return $counts;
+    }
+
+    $jobsDir = rtrim((string) ($config['jobsDirectory'] ?? ''), DIRECTORY_SEPARATOR);
+    if ($jobsDir === '' || !is_dir($jobsDir)) {
+        return $counts;
+    }
+
+    $entries = scandir($jobsDir);
+    if ($entries === false) {
+        return $counts;
+    }
+
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+        $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $entry;
+        if (!is_dir($jobDir)) {
+            continue;
+        }
+        $job = load_json_file($jobDir . '/job.json');
+        if (!is_array($job)) {
+            continue;
+        }
+        foreach ($normalizedLabelIds as $labelId) {
+            if (archived_job_uses_saved_label_id($job, $labelId)) {
+                $counts[$labelId] = ((int) ($counts[$labelId] ?? 0)) + 1;
+            }
+        }
+    }
+
+    return $counts;
+}
+
+function archived_job_uses_saved_field_key(array $job, string $fieldKey): bool
+{
+    $normalizedFieldKey = is_string($fieldKey) ? trim($fieldKey) : '';
+    if ($normalizedFieldKey === '' || (($job['archived'] ?? false) !== true)) {
+        return false;
+    }
+
+    $approved = current_approved_archiving_for_job($job);
+    $approvedFields = is_array($approved['fields'] ?? null) ? $approved['fields'] : [];
+    return normalize_auto_archiving_field_value_list($approvedFields[$normalizedFieldKey] ?? null) !== [];
+}
+
+function count_archived_documents_using_field_keys(array $config, array $fieldKeys): array
+{
+    $normalizedFieldKeys = array_values(array_unique(array_filter(array_map(
+        static fn ($value): string => is_string($value) ? trim($value) : '',
+        $fieldKeys
+    ), static fn (string $value): bool => $value !== '')));
+    $counts = [];
+    foreach ($normalizedFieldKeys as $fieldKey) {
+        $counts[$fieldKey] = 0;
+    }
+    if ($normalizedFieldKeys === []) {
+        return $counts;
+    }
+
+    $jobsDir = rtrim((string) ($config['jobsDirectory'] ?? ''), DIRECTORY_SEPARATOR);
+    if ($jobsDir === '' || !is_dir($jobsDir)) {
+        return $counts;
+    }
+
+    $entries = scandir($jobsDir);
+    if ($entries === false) {
+        return $counts;
+    }
+
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+        $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $entry;
+        if (!is_dir($jobDir)) {
+            continue;
+        }
+        $job = load_json_file($jobDir . '/job.json');
+        if (!is_array($job)) {
+            continue;
+        }
+        foreach ($normalizedFieldKeys as $fieldKey) {
+            if (archived_job_uses_saved_field_key($job, $fieldKey)) {
+                $counts[$fieldKey] = ((int) ($counts[$fieldKey] ?? 0)) + 1;
+            }
+        }
+    }
+
+    return $counts;
+}
+
+function cleanup_removed_labels_from_unarchived_job(array &$job, array $removedLabelIds): bool
+{
+    if (($job['archived'] ?? false) === true || $removedLabelIds === []) {
+        return false;
+    }
+
+    $changed = false;
+    $removeLabels = static function (mixed $value) use ($removedLabelIds, &$changed): array {
+        $normalized = normalize_stored_job_label_ids($value);
+        $filtered = array_values(array_filter($normalized, static fn (string $labelId): bool => !in_array($labelId, $removedLabelIds, true)));
+        if ($filtered !== $normalized) {
+            $changed = true;
+        }
+        return $filtered;
+    };
+
+    if (array_key_exists('selectedLabelIds', $job)) {
+        $selected = $removeLabels($job['selectedLabelIds']);
+        if ($selected === []) {
+            unset($job['selectedLabelIds']);
+        } else {
+            $job['selectedLabelIds'] = $selected;
+        }
+    }
+
+    if (array_key_exists('labels', $job)) {
+        $job['labels'] = $removeLabels($job['labels']);
+    }
+    if (is_array($job['autoArchivingResult'] ?? null)) {
+        $autoLabels = $removeLabels($job['autoArchivingResult']['labels'] ?? null);
+        $job['autoArchivingResult']['labels'] = $autoLabels;
+    }
+
+    if (is_array($job['analysis'] ?? null)) {
+        if (array_key_exists('labels', $job['analysis'])) {
+            $job['analysis']['labels'] = $removeLabels($job['analysis']['labels']);
+        }
+        if (is_array($job['analysis']['autoArchivingResult'] ?? null)) {
+            $autoLabels = $removeLabels($job['analysis']['autoArchivingResult']['labels'] ?? null);
+            $job['analysis']['autoArchivingResult']['labels'] = $autoLabels;
+        }
+    }
+
+    return $changed;
+}
+
+function cleanup_removed_fields_from_unarchived_job(array &$job, array $removedFieldKeys): bool
+{
+    if (($job['archived'] ?? false) === true || $removedFieldKeys === []) {
+        return false;
+    }
+
+    $changed = false;
+    $removeFieldKeys = static function (mixed &$value) use ($removedFieldKeys, &$changed): void {
+        if (!is_array($value)) {
+            return;
+        }
+        foreach ($removedFieldKeys as $fieldKey) {
+            if (array_key_exists($fieldKey, $value)) {
+                unset($value[$fieldKey]);
+                $changed = true;
+            }
+        }
+    };
+
+    if (array_key_exists('extractionFields', $job)) {
+        $extractionFields = is_array($job['extractionFields']) ? $job['extractionFields'] : [];
+        $removeFieldKeys($extractionFields);
+        $job['extractionFields'] = $extractionFields === [] ? new stdClass() : $extractionFields;
+    }
+    if (array_key_exists('extractionFieldMeta', $job)) {
+        $extractionFieldMeta = is_array($job['extractionFieldMeta']) ? $job['extractionFieldMeta'] : [];
+        $removeFieldKeys($extractionFieldMeta);
+        $job['extractionFieldMeta'] = $extractionFieldMeta === [] ? new stdClass() : $extractionFieldMeta;
+    }
+    if (is_array($job['autoArchivingResult'] ?? null) && array_key_exists('fields', $job['autoArchivingResult'])) {
+        $autoFields = is_array($job['autoArchivingResult']['fields']) ? $job['autoArchivingResult']['fields'] : [];
+        $removeFieldKeys($autoFields);
+        $job['autoArchivingResult']['fields'] = $autoFields;
+    }
+
+    if (is_array($job['analysis'] ?? null)) {
+        if (array_key_exists('extractionFields', $job['analysis'])) {
+            $analysisFields = is_array($job['analysis']['extractionFields']) ? $job['analysis']['extractionFields'] : [];
+            $removeFieldKeys($analysisFields);
+            $job['analysis']['extractionFields'] = $analysisFields === [] ? new stdClass() : $analysisFields;
+        }
+        if (array_key_exists('extractionFieldMeta', $job['analysis'])) {
+            $analysisFieldMeta = is_array($job['analysis']['extractionFieldMeta']) ? $job['analysis']['extractionFieldMeta'] : [];
+            $removeFieldKeys($analysisFieldMeta);
+            $job['analysis']['extractionFieldMeta'] = $analysisFieldMeta === [] ? new stdClass() : $analysisFieldMeta;
+        }
+        if (is_array($job['analysis']['autoArchivingResult'] ?? null) && array_key_exists('fields', $job['analysis']['autoArchivingResult'])) {
+            $autoFields = is_array($job['analysis']['autoArchivingResult']['fields']) ? $job['analysis']['autoArchivingResult']['fields'] : [];
+            $removeFieldKeys($autoFields);
+            $job['analysis']['autoArchivingResult']['fields'] = $autoFields;
+        }
+    }
+
+    return $changed;
+}
+
+function cleanup_unarchived_jobs_after_label_removal(array $config, array $removedLabelIds): array
+{
+    $normalizedLabelIds = array_values(array_unique(array_filter(array_map(
+        static fn ($value): string => is_string($value) ? trim($value) : '',
+        $removedLabelIds
+    ), static fn (string $value): bool => $value !== '')));
+    if ($normalizedLabelIds === []) {
+        return ['cleanedJobIds' => [], 'cleanedCount' => 0];
+    }
+
+    $jobsDir = rtrim((string) ($config['jobsDirectory'] ?? ''), DIRECTORY_SEPARATOR);
+    if ($jobsDir === '' || !is_dir($jobsDir)) {
+        return ['cleanedJobIds' => [], 'cleanedCount' => 0];
+    }
+
+    $cleanedJobIds = [];
+    foreach (scandir($jobsDir) ?: [] as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+        $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $entry;
+        if (!is_dir($jobDir)) {
+            continue;
+        }
+        $jobPath = $jobDir . '/job.json';
+        $job = load_json_file($jobPath);
+        if (!is_array($job) || (($job['archived'] ?? false) === true)) {
+            continue;
+        }
+        $jobChanged = cleanup_removed_labels_from_unarchived_job($job, $normalizedLabelIds);
+        $extractedPath = $jobDir . '/extracted.json';
+        $extracted = load_json_file($extractedPath);
+        $extractedChanged = false;
+        if (is_array($extracted)) {
+            $extractedChanged = cleanup_removed_labels_from_unarchived_job($extracted, $normalizedLabelIds);
+        }
+        if (!$jobChanged && !$extractedChanged) {
+            continue;
+        }
+        $job['updatedAt'] = now_iso();
+        write_json_file($jobPath, $job);
+        if ($extractedChanged) {
+            write_json_file($extractedPath, $extracted);
+        }
+        queue_job_upsert_event($config, $entry);
+        $cleanedJobIds[] = $entry;
+    }
+
+    return [
+        'cleanedJobIds' => $cleanedJobIds,
+        'cleanedCount' => count($cleanedJobIds),
+    ];
+}
+
+function cleanup_unarchived_jobs_after_field_removal(array $config, array $removedFieldKeys): array
+{
+    $normalizedFieldKeys = array_values(array_unique(array_filter(array_map(
+        static fn ($value): string => is_string($value) ? trim($value) : '',
+        $removedFieldKeys
+    ), static fn (string $value): bool => $value !== '')));
+    if ($normalizedFieldKeys === []) {
+        return ['cleanedJobIds' => [], 'cleanedCount' => 0];
+    }
+
+    $jobsDir = rtrim((string) ($config['jobsDirectory'] ?? ''), DIRECTORY_SEPARATOR);
+    if ($jobsDir === '' || !is_dir($jobsDir)) {
+        return ['cleanedJobIds' => [], 'cleanedCount' => 0];
+    }
+
+    $cleanedJobIds = [];
+    foreach (scandir($jobsDir) ?: [] as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+        $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $entry;
+        if (!is_dir($jobDir)) {
+            continue;
+        }
+        $jobPath = $jobDir . '/job.json';
+        $job = load_json_file($jobPath);
+        if (!is_array($job) || (($job['archived'] ?? false) === true)) {
+            continue;
+        }
+        $jobChanged = cleanup_removed_fields_from_unarchived_job($job, $normalizedFieldKeys);
+        $extractedPath = $jobDir . '/extracted.json';
+        $extracted = load_json_file($extractedPath);
+        $extractedChanged = false;
+        if (is_array($extracted)) {
+            $extractedChanged = cleanup_removed_fields_from_unarchived_job($extracted, $normalizedFieldKeys);
+        }
+        if (!$jobChanged && !$extractedChanged) {
+            continue;
+        }
+        $job['updatedAt'] = now_iso();
+        write_json_file($jobPath, $job);
+        if ($extractedChanged) {
+            write_json_file($extractedPath, $extracted);
+        }
+        queue_job_upsert_event($config, $entry);
+        $cleanedJobIds[] = $entry;
+    }
+
+    return [
+        'cleanedJobIds' => $cleanedJobIds,
+        'cleanedCount' => count($cleanedJobIds),
+    ];
 }
 
 function job_events_log_path(): string

@@ -64,7 +64,7 @@
           <div class="selected-job-panel-header-row selected-job-actions-panel-header-row">
             <div class="selected-job-panel-header">Åtgärder</div>
             <div id="selected-job-actions-warning" class="selected-job-actions-warning hidden" aria-live="polite">
-              <span class="selected-job-actions-warning-text">Analys inaktuell - analysera igen</span>
+              <span class="selected-job-actions-warning-text">Analys inaktuell</span>
             </div>
           </div>
           <div class="selected-job-panel-section selected-job-fields selected-job-actions-fields">
@@ -139,9 +139,8 @@
                 <button id="reset-filename-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ filnamn">↺</button>
               </div>
             </div>
-            <button id="selected-job-reprocess" type="button" disabled>Analysera igen</button>
-            <button id="archive-action" type="button" disabled title="Markera ett jobb först.">Arkivera</button>
             <button id="dismiss-archived-update-action" type="button" disabled hidden>Avfärda</button>
+            <button id="archive-action" type="button" disabled title="Markera ett jobb först.">Arkivera</button>
           </div>
         </div>
       </section>
