@@ -91,6 +91,7 @@ try {
                 'jobs' => [],
                 'session' => [
                     'status' => 'idle',
+                    'ignoreDismissed' => false,
                     'analyzedCount' => 0,
                     'totalCount' => 0,
                     'foundCount' => 0,

@@ -2758,6 +2758,21 @@ function job_archiving_snapshot(array $job): ?array
     return $snapshot;
 }
 
+function job_archived_version(array $job): int
+{
+    $snapshot = job_archiving_snapshot($job);
+    return is_array($snapshot) ? max(0, (int) ($snapshot['approvedWithRulesVersion'] ?? 0)) : 0;
+}
+
+function job_dismissed_analysis_version(array $job): int
+{
+    $version = filter_var($job['dismissedAnalysisVersion'] ?? null, FILTER_VALIDATE_INT);
+    if ($version === false || $version === null || $version < 1) {
+        return 0;
+    }
+    return (int) $version;
+}
+
 function archived_job_active_result(array $config, string $jobId, array $job, array $activeRules, int $activeVersion): array
 {
     $snapshot = job_archiving_snapshot($job);
@@ -3199,6 +3214,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
         unset(
             $job['archivedAt'],
             $job['archivedPdfPath'],
+            $job['dismissedAnalysisVersion'],
             $job['needsRuleReview'],
             $job['ruleReviewTargetRulesVersion'],
             $job['lastResolvedArchivingRulesVersion'],
@@ -3315,6 +3331,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $job['archivedAt'] = now_iso();
     $job['archivedPdfPath'] = $targetPath;
     $job['updatedAt'] = now_iso();
+    unset($job['dismissedAnalysisVersion']);
     unset(
         $job['needsRuleReview'],
         $job['ruleReviewTargetRulesVersion'],
@@ -11639,10 +11656,11 @@ function archiving_review_label_change_item(string $labelName, bool $approvedHas
         return [
             'type' => $approvedHasLabel ? 'improvement' : 'info',
             'field' => 'labels',
-            'message' => 'Etikett tillagd: ' . $labelName,
-            'detail' => $approvedHasLabel
-                ? 'Matchar nu användarens tidigare manuella val.'
-                : 'Etiketten fanns inte tidigare.',
+            'message' => ($approvedHasLabel ? 'Etikett tillagd' : 'Ny etikett tillagd') . ': ' . $labelName,
+            'messagePrefix' => $approvedHasLabel ? 'Etikett tillagd:' : 'Ny etikett tillagd:',
+            'labelName' => $labelName,
+            'metaText' => $approvedHasLabel ? '' : 'ny',
+            'detail' => '',
         ];
     }
 
@@ -11651,9 +11669,10 @@ function archiving_review_label_change_item(string $labelName, bool $approvedHas
             'type' => $approvedHasLabel ? 'risk' : 'improvement',
             'field' => 'labels',
             'message' => 'Etikett borttagen: ' . $labelName,
-            'detail' => $approvedHasLabel
-                ? 'Etiketten fanns tidigare och var godkänd.'
-                : 'Etiketten fanns inte i tidigare godkänt värde.',
+            'messagePrefix' => 'Etikett borttagen:',
+            'labelName' => $labelName,
+            'metaText' => $approvedHasLabel ? 'tidigare godkänd' : '',
+            'detail' => '',
         ];
     }
 
@@ -11818,6 +11837,8 @@ function archived_job_review_payload(array $config, string $jobId, ?array $job =
     return [
         'jobId' => $jobId,
         'originalFilename' => is_string($loadedJob['originalFilename'] ?? null) ? (string) $loadedJob['originalFilename'] : $jobId,
+        'archivedVersion' => job_archived_version($loadedJob),
+        'dismissedAnalysisVersion' => job_dismissed_analysis_version($loadedJob),
         'archivedValue' => $archivedApproved,
         'currentApprovedValue' => $currentApproved,
         'historicalAutoResult' => $historicalResult,
@@ -11940,7 +11961,10 @@ function archiving_rules_review_job_ids_hash(array $jobIds): string
 function empty_archiving_review_summary(): array
 {
     return [
+        'archivedJobs' => 0,
         'testedJobs' => 0,
+        'affected' => 0,
+        'dismissed' => 0,
         'unchanged' => 0,
         'improvements' => 0,
         'risks' => 0,
@@ -11952,6 +11976,7 @@ function empty_archiving_update_session(): array
 {
     return [
         'status' => 'idle',
+        'ignoreDismissed' => false,
         'activeVersion' => 0,
         'activeRulesHash' => '',
         'jobIdsHash' => '',
@@ -11989,6 +12014,7 @@ function normalize_archiving_rules_review_state(mixed $input): array
 
     $update = array_merge(empty_archiving_update_session(), $updateIn);
     $update['status'] = normalize_archiving_review_session_status($update['status'] ?? null);
+    $update['ignoreDismissed'] = ($update['ignoreDismissed'] ?? false) === true;
     $update['activeVersion'] = max(0, (int) ($update['activeVersion'] ?? 0));
     $update['activeRulesHash'] = is_string($update['activeRulesHash'] ?? null) ? trim((string) $update['activeRulesHash']) : '';
     $update['jobIdsHash'] = is_string($update['jobIdsHash'] ?? null) ? trim((string) $update['jobIdsHash']) : '';
@@ -12073,15 +12099,25 @@ function archived_job_ids(array $config): array
     return $jobIds;
 }
 
-function archiving_review_summary_from_processed_jobs(array $processedJobs): array
+function archiving_review_summary_from_processed_jobs(array $processedJobs, bool $ignoreDismissed = false): array
 {
     $summary = empty_archiving_review_summary();
     foreach ($processedJobs as $item) {
         if (!is_array($item)) {
             continue;
         }
+        $summary['archivedJobs'] = ((int) ($summary['archivedJobs'] ?? 0)) + 1;
         $type = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
         update_archiving_review_summary($summary, $type);
+        if ($type !== 'unchanged') {
+            $dismissedForVersion = ($item['dismissedForVersion'] ?? false) === true;
+            if ($dismissedForVersion) {
+                $summary['dismissed'] = ((int) ($summary['dismissed'] ?? 0)) + 1;
+            }
+            if (!$dismissedForVersion || $ignoreDismissed) {
+                $summary['affected'] = ((int) ($summary['affected'] ?? 0)) + 1;
+            }
+        }
     }
     return $summary;
 }
@@ -12150,7 +12186,7 @@ function archiving_review_session_enqueue_job(array &$session, string $jobId): v
     unset($processedJobs[$jobId]);
     $session['processedJobs'] = $processedJobs;
     $session['analyzedCount'] = count($processedJobs);
-    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs);
+    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs, ($session['ignoreDismissed'] ?? false) === true);
     $session['status'] = 'running';
     $session['updatedAt'] = now_iso();
 }
@@ -12176,7 +12212,7 @@ function archiving_review_session_remove_job(array &$session, string $jobId): vo
     }
     $session['jobIdsHash'] = archiving_rules_review_job_ids_hash(is_array($session['jobIds'] ?? null) ? $session['jobIds'] : []);
     $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
-    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs);
+    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs, ($session['ignoreDismissed'] ?? false) === true);
     $session['totalCount'] = count(is_array($session['jobIds'] ?? null) ? $session['jobIds'] : []);
     $session['analyzedCount'] = count($processedJobs);
     $session['nextIndex'] = min(max(0, (int) ($session['nextIndex'] ?? 0)), $session['totalCount']);
@@ -12213,6 +12249,7 @@ function initialize_archiving_update_session(
 
     return [
         'status' => count($jobIds) === 0 ? 'complete' : 'running',
+        'ignoreDismissed' => ($metadata['ignoreDismissed'] ?? false) === true,
         'activeVersion' => $activeVersion,
         'activeRulesHash' => archiving_rules_review_relevant_hash($activeRules),
         'jobIdsHash' => archiving_rules_review_job_ids_hash($jobIds),
@@ -12252,13 +12289,15 @@ function archiving_update_session_is_current(array $session, int $activeVersion,
 function archiving_update_review_response_from_session(int $activeVersion, array $session): array
 {
     $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
+    $ignoreDismissed = ($session['ignoreDismissed'] ?? false) === true;
     $affectedItems = [];
     foreach ($processedJobs as $item) {
         if (!is_array($item)) {
             continue;
         }
         $type = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
-        if ($type !== 'unchanged') {
+        $dismissedForVersion = ($item['dismissedForVersion'] ?? false) === true;
+        if ($type !== 'unchanged' && (!$dismissedForVersion || $ignoreDismissed)) {
             $affectedItems[] = $item;
         }
     }
@@ -12277,6 +12316,7 @@ function archiving_update_review_response_from_session(int $activeVersion, array
         'jobs' => sort_archiving_review_items($affectedItems),
         'session' => [
             'status' => is_string($session['status'] ?? null) ? (string) $session['status'] : 'idle',
+            'ignoreDismissed' => $ignoreDismissed,
             'analyzedCount' => (int) ($session['analyzedCount'] ?? 0),
             'totalCount' => (int) ($session['totalCount'] ?? 0),
             'foundCount' => count($affectedItems),
@@ -12302,6 +12342,43 @@ function current_archiving_update_session(array $config): array
         return empty_archiving_update_session();
     }
     return $session;
+}
+
+function set_archiving_update_session_ignore_dismissed(array $config, bool $ignoreDismissed): array
+{
+    return with_archiving_rules_review_lock(static function () use ($config, $ignoreDismissed): array {
+        $state = load_archiving_rules_review_state();
+        $session = is_array($state['updateSession'] ?? null) ? $state['updateSession'] : empty_archiving_update_session();
+        $activeRules = load_active_archiving_rules();
+        $activeVersion = active_archiving_rules_version();
+        $jobIds = archived_job_ids($config);
+
+        if (!archiving_update_session_is_current($session, $activeVersion, $activeRules, $jobIds)) {
+            $session = initialize_archiving_update_session($config, $activeVersion, $activeRules, [
+                'reason' => is_string($session['reason'] ?? null) ? $session['reason'] : '',
+                'changedSections' => is_array($session['changedSections'] ?? null) ? $session['changedSections'] : [],
+                'templateChanges' => is_array($session['templateChanges'] ?? null) ? $session['templateChanges'] : [],
+                'ignoreDismissed' => $ignoreDismissed,
+            ]);
+        } else {
+            $session['ignoreDismissed'] = $ignoreDismissed;
+            $session['status'] = 'running';
+            $session['updatedAt'] = now_iso();
+            $session['pendingJobIds'] = array_values(array_unique(array_merge(
+                is_array($session['pendingJobIds'] ?? null) ? $session['pendingJobIds'] : [],
+                is_array($session['jobIds'] ?? null) ? $session['jobIds'] : []
+            )));
+            $session['processedJobs'] = [];
+            $session['affectedJobIds'] = [];
+            $session['analyzedCount'] = 0;
+            $session['nextIndex'] = 0;
+            $session['summary'] = empty_archiving_review_summary();
+        }
+
+        $state['updateSession'] = $session;
+        save_archiving_rules_review_state($state);
+        return $session;
+    });
 }
 
 function restart_archiving_update_session(
@@ -12336,6 +12413,7 @@ function collect_archiving_update_review(array $config, int $chunkSize = 20): ar
             ]);
         }
         archiving_review_session_sync_job_ids($session, $jobIds);
+        $ignoreDismissed = ($session['ignoreDismissed'] ?? false) === true;
 
         $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
         $affectedJobIds = is_array($session['affectedJobIds'] ?? null) ? $session['affectedJobIds'] : [];
@@ -12368,10 +12446,10 @@ function collect_archiving_update_review(array $config, int $chunkSize = 20): ar
             $approved = current_approved_archiving_for_job($job);
             $historicalResult = archived_job_auto_result_at_approval($jobId, $job);
             $currentResult = archived_job_active_result($config, $jobId, $job, $activeRules, $activeVersion);
-            $item = archiving_update_review_item($jobId, $job, $approved, $historicalResult, $currentResult, $displayMaps);
+            $item = archiving_update_review_item($jobId, $job, $approved, $historicalResult, $currentResult, $displayMaps, $activeVersion);
             $processedJobs[$jobId] = $item;
             $classificationType = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
-            if ($classificationType === 'unchanged') {
+            if ($classificationType === 'unchanged' || (($item['dismissedForVersion'] ?? false) === true && !$ignoreDismissed)) {
                 $affectedJobIds = array_values(array_diff($affectedJobIds, [$jobId]));
             } elseif (!in_array($jobId, $affectedJobIds, true)) {
                 $affectedJobIds[] = $jobId;
@@ -12384,7 +12462,7 @@ function collect_archiving_update_review(array $config, int $chunkSize = 20): ar
         $session['nextIndex'] = $nextIndex;
         $session['analyzedCount'] = count($processedJobs);
         $session['totalCount'] = $totalCount;
-        $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs);
+        $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs, $ignoreDismissed);
         $session['updatedAt'] = now_iso();
         $session['status'] = ($nextIndex >= $totalCount && $session['pendingJobIds'] === []) ? 'complete' : 'running';
         $state['updateSession'] = $session;
@@ -12495,11 +12573,16 @@ function archiving_update_review_item(
     array $approved,
     array $historicalResult,
     array $currentResult,
-    array $displayMaps
+    array $displayMaps,
+    int $activeVersion
 ): array {
+    $dismissedAnalysisVersion = job_dismissed_analysis_version($job);
     return [
         'jobId' => $jobId,
         'originalFilename' => is_string($job['originalFilename'] ?? null) ? (string) $job['originalFilename'] : $jobId,
+        'archivedVersion' => job_archived_version($job),
+        'dismissedAnalysisVersion' => $dismissedAnalysisVersion,
+        'dismissedForVersion' => $dismissedAnalysisVersion > 0 && $dismissedAnalysisVersion === $activeVersion,
         'archivedApproved' => normalize_auto_archiving_result($approved),
         'historicalAutoResult' => normalize_auto_archiving_result($historicalResult),
         'currentAutoResult' => normalize_auto_archiving_result($currentResult),
@@ -12715,26 +12798,29 @@ function save_archived_job_review(array $config, string $jobId, string $action, 
     $currentApproved = current_approved_archiving_for_job($job);
     $proposed = archived_job_active_result($config, $jobId, $job, load_active_archiving_rules(), $activeVersion);
     $nextApproved = $currentApproved;
+    $dismissOnly = false;
 
     if ($action === 'use-new') {
         $nextApproved = $proposed;
     } elseif ($action === 'manual') {
         $nextApproved = resolved_active_review_value($payload, $proposed, $config);
-    } elseif ($action !== 'keep') {
+    } elseif ($action === 'dismiss' || $action === 'keep') {
+        $dismissOnly = true;
+    } else {
         throw new RuntimeException('Ogiltig granskningsåtgärd');
     }
 
-    $archivedPdfPath = is_string($job['archivedPdfPath'] ?? null) ? trim((string) $job['archivedPdfPath']) : '';
-    if ($archivedPdfPath === '' || !is_file($archivedPdfPath)) {
-        throw new RuntimeException('Arkiverad PDF saknas');
-    }
+    $nextPath = is_string($job['archivedPdfPath'] ?? null) ? trim((string) $job['archivedPdfPath']) : '';
+    $currentArchivedPdfPath = $nextPath;
+    if (!$dismissOnly) {
+        if ($nextPath === '' || !is_file($nextPath)) {
+            throw new RuntimeException('Arkiverad PDF saknas');
+        }
 
-    $nextPath = $archivedPdfPath;
-    $outputBaseDirectory = trim((string) ($config['outputBaseDirectory'] ?? ''));
-    if ($outputBaseDirectory === '' || !is_dir($outputBaseDirectory)) {
-        throw new RuntimeException('Bas-sökväg för utdata är inte konfigurerad');
-    }
-    if ($action !== 'keep') {
+        $outputBaseDirectory = trim((string) ($config['outputBaseDirectory'] ?? ''));
+        if ($outputBaseDirectory === '' || !is_dir($outputBaseDirectory)) {
+            throw new RuntimeException('Bas-sökväg för utdata är inte konfigurerad');
+        }
         $clientId = is_string($nextApproved['clientId'] ?? null) ? trim((string) $nextApproved['clientId']) : '';
         $archiveFolderPath = is_string($nextApproved['archiveFolderPath'] ?? null) ? trim((string) $nextApproved['archiveFolderPath']) : '';
         $filename = is_string($nextApproved['filename'] ?? null) ? trim((string) $nextApproved['filename']) : '';
@@ -12747,26 +12833,31 @@ function save_archived_job_review(array $config, string $jobId, string $action, 
         }
         ensure_directory($targetDirectory);
         $targetPath = $targetDirectory . DIRECTORY_SEPARATOR . sanitize_pdf_filename($filename);
-        if ($targetPath !== $archivedPdfPath) {
+        if ($targetPath !== $currentArchivedPdfPath) {
             if (is_file($targetPath)) {
                 throw new RuntimeException('Det finns redan en fil med det filnamnet i mål-mappen');
             }
-            if (!rename($archivedPdfPath, $targetPath)) {
+            if (!rename($currentArchivedPdfPath, $targetPath)) {
                 throw new RuntimeException('Kunde inte uppdatera arkiverad fil');
             }
             $nextPath = $targetPath;
         }
     }
 
-    $normalizedApproved = normalize_auto_archiving_result($nextApproved);
-    $job['approvedArchiving'] = $normalizedApproved;
-    $job['selectedClientDirName'] = is_string($nextApproved['clientId'] ?? null) ? trim((string) $nextApproved['clientId']) : null;
-    $job['selectedSenderId'] = isset($nextApproved['senderId']) ? (int) $nextApproved['senderId'] : null;
-    $job['selectedFolderId'] = is_string($nextApproved['folderId'] ?? null) ? trim((string) $nextApproved['folderId']) : null;
-    $job['selectedLabelIds'] = normalize_stored_job_label_ids($nextApproved['labels'] ?? null);
-    $job['filename'] = is_string($nextApproved['filename'] ?? null) ? trim((string) $nextApproved['filename']) : null;
-    $job['archivedPdfPath'] = $nextPath;
-    set_job_archiving_snapshot($job, $activeVersion, $proposed, $normalizedApproved);
+    if ($dismissOnly) {
+        $job['dismissedAnalysisVersion'] = $activeVersion;
+    } else {
+        $normalizedApproved = normalize_auto_archiving_result($nextApproved);
+        $job['approvedArchiving'] = $normalizedApproved;
+        $job['selectedClientDirName'] = is_string($nextApproved['clientId'] ?? null) ? trim((string) $nextApproved['clientId']) : null;
+        $job['selectedSenderId'] = isset($nextApproved['senderId']) ? (int) $nextApproved['senderId'] : null;
+        $job['selectedFolderId'] = is_string($nextApproved['folderId'] ?? null) ? trim((string) $nextApproved['folderId']) : null;
+        $job['selectedLabelIds'] = normalize_stored_job_label_ids($nextApproved['labels'] ?? null);
+        $job['filename'] = is_string($nextApproved['filename'] ?? null) ? trim((string) $nextApproved['filename']) : null;
+        $job['archivedPdfPath'] = $nextPath;
+        set_job_archiving_snapshot($job, $activeVersion, $proposed, $normalizedApproved);
+        unset($job['dismissedAnalysisVersion']);
+    }
     $job['updatedAt'] = now_iso();
     unset(
         $job['needsRuleReview'],
@@ -12776,6 +12867,7 @@ function save_archived_job_review(array $config, string $jobId, string $action, 
         $job['ruleReviewDiff']
     );
     write_json_file($jobPath, $job);
+    set_archiving_update_session_ignore_dismissed($config, false);
     invalidate_archiving_review_job($config, $jobId, true);
     queue_job_upsert_event($config, $jobId);
     maybe_queue_archiving_rules_update_event($config);
@@ -14473,6 +14565,8 @@ function build_job_state_entry(
     $isArchived = ($job['archived'] ?? false) === true;
     $archivedAt = is_string($job['archivedAt'] ?? null) ? trim((string) $job['archivedAt']) : null;
     $archivedPdfPath = is_string($job['archivedPdfPath'] ?? null) ? trim((string) $job['archivedPdfPath']) : null;
+    $archivedVersion = job_archived_version($job);
+    $dismissedAnalysisVersion = job_dismissed_analysis_version($job);
     $extracted = load_json_file($jobDir . '/extracted.json');
     $senderSummary = build_job_sender_summary($extracted, $jobDir, null, $selectedSenderId);
     $analysisOutdated = ($job['analysisOutdated'] ?? false) === true;
@@ -14504,6 +14598,8 @@ function build_job_state_entry(
                 'archived' => $isArchived,
                 'archivedAt' => $archivedAt,
                 'archivedPdfPath' => $archivedPdfPath,
+                'archivedVersion' => $archivedVersion,
+                'dismissedAnalysisVersion' => $dismissedAnalysisVersion,
             ],
         ];
     }
@@ -14534,6 +14630,8 @@ function build_job_state_entry(
                 'archived' => $isArchived,
                 'archivedAt' => $archivedAt,
                 'archivedPdfPath' => $archivedPdfPath,
+                'archivedVersion' => $archivedVersion,
+                'dismissedAnalysisVersion' => $dismissedAnalysisVersion,
                 'error' => is_string($job['error'] ?? null) ? $job['error'] : null,
             ],
         ];
@@ -14593,6 +14691,8 @@ function build_job_state_entry(
         'archived' => $isArchived,
         'archivedAt' => $archivedAt,
         'archivedPdfPath' => $archivedPdfPath,
+        'archivedVersion' => $archivedVersion,
+        'dismissedAnalysisVersion' => $dismissedAnalysisVersion,
     ];
 
     return [
@@ -15111,6 +15211,7 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         $job['selectedLabelIds'],
         $job['filename'],
         $job['approvedArchiving'],
+        $job['dismissedAnalysisVersion'],
         $job['archiveSnapshot'],
         $job['needsRuleReview'],
         $job['ruleReviewTargetRulesVersion'],

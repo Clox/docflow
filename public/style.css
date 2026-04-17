@@ -752,8 +752,20 @@ body.is-resizing-sidebar {
   grid-column: 1 / -1;
 }
 
+.field-group-control-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.field-group-control-row > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .selected-job-actions-fields > #selected-job-reprocess,
-.selected-job-actions-fields > #archive-action {
+.selected-job-actions-fields > #archive-action,
+.selected-job-actions-fields > #dismiss-archived-update-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -772,12 +784,14 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-actions-fields > #selected-job-reprocess:hover,
-.selected-job-actions-fields > #archive-action:hover {
+.selected-job-actions-fields > #archive-action:hover,
+.selected-job-actions-fields > #dismiss-archived-update-action:hover {
   background: #f8fafc;
 }
 
 .selected-job-actions-fields > #selected-job-reprocess:disabled,
-.selected-job-actions-fields > #archive-action:disabled {
+.selected-job-actions-fields > #archive-action:disabled,
+.selected-job-actions-fields > #dismiss-archived-update-action:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -807,6 +821,11 @@ body.is-resizing-sidebar {
 #archive-action[data-job-action="restore"]::after {
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h16'/%3E%3Cpath d='M5 7l1-3h12l1 3'/%3E%3Cpath d='M5 7v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7'/%3E%3Cpath d='M12 17v-7'/%3E%3Cpath d='m9 13 3-3 3 3'/%3E%3C/svg%3E") no-repeat center / contain;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h16'/%3E%3Cpath d='M5 7l1-3h12l1 3'/%3E%3Cpath d='M5 7v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7'/%3E%3Cpath d='M12 17v-7'/%3E%3Cpath d='m9 13 3-3 3 3'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+
+#archive-action[data-job-action="update"]::after {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 1 1-2.64-6.36'/%3E%3Cpath d='M21 3v6h-6'/%3E%3C/svg%3E") no-repeat center / contain;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 1 1-2.64-6.36'/%3E%3Cpath d='M21 3v6h-6'/%3E%3C/svg%3E") no-repeat center / contain;
 }
 
 .main {
@@ -1683,7 +1702,9 @@ body.is-resizing-sidebar {
   color: #0f172a;
 }
 
-#archive-action {
+#selected-job-reprocess,
+#archive-action,
+#dismiss-archived-update-action {
   font: inherit;
   padding: 6px 12px;
   border: 1px solid #cbd5e1;
@@ -1702,11 +1723,39 @@ body.is-resizing-sidebar {
   width: 100%;
 }
 
-#archive-action:hover {
+.field-reset-button {
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #475569;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.field-reset-button:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.field-reset-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#selected-job-reprocess:hover,
+#archive-action:hover,
+#dismiss-archived-update-action:hover {
   background: #f8fafc;
 }
 
-#archive-action:disabled {
+#selected-job-reprocess:disabled,
+#archive-action:disabled,
+#dismiss-archived-update-action:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -2480,9 +2529,9 @@ body.is-resizing-sidebar {
 
 .settings-inline-notice {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
   margin: 0 0 12px;
   padding: 10px 12px;
   border: 1px solid #f0d68a;
@@ -2499,6 +2548,10 @@ body.is-resizing-sidebar {
   border-radius: 6px;
   background: #fff;
   cursor: pointer;
+}
+
+#archiving-review-actions {
+  margin: 0 0 14px;
 }
 
 .archiving-review-summary {
@@ -2616,6 +2669,31 @@ body.is-resizing-sidebar {
 .archiving-review-change-detail {
   margin-top: 2px;
   color: #64748b;
+}
+
+.archiving-review-change-message.has-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.archiving-review-change-label-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px solid #d7dee8;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.archiving-review-change-label-meta {
+  color: #64748b;
+  font-size: 12px;
 }
 
 .archiving-review-job button {

@@ -38,6 +38,9 @@ const sidebarSplitterEl = document.getElementById('sidebar-splitter');
 const clientSelectEl = document.getElementById('client-select');
 const senderSelectEl = document.getElementById('sender-select');
 const folderSelectEl = document.getElementById('folder-select');
+const resetClientActionEl = document.getElementById('reset-client-action');
+const resetSenderActionEl = document.getElementById('reset-sender-action');
+const resetFolderActionEl = document.getElementById('reset-folder-action');
 const jobLabelsFieldEl = document.getElementById('job-labels-field');
 const jobLabelsSummaryEl = document.getElementById('job-labels-summary');
 const jobLabelsOverlayEl = document.getElementById('job-labels-overlay');
@@ -45,7 +48,9 @@ const jobLabelsComboboxEl = document.getElementById('job-labels-combobox');
 const jobLabelsComboboxListEl = document.getElementById('job-labels-combobox-list');
 const jobLabelsSelectedEl = document.getElementById('job-labels-selected');
 const jobLabelsFieldGroupEl = jobLabelsFieldEl ? jobLabelsFieldEl.closest('.field-group-job-labels') : null;
+const resetLabelsActionEl = document.getElementById('reset-labels-action');
 const filenameInputEl = document.getElementById('filename-input');
+const resetFilenameActionEl = document.getElementById('reset-filename-action');
 const archiveActionEl = document.getElementById('archive-action');
 const appNoticesEl = document.getElementById('app-notices');
 const archivedReviewPanelEl = document.getElementById('archived-review-panel');
@@ -67,6 +72,7 @@ const selectedJobSenderUnknownSectionEl = document.getElementById('selected-job-
 const selectedJobSenderUnknownInfoEl = document.getElementById('selected-job-sender-unknown-info');
 const selectedJobStatusEl = document.getElementById('selected-job-status');
 const selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
+const dismissArchivedUpdateActionEl = document.getElementById('dismiss-archived-update-action');
 const selectedJobActionsWarningEl = document.getElementById('selected-job-actions-warning');
 const settingsPanelTemplateIds = {
   clients: 'settings-template-clients',
@@ -81,6 +87,19 @@ const settingsPanelTemplateIds = {
   system: 'settings-template-system',
   extensions: 'settings-template-extensions'
 };
+
+function developmentUiEnabled() {
+  const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  if (!isLocalHost) {
+    return false;
+  }
+  return window.localStorage.getItem('docflowShowDevControls') === '1';
+}
+
+if (selectedJobReprocessEl instanceof HTMLButtonElement) {
+  selectedJobReprocessEl.hidden = !developmentUiEnabled();
+}
+
 let clientsListEl = null;
 let clientsAddRowEl = null;
 let clientsCancelEl = null;
@@ -127,6 +146,7 @@ let pythonStatusBadgeWrapEl = null;
 let pythonStatusBadgeEl = null;
 let pythonInstallCommandEl = null;
 let pythonRefreshButtonEl = null;
+let archivingReviewActionsEl = null;
 let pythonLocalInstallButtonEl = null;
 let rapidocrStatusBadgeWrapEl = null;
 let rapidocrStatusBadgeEl = null;
@@ -159,7 +179,6 @@ let archivingReviewStatusEl = null;
 let archivingReviewSummaryEl = null;
 let archivingReviewTemplateChangesEl = null;
 let archivingReviewJobsEl = null;
-let archivingReviewDevBumpEl = null;
 let labelsTabEls = [];
 let labelsViewCustomEl = null;
 let labelsViewSystemEl = null;
@@ -380,7 +399,7 @@ const SETTINGS_DIALOG_DRAG_HANDLE_HEIGHT_PX = 44;
 let settingsDialogLayout = null;
 let settingsDialogDragState = null;
 let settingsDialogResizeState = null;
-const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'processing', 'archived']);
+const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'archived-review', 'processing', 'archived']);
 const SIDEBAR_LIST_SIZE_STORAGE_KEY = 'docflow.sidebar.listSizePercent';
 const DEFAULT_SIDEBAR_LIST_SIZE_PERCENT = 35;
 const MIN_SIDEBAR_LIST_SIZE_PERCENT = 20;
@@ -814,13 +833,15 @@ function selectedJobStatusText(job) {
     return 'Status: Misslyckat';
   }
   if (job.archived === true) {
-    return 'Status: Arkiverat';
+    return archivedReviewModeActiveForJob(job)
+      ? 'Status: Arkiverat att granska'
+      : 'Status: Arkiverat';
   }
   return 'Status: Klar';
 }
 
 function setClientForJob(job) {
-  clientSelectEl.disabled = !job || job.status !== 'ready' || job.archived === true;
+  clientSelectEl.disabled = !selectedJobArchivingEditable(job);
 
   if (!job) {
     clientSelectEl.value = '';
@@ -841,7 +862,7 @@ function setClientForJob(job) {
 }
 
 function setSenderForJob(job) {
-  senderSelectEl.disabled = !job || job.status !== 'ready' || job.archived === true;
+  senderSelectEl.disabled = !selectedJobArchivingEditable(job);
 
   if (!job) {
     senderSelectEl.value = '';
@@ -862,7 +883,7 @@ function setSenderForJob(job) {
 }
 
 function setFolderForJob(job) {
-  folderSelectEl.disabled = !job || job.status !== 'ready' || job.archived === true;
+  folderSelectEl.disabled = !selectedJobArchivingEditable(job);
 
   if (!job) {
     folderSelectEl.value = '';
@@ -917,7 +938,7 @@ function effectiveSelectedLabelIds(job) {
 }
 
 function selectedJobLabelsEditable(job) {
-  return !!job && job.status === 'ready' && job.archived !== true;
+  return selectedJobArchivingEditable(job);
 }
 
 function currentSelectedJobLabelOptions() {
@@ -1274,12 +1295,17 @@ async function persistSelectedJobLabelIds(nextLabelIds) {
   const previousLocalValue = hadLocalValue ? normalizeSelectedLabelIds(selectedLabelIdsByJobId.get(job.id)) : null;
 
   selectedLabelIdsByJobId.set(job.id, normalizedNext);
+  updateArchivedReviewDraftFromSidebar(job);
   setLabelsForJob(findJobById(selectedJobId));
   const currentJob = findJobById(selectedJobId);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
+  updateSelectedJobResetActions(currentJob);
 
   try {
+    if (archivedReviewModeActiveForJob(job)) {
+      return;
+    }
     await saveSelectedJobFields(job.id, { selectedLabelIds: normalizedNext });
   } catch (error) {
     if (hadLocalValue) {
@@ -1291,6 +1317,7 @@ async function persistSelectedJobLabelIds(nextLabelIds) {
     const rollbackJob = findJobById(selectedJobId);
     syncFilenameField(rollbackJob);
     updateArchiveAction(rollbackJob);
+    updateSelectedJobResetActions(rollbackJob);
     throw error;
   }
 }
@@ -1537,6 +1564,109 @@ function jobHasArchivingUpdateChange(jobId) {
 
 function jobSupportsArchivedReview(job) {
   return !!(job && job.archived === true);
+}
+
+function archivedReviewModeActiveForJob(job) {
+  return !!(job && job.archived === true && currentJobListMode === 'archived-review');
+}
+
+function selectedArchivedReviewPayload(job) {
+  if (!archivedReviewModeActiveForJob(job)) {
+    return null;
+  }
+  return archivedJobReviewPayload
+    && archivedJobReviewPayload.jobId === job.id
+    && archivedJobReviewPayload.loading !== true
+    ? archivedJobReviewPayload
+    : null;
+}
+
+function archivedReviewSidebarEditable(job) {
+  const payload = selectedArchivedReviewPayload(job);
+  return !!(payload && payload.isActionable === true);
+}
+
+function selectedJobArchivingEditable(job) {
+  return !!job && job.status === 'ready' && (job.archived !== true || archivedReviewSidebarEditable(job));
+}
+
+function clearArchivedReviewEditorState(jobId) {
+  if (typeof jobId !== 'string' || jobId === '') {
+    return;
+  }
+  selectedClientByJobId.delete(jobId);
+  selectedSenderByJobId.delete(jobId);
+  selectedFolderByJobId.delete(jobId);
+  selectedLabelIdsByJobId.delete(jobId);
+  filenameByJobId.delete(jobId);
+}
+
+function syncArchivedReviewEditorState(job, payload = null) {
+  if (!archivedReviewModeActiveForJob(job)) {
+    return;
+  }
+  const resolvedPayload = payload && payload.jobId === job.id ? payload : selectedArchivedReviewPayload(job);
+  if (!resolvedPayload || resolvedPayload.loading === true) {
+    return;
+  }
+  const draft = ensureArchivedReviewDraft(job.id, resolvedPayload);
+  if (draft.clientId) {
+    selectedClientByJobId.set(job.id, draft.clientId);
+  } else {
+    selectedClientByJobId.delete(job.id);
+  }
+  if (draft.senderId) {
+    selectedSenderByJobId.set(job.id, draft.senderId);
+  } else {
+    selectedSenderByJobId.delete(job.id);
+  }
+  if (draft.folderId) {
+    selectedFolderByJobId.set(job.id, draft.folderId);
+  } else {
+    selectedFolderByJobId.delete(job.id);
+  }
+  selectedLabelIdsByJobId.set(job.id, Array.isArray(draft.labels) ? [...draft.labels] : []);
+  if (draft.filename && String(draft.filename).trim() !== '') {
+    filenameByJobId.set(job.id, draft.filename);
+  } else {
+    filenameByJobId.delete(job.id);
+  }
+}
+
+function updateArchivedReviewDraftFromSidebar(job) {
+  if (!archivedReviewModeActiveForJob(job)) {
+    return;
+  }
+  const payload = selectedArchivedReviewPayload(job);
+  if (!payload) {
+    return;
+  }
+  const draft = ensureArchivedReviewDraft(job.id, payload);
+  draft.clientId = effectiveClientDirName(job) || '';
+  draft.senderId = effectiveSenderId(job) ? String(effectiveSenderId(job)) : '';
+  draft.folderId = effectiveFolderId(job) || '';
+  draft.filename = filenameByJobId.get(job.id) || displayedFilenameForJob(job) || '';
+  draft.labels = effectiveSelectedLabelIds(job);
+}
+
+function archivedReviewDraftMatchesProposal(job, payload) {
+  const draft = ensureArchivedReviewDraft(job.id, payload);
+  const source = payload && payload.currentAutoResult && typeof payload.currentAutoResult === 'object'
+    ? payload.currentAutoResult
+    : {};
+  return JSON.stringify({
+    clientId: draft.clientId || '',
+    senderId: draft.senderId || '',
+    folderId: draft.folderId || '',
+    filename: draft.filename || '',
+    labels: Array.isArray(draft.labels) ? [...draft.labels].sort() : [],
+  }) === JSON.stringify({
+    clientId: typeof source.clientId === 'string' ? source.clientId : '',
+    senderId: source.senderId ? String(source.senderId) : '',
+    folderId: typeof source.folderId === 'string' ? source.folderId : '',
+    filename: typeof source.filename === 'string' ? source.filename : '',
+    labels: Array.isArray(source.labels) ? [...source.labels].sort() : [],
+  });
 }
 
 function jobsNeedingRuleReview() {
@@ -2758,6 +2888,9 @@ function setJobListMode(mode, options = {}) {
   if (nextMode !== 'ready') {
     pinnedProcessingJobIds.clear();
   }
+  if (nextMode === 'archived-review' && currentViewMode === 'review') {
+    setViewMode('pdf');
+  }
   currentJobListMode = nextMode;
   jobListModeEl.value = currentJobListMode;
   renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
@@ -3704,7 +3837,10 @@ function emptyArchivingReviewPayload() {
     changedSections: [],
     templateChanges: [],
     summary: {
+      archivedJobs: 0,
       testedJobs: 0,
+      affected: 0,
+      dismissed: 0,
       unchanged: 0,
       improvements: 0,
       risks: 0,
@@ -3713,6 +3849,7 @@ function emptyArchivingReviewPayload() {
     jobs: [],
     session: {
       status: 'idle',
+      ignoreDismissed: false,
       analyzedCount: 0,
       totalCount: 0,
       foundCount: 0,
@@ -3743,15 +3880,28 @@ function normalizeArchivingReviewPayload(payload) {
         }))
       : [],
     summary: {
+      archivedJobs: Number.parseInt(String(summary.archivedJobs || summary.testedJobs || 0), 10) || 0,
       testedJobs: Number.parseInt(String(summary.testedJobs || 0), 10) || 0,
+      affected: Number.parseInt(String(summary.affected || 0), 10) || 0,
+      dismissed: Number.parseInt(String(summary.dismissed || 0), 10) || 0,
       unchanged: Number.parseInt(String(summary.unchanged || 0), 10) || 0,
       improvements: Number.parseInt(String(summary.improvements || 0), 10) || 0,
       risks: Number.parseInt(String(summary.risks || 0), 10) || 0,
       info: Number.parseInt(String(summary.info || 0), 10) || 0,
     },
-    jobs: Array.isArray(next.jobs) ? next.jobs : [],
+    jobs: Array.isArray(next.jobs)
+      ? next.jobs
+        .filter((item) => item && typeof item === 'object')
+        .map((item) => ({
+          ...item,
+          archivedVersion: Number.parseInt(String(item.archivedVersion || 0), 10) || 0,
+          dismissedAnalysisVersion: Number.parseInt(String(item.dismissedAnalysisVersion || 0), 10) || 0,
+          dismissedForVersion: item.dismissedForVersion === true,
+        }))
+      : [],
     session: {
       status: typeof session.status === 'string' ? session.status : 'idle',
+      ignoreDismissed: session.ignoreDismissed === true,
       analyzedCount: Number.parseInt(String(session.analyzedCount || 0), 10) || 0,
       totalCount: Number.parseInt(String(session.totalCount || 0), 10) || 0,
       foundCount: Number.parseInt(String(session.foundCount || 0), 10) || 0,
@@ -3799,7 +3949,7 @@ function applyArchivingRulesStatePayload(payload, options = {}) {
   syncArchivingReviewPayloadFromState(options.forceRender === true);
   renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
   refreshSelection();
-  if (currentViewMode === 'review' && selectedJobId) {
+  if ((currentViewMode === 'review' || currentJobListMode === 'archived-review') && selectedJobId) {
     loadArchivedReview(selectedJobId, true).catch(() => {
       renderArchivedReviewPanel();
     });
@@ -3954,9 +4104,50 @@ function buildArchivedReviewColumn(titleText) {
   return column;
 }
 
+function applyOptimisticArchivedReviewResolution(jobId, options = {}) {
+  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
+  const remainingJobs = payload.jobs.filter((item) => !(item && item.jobId === jobId));
+  if (remainingJobs.length === payload.jobs.length) {
+    return;
+  }
+
+  const dismissed = options.dismissed === true;
+  const nextSummary = {
+    ...payload.summary,
+    affected: Math.max(0, (payload.summary.affected || 0) - 1),
+    dismissed: dismissed
+      ? ((payload.summary.dismissed || 0) + 1)
+      : (payload.summary.dismissed || 0),
+    unchanged: dismissed
+      ? (payload.summary.unchanged || 0)
+      : ((payload.summary.unchanged || 0) + 1),
+  };
+  const nextPayload = {
+    ...payload,
+    jobs: remainingJobs,
+    summary: nextSummary,
+    session: {
+      ...payload.session,
+      ignoreDismissed: false,
+      foundCount: remainingJobs.length,
+    },
+    signature: '',
+  };
+
+  state.archivingRules = {
+    ...state.archivingRules,
+    hasPendingArchivedUpdates: remainingJobs.length > 0 || nextPayload.session.status === 'running',
+    pendingArchivedUpdateCount: nextSummary.affected,
+    updateReview: nextPayload,
+  };
+  syncArchivingReviewPayloadFromState(true);
+  renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
+  refreshSelection();
+}
+
 async function saveArchivedReviewAction(action) {
   const selectedJob = findJobById(selectedJobId);
-  const payload = archivedJobReviewPayload && archivedJobReviewPayload.jobId === selectedJob.id
+  const payload = selectedJob && archivedJobReviewPayload && archivedJobReviewPayload.jobId === selectedJob.id
     ? archivedJobReviewPayload
     : null;
   if (!selectedJob || selectedJob.archived !== true || !payload || payload.isActionable !== true) {
@@ -3991,13 +4182,20 @@ async function saveArchivedReviewAction(action) {
   }
 
   archivedReviewDraftByJobId.delete(selectedJob.id);
+  clearArchivedReviewEditorState(selectedJob.id);
   archivedJobReviewPayload = null;
   loadedMetaJobId = '';
   loadedMatchesJobId = '';
   loadedOcrJobId = '';
+  applyOptimisticArchivedReviewResolution(selectedJob.id, { dismissed: action === 'dismiss' });
   applyStateEntry(result.entry);
   await fetchState({ force: true, refreshArchiveStructure: true });
-  await loadArchivedReview(selectedJob.id, true);
+  const nextSelectedJob = selectedJobId === selectedJob.id ? findJobById(selectedJob.id) : null;
+  if (currentJobListMode === 'archived-review' && nextSelectedJob && nextSelectedJob.archived === true) {
+    await loadArchivedReview(selectedJob.id, true);
+  } else {
+    renderArchivedReviewPanel();
+  }
 }
 
 async function loadArchivedReview(jobId, force = false) {
@@ -4052,7 +4250,69 @@ async function loadArchivedReview(jobId, force = false) {
       reviewStateSignature,
     }),
   };
+  syncArchivedReviewEditorState(selectedJob, archivedJobReviewPayload);
+  setClientForJob(selectedJob);
+  setSenderForJob(selectedJob);
+  setFolderForJob(selectedJob);
+  setLabelsForJob(selectedJob);
+  syncFilenameField(selectedJob);
+  updateArchiveAction(selectedJob);
+  updateSelectedJobResetActions(selectedJob);
   renderArchivedReviewPanel();
+}
+
+function createArchivingReviewLabelChip(labelName) {
+  const chip = document.createElement('span');
+  chip.className = 'job-labels-selected-chip archiving-review-change-label-chip';
+  const text = document.createElement('span');
+  text.className = 'job-labels-selected-chip-text';
+  text.textContent = labelName;
+  chip.appendChild(text);
+  return chip;
+}
+
+function renderArchivingReviewChangeMessage(messageEl, item) {
+  if (!(messageEl instanceof HTMLElement)) {
+    return;
+  }
+  if (item && item.field === 'labels' && typeof item.labelName === 'string' && item.labelName.trim() !== '') {
+    messageEl.classList.add('has-chip');
+    const prefix = document.createElement('span');
+    prefix.textContent = typeof item.messagePrefix === 'string' && item.messagePrefix.trim() !== ''
+      ? item.messagePrefix
+      : (typeof item.message === 'string' ? item.message : 'Etikett:');
+    messageEl.appendChild(prefix);
+    messageEl.appendChild(createArchivingReviewLabelChip(item.labelName.trim()));
+    if (typeof item.metaText === 'string' && item.metaText.trim() !== '') {
+      const meta = document.createElement('span');
+      meta.className = 'archiving-review-change-label-meta';
+      meta.textContent = `(${item.metaText.trim()})`;
+      messageEl.appendChild(meta);
+    }
+    return;
+  }
+  messageEl.textContent = item && typeof item.message === 'string' ? item.message : '';
+}
+
+function buildArchivingReviewChangeList(changeItems) {
+  const list = document.createElement('ul');
+  list.className = 'archiving-review-change-list';
+  changeItems.forEach((item) => {
+    const row = document.createElement('li');
+    row.className = `archiving-review-change is-${item && item.type ? item.type : 'info'}`;
+    const message = document.createElement('div');
+    message.className = 'archiving-review-change-message';
+    renderArchivingReviewChangeMessage(message, item);
+    row.appendChild(message);
+    if (item && typeof item.detail === 'string' && item.detail) {
+      const detail = document.createElement('div');
+      detail.className = 'archiving-review-change-detail';
+      detail.textContent = item.detail;
+      row.appendChild(detail);
+    }
+    list.appendChild(row);
+  });
+  return list;
 }
 
 function renderArchivedReviewPanel() {
@@ -4078,7 +4338,6 @@ function renderArchivedReviewPanel() {
     return;
   }
 
-  const draft = ensureArchivedReviewDraft(selectedJob.id, payload);
   const wrapper = document.createElement('div');
   wrapper.className = 'archived-review-layout';
 
@@ -4105,267 +4364,18 @@ function renderArchivedReviewPanel() {
     ? payload.classification.changeItems
     : [];
   if (changeItems.length > 0) {
-    const list = document.createElement('ul');
-    list.className = 'archiving-review-change-list archived-review-change-list';
-    changeItems.forEach((item) => {
-      const row = document.createElement('li');
-      row.className = `archiving-review-change is-${item && item.type ? item.type : 'info'}`;
-      const message = document.createElement('div');
-      message.className = 'archiving-review-change-message';
-      message.textContent = item && typeof item.message === 'string' ? item.message : '';
-      row.appendChild(message);
-      if (item && typeof item.detail === 'string' && item.detail) {
-        const detail = document.createElement('div');
-        detail.className = 'archiving-review-change-detail';
-        detail.textContent = item.detail;
-        row.appendChild(detail);
-      }
-      list.appendChild(row);
-    });
+    const list = buildArchivingReviewChangeList(changeItems);
+    list.classList.add('archived-review-change-list');
     header.appendChild(list);
   }
   wrapper.appendChild(header);
 
-  const columns = document.createElement('div');
-  columns.className = 'archived-review-columns';
-  const archivedColumn = buildArchivedReviewColumn('Arkiverat värde');
-  const proposedColumn = buildArchivedReviewColumn('Aktuellt föreslaget värde');
-
-  const archivedValue = payload.archivedValue && typeof payload.archivedValue === 'object' ? payload.archivedValue : {};
-  const addSelectPair = (labelText, archivedValueText, currentValue, options, onChange) => {
-    const archivedGroup = document.createElement('label');
-    archivedGroup.className = 'archived-review-control';
-    const archivedLabel = document.createElement('span');
-    archivedLabel.textContent = labelText;
-    const archivedSelect = document.createElement('select');
-    archivedSelect.disabled = true;
-    const archivedOption = document.createElement('option');
-    archivedOption.value = '';
-    archivedOption.textContent = archivedValueText && options.some((option) => option.value === String(archivedValueText))
-      ? options.find((option) => option.value === String(archivedValueText)).label
-      : (archivedValueText || '—');
-    archivedSelect.appendChild(archivedOption);
-    archivedColumn.appendChild(archivedGroup);
-    archivedGroup.append(archivedLabel, archivedSelect);
-
-    const proposedGroup = document.createElement('label');
-    proposedGroup.className = 'archived-review-control';
-    const proposedLabel = document.createElement('span');
-    proposedLabel.textContent = labelText;
-    const proposedSelect = document.createElement('select');
-    const blankOption = document.createElement('option');
-    blankOption.value = '';
-    blankOption.textContent = 'Välj...';
-    proposedSelect.appendChild(blankOption);
-    options.forEach((option) => {
-      const node = document.createElement('option');
-      node.value = option.value;
-      node.textContent = option.label;
-      proposedSelect.appendChild(node);
-    });
-    proposedSelect.value = currentValue || '';
-    proposedSelect.disabled = !reviewIsActionable;
-    if (reviewIsActionable) {
-      proposedSelect.addEventListener('change', () => onChange(proposedSelect.value));
-    }
-    proposedGroup.append(proposedLabel, proposedSelect);
-    proposedColumn.appendChild(proposedGroup);
-  };
-
-  addSelectPair(
-    'Huvudman',
-    typeof archivedValue.clientId === 'string' ? archivedValue.clientId : '',
-    draft.clientId,
-    (Array.isArray(state.clients) ? state.clients : []).map((client) => ({
-      value: client && typeof client.dirName === 'string' ? client.dirName : '',
-      label: client && typeof client.dirName === 'string' ? client.dirName : ''
-    })).filter((option) => option.value && option.label),
-    (value) => {
-      draft.clientId = value;
-    }
-  );
-
-  addSelectPair(
-    'Avsändare',
-    archivedValue.senderId ? String(archivedValue.senderId) : '',
-    draft.senderId,
-    (Array.isArray(state.senders) ? state.senders : []).map((sender) => ({
-      value: sender && Number.isInteger(sender.id) ? String(sender.id) : '',
-      label: sender && typeof sender.name === 'string' ? sender.name : ''
-    })).filter((option) => option.value && option.label),
-    (value) => {
-      draft.senderId = value;
-    }
-  );
-
-  addSelectPair(
-    'Mapp',
-    typeof archivedValue.folderId === 'string' ? archivedValue.folderId : '',
-    draft.folderId,
-    (Array.isArray(state.archiveFolders) ? state.archiveFolders : []).map((folder) => ({
-      value: folder && typeof folder.id === 'string' ? folder.id : '',
-      label: archiveFolderDisplayName(folder)
-    })).filter((option) => option.value && option.label),
-    (value) => {
-      draft.folderId = value;
-    }
-  );
-
-  const archivedFilename = document.createElement('label');
-  archivedFilename.className = 'archived-review-control';
-  archivedFilename.innerHTML = '<span>Filnamn</span>';
-  const archivedFilenameInput = document.createElement('input');
-  archivedFilenameInput.type = 'text';
-  archivedFilenameInput.disabled = true;
-  archivedFilenameInput.value = typeof archivedValue.filename === 'string' ? archivedValue.filename : '';
-  archivedFilename.appendChild(archivedFilenameInput);
-  archivedColumn.appendChild(archivedFilename);
-
-  const proposedFilename = document.createElement('label');
-  proposedFilename.className = 'archived-review-control';
-  proposedFilename.innerHTML = '<span>Filnamn</span>';
-  const proposedFilenameInput = document.createElement('input');
-  proposedFilenameInput.type = 'text';
-  proposedFilenameInput.value = draft.filename || '';
-  proposedFilenameInput.disabled = !reviewIsActionable;
-  if (reviewIsActionable) {
-    proposedFilenameInput.addEventListener('input', () => {
-      draft.filename = proposedFilenameInput.value;
-    });
-  }
-  proposedFilename.appendChild(proposedFilenameInput);
-  proposedColumn.appendChild(proposedFilename);
-
-  const archivedLabelsSection = document.createElement('div');
-  archivedLabelsSection.className = 'archived-review-section';
-  archivedLabelsSection.innerHTML = '<h5>Arkiverade etiketter</h5>';
-  const archivedLabelsWrap = document.createElement('div');
-  archivedLabelsWrap.className = 'archived-review-tags';
-  renderArchivedReviewTags(archivedLabelsWrap, archivedValue.labels, payload);
-  archivedLabelsSection.appendChild(archivedLabelsWrap);
-  archivedColumn.appendChild(archivedLabelsSection);
-
-  const proposedLabelsSection = document.createElement('div');
-  proposedLabelsSection.className = 'archived-review-section';
-  proposedLabelsSection.innerHTML = '<h5>Nya etiketter</h5>';
-  const labelList = document.createElement('div');
-  labelList.className = 'archived-review-checkboxes';
-  (Array.isArray(payload.availableLabels) ? payload.availableLabels : []).forEach((label) => {
-    if (!label || typeof label.id !== 'string') {
-      return;
-    }
-    const row = document.createElement('label');
-    row.className = 'archived-review-checkbox';
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.checked = draft.labels.includes(label.id);
-    input.disabled = !reviewIsActionable;
-    if (reviewIsActionable) {
-      input.addEventListener('change', () => {
-        draft.labels = input.checked
-          ? Array.from(new Set([...draft.labels, label.id]))
-          : draft.labels.filter((item) => item !== label.id);
-      });
-    }
-    const text = document.createElement('span');
-    text.textContent = typeof label.name === 'string' ? label.name : label.id;
-    row.append(input, text);
-    labelList.appendChild(row);
-  });
-  proposedLabelsSection.appendChild(labelList);
-  proposedColumn.appendChild(proposedLabelsSection);
-
-  const archivedFieldsSection = document.createElement('div');
-  archivedFieldsSection.className = 'archived-review-section';
-  archivedFieldsSection.innerHTML = '<h5>Arkiverade datafält</h5>';
-  const archivedFieldsWrap = document.createElement('div');
-  renderArchivedReviewFieldRows(archivedFieldsWrap, archivedValue.fields || {}, reviewFieldDefinitions(payload, false), false, () => {});
-  archivedFieldsSection.appendChild(archivedFieldsWrap);
-  archivedColumn.appendChild(archivedFieldsSection);
-
-  const proposedFieldsSection = document.createElement('div');
-  proposedFieldsSection.className = 'archived-review-section';
-  proposedFieldsSection.innerHTML = '<h5>Nya datafält</h5>';
-  const proposedFieldsWrap = document.createElement('div');
-  renderArchivedReviewFieldRows(proposedFieldsWrap, draft.fields || {}, reviewFieldDefinitions(payload, false), reviewIsActionable, (key, value) => {
-    if (!value.trim()) {
-      delete draft.fields[key];
-    } else {
-      draft.fields[key] = [value];
-    }
-  });
-  proposedFieldsSection.appendChild(proposedFieldsWrap);
-  proposedColumn.appendChild(proposedFieldsSection);
-
-  const archivedSystemFieldsSection = document.createElement('div');
-  archivedSystemFieldsSection.className = 'archived-review-section';
-  archivedSystemFieldsSection.innerHTML = '<h5>Arkiverade systemdatafält</h5>';
-  const archivedSystemFieldsWrap = document.createElement('div');
-  renderArchivedReviewFieldRows(archivedSystemFieldsWrap, archivedValue.systemFields || {}, reviewFieldDefinitions(payload, true), false, () => {});
-  archivedSystemFieldsSection.appendChild(archivedSystemFieldsWrap);
-  archivedColumn.appendChild(archivedSystemFieldsSection);
-
-  const proposedSystemFieldsSection = document.createElement('div');
-  proposedSystemFieldsSection.className = 'archived-review-section';
-  proposedSystemFieldsSection.innerHTML = '<h5>Nya systemdatafält</h5>';
-  const proposedSystemFieldsWrap = document.createElement('div');
-  renderArchivedReviewFieldRows(proposedSystemFieldsWrap, draft.systemFields || {}, reviewFieldDefinitions(payload, true), reviewIsActionable, (key, value) => {
-    if (!value.trim()) {
-      delete draft.systemFields[key];
-    } else {
-      draft.systemFields[key] = [value];
-    }
-  });
-  proposedSystemFieldsSection.appendChild(proposedSystemFieldsWrap);
-  proposedColumn.appendChild(proposedSystemFieldsSection);
-
-  columns.append(archivedColumn, proposedColumn);
-  wrapper.appendChild(columns);
-
-  const actions = document.createElement('div');
-  actions.className = 'archived-review-actions';
-  if (!reviewIsActionable) {
-    const previewNotice = document.createElement('div');
-    previewNotice.className = 'archived-review-empty';
-    previewNotice.textContent = 'Det här jobbet behöver inte uppdateras just nu.';
-    actions.appendChild(previewNotice);
-    wrapper.appendChild(actions);
-    archivedReviewPanelEl.replaceChildren(wrapper);
-    return;
-  }
-  const keepButton = document.createElement('button');
-  keepButton.type = 'button';
-  keepButton.textContent = 'Behåll nuvarande arkivering';
-  keepButton.addEventListener('click', async () => {
-    try {
-      await saveArchivedReviewAction('keep');
-    } catch (error) {
-      alert(error.message || 'Kunde inte avsluta granskningen.');
-    }
-  });
-  const useNewButton = document.createElement('button');
-  useNewButton.type = 'button';
-  useNewButton.textContent = 'Använd aktuell arkivering';
-  useNewButton.addEventListener('click', async () => {
-    try {
-      await saveArchivedReviewAction('use-new');
-    } catch (error) {
-      alert(error.message || 'Kunde inte använda nya förslag.');
-    }
-  });
-  const saveManualButton = document.createElement('button');
-  saveManualButton.type = 'button';
-  saveManualButton.className = 'button-success';
-  saveManualButton.textContent = 'Spara manuellt';
-  saveManualButton.addEventListener('click', async () => {
-    try {
-      await saveArchivedReviewAction('manual');
-    } catch (error) {
-      alert(error.message || 'Kunde inte spara manuella ändringar.');
-    }
-  });
-  actions.append(keepButton, useNewButton, saveManualButton);
-  wrapper.appendChild(actions);
+  const note = document.createElement('div');
+  note.className = 'archived-review-empty';
+  note.textContent = reviewIsActionable
+    ? 'Använd sidomenyn för att uppdatera eller avfärda dokumentet för aktuell version.'
+    : 'Det här jobbet behöver inte uppdateras just nu.';
+  wrapper.appendChild(note);
 
   archivedReviewPanelEl.replaceChildren(wrapper);
 }
@@ -4375,7 +4385,7 @@ async function loadArchivingRuleReview() {
 }
 
 function renderArchivingRuleReview(force = false) {
-  if (!(archivingReviewSummaryEl instanceof HTMLElement) || !(archivingReviewTemplateChangesEl instanceof HTMLElement) || !(archivingReviewJobsEl instanceof HTMLElement) || !(archivingReviewStatusEl instanceof HTMLElement)) {
+  if (!(archivingReviewSummaryEl instanceof HTMLElement) || !(archivingReviewTemplateChangesEl instanceof HTMLElement) || !(archivingReviewJobsEl instanceof HTMLElement) || !(archivingReviewStatusEl instanceof HTMLElement) || !(archivingReviewActionsEl instanceof HTMLElement)) {
     return;
   }
 
@@ -4389,6 +4399,7 @@ function renderArchivingRuleReview(force = false) {
   const templateChanges = Array.isArray(payload.templateChanges) ? payload.templateChanges : [];
   const session = payload.session && typeof payload.session === 'object' ? payload.session : {};
   const sessionStatus = typeof session.status === 'string' ? session.status : 'idle';
+  const ignoreDismissed = session.ignoreDismissed === true;
   const analyzedCount = Number.parseInt(String(session.analyzedCount || 0), 10) || 0;
   const totalCount = Number.parseInt(String(session.totalCount || 0), 10) || 0;
   const foundCount = Number.parseInt(String(session.foundCount || 0), 10) || jobs.length;
@@ -4396,6 +4407,7 @@ function renderArchivingRuleReview(force = false) {
   archivingReviewSummaryEl.innerHTML = '';
   archivingReviewTemplateChangesEl.innerHTML = '';
   archivingReviewJobsEl.innerHTML = '';
+  archivingReviewActionsEl.innerHTML = '';
 
   archivingReviewSummaryEl.classList.remove('hidden');
   if (templateChanges.length > 0) {
@@ -4418,11 +4430,10 @@ function renderArchivingRuleReview(force = false) {
   }
 
   const summaryItems = [
-    ['Testade jobb', summary.testedJobs || 0],
-    ['Oförändrade', summary.unchanged || 0],
-    ['Förbättringar', summary.improvements || 0],
-    ['Risker', summary.risks || 0],
-    ['Infoändringar', summary.info || 0],
+    ['Arkiverade dokument', summary.archivedJobs || summary.testedJobs || 0],
+    ['Påverkas', summary.affected || 0],
+    ['Påverkas inte', summary.unchanged || 0],
+    ['Avfärdade', summary.dismissed || 0],
   ];
   summaryItems.forEach(([label, value]) => {
     const card = document.createElement('div');
@@ -4436,41 +4447,77 @@ function renderArchivingRuleReview(force = false) {
   });
 
   archivingReviewStatusEl.classList.remove('hidden');
-  const lines = document.createElement('div');
-  lines.className = 'archiving-review-status-lines';
-
-  const intro = document.createElement('div');
-  intro.textContent = 'Aktuella regler gäller redan för nya och ännu oarkiverade dokument. Här kan du analysera och uppdatera redan arkiverade dokument.';
-  lines.appendChild(intro);
-
-  if (Array.isArray(payload.changedSections) && payload.changedSections.length > 0) {
-    const changedWrap = document.createElement('div');
-    const changedLabel = document.createElement('div');
-    changedLabel.textContent = 'Ändringar har gjorts i:';
-    const changedList = document.createElement('ul');
-    changedList.className = 'archiving-review-status-list';
-    payload.changedSections.forEach((section) => {
-      const item = document.createElement('li');
-      item.textContent = section;
-      changedList.appendChild(item);
+  const actions = document.createElement('div');
+  actions.className = 'panel-actions';
+  const openListButton = document.createElement('button');
+  openListButton.type = 'button';
+  openListButton.textContent = 'Öppna Arkiverade att granska';
+  openListButton.disabled = foundCount < 1;
+  openListButton.addEventListener('click', () => {
+    closeSettingsModal(true);
+    setJobListMode('archived-review');
+    if (currentViewMode === 'review') {
+      setViewMode('pdf');
+    }
+  });
+  const updateAllButton = document.createElement('button');
+  updateAllButton.type = 'button';
+  updateAllButton.textContent = 'Uppdatera alla påverkade';
+  updateAllButton.disabled = foundCount < 1 || sessionStatus === 'running';
+  updateAllButton.addEventListener('click', async () => {
+    try {
+      await updateAllArchivedReviewJobs();
+    } catch (error) {
+      alert(error.message || 'Kunde inte uppdatera alla arkiverade dokument.');
+    }
+  });
+  const reanalyzeAllButton = document.createElement('button');
+  reanalyzeAllButton.type = 'button';
+  reanalyzeAllButton.textContent = 'Analysera om alla';
+  reanalyzeAllButton.disabled = sessionStatus === 'running' || totalCount < 1;
+  reanalyzeAllButton.addEventListener('click', async () => {
+    try {
+      await restartArchivingUpdateReview(true);
+    } catch (error) {
+      alert(error.message || 'Kunde inte analysera om alla arkiverade dokument.');
+    }
+  });
+  actions.append(openListButton, updateAllButton, reanalyzeAllButton);
+  if (developmentUiEnabled()) {
+    const devButton = document.createElement('button');
+    devButton.type = 'button';
+    devButton.textContent = 'Dev: Höj arkiveringsversion';
+    devButton.disabled = archivingReviewLoading;
+    devButton.addEventListener('click', async () => {
+      try {
+        await bumpArchivingRulesVersionDev();
+      } catch (error) {
+        alert(error.message || 'Kunde inte höja arkiveringsversionen.');
+      }
     });
-    changedWrap.append(changedLabel, changedList);
-    lines.appendChild(changedWrap);
+    actions.appendChild(devButton);
   }
+  archivingReviewActionsEl.appendChild(actions);
 
   const statusLine = document.createElement('div');
+  statusLine.className = 'archiving-review-status-lines';
   if (sessionStatus === 'running') {
-    statusLine.textContent = `Analysen av arkiverade jobb pågår. ${analyzedCount} / ${totalCount} analyserade. ${foundCount} jobb hittade hittills. Fler jobb kan tillkomma medan analysen fortsätter.`;
+    statusLine.textContent = `Analyserar arkiverade dokument... ${analyzedCount} / ${totalCount} analyserade.`;
   } else if (totalCount === 0) {
     statusLine.textContent = 'Det finns inga arkiverade jobb att analysera just nu.';
-  } else if (foundCount > 0) {
-    statusLine.textContent = `Analysen är klar. ${foundCount} arkiverade jobb påverkas av aktuella regler eller kod.`;
+  } else if ((summary.affected || 0) > 0) {
+    statusLine.textContent = `${summary.affected} ${summary.affected === 1 ? 'arkiverat dokument behöver' : 'arkiverade dokument behöver'} granskas eller uppdateras.`;
   } else {
-    statusLine.textContent = 'Analysen är klar. Inga arkiverade jobb påverkas just nu.';
+    statusLine.textContent = 'Inga arkiverade dokument påverkas just nu.';
   }
-  lines.appendChild(statusLine);
-
-  archivingReviewStatusEl.replaceChildren(lines);
+  if (ignoreDismissed) {
+    const hint = document.createElement('div');
+    hint.className = 'archiving-review-status-lines';
+    hint.textContent = 'Visar även tidigare avfärdade dokument för den aktuella versionen.';
+    archivingReviewStatusEl.replaceChildren(statusLine, hint);
+  } else {
+    archivingReviewStatusEl.replaceChildren(statusLine);
+  }
   if (jobs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
@@ -4497,33 +4544,18 @@ function renderArchivingRuleReview(force = false) {
       ? item.classification.changeItems
       : [];
     if (changeItems.length > 0) {
-      const changeList = document.createElement('ul');
-      changeList.className = 'archiving-review-change-list';
-      changeItems.forEach((changeItem) => {
-        const changeRow = document.createElement('li');
-        changeRow.className = `archiving-review-change is-${changeItem && changeItem.type ? changeItem.type : 'info'}`;
-        const message = document.createElement('div');
-        message.className = 'archiving-review-change-message';
-        message.textContent = changeItem && typeof changeItem.message === 'string' ? changeItem.message : '';
-        changeRow.appendChild(message);
-        if (changeItem && typeof changeItem.detail === 'string' && changeItem.detail) {
-          const detail = document.createElement('div');
-          detail.className = 'archiving-review-change-detail';
-          detail.textContent = changeItem.detail;
-          changeRow.appendChild(detail);
-        }
-        changeList.appendChild(changeRow);
-      });
-      body.appendChild(changeList);
+      body.appendChild(buildArchivingReviewChangeList(changeItems));
     }
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = 'Öppna arkiverat jobb';
     button.addEventListener('click', () => {
       closeSettingsModal(true);
-      setJobListMode('ready');
+      setJobListMode('archived-review');
       applySelectedJobId(item.jobId);
-      setViewMode('review');
+      if (currentViewMode === 'review') {
+        setViewMode('pdf');
+      }
     });
     row.append(body, button);
     archivingReviewJobsEl.appendChild(row);
@@ -4562,6 +4594,55 @@ async function bumpArchivingRulesVersionDev() {
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   await Promise.all([loadArchiveStructure(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshArchiveStructure: true })]);
   watchReprocessedJobIdsFromPayload(payload);
+}
+
+async function restartArchivingUpdateReview(ignoreDismissed = false) {
+  const response = await fetch('/api/restart-archiving-update-review.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      ignoreDismissed,
+    })
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte starta om analysen.');
+  }
+
+  applyArchivingRulesStatePayload(payload.archivingRules, { forceRender: true });
+  await fetchState({ force: true, refreshArchiveStructure: true });
+}
+
+async function updateAllArchivedReviewJobs() {
+  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
+  const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+  const jobIds = jobs
+    .map((item) => item && typeof item.jobId === 'string' ? item.jobId : '')
+    .filter((jobId) => jobId !== '');
+  if (jobIds.length < 1) {
+    return;
+  }
+  archivedJobReviewPayload = null;
+  const response = await fetch('/api/apply-archiving-update-batch.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ jobIds })
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result || result.ok !== true) {
+    throw new Error(result && typeof result.error === 'string'
+      ? result.error
+      : 'Kunde inte uppdatera alla arkiverade dokument.');
+  }
+  jobIds.forEach((jobId) => {
+    archivedReviewDraftByJobId.delete(jobId);
+    clearArchivedReviewEditorState(jobId);
+  });
+  await fetchState({ force: true, refreshArchiveStructure: true });
 }
 
 function ensureJobListNode(key, createNode) {
@@ -4744,18 +4825,22 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
   const activeKeys = new Set();
   const safeProcessingJobs = Array.isArray(processingJobs) ? processingJobs : [];
   const isReadyMode = currentJobListMode === 'ready';
+  const isArchivedReviewMode = currentJobListMode === 'archived-review';
   const isAllMode = currentJobListMode === 'all';
   const isProcessingMode = currentJobListMode === 'processing';
   const isArchivedMode = currentJobListMode === 'archived';
 
   if (
     ((isReadyMode || isAllMode) && displayedReadyJobs.length === 0 && displayedReviewJobs.length === 0 && safeProcessingJobs.length === 0 && displayedArchivedJobs.length === 0 && safeFailedJobs.length === 0)
+    || (isArchivedReviewMode && displayedReviewJobs.length === 0)
     || (isProcessingMode && safeProcessingJobs.length === 0 && safeFailedJobs.length === 0)
     || (isArchivedMode && displayedArchivedJobs.length === 0)
   ) {
     const messageNode = ensureJobListMessageNode();
     messageNode.textContent = isAllMode
       ? 'Inga jobb ännu.'
+      : isArchivedReviewMode
+      ? 'Inga arkiverade dokument att granska just nu.'
       : isProcessingMode
       ? 'Inga jobb bearbetas just nu.'
       : (isArchivedMode ? 'Inga arkiverade jobb ännu.' : 'Inga jobb att granska just nu.');
@@ -4815,8 +4900,16 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
         });
       }
     } else if (isReadyMode) {
+      displayedReadyJobs.forEach((job) => {
+        const key = `ready:${job.id}`;
+        const li = ensureJobListItemNode(key);
+        updateReadyJobListItem(li, job);
+        desiredNodes.push(li);
+        activeKeys.add(key);
+      });
+    } else if (isArchivedReviewMode) {
       if (displayedReviewJobs.length > 0) {
-        const labelNode = ensureJobListSectionLabelNode('Arkiverade jobb att granska', 'label:ready:review');
+        const labelNode = ensureJobListSectionLabelNode('Arkiverade att granska', 'label:ready:review');
         desiredNodes.push(labelNode);
         activeKeys.add('label:ready:review');
         displayedReviewJobs.forEach((job) => {
@@ -4827,20 +4920,6 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
           activeKeys.add(key);
         });
       }
-
-      if (displayedReadyJobs.length > 0 && displayedReviewJobs.length > 0) {
-        const labelNode = ensureJobListSectionLabelNode('Nya jobb', 'label:ready:jobs');
-        desiredNodes.push(labelNode);
-        activeKeys.add('label:ready:jobs');
-      }
-
-      displayedReadyJobs.forEach((job) => {
-        const key = `ready:${job.id}`;
-        const li = ensureJobListItemNode(key);
-        updateReadyJobListItem(li, job);
-        desiredNodes.push(li);
-        activeKeys.add(key);
-      });
     } else if (isProcessingMode) {
       safeProcessingJobs.forEach((job) => {
         const key = `processing:${job.id}`;
@@ -4957,6 +5036,9 @@ function jobsForCurrentListMode() {
   if (currentJobListMode === 'processing') {
     return Array.isArray(state.processingJobs) ? state.processingJobs : [];
   }
+  if (currentJobListMode === 'archived-review') {
+    return displayedArchivedReviewJobsForReadyMode();
+  }
   if (currentJobListMode === 'archived') {
     return Array.isArray(state.archivedJobs) ? state.archivedJobs : [];
   }
@@ -4965,9 +5047,10 @@ function jobsForCurrentListMode() {
 
 function displayedJobsForCurrentListMode() {
   if (currentJobListMode === 'ready') {
-    return []
-      .concat(displayedReviewJobsForReadyMode())
-      .concat(buildDisplayedReadyJobs(state.processingJobs, state.readyJobs));
+    return buildDisplayedReadyJobs(state.processingJobs, state.readyJobs);
+  }
+  if (currentJobListMode === 'archived-review') {
+    return displayedArchivedReviewJobsForReadyMode();
   }
   if (currentJobListMode === 'all') {
     return []
@@ -5062,6 +5145,40 @@ function autoArchivingResultForJob(job) {
   return analysis && analysis.autoArchivingResult && typeof analysis.autoArchivingResult === 'object'
     ? analysis.autoArchivingResult
     : null;
+}
+
+function proposedArchivingResultForJob(job) {
+  if (!job) {
+    return null;
+  }
+  const reviewPayload = selectedArchivedReviewPayload(job);
+  if (reviewPayload && reviewPayload.currentAutoResult && typeof reviewPayload.currentAutoResult === 'object') {
+    return reviewPayload.currentAutoResult;
+  }
+  return autoArchivingResultForJob(job);
+}
+
+function normalizeComparableLabelIds(value) {
+  const list = Array.isArray(value) ? value : [];
+  return Array.from(new Set(
+    list
+      .map((item) => String(item || '').trim())
+      .filter((item) => item !== '')
+  )).sort();
+}
+
+function arrayValuesEqual(left, right) {
+  const a = Array.isArray(left) ? left : [];
+  const b = Array.isArray(right) ? right : [];
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function effectiveClientDirName(job) {
@@ -5188,18 +5305,42 @@ function clearSelectedJobSenderSectionMessage(message) {
   }
 }
 
+function applySelectedClientValue(value) {
+  if (!selectedJobId) {
+    return;
+  }
+
+  const selectedJob = findJobById(selectedJobId);
+  if (!value) {
+    selectedClientByJobId.delete(selectedJobId);
+  } else {
+    selectedClientByJobId.set(selectedJobId, value);
+  }
+
+  if (clientSelectEl instanceof HTMLSelectElement && clientSelectEl.value !== value) {
+    clientSelectEl.value = value;
+  }
+
+  const currentJob = findJobById(selectedJobId);
+  updateArchivedReviewDraftFromSidebar(currentJob);
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+  updateSelectedJobResetActions(currentJob);
+  if (archivedReviewModeActiveForJob(selectedJob)) {
+    return;
+  }
+  saveSelectedJobFields(selectedJobId, { selectedClientDirName: value || null }).catch((error) => {
+    restoreSelectedJobEditorState();
+    alert(error.message || 'Kunde inte spara huvudman.');
+  });
+}
+
 function applySelectedSenderValue(value) {
   if (!selectedJobId) {
     return;
   }
 
   const selectedJob = findJobById(selectedJobId);
-  if (selectedJob && selectedJob.archived === true) {
-    setSenderForJob(selectedJob);
-    renderSelectedJobSenderSection(selectedJob);
-    return;
-  }
-
   if (!value) {
     selectedSenderByJobId.delete(selectedJobId);
   } else {
@@ -5211,14 +5352,77 @@ function applySelectedSenderValue(value) {
   }
 
   const currentJob = findJobById(selectedJobId);
+  updateArchivedReviewDraftFromSidebar(currentJob);
   renderSelectedJobSenderSection(currentJob);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
+  updateSelectedJobResetActions(currentJob);
+  if (archivedReviewModeActiveForJob(selectedJob)) {
+    return;
+  }
   saveSelectedJobFields(selectedJobId, { selectedSenderId: value || null }).catch((error) => {
     restoreSelectedJobEditorState();
     renderSelectedJobSenderSection(findJobById(selectedJobId));
     alert(error.message || 'Kunde inte spara avsändare.');
   });
+}
+
+function applySelectedFolderValue(value) {
+  if (!selectedJobId) {
+    return;
+  }
+
+  const selectedJob = findJobById(selectedJobId);
+  if (!value) {
+    selectedFolderByJobId.delete(selectedJobId);
+  } else {
+    selectedFolderByJobId.set(selectedJobId, value);
+  }
+
+  if (folderSelectEl instanceof HTMLSelectElement && folderSelectEl.value !== value) {
+    folderSelectEl.value = value;
+  }
+
+  const currentJob = findJobById(selectedJobId);
+  updateArchivedReviewDraftFromSidebar(currentJob);
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+  updateSelectedJobResetActions(currentJob);
+  if (archivedReviewModeActiveForJob(selectedJob)) {
+    return;
+  }
+  saveSelectedJobFields(selectedJobId, { selectedFolderId: value || null }).catch((error) => {
+    restoreSelectedJobEditorState();
+    alert(error.message || 'Kunde inte spara mapp.');
+  });
+}
+
+async function resetSelectedJobFieldToProposed(fieldKey) {
+  const job = findJobById(selectedJobId);
+  const proposed = proposedArchivingResultForJob(job);
+  if (!job || !selectedJobArchivingEditable(job) || !proposed || typeof proposed !== 'object') {
+    return;
+  }
+
+  if (fieldKey === 'client') {
+    applySelectedClientValue(typeof proposed.clientId === 'string' ? proposed.clientId.trim() : '');
+    return;
+  }
+  if (fieldKey === 'sender') {
+    applySelectedSenderValue(proposed.senderId ? String(proposed.senderId).trim() : '');
+    return;
+  }
+  if (fieldKey === 'folder') {
+    applySelectedFolderValue(typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '');
+    return;
+  }
+  if (fieldKey === 'filename') {
+    applySelectedFilenameValue(typeof proposed.filename === 'string' ? proposed.filename.trim() : '');
+    return;
+  }
+  if (fieldKey === 'labels') {
+    await persistSelectedJobLabelIds(normalizeComparableLabelIds(proposed.labels));
+  }
 }
 
 function renderSelectedJobSenderSection(job) {
@@ -5842,10 +6046,63 @@ function syncFilenameField(job) {
     return;
   }
 
-  const disabled = !job || job.status !== 'ready' || job.archived === true;
+  const disabled = !selectedJobArchivingEditable(job);
   filenameInputEl.disabled = disabled;
   filenameInputEl.value = job ? displayedFilenameForJob(job) : '';
   filenameInputEl.title = job ? filenameTooltipForJob(job, filenameInputEl.value) : '';
+}
+
+function currentJobValuesDifferFromProposed(job) {
+  const proposed = proposedArchivingResultForJob(job);
+  if (!job || !proposed || typeof proposed !== 'object') {
+    return {
+      client: false,
+      sender: false,
+      folder: false,
+      filename: false,
+      labels: false,
+    };
+  }
+
+  const proposedClientId = typeof proposed.clientId === 'string' ? proposed.clientId.trim() : '';
+  const proposedSenderId = proposed.senderId ? String(proposed.senderId).trim() : '';
+  const proposedFolderId = typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '';
+  const proposedFilename = typeof proposed.filename === 'string' ? proposed.filename.trim() : '';
+  const proposedLabels = normalizeComparableLabelIds(proposed.labels);
+
+  return {
+    client: effectiveClientDirName(job) !== proposedClientId,
+    sender: effectiveSenderId(job) !== proposedSenderId,
+    folder: effectiveFolderId(job) !== proposedFolderId,
+    filename: String(displayedFilenameForJob(job) || '').trim() !== proposedFilename,
+    labels: !arrayValuesEqual(normalizeComparableLabelIds(effectiveSelectedLabelIds(job)), proposedLabels),
+  };
+}
+
+function setFieldResetButtonVisibility(buttonEl, visible) {
+  if (!(buttonEl instanceof HTMLButtonElement)) {
+    return;
+  }
+  buttonEl.hidden = !visible;
+  buttonEl.disabled = !visible;
+  buttonEl.title = visible ? 'Återställ till automatiskt föreslaget värde' : '';
+}
+
+function updateSelectedJobResetActions(job) {
+  const editable = !!job && selectedJobArchivingEditable(job);
+  const diffs = editable ? currentJobValuesDifferFromProposed(job) : {
+    client: false,
+    sender: false,
+    folder: false,
+    filename: false,
+    labels: false,
+  };
+
+  setFieldResetButtonVisibility(resetClientActionEl, editable && diffs.client);
+  setFieldResetButtonVisibility(resetSenderActionEl, editable && diffs.sender);
+  setFieldResetButtonVisibility(resetFolderActionEl, editable && diffs.folder);
+  setFieldResetButtonVisibility(resetFilenameActionEl, editable && diffs.filename);
+  setFieldResetButtonVisibility(resetLabelsActionEl, editable && diffs.labels);
 }
 
 function selectedJobAnalysisOutdated(job) {
@@ -5880,15 +6137,39 @@ function updateArchiveAction(job) {
     return;
   }
 
+  if (dismissArchivedUpdateActionEl instanceof HTMLButtonElement) {
+    const archivedReviewMode = currentJobListMode === 'archived-review';
+    dismissArchivedUpdateActionEl.hidden = !archivedReviewMode;
+    dismissArchivedUpdateActionEl.textContent = 'Avfärda';
+    dismissArchivedUpdateActionEl.disabled = true;
+    dismissArchivedUpdateActionEl.title = archivedReviewMode
+      ? 'De föreslagna ändringarna ignoreras för dessa regler. Du kan analysera igen senare.'
+      : '';
+  }
+
   if (!job) {
-    archiveActionEl.dataset.jobAction = 'archive';
+    archiveActionEl.dataset.jobAction = currentJobListMode === 'archived-review' ? 'update' : 'archive';
     archiveActionEl.disabled = true;
-    archiveActionEl.textContent = 'Arkivera';
+    archiveActionEl.textContent = currentJobListMode === 'archived-review' ? 'Uppdatera' : 'Arkivera';
     archiveActionEl.title = 'Markera ett jobb först.';
     return;
   }
 
   const isArchived = job.archived === true;
+  if (archivedReviewModeActiveForJob(job)) {
+    const payload = selectedArchivedReviewPayload(job);
+    archiveActionEl.dataset.jobAction = 'update';
+    archiveActionEl.textContent = 'Uppdatera';
+    archiveActionEl.disabled = !(payload && payload.isActionable === true);
+    archiveActionEl.title = archiveActionEl.disabled
+      ? 'Analysen för det arkiverade dokumentet laddas eller saknar förändringar.'
+      : 'Sparar aktuellt förslag eller manuella ändringar för det arkiverade dokumentet.';
+    if (dismissArchivedUpdateActionEl instanceof HTMLButtonElement) {
+      dismissArchivedUpdateActionEl.disabled = !(payload && payload.isActionable === true);
+    }
+    return;
+  }
+
   archiveActionEl.dataset.jobAction = isArchived ? 'restore' : 'archive';
   archiveActionEl.textContent = isArchived ? 'Återställ' : 'Arkivera';
   if (isArchived) {
@@ -6096,6 +6377,7 @@ function restoreSelectedJobEditorState() {
   setLabelsForJob(currentJob);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
+  updateSelectedJobResetActions(currentJob);
 }
 
 async function saveSelectedJobFields(jobId, payload) {
@@ -6143,6 +6425,31 @@ function scheduleFilenameSave(jobId, filename) {
   filenameSaveTimerByJobId.set(jobId, nextTimer);
 }
 
+function applySelectedFilenameValue(value) {
+  if (!selectedJobId) {
+    return;
+  }
+  const currentJob = findJobById(selectedJobId);
+  if (!currentJob || (!selectedJobArchivingEditable(currentJob) && !archivedReviewModeActiveForJob(currentJob))) {
+    syncFilenameField(currentJob);
+    return;
+  }
+
+  if (!value.trim()) {
+    filenameByJobId.delete(selectedJobId);
+  } else {
+    filenameByJobId.set(selectedJobId, value);
+  }
+  filenameInputEl.title = filenameTooltipForJob(currentJob, value);
+  updateArchivedReviewDraftFromSidebar(currentJob);
+  updateArchiveAction(currentJob);
+  updateSelectedJobResetActions(currentJob);
+  if (archivedReviewModeActiveForJob(currentJob)) {
+    return;
+  }
+  scheduleFilenameSave(selectedJobId, value);
+}
+
 function renderSelectedJobPanel() {
   const selectedJob = findJobById(selectedJobId);
   if (!selectedJob) {
@@ -6160,6 +6467,7 @@ function renderSelectedJobPanel() {
     selectedJobReprocessEl.title = 'Markera ett jobb först.';
     syncFilenameField(null);
     updateArchiveAction(null);
+    updateSelectedJobResetActions(null);
     return;
   }
 
@@ -6207,6 +6515,7 @@ function renderSelectedJobPanel() {
     : 'Klicka för att analysera igen från review.pdf. Håll Ctrl nedtryckt för att tvinga en helomkörning från source.pdf.';
   syncFilenameField(selectedJob);
   updateArchiveAction(selectedJob);
+  updateSelectedJobResetActions(selectedJob);
 }
 
 function buildDisplayedReadyJobs(processingJobs, readyJobs) {
@@ -7416,6 +7725,11 @@ function applySelectedJobId(jobId, options = {}) {
   setSenderForJob(selectedJob);
   setFolderForJob(selectedJob);
   setLabelsForJob(selectedJob);
+  if (archivedReviewModeActiveForJob(selectedJob)) {
+    loadArchivedReview(selectedJob.id).catch(() => {
+      renderArchivedReviewPanel();
+    });
+  }
   if (syncHash) {
     updateHashState();
   }
@@ -7485,6 +7799,12 @@ function refreshSelection() {
     setLabelsForJob(currentSelection);
     syncFilenameField(currentSelection);
     updateArchiveAction(currentSelection);
+    updateSelectedJobResetActions(currentSelection);
+    if (archivedReviewModeActiveForJob(currentSelection)) {
+      loadArchivedReview(currentSelection.id, shouldRefreshViewer).catch(() => {
+        renderArchivedReviewPanel();
+      });
+    }
     updateHashState();
     return;
   }
@@ -8446,23 +8766,10 @@ function bindSettingsPanelRefs(tabId) {
     setExtractionFieldsTab('fields');
   } else if (tabId === 'archiving-review') {
     archivingReviewStatusEl = document.getElementById('archiving-review-status');
+    archivingReviewActionsEl = document.getElementById('archiving-review-actions');
     archivingReviewSummaryEl = document.getElementById('archiving-review-summary');
     archivingReviewTemplateChangesEl = document.getElementById('archiving-review-template-changes');
     archivingReviewJobsEl = document.getElementById('archiving-review-jobs');
-    archivingReviewDevBumpEl = document.getElementById('archiving-review-dev-bump');
-    if (archivingReviewDevBumpEl) {
-      const isDev = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-      archivingReviewDevBumpEl.hidden = !isDev;
-      if (isDev) {
-        archivingReviewDevBumpEl.addEventListener('click', async () => {
-          try {
-            await bumpArchivingRulesVersionDev();
-          } catch (error) {
-            alert(error.message || 'Kunde inte höja arkiveringsversionen.');
-          }
-        });
-      }
-    }
   } else if (tabId === 'paths') {
     inputInboxPathEl = document.getElementById('input-inbox-path');
     outputBasePathEl = document.getElementById('output-base-path');
@@ -9026,10 +9333,6 @@ function updateSettingsActionButtons() {
   if (extractionFieldsCancelEl && extractionFieldsApplyEl) {
     extractionFieldsCancelEl.disabled = extractionFieldsLoading || !extractionFieldsDirty;
     extractionFieldsApplyEl.disabled = extractionFieldsLoading || !extractionFieldsDirty;
-  }
-
-  if (archivingReviewDevBumpEl) {
-    archivingReviewDevBumpEl.disabled = archivingReviewLoading;
   }
 
   if (pathsCancelEl && pathsApplyEl) {
@@ -16428,24 +16731,12 @@ clientSelectEl.addEventListener('change', () => {
   }
 
   const selectedJob = findJobById(selectedJobId);
-  if (selectedJob && selectedJob.archived === true) {
+  if (selectedJob && selectedJob.archived === true && !archivedReviewModeActiveForJob(selectedJob)) {
     setClientForJob(selectedJob);
     return;
   }
 
-  const value = clientSelectEl.value;
-  if (!value) {
-    selectedClientByJobId.delete(selectedJobId);
-  } else {
-    selectedClientByJobId.set(selectedJobId, value);
-  }
-  const currentJob = findJobById(selectedJobId);
-  syncFilenameField(currentJob);
-  updateArchiveAction(currentJob);
-  saveSelectedJobFields(selectedJobId, { selectedClientDirName: value || null }).catch((error) => {
-    restoreSelectedJobEditorState();
-    alert(error.message || 'Kunde inte spara huvudman.');
-  });
+  applySelectedClientValue(clientSelectEl.value);
 });
 
 senderSelectEl.addEventListener('change', () => {
@@ -16462,7 +16753,7 @@ senderSelectEl.addEventListener('change', () => {
   }
 
   const selectedJob = findJobById(selectedJobId);
-  if (selectedJob && selectedJob.archived === true) {
+  if (selectedJob && selectedJob.archived === true && !archivedReviewModeActiveForJob(selectedJob)) {
     setSenderForJob(selectedJob);
     renderSelectedJobSenderSection(selectedJob);
     return;
@@ -16486,30 +16777,50 @@ folderSelectEl.addEventListener('change', () => {
   }
 
   const selectedJob = findJobById(selectedJobId);
-  if (selectedJob && selectedJob.archived === true) {
+  if (selectedJob && selectedJob.archived === true && !archivedReviewModeActiveForJob(selectedJob)) {
     setFolderForJob(selectedJob);
     return;
   }
 
-  const value = folderSelectEl.value;
-  if (!value) {
-    selectedFolderByJobId.delete(selectedJobId);
-  } else {
-    selectedFolderByJobId.set(selectedJobId, value);
-  }
-  const currentJob = findJobById(selectedJobId);
-  syncFilenameField(currentJob);
-  updateArchiveAction(currentJob);
-  saveSelectedJobFields(selectedJobId, { selectedFolderId: value || null }).catch((error) => {
-    restoreSelectedJobEditorState();
-    alert(error.message || 'Kunde inte spara mapp.');
-  });
+  applySelectedFolderValue(folderSelectEl.value);
 });
+
+if (resetClientActionEl instanceof HTMLButtonElement) {
+  resetClientActionEl.addEventListener('click', () => {
+    resetSelectedJobFieldToProposed('client').catch((error) => {
+      alert(error.message || 'Kunde inte återställa huvudman.');
+    });
+  });
+}
+
+if (resetSenderActionEl instanceof HTMLButtonElement) {
+  resetSenderActionEl.addEventListener('click', () => {
+    resetSelectedJobFieldToProposed('sender').catch((error) => {
+      alert(error.message || 'Kunde inte återställa avsändare.');
+    });
+  });
+}
+
+if (resetFolderActionEl instanceof HTMLButtonElement) {
+  resetFolderActionEl.addEventListener('click', () => {
+    resetSelectedJobFieldToProposed('folder').catch((error) => {
+      alert(error.message || 'Kunde inte återställa mapp.');
+    });
+  });
+}
 
 if (jobLabelsFieldEl instanceof HTMLButtonElement) {
   jobLabelsFieldEl.addEventListener('click', (event) => {
     event.preventDefault();
     toggleJobLabelsOverlay();
+  });
+}
+
+if (resetLabelsActionEl instanceof HTMLButtonElement) {
+  resetLabelsActionEl.addEventListener('click', () => {
+    resetSelectedJobFieldToProposed('labels').catch((error) => {
+      alert(error.message || 'Kunde inte återställa etiketter.');
+    });
   });
 }
 
@@ -16602,29 +16913,38 @@ if (jobLabelsFieldGroupEl instanceof HTMLElement) {
 }
 
 filenameInputEl.addEventListener('input', () => {
-  if (!selectedJobId) {
-    return;
-  }
-  const currentJob = findJobById(selectedJobId);
-  if (!currentJob || currentJob.archived === true) {
-    syncFilenameField(currentJob);
-    return;
-  }
-
-  const value = filenameInputEl.value;
-  if (!value.trim()) {
-    filenameByJobId.delete(selectedJobId);
-  } else {
-    filenameByJobId.set(selectedJobId, value);
-  }
-  filenameInputEl.title = filenameTooltipForJob(currentJob, value);
-  updateArchiveAction(currentJob);
-  scheduleFilenameSave(selectedJobId, value);
+  applySelectedFilenameValue(filenameInputEl.value);
 });
+
+if (resetFilenameActionEl instanceof HTMLButtonElement) {
+  resetFilenameActionEl.addEventListener('click', () => {
+    resetSelectedJobFieldToProposed('filename').catch((error) => {
+      alert(error.message || 'Kunde inte återställa filnamn.');
+    });
+  });
+}
 
 archiveActionEl.addEventListener('click', async () => {
   const selectedJob = findJobById(selectedJobId);
   if (!selectedJob) {
+    return;
+  }
+
+  if (archivedReviewModeActiveForJob(selectedJob)) {
+    const payload = selectedArchivedReviewPayload(selectedJob);
+    if (!payload || payload.isActionable !== true) {
+      return;
+    }
+    updateArchivedReviewDraftFromSidebar(selectedJob);
+    const action = archivedReviewDraftMatchesProposal(selectedJob, payload) ? 'use-new' : 'manual';
+    archiveActionEl.disabled = true;
+    try {
+      await saveArchivedReviewAction(action);
+    } catch (error) {
+      alert(error.message || 'Kunde inte uppdatera den arkiverade posten.');
+    } finally {
+      updateArchiveAction(findJobById(selectedJobId));
+    }
     return;
   }
 
@@ -16678,6 +16998,23 @@ archiveActionEl.addEventListener('click', async () => {
     updateArchiveAction(findJobById(selectedJobId));
   }
 });
+
+if (dismissArchivedUpdateActionEl instanceof HTMLButtonElement) {
+  dismissArchivedUpdateActionEl.addEventListener('click', async () => {
+    const selectedJob = findJobById(selectedJobId);
+    if (!selectedJob || !archivedReviewModeActiveForJob(selectedJob)) {
+      return;
+    }
+    dismissArchivedUpdateActionEl.disabled = true;
+    try {
+      await saveArchivedReviewAction('dismiss');
+    } catch (error) {
+      alert(error.message || 'Kunde inte avfärda dokumentet för aktuell version.');
+    } finally {
+      updateArchiveAction(findJobById(selectedJobId));
+    }
+  });
+}
 
 settingsButtonEl.addEventListener('click', async () => {
   if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {

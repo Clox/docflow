@@ -21,6 +21,7 @@
           <div class="sidebar-title-controls">
             <select id="job-list-mode" aria-label="Jobblista">
               <option value="ready">Att granska</option>
+              <option value="archived-review">Arkiverade att granska</option>
               <option value="processing">Bearbetas</option>
               <option value="archived">Arkiverade</option>
               <option value="all">Alla</option>
@@ -70,35 +71,47 @@
             <div class="selected-job-panel-section-title">Arkivering</div>
             <div class="field-group">
               <label class="floating-label" for="client-select">Huvudman</label>
-              <select id="client-select">
-                <option value="" hidden>Välj huvudman</option>
-              </select>
+              <div class="field-group-control-row">
+                <select id="client-select">
+                  <option value="" hidden>Välj huvudman</option>
+                </select>
+                <button id="reset-client-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ huvudman">↺</button>
+              </div>
             </div>
             <div class="field-group">
               <label class="floating-label" for="sender-select">Avsändare</label>
-              <select id="sender-select">
-                <option value="" hidden>Välj avsändare</option>
-              </select>
+              <div class="field-group-control-row">
+                <select id="sender-select">
+                  <option value="" hidden>Välj avsändare</option>
+                </select>
+                <button id="reset-sender-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ avsändare">↺</button>
+              </div>
             </div>
             <div class="field-group">
               <label class="floating-label" for="folder-select">Mapp</label>
-              <select id="folder-select">
-                <option value="" hidden>Välj mapp</option>
-              </select>
+              <div class="field-group-control-row">
+                <select id="folder-select">
+                  <option value="" hidden>Välj mapp</option>
+                </select>
+                <button id="reset-folder-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ mapp">↺</button>
+              </div>
             </div>
             <div class="field-group field-group-job-labels">
               <label class="floating-label" for="job-labels-field">Etiketter</label>
-              <button
-                id="job-labels-field"
-                class="job-labels-field"
-                type="button"
-                disabled
-                aria-haspopup="dialog"
-                aria-expanded="false"
-                aria-controls="job-labels-overlay"
-              >
-                <span id="job-labels-summary" class="job-labels-summary"></span>
-              </button>
+              <div class="field-group-control-row">
+                <button
+                  id="job-labels-field"
+                  class="job-labels-field"
+                  type="button"
+                  disabled
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
+                  aria-controls="job-labels-overlay"
+                >
+                  <span id="job-labels-summary" class="job-labels-summary"></span>
+                </button>
+                <button id="reset-labels-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ etiketter">↺</button>
+              </div>
               <div id="job-labels-focus-hint" class="job-labels-field-hint" aria-hidden="true">Tryck Enter för att visa/redigera etiketter</div>
               <div id="job-labels-overlay" class="job-labels-overlay" aria-hidden="true">
                 <div class="job-labels-combobox">
@@ -121,10 +134,14 @@
             </div>
             <div class="field-group field-group-filename">
               <label class="floating-label" for="filename-input">Filnamn</label>
-              <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">
+              <div class="field-group-control-row">
+                <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">
+                <button id="reset-filename-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ filnamn">↺</button>
+              </div>
             </div>
             <button id="selected-job-reprocess" type="button" disabled>Analysera igen</button>
             <button id="archive-action" type="button" disabled title="Markera ett jobb först.">Arkivera</button>
+            <button id="dismiss-archived-update-action" type="button" disabled hidden>Avfärda</button>
           </div>
         </div>
       </section>
@@ -300,14 +317,12 @@
 
   <template id="settings-template-archiving-review">
     <h3>Uppdatera arkiverade dokument</h3>
-    <p>Här kan du analysera hur nya arkiveringsregler påverkar redan arkiverade dokument och välja att uppdatera dem.</p>
+    <p>Här kan du se vilka redan arkiverade dokument som får ett annat resultat med aktuella regler och aktuell kod, och sedan uppdatera dem vid behov.</p>
     <div id="archiving-review-status" class="settings-inline-notice hidden"></div>
+    <div id="archiving-review-actions" class="panel-actions"></div>
     <div id="archiving-review-summary" class="archiving-review-summary"></div>
     <div id="archiving-review-template-changes" class="archiving-review-template-changes"></div>
     <div id="archiving-review-jobs" class="archiving-review-jobs"></div>
-    <div class="panel-actions">
-      <button id="archiving-review-dev-bump" type="button" hidden>Dev: Höj arkiveringsversion</button>
-    </div>
   </template>
 
   <template id="settings-template-senders">
