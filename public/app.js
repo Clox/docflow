@@ -5647,9 +5647,14 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
   if (!job || !selectedJobArchivingEditable(job) || !proposed || typeof proposed !== 'object') {
     return;
   }
+  const archivedReviewMode = archivedReviewModeActiveForJob(job);
 
   if (fieldKey === 'client') {
     const nextValue = typeof proposed.clientId === 'string' ? proposed.clientId.trim() : '';
+    if (!archivedReviewMode) {
+      applySelectedClientValue(nextValue);
+      return;
+    }
     if (!nextValue) {
       selectedClientByJobId.delete(job.id);
     } else {
@@ -5665,6 +5670,10 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
   }
   if (fieldKey === 'sender') {
     const nextValue = proposed.senderId ? String(proposed.senderId).trim() : '';
+    if (!archivedReviewMode) {
+      applySelectedSenderValue(nextValue);
+      return;
+    }
     if (!nextValue) {
       selectedSenderByJobId.delete(job.id);
     } else {
@@ -5681,6 +5690,10 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
   }
   if (fieldKey === 'folder') {
     const nextValue = typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '';
+    if (!archivedReviewMode) {
+      applySelectedFolderValue(nextValue);
+      return;
+    }
     if (!nextValue) {
       selectedFolderByJobId.delete(job.id);
     } else {
@@ -5696,6 +5709,10 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
   }
   if (fieldKey === 'filename') {
     const nextValue = proposedFilenameForJob(job, proposed);
+    if (!archivedReviewMode) {
+      applySelectedFilenameValue(nextValue);
+      return;
+    }
     if (!nextValue) {
       filenameByJobId.delete(job.id);
     } else {
@@ -5709,6 +5726,10 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
     return;
   }
   if (fieldKey === 'labels') {
+    if (!archivedReviewMode) {
+      await persistSelectedJobLabelIds(normalizeComparableLabelIds(proposed.labels));
+      return;
+    }
     selectedLabelIdsByJobId.set(job.id, normalizeComparableLabelIds(proposed.labels));
     const currentJob = findJobById(job.id);
     updateArchivedReviewDraftFromSidebar(currentJob);
