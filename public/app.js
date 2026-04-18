@@ -30,6 +30,7 @@ const ocrSearchRegexEl = document.getElementById('ocr-search-regex');
 const ocrSearchPrevEl = document.getElementById('ocr-search-prev');
 const ocrSearchNextEl = document.getElementById('ocr-search-next');
 const ocrSearchStatusEl = document.getElementById('ocr-search-status');
+const mainEl = document.querySelector('.main');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
 const jobListModeEl = document.getElementById('job-list-mode');
@@ -445,9 +446,8 @@ let settingsDialogResizeState = null;
 const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'archived-review', 'processing', 'archived']);
 const SIDEBAR_LIST_SIZE_STORAGE_KEY = 'docflow.sidebar.listSizePercent';
 const DEFAULT_SIDEBAR_LIST_SIZE_PERCENT = 35;
-const MIN_SIDEBAR_LIST_SIZE_PERCENT = 20;
-const MAX_SIDEBAR_LIST_SIZE_PERCENT = 80;
-const MIN_DETAIL_PANEL_HEIGHT_PX = 220;
+const MIN_SIDEBAR_LIST_SIZE_PERCENT = 14;
+const MAX_SIDEBAR_LIST_SIZE_PERCENT = 86;
 
 let senderMergeState = null;
 let currentJobListMode = 'ready';
@@ -751,24 +751,37 @@ function clampSidebarListSizePercent(value) {
   if (!Number.isFinite(numeric)) {
     return DEFAULT_SIDEBAR_LIST_SIZE_PERCENT;
   }
+  return Math.max(MIN_SIDEBAR_LIST_SIZE_PERCENT, Math.min(MAX_SIDEBAR_LIST_SIZE_PERCENT, numeric));
+}
 
-  let dynamicMax = MAX_SIDEBAR_LIST_SIZE_PERCENT;
-  if (sidebarEl instanceof HTMLElement) {
-    const rect = sidebarEl.getBoundingClientRect();
-    const splitterHeight = sidebarSplitterEl instanceof HTMLElement
-      ? sidebarSplitterEl.getBoundingClientRect().height
-      : 14;
-    const computedStyles = window.getComputedStyle(sidebarEl);
-    const actionsHeight = selectedJobActionsPanelEl instanceof HTMLElement && selectedJobActionsPanelEl.getBoundingClientRect().height > 0
-      ? selectedJobActionsPanelEl.getBoundingClientRect().height
-      : (Number.parseFloat(computedStyles.getPropertyValue('--sidebar-actions-height')) || 0);
-    if (rect.height > 0) {
-      dynamicMax = ((rect.height - splitterHeight - actionsHeight - MIN_DETAIL_PANEL_HEIGHT_PX) / rect.height) * 100;
-    }
+function sidebarVariablePanelsMetrics() {
+  if (!(sidebarEl instanceof HTMLElement)) {
+    return null;
   }
-
-  const boundedMax = Math.max(MIN_SIDEBAR_LIST_SIZE_PERCENT, Math.min(MAX_SIDEBAR_LIST_SIZE_PERCENT, dynamicMax));
-  return Math.max(MIN_SIDEBAR_LIST_SIZE_PERCENT, Math.min(boundedMax, numeric));
+  const sidebarRect = sidebarEl.getBoundingClientRect();
+  if (sidebarRect.height <= 0) {
+    return null;
+  }
+  const titleHeight = (() => {
+    const titleEl = sidebarEl.querySelector('.sidebar-title');
+    return titleEl instanceof HTMLElement ? titleEl.getBoundingClientRect().height : 0;
+  })();
+  const splitterHeight = sidebarSplitterEl instanceof HTMLElement
+    ? sidebarSplitterEl.getBoundingClientRect().height
+    : 12;
+  const dividerHeight = (() => {
+    const dividerEl = sidebarEl.querySelector('.sidebar-divider');
+    return dividerEl instanceof HTMLElement ? dividerEl.getBoundingClientRect().height : 8;
+  })();
+  const actionsHeight = selectedJobActionsPanelEl instanceof HTMLElement
+    ? selectedJobActionsPanelEl.getBoundingClientRect().height
+    : 0;
+  const availableHeight = Math.max(0, sidebarRect.height - titleHeight - splitterHeight - dividerHeight - actionsHeight);
+  return {
+    titleHeight,
+    availableHeight,
+    sidebarHeight: sidebarRect.height,
+  };
 }
 
 function applySidebarListSizePercent(value, persist = true) {
@@ -776,7 +789,13 @@ function applySidebarListSizePercent(value, persist = true) {
     return;
   }
   const nextValue = clampSidebarListSizePercent(value);
-  sidebarEl.style.setProperty('--sidebar-list-size', `${nextValue}%`);
+  const metrics = sidebarVariablePanelsMetrics();
+  if (metrics && metrics.availableHeight > 0) {
+    const nextPixelSize = metrics.titleHeight + ((metrics.availableHeight * nextValue) / 100);
+    sidebarEl.style.setProperty('--sidebar-list-size', `${nextPixelSize}px`);
+  } else {
+    sidebarEl.style.setProperty('--sidebar-list-size', `${nextValue}%`);
+  }
   if (!persist) {
     return;
   }
@@ -801,15 +820,16 @@ function restoreSidebarListSizePercent() {
 }
 
 function updateSidebarSplitFromPointer(clientY) {
-  if (!(sidebarEl instanceof HTMLElement)) {
+  const metrics = sidebarVariablePanelsMetrics();
+  if (!metrics || !(sidebarEl instanceof HTMLElement)) {
     return;
   }
   const rect = sidebarEl.getBoundingClientRect();
-  if (rect.height <= 0) {
+  if (rect.height <= 0 || metrics.availableHeight <= 0) {
     return;
   }
-  const relativeY = clientY - rect.top;
-  const nextPercent = (relativeY / rect.height) * 100;
+  const relativeY = clientY - rect.top - metrics.titleHeight;
+  const nextPercent = (relativeY / metrics.availableHeight) * 100;
   applySidebarListSizePercent(nextPercent);
 }
 
@@ -5675,7 +5695,7 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
     return;
   }
   if (fieldKey === 'filename') {
-    const nextValue = typeof proposed.filename === 'string' ? proposed.filename.trim() : '';
+    const nextValue = proposedFilenameForJob(job, proposed);
     if (!nextValue) {
       filenameByJobId.delete(job.id);
     } else {
@@ -6280,6 +6300,14 @@ function displayedFilenameForJob(job) {
   return generateFilenameForJob(job);
 }
 
+function proposedFilenameForJob(job, proposed = proposedArchivingResultForJob(job)) {
+  if (!job || !proposed || typeof proposed !== 'object') {
+    return '';
+  }
+  const directValue = typeof proposed.filename === 'string' ? proposed.filename.trim() : '';
+  return directValue !== '' ? directValue : generateFilenameForJob(job);
+}
+
 function renderArchiveFolderPathForJob(job) {
   const folder = findArchiveFolderById(effectiveFolderId(job));
   const template = folder && folder.pathTemplate && typeof folder.pathTemplate === 'object'
@@ -6343,7 +6371,7 @@ function currentJobValuesDifferFromProposed(job) {
   const proposedClientId = typeof proposed.clientId === 'string' ? proposed.clientId.trim() : '';
   const proposedSenderId = proposed.senderId ? String(proposed.senderId).trim() : '';
   const proposedFolderId = typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '';
-  const proposedFilename = typeof proposed.filename === 'string' ? proposed.filename.trim() : '';
+  const proposedFilename = proposedFilenameForJob(job, proposed);
   const proposedLabels = normalizeComparableLabelIds(proposed.labels);
 
   return {
@@ -6377,8 +6405,7 @@ function proposedResetTooltip(fieldKey, job) {
     return value ? `Återställ till föreslagen mapp:\n${value}` : '';
   }
   if (fieldKey === 'filename') {
-    const directValue = typeof proposed.filename === 'string' ? proposed.filename.trim() : '';
-    const value = directValue !== '' ? directValue : generateFilenameForJob(job);
+    const value = proposedFilenameForJob(job, proposed);
     return value ? `Återställ till föreslaget filnamn:\n${value}` : '';
   }
   if (fieldKey === 'labels') {
@@ -17292,10 +17319,20 @@ if (jobLabelsFieldGroupEl instanceof HTMLElement) {
     if (nextFocusedElement instanceof Node && jobLabelsFieldGroupEl.contains(nextFocusedElement)) {
       return;
     }
-    if (!(nextFocusedElement instanceof Node)) {
+    if (nextFocusedElement instanceof Node) {
+      closeJobLabelsOverlay();
       return;
     }
-    closeJobLabelsOverlay();
+    window.requestAnimationFrame(() => {
+      if (!jobLabelsOverlayOpen || !(jobLabelsFieldGroupEl instanceof HTMLElement)) {
+        return;
+      }
+      const activeElement = document.activeElement;
+      if (activeElement instanceof Node && jobLabelsFieldGroupEl.contains(activeElement)) {
+        return;
+      }
+      closeJobLabelsOverlay();
+    });
   });
 }
 
@@ -17727,6 +17764,33 @@ document.addEventListener('pointerdown', (event) => {
     return;
   }
   closeJobLabelsOverlay();
+});
+
+if (mainEl instanceof HTMLElement) {
+  mainEl.addEventListener('pointerdown', (event) => {
+    if (!jobLabelsOverlayOpen || !(jobLabelsFieldGroupEl instanceof HTMLElement)) {
+      return;
+    }
+    if (event.target instanceof Node && jobLabelsFieldGroupEl.contains(event.target)) {
+      return;
+    }
+    closeJobLabelsOverlay();
+  }, true);
+}
+
+pdfFrameEls.forEach((frameEl) => {
+  frameEl.addEventListener('pointerdown', () => {
+    if (!jobLabelsOverlayOpen) {
+      return;
+    }
+    closeJobLabelsOverlay();
+  }, true);
+  frameEl.addEventListener('focus', () => {
+    if (!jobLabelsOverlayOpen) {
+      return;
+    }
+    closeJobLabelsOverlay();
+  }, true);
 });
 
 document.addEventListener('keydown', (event) => {

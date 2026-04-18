@@ -40,14 +40,24 @@ body {
 
 .sidebar-splitter {
   position: relative;
-  flex: 0 0 10px;
+  flex: 0 0 12px;
   cursor: row-resize;
+  background: transparent;
+}
+
+.sidebar-splitter::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  bottom: 2px;
   background: #f3f4f6;
   border-top: 1px solid #e5e7eb;
   border-bottom: 1px solid #e5e7eb;
 }
 
-.sidebar-splitter::before {
+.sidebar-splitter::after {
   content: "";
   position: absolute;
   left: 50%;
@@ -64,13 +74,13 @@ body {
   opacity: 0.9;
 }
 
-.sidebar-splitter:hover,
-.sidebar-splitter.is-dragging {
+.sidebar-splitter:hover::before,
+.sidebar-splitter.is-dragging::before {
   background: #e8eef8;
 }
 
 .sidebar-divider {
-  flex: 0 0 10px;
+  flex: 0 0 8px;
   background: #f3f4f6;
   border-top: 1px solid #e5e7eb;
   border-bottom: 1px solid #e5e7eb;
@@ -237,7 +247,6 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-panel {
-  border-top: 1px solid #ddd;
   background: #fff;
   display: flex;
   flex-direction: column;
@@ -798,6 +807,10 @@ body.is-resizing-sidebar {
   grid-column: 2;
   justify-self: stretch;
   width: 100%;
+}
+
+.selected-job-actions-fields > #dismiss-archived-update-action[hidden] + #archive-action {
+  grid-column: 1 / -1;
 }
 
 .selected-job-actions-fields > #selected-job-reprocess:hover,
