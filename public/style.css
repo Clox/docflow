@@ -127,6 +127,7 @@ body.is-resizing-sidebar {
   gap: 8px;
   min-width: 0;
   margin-left: auto;
+  position: relative;
 }
 
 #job-list-mode {
@@ -136,6 +137,60 @@ body.is-resizing-sidebar {
   border: 1px solid #ccc;
   border-radius: 4px;
   background: #fff;
+}
+
+.job-list-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.job-list-menu-button {
+  min-width: 34px;
+  padding: 5px 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.job-list-menu-button:hover,
+.job-list-menu-button[aria-expanded="true"] {
+  background: #f8fafc;
+}
+
+.job-list-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 250px;
+  padding: 6px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.job-list-menu.hidden {
+  display: none;
+}
+
+.job-list-menu button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #0f172a;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.job-list-menu button:hover {
+  background: #f8fafc;
 }
 
 .job-list {
@@ -244,6 +299,23 @@ body.is-resizing-sidebar {
 .job-message {
   color: #666;
   padding: 8px 10px;
+}
+
+.job-list-control-row {
+  padding: 6px 10px 2px;
+}
+
+.job-list-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #475569;
+  cursor: pointer;
+}
+
+.job-list-toggle input {
+  margin: 0;
 }
 
 .selected-job-panel {

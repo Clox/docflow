@@ -167,6 +167,7 @@ if (array_key_exists('chromeExtensionSuppressMissingNotice', $payload)) {
 }
 
 try {
+    $effectiveCurrentConfig = load_config();
     $config = load_raw_config();
     if ($nextInboxDirectory !== null) {
         $config['inboxDirectory'] = $nextInboxDirectory;
@@ -193,6 +194,28 @@ try {
         $config['chromeExtensionSuppressMissingNotice'] = $nextChromeExtensionSuppressMissingNotice;
     }
     save_raw_config($config);
+    $effectiveNextConfig = load_config();
+    $analysisRelevantConfigChanged = (
+        (bool) ($effectiveCurrentConfig['ocrSkipExistingText'] ?? true) !== (bool) ($effectiveNextConfig['ocrSkipExistingText'] ?? true)
+        || (int) ($effectiveCurrentConfig['ocrOptimizeLevel'] ?? 1) !== (int) ($effectiveNextConfig['ocrOptimizeLevel'] ?? 1)
+        || (string) ($effectiveCurrentConfig['ocrTextExtractionMethod'] ?? 'layout') !== (string) ($effectiveNextConfig['ocrTextExtractionMethod'] ?? 'layout')
+        || json_encode(
+            sanitize_ocr_pdf_text_substitutions($effectiveCurrentConfig['ocrPdfTextSubstitutions'] ?? []),
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        ) !== json_encode(
+            sanitize_ocr_pdf_text_substitutions($effectiveNextConfig['ocrPdfTextSubstitutions'] ?? []),
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        )
+    );
+    $reprocessedJobs = [
+        'reprocessedJobIds' => [],
+        'reprocessedCount' => 0,
+        'mode' => 'full',
+    ];
+    if ($analysisRelevantConfigChanged) {
+        ensure_job_dispatcher_running($effectiveNextConfig);
+        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($effectiveNextConfig, 'full', false);
+    }
     json_response([
         'ok' => true,
         'inboxDirectory' => $config['inboxDirectory'] ?? '',
@@ -206,6 +229,7 @@ try {
         'chromeExtensionVersion' => docflow_chrome_extension_version(),
         'chromeExtensionDirectory' => docflow_chrome_extension_directory(),
         'chromeExtensionSuppressMissingNotice' => (bool) ($config['chromeExtensionSuppressMissingNotice'] ?? false),
+        'reprocessedJobs' => $reprocessedJobs,
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

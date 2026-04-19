@@ -26,6 +26,25 @@
               <option value="archived">Arkiverade</option>
               <option value="all">Alla</option>
             </select>
+            <div id="job-list-menu-wrap" class="job-list-menu-wrap">
+              <button
+                id="job-list-menu-button"
+                class="job-list-menu-button"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="job-list-menu"
+                title="Fler åtgärder för dokumentlistan"
+              >⋯</button>
+              <div id="job-list-menu" class="job-list-menu hidden" role="menu" aria-label="Dokumentlistans meny">
+                <button
+                  id="job-list-reanalyze-all-action"
+                  type="button"
+                  role="menuitem"
+                  title="Kör om analysen för alla dokument med aktuell logik och aktuella regler. Arkiverade dokument ändras inte automatiskt, men nya förslag kan visas om analysen nu ger ett annat resultat."
+                >Kör om analys för alla dokument</button>
+              </div>
+            </div>
           </div>
         </div>
         <ul id="job-list" class="job-list"></ul>

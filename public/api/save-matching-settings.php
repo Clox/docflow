@@ -48,15 +48,34 @@ $positionAdjustment = normalize_matching_position_adjustment_settings(
 );
 
 try {
+    $config = load_config();
+    ensure_job_dispatcher_running($config);
+    $previousPayload = load_matching_settings_payload();
     write_json_file(DATA_DIR . '/matching.json', [
         'replacements' => $normalized,
         'positionAdjustment' => $positionAdjustment,
     ]);
 
+    $reprocessedJobs = [
+        'reprocessedJobIds' => [],
+        'reprocessedCount' => 0,
+        'mode' => 'post-ocr',
+    ];
+    if (
+        json_encode($previousPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        !== json_encode([
+            'replacements' => $normalized,
+            'positionAdjustment' => $positionAdjustment,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+    ) {
+        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false);
+    }
+
     json_response([
         'ok' => true,
         'replacements' => $normalized,
         'positionAdjustment' => $positionAdjustment,
+        'reprocessedJobs' => $reprocessedJobs,
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

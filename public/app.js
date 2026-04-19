@@ -34,6 +34,10 @@ const mainEl = document.querySelector('.main');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
 const jobListModeEl = document.getElementById('job-list-mode');
+const jobListMenuWrapEl = document.getElementById('job-list-menu-wrap');
+const jobListMenuButtonEl = document.getElementById('job-list-menu-button');
+const jobListMenuEl = document.getElementById('job-list-menu');
+const jobListReanalyzeAllActionEl = document.getElementById('job-list-reanalyze-all-action');
 const sidebarEl = document.querySelector('.sidebar');
 const sidebarSplitterEl = document.getElementById('sidebar-splitter');
 const clientSelectEl = document.getElementById('client-select');
@@ -451,6 +455,7 @@ const MAX_SIDEBAR_LIST_SIZE_PERCENT = 86;
 
 let senderMergeState = null;
 let currentJobListMode = 'ready';
+let showDismissedArchivedReviewJobs = false;
 let archivingRulesReviewPayload = null;
 let archivingRulesReviewPayloadSignature = '';
 let archivedJobReviewPayload = null;
@@ -1613,9 +1618,8 @@ function updatePdfFrameWindow(jobId) {
 }
 
 function affectedArchivedJobIdsFromArchivingUpdate() {
-  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
   return new Set(
-    (Array.isArray(payload.jobs) ? payload.jobs : [])
+    activeArchivedReviewItems()
       .map((item) => item && typeof item.jobId === 'string' ? item.jobId : '')
       .filter((jobId) => jobId !== '')
   );
@@ -1759,20 +1763,16 @@ function jobsNeedingRuleReview() {
 }
 
 function displayedArchivedReviewJobsForReadyMode() {
-  const affectedJobIds = affectedArchivedJobIdsFromArchivingUpdate();
+  const displayedItems = displayedArchivedReviewItems();
   const jobsById = new Map(
     (Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
       .filter((job) => job && typeof job.id === 'string' && job.id !== '')
       .map((job) => [job.id, job])
   );
   const orderedIds = [];
-  jobsNeedingRuleReview().forEach((job) => {
-    if (job && typeof job.id === 'string' && job.id !== '') {
-      orderedIds.push(job.id);
-    }
-  });
-  Array.from(affectedJobIds).forEach((jobId) => {
-    if (!orderedIds.includes(jobId)) {
+  displayedItems.forEach((item) => {
+    const jobId = item && typeof item.jobId === 'string' ? item.jobId : '';
+    if (jobId !== '' && !orderedIds.includes(jobId)) {
       orderedIds.push(jobId);
     }
   });
@@ -2966,6 +2966,52 @@ async function setViewerReview(jobId) {
   }
 }
 
+function changedArchivedReviewItems() {
+  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
+  return (Array.isArray(payload.jobs) ? payload.jobs : [])
+    .filter((item) => item && typeof item === 'object');
+}
+
+function activeArchivedReviewItems() {
+  return changedArchivedReviewItems()
+    .filter((item) => item.dismissedForVersion !== true);
+}
+
+function displayedArchivedReviewItems() {
+  return showDismissedArchivedReviewJobs
+    ? changedArchivedReviewItems()
+    : activeArchivedReviewItems();
+}
+
+function setShowDismissedArchivedReviewJobs(value) {
+  const nextValue = value === true;
+  if (showDismissedArchivedReviewJobs === nextValue) {
+    return;
+  }
+  showDismissedArchivedReviewJobs = nextValue;
+  renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
+  refreshSelection();
+}
+
+function closeJobListMenu() {
+  if (!(jobListMenuButtonEl instanceof HTMLButtonElement) || !(jobListMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  jobListMenuButtonEl.setAttribute('aria-expanded', 'false');
+  jobListMenuEl.classList.add('hidden');
+}
+
+function toggleJobListMenu(forceOpen = null) {
+  if (!(jobListMenuButtonEl instanceof HTMLButtonElement) || !(jobListMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  const nextOpen = forceOpen === null
+    ? jobListMenuEl.classList.contains('hidden')
+    : forceOpen === true;
+  jobListMenuButtonEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+  jobListMenuEl.classList.toggle('hidden', !nextOpen);
+}
+
 function setJobListMode(mode, options = {}) {
   const nextMode = VALID_JOB_LIST_MODES.has(mode) ? mode : 'ready';
   if (nextMode !== 'ready') {
@@ -2980,6 +3026,7 @@ function setJobListMode(mode, options = {}) {
   if (options.refreshSelection !== false) {
     refreshSelection();
   }
+  closeJobListMenu();
   const selectedJob = findJobById(selectedJobId);
   updateArchiveAction(selectedJob);
   updateSelectedJobResetActions(selectedJob);
@@ -3987,7 +4034,7 @@ function normalizeArchivingReviewPayload(payload) {
       : [],
     session: {
       status: typeof session.status === 'string' ? session.status : 'idle',
-      ignoreDismissed: session.ignoreDismissed === true,
+      ignoreDismissed: false,
       analyzedCount: Number.parseInt(String(session.analyzedCount || 0), 10) || 0,
       totalCount: Number.parseInt(String(session.totalCount || 0), 10) || 0,
       foundCount: Number.parseInt(String(session.foundCount || 0), 10) || 0,
@@ -4254,21 +4301,32 @@ function preloadArchivedReviewPayloadsAroundJob(jobId) {
 
 function applyOptimisticArchivedReviewResolution(jobId, options = {}) {
   const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
-  const remainingJobs = payload.jobs.filter((item) => !(item && item.jobId === jobId));
-  if (remainingJobs.length === payload.jobs.length) {
+  if (!payload.jobs.some((item) => item && item.jobId === jobId)) {
     return;
   }
 
   const dismissed = options.dismissed === true;
+  const remainingJobs = payload.jobs
+    .map((item) => {
+      if (!item || item.jobId !== jobId) {
+        return item;
+      }
+      if (!dismissed) {
+        return null;
+      }
+      return {
+        ...item,
+        dismissedForVersion: true,
+        dismissedAnalysisVersion: Number.parseInt(String(state.archivingRules?.activeVersion || 0), 10) || 0,
+      };
+    })
+    .filter(Boolean);
   const nextSummary = {
     ...payload.summary,
     affected: Math.max(0, (payload.summary.affected || 0) - 1),
     dismissed: dismissed
       ? ((payload.summary.dismissed || 0) + 1)
       : (payload.summary.dismissed || 0),
-    unchanged: dismissed
-      ? (payload.summary.unchanged || 0)
-      : ((payload.summary.unchanged || 0) + 1),
   };
   const nextPayload = {
     ...payload,
@@ -4281,11 +4339,12 @@ function applyOptimisticArchivedReviewResolution(jobId, options = {}) {
     },
     signature: '',
   };
+  const nextPendingCount = remainingJobs.filter((item) => item && item.dismissedForVersion !== true).length;
 
   state.archivingRules = {
     ...state.archivingRules,
-    hasPendingArchivedUpdates: remainingJobs.length > 0 || nextPayload.session.status === 'running',
-    pendingArchivedUpdateCount: nextSummary.affected,
+    hasPendingArchivedUpdates: nextPendingCount > 0 || nextPayload.session.status === 'running',
+    pendingArchivedUpdateCount: nextPendingCount,
     updateReview: nextPayload,
   };
   syncArchivingReviewPayloadFromState(true);
@@ -4328,7 +4387,7 @@ function applyOptimisticArchivedReviewUnarchive(job) {
   const dismissedForVersion = payloadJob
     ? payloadJob.dismissedForVersion === true
     : ((Number.parseInt(String(job.dismissedAnalysisVersion || 0), 10) || 0) === activeVersion);
-  const wasAffected = classificationType !== 'unchanged' && (!dismissedForVersion || payload.session.ignoreDismissed === true);
+  const wasAffected = classificationType !== 'unchanged' && !dismissedForVersion;
   const remainingJobs = payload.jobs.filter((item) => !(item && item.jobId === job.id));
   const nextSummary = decrementArchivingReviewSummaryBucket({
     ...payload.summary,
@@ -4611,13 +4670,14 @@ function renderArchivingRuleReview(force = false) {
   renderedArchivingReviewSignature = payload.signature;
   const summary = payload.summary && typeof payload.summary === 'object' ? payload.summary : {};
   const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+  const visibleJobs = jobs.filter((item) => item && item.dismissedForVersion !== true);
   const templateChanges = Array.isArray(payload.templateChanges) ? payload.templateChanges : [];
   const session = payload.session && typeof payload.session === 'object' ? payload.session : {};
   const sessionStatus = typeof session.status === 'string' ? session.status : 'idle';
-  const ignoreDismissed = session.ignoreDismissed === true;
   const analyzedCount = Number.parseInt(String(session.analyzedCount || 0), 10) || 0;
   const totalCount = Number.parseInt(String(session.totalCount || 0), 10) || 0;
   const foundCount = Number.parseInt(String(session.foundCount || 0), 10) || jobs.length;
+  const actionableCount = visibleJobs.length;
 
   archivingReviewSummaryEl.innerHTML = '';
   archivingReviewTemplateChangesEl.innerHTML = '';
@@ -4681,7 +4741,7 @@ function renderArchivingRuleReview(force = false) {
   updateAllButton.type = 'button';
   updateAllButton.textContent = 'Applicera nya regler på alla påverkade';
   updateAllButton.title = 'Applicera de nya arkiveringsreglerna på alla påverkade arkiverade dokument';
-  updateAllButton.disabled = foundCount < 1 || sessionStatus === 'running';
+  updateAllButton.disabled = actionableCount < 1 || sessionStatus === 'running';
   updateAllButton.addEventListener('click', async () => {
     try {
       await updateAllArchivedReviewJobs();
@@ -4689,20 +4749,20 @@ function renderArchivingRuleReview(force = false) {
       alert(error.message || 'Kunde inte uppdatera alla arkiverade dokument.');
     }
   });
-  const reanalyzeAllButton = document.createElement('button');
-  reanalyzeAllButton.type = 'button';
-  reanalyzeAllButton.textContent = 'Analysera om alla';
-  reanalyzeAllButton.title = 'Kör analysen igen och visa även dokument som tidigare har avfärdats';
-  reanalyzeAllButton.disabled = sessionStatus === 'running' || totalCount < 1;
-  reanalyzeAllButton.addEventListener('click', async () => {
+  const rerunAnalysisButton = document.createElement('button');
+  rerunAnalysisButton.type = 'button';
+  rerunAnalysisButton.textContent = 'Kör om analys';
+  rerunAnalysisButton.title = 'Omanalyserar arkiverade dokument med aktuella regler. Dokumenten ligger kvar oförändrade i arkivet tills en uppdatering godkänns, men nya ändringar kan föreslås om reglerna nu ger ett annat resultat.';
+  rerunAnalysisButton.disabled = sessionStatus === 'running';
+  rerunAnalysisButton.addEventListener('click', async () => {
     try {
-      await restartArchivingUpdateReview(true);
+      await restartArchivingUpdateReview(false);
     } catch (error) {
-      alert(error.message || 'Kunde inte analysera om alla arkiverade dokument.');
+      alert(error.message || 'Kunde inte köra om analysen för arkiverade dokument.');
     }
   });
   statusActions.append(openListButton, updateAllButton);
-  actions.append(reanalyzeAllButton);
+  actions.append(rerunAnalysisButton);
   if (developmentUiEnabled()) {
     const devButton = document.createElement('button');
     devButton.type = 'button';
@@ -4730,15 +4790,8 @@ function renderArchivingRuleReview(force = false) {
   } else {
     statusLine.textContent = 'Inga arkiverade dokument påverkas just nu.';
   }
-  if (ignoreDismissed) {
-    const hint = document.createElement('div');
-    hint.className = 'archiving-review-status-lines';
-    hint.textContent = 'Visar även tidigare avfärdade dokument för den aktuella versionen.';
-    archivingReviewStatusEl.replaceChildren(statusLine, hint, statusActions);
-  } else {
-    archivingReviewStatusEl.replaceChildren(statusLine, statusActions);
-  }
-  if (jobs.length === 0) {
+  archivingReviewStatusEl.replaceChildren(statusLine, statusActions);
+  if (visibleJobs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
     empty.textContent = sessionStatus === 'running'
@@ -4751,7 +4804,7 @@ function renderArchivingRuleReview(force = false) {
     return;
   }
 
-  jobs.forEach((item) => {
+  visibleJobs.forEach((item) => {
     const row = document.createElement('div');
     row.className = `archiving-review-job is-${item.classification && item.classification.type ? item.classification.type : 'info'}`;
     const body = document.createElement('div');
@@ -4838,9 +4891,29 @@ async function restartArchivingUpdateReview(ignoreDismissed = false) {
   await fetchState({ force: true, refreshArchiveStructure: true });
 }
 
+async function reanalyzeAllDocuments() {
+  const response = await fetch('/api/reanalyze-all-documents.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: '{}'
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte köra om analysen för alla dokument.');
+  }
+
+  applyArchivingRulesPayloadFromResponse(payload, { forceRender: true });
+  watchReprocessedJobIdsFromPayload(payload);
+  if (!Array.isArray(payload?.reprocessedJobs?.reprocessedJobIds) || payload.reprocessedJobs.reprocessedJobIds.length < 1) {
+    await fetchState({ force: true, refreshArchiveStructure: true });
+  }
+}
+
 async function updateAllArchivedReviewJobs() {
   const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
-  const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+  const jobs = activeArchivedReviewItems();
   const jobIds = jobs
     .map((item) => item && typeof item.jobId === 'string' ? item.jobId : '')
     .filter((jobId) => jobId !== '');
@@ -4895,6 +4968,30 @@ function ensureJobListSectionLabelNode(text, key = 'label:failed') {
     return li;
   });
   node.textContent = text;
+  return node;
+}
+
+function ensureArchivedReviewListControlNode() {
+  const node = ensureJobListNode('control:archived-review:dismissed', () => {
+    const li = document.createElement('li');
+    li.className = 'job-list-control-row';
+    const label = document.createElement('label');
+    label.className = 'job-list-toggle';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.addEventListener('change', () => {
+      setShowDismissedArchivedReviewJobs(input.checked);
+    });
+    const text = document.createElement('span');
+    text.textContent = 'Visa även avfärdade';
+    label.append(input, text);
+    li.appendChild(label);
+    li._inputEl = input;
+    return li;
+  });
+  if (node._inputEl instanceof HTMLInputElement) {
+    node._inputEl.checked = showDismissedArchivedReviewJobs;
+  }
   return node;
 }
 
@@ -4993,6 +5090,10 @@ function updateArchivedJobListItem(li, job) {
   if (jobHasArchivingUpdateChange(job.id)) {
     li.classList.add('is-needs-review');
   }
+  const reviewItem = currentJobListMode === 'archived-review'
+    ? changedArchivedReviewItems().find((item) => item && item.jobId === job.id)
+    : null;
+  const dismissedForVersion = reviewItem && reviewItem.dismissedForVersion === true;
   if (job.id === selectedJobId) {
     li.classList.add('selected');
   }
@@ -5000,7 +5101,9 @@ function updateArchivedJobListItem(li, job) {
   li.dataset.jobId = job.id;
   li._nameEl.textContent = job.originalFilename;
 
-  const archivedLabel = jobHasArchivingUpdateChange(job.id)
+  const archivedLabel = dismissedForVersion
+    ? `Avfärdad för aktuell version${job.filename ? ' • ' + job.filename : ''}`
+    : jobHasArchivingUpdateChange(job.id)
     ? `Behöver uppdateras${job.filename ? ' • ' + job.filename : ''}`
     : (job.filename
       ? job.filename
@@ -5052,6 +5155,12 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
   const isAllMode = currentJobListMode === 'all';
   const isProcessingMode = currentJobListMode === 'processing';
   const isArchivedMode = currentJobListMode === 'archived';
+
+  if (isArchivedReviewMode) {
+    const controlNode = ensureArchivedReviewListControlNode();
+    desiredNodes.push(controlNode);
+    activeKeys.add('control:archived-review:dismissed');
+  }
 
   if (
     ((isReadyMode || isAllMode) && displayedReadyJobs.length === 0 && displayedReviewJobs.length === 0 && safeProcessingJobs.length === 0 && displayedArchivedJobs.length === 0 && safeFailedJobs.length === 0)
@@ -16843,6 +16952,7 @@ async function saveMatchingSettings() {
   }
   matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft);
   renderMatchingEditor();
+  watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
 }
 
@@ -17042,6 +17152,7 @@ async function saveOcrProcessingSettings() {
   ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
   renderOcrPdfSubstitutionsEditor();
   renderOcrProcessingCommand();
+  watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
 }
 
@@ -17151,6 +17262,28 @@ viewModeEl.addEventListener('change', () => {
 jobListModeEl.addEventListener('change', () => {
   setJobListMode(jobListModeEl.value);
 });
+
+if (jobListMenuButtonEl instanceof HTMLButtonElement) {
+  jobListMenuButtonEl.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleJobListMenu();
+  });
+}
+
+if (jobListReanalyzeAllActionEl instanceof HTMLButtonElement) {
+  jobListReanalyzeAllActionEl.addEventListener('click', async () => {
+    closeJobListMenu();
+    jobListReanalyzeAllActionEl.disabled = true;
+    try {
+      await reanalyzeAllDocuments();
+    } catch (error) {
+      alert(error.message || 'Kunde inte köra om analysen för alla dokument.');
+    } finally {
+      jobListReanalyzeAllActionEl.disabled = false;
+    }
+  });
+}
 
 clientSelectEl.addEventListener('change', () => {
   if (clientSelectEl.value === EDIT_CLIENTS_OPTION_VALUE) {
@@ -17778,6 +17911,16 @@ window.addEventListener('resize', () => {
 });
 
 document.addEventListener('pointerdown', (event) => {
+  if (
+    jobListMenuWrapEl instanceof HTMLElement
+    && jobListMenuButtonEl instanceof HTMLButtonElement
+    && jobListMenuEl instanceof HTMLElement
+    && !jobListMenuEl.classList.contains('hidden')
+    && !jobListMenuWrapEl.contains(event.target)
+  ) {
+    closeJobListMenu();
+  }
+
   if (!jobLabelsOverlayOpen || !(jobLabelsFieldGroupEl instanceof HTMLElement)) {
     return;
   }
@@ -17815,6 +17958,11 @@ pdfFrameEls.forEach((frameEl) => {
 });
 
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && jobListMenuEl instanceof HTMLElement && !jobListMenuEl.classList.contains('hidden')) {
+    closeJobListMenu();
+    return;
+  }
+
   if (event.key === 'Escape' && jobLabelsOverlayOpen) {
     event.preventDefault();
     closeJobLabelsOverlay({ restoreFocus: true });

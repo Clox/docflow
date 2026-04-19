@@ -2628,7 +2628,7 @@ function build_archiving_rules_state_payload(array $config, ?int $pendingArchive
         $updateSession = empty_archiving_update_session();
     }
     $updateReview = archiving_update_review_response_from_session($activeVersion, $updateSession);
-    $resolvedPendingArchivedUpdateCount = $pendingArchivedUpdateCount ?? count(is_array($updateSession['affectedJobIds'] ?? null) ? $updateSession['affectedJobIds'] : []);
+    $resolvedPendingArchivedUpdateCount = $pendingArchivedUpdateCount ?? count_pending_archiving_update_jobs_in_session($updateSession);
     $hasPendingArchivedUpdates = $resolvedPendingArchivedUpdateCount > 0
         || (
             is_array($updateSession)
@@ -2647,6 +2647,26 @@ function build_archiving_rules_state_payload(array $config, ?int $pendingArchive
             'updateReview' => $updateReview,
         ]),
     ];
+}
+
+function count_pending_archiving_update_jobs_in_session(array $session): int
+{
+    $count = 0;
+    foreach (is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $type = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
+        if ($type === 'unchanged') {
+            continue;
+        }
+        if (($item['dismissedForVersion'] ?? false) === true) {
+            continue;
+        }
+        $count++;
+    }
+
+    return $count;
 }
 
 function archiving_rules_state_payload_hash(array $payload): string
@@ -12186,8 +12206,9 @@ function archiving_review_session_enqueue_job(array &$session, string $jobId): v
     unset($processedJobs[$jobId]);
     $session['processedJobs'] = $processedJobs;
     $session['analyzedCount'] = count($processedJobs);
-    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs, ($session['ignoreDismissed'] ?? false) === true);
+    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs, false);
     $session['status'] = 'running';
+    $session['ignoreDismissed'] = false;
     $session['updatedAt'] = now_iso();
 }
 
@@ -12212,10 +12233,11 @@ function archiving_review_session_remove_job(array &$session, string $jobId): vo
     }
     $session['jobIdsHash'] = archiving_rules_review_job_ids_hash(is_array($session['jobIds'] ?? null) ? $session['jobIds'] : []);
     $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
-    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs, ($session['ignoreDismissed'] ?? false) === true);
+    $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs, false);
     $session['totalCount'] = count(is_array($session['jobIds'] ?? null) ? $session['jobIds'] : []);
     $session['analyzedCount'] = count($processedJobs);
     $session['nextIndex'] = min(max(0, (int) ($session['nextIndex'] ?? 0)), $session['totalCount']);
+    $session['ignoreDismissed'] = false;
     $session['updatedAt'] = now_iso();
 }
 
@@ -12249,7 +12271,7 @@ function initialize_archiving_update_session(
 
     return [
         'status' => count($jobIds) === 0 ? 'complete' : 'running',
-        'ignoreDismissed' => ($metadata['ignoreDismissed'] ?? false) === true,
+        'ignoreDismissed' => false,
         'activeVersion' => $activeVersion,
         'activeRulesHash' => archiving_rules_review_relevant_hash($activeRules),
         'jobIdsHash' => archiving_rules_review_job_ids_hash($jobIds),
@@ -12289,18 +12311,17 @@ function archiving_update_session_is_current(array $session, int $activeVersion,
 function archiving_update_review_response_from_session(int $activeVersion, array $session): array
 {
     $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
-    $ignoreDismissed = ($session['ignoreDismissed'] ?? false) === true;
-    $affectedItems = [];
+    $changedItems = [];
     foreach ($processedJobs as $item) {
         if (!is_array($item)) {
             continue;
         }
         $type = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
-        $dismissedForVersion = ($item['dismissedForVersion'] ?? false) === true;
-        if ($type !== 'unchanged' && (!$dismissedForVersion || $ignoreDismissed)) {
-            $affectedItems[] = $item;
+        if ($type !== 'unchanged') {
+            $changedItems[] = $item;
         }
     }
+    $summary = archiving_review_summary_from_processed_jobs($processedJobs, false);
 
     return [
         'activeArchivingRulesVersion' => $activeVersion,
@@ -12312,14 +12333,14 @@ function archiving_update_review_response_from_session(int $activeVersion, array
             is_array($session['templateChanges'] ?? null) ? $session['templateChanges'] : [],
             static fn ($value): bool => is_array($value)
         )),
-        'summary' => is_array($session['summary'] ?? null) ? $session['summary'] : empty_archiving_review_summary(),
-        'jobs' => sort_archiving_review_items($affectedItems),
+        'summary' => $summary,
+        'jobs' => sort_archiving_review_items($changedItems),
         'session' => [
             'status' => is_string($session['status'] ?? null) ? (string) $session['status'] : 'idle',
-            'ignoreDismissed' => $ignoreDismissed,
+            'ignoreDismissed' => false,
             'analyzedCount' => (int) ($session['analyzedCount'] ?? 0),
             'totalCount' => (int) ($session['totalCount'] ?? 0),
-            'foundCount' => count($affectedItems),
+            'foundCount' => count($changedItems),
             'remainingCount' => max(
                 0,
                 ((int) ($session['totalCount'] ?? 0))
@@ -12346,7 +12367,7 @@ function current_archiving_update_session(array $config): array
 
 function set_archiving_update_session_ignore_dismissed(array $config, bool $ignoreDismissed): array
 {
-    return with_archiving_rules_review_lock(static function () use ($config, $ignoreDismissed): array {
+    return with_archiving_rules_review_lock(static function () use ($config): array {
         $state = load_archiving_rules_review_state();
         $session = is_array($state['updateSession'] ?? null) ? $state['updateSession'] : empty_archiving_update_session();
         $activeRules = load_active_archiving_rules();
@@ -12358,10 +12379,9 @@ function set_archiving_update_session_ignore_dismissed(array $config, bool $igno
                 'reason' => is_string($session['reason'] ?? null) ? $session['reason'] : '',
                 'changedSections' => is_array($session['changedSections'] ?? null) ? $session['changedSections'] : [],
                 'templateChanges' => is_array($session['templateChanges'] ?? null) ? $session['templateChanges'] : [],
-                'ignoreDismissed' => $ignoreDismissed,
             ]);
         } else {
-            $session['ignoreDismissed'] = $ignoreDismissed;
+            $session['ignoreDismissed'] = false;
             $session['status'] = 'running';
             $session['updatedAt'] = now_iso();
             $session['pendingJobIds'] = array_values(array_unique(array_merge(
@@ -12413,7 +12433,8 @@ function collect_archiving_update_review(array $config, int $chunkSize = 20): ar
             ]);
         }
         archiving_review_session_sync_job_ids($session, $jobIds);
-        $ignoreDismissed = ($session['ignoreDismissed'] ?? false) === true;
+        $ignoreDismissed = false;
+        $session['ignoreDismissed'] = false;
 
         $processedJobs = is_array($session['processedJobs'] ?? null) ? $session['processedJobs'] : [];
         $affectedJobIds = is_array($session['affectedJobIds'] ?? null) ? $session['affectedJobIds'] : [];
@@ -12449,7 +12470,7 @@ function collect_archiving_update_review(array $config, int $chunkSize = 20): ar
             $item = archiving_update_review_item($jobId, $job, $approved, $historicalResult, $currentResult, $displayMaps, $activeVersion);
             $processedJobs[$jobId] = $item;
             $classificationType = is_string($item['classification']['type'] ?? null) ? (string) $item['classification']['type'] : 'unchanged';
-            if ($classificationType === 'unchanged' || (($item['dismissedForVersion'] ?? false) === true && !$ignoreDismissed)) {
+            if ($classificationType === 'unchanged' || (($item['dismissedForVersion'] ?? false) === true)) {
                 $affectedJobIds = array_values(array_diff($affectedJobIds, [$jobId]));
             } elseif (!in_array($jobId, $affectedJobIds, true)) {
                 $affectedJobIds[] = $jobId;
@@ -12462,7 +12483,7 @@ function collect_archiving_update_review(array $config, int $chunkSize = 20): ar
         $session['nextIndex'] = $nextIndex;
         $session['analyzedCount'] = count($processedJobs);
         $session['totalCount'] = $totalCount;
-        $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs, $ignoreDismissed);
+        $session['summary'] = archiving_review_summary_from_processed_jobs($processedJobs, false);
         $session['updatedAt'] = now_iso();
         $session['status'] = ($nextIndex >= $totalCount && $session['pendingJobIds'] === []) ? 'complete' : 'running';
         $state['updateSession'] = $session;
@@ -12610,14 +12631,24 @@ function advance_archiving_review_sessions_background(array $config, int $chunkS
     maybe_queue_archiving_rules_update_event($config);
 }
 
-function reprocess_unarchived_jobs_for_active_archiving_rules(array $config): array
+function reprocess_unarchived_jobs_for_analysis_change(
+    array $config,
+    string $mode = 'post-ocr',
+    bool $forceOcr = false
+): array
 {
+    $normalizedMode = trim($mode);
+    if ($normalizedMode !== 'full' && $normalizedMode !== 'post-ocr') {
+        $normalizedMode = 'post-ocr';
+    }
+
     $jobsDir = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR);
     $entries = scandir($jobsDir);
     if ($entries === false) {
         return [
             'reprocessedJobIds' => [],
             'reprocessedCount' => 0,
+            'mode' => $normalizedMode,
         ];
     }
 
@@ -12634,14 +12665,20 @@ function reprocess_unarchived_jobs_for_active_archiving_rules(array $config): ar
         if (!is_array($job) || ($job['archived'] ?? false) === true || ($job['status'] ?? '') === 'processing') {
             continue;
         }
-        reprocess_job_by_id($config, $entry, 'post-ocr');
+        reprocess_job_by_id($config, $entry, $normalizedMode, $forceOcr);
         $jobIds[] = $entry;
     }
 
     return [
         'reprocessedJobIds' => $jobIds,
         'reprocessedCount' => count($jobIds),
+        'mode' => $normalizedMode,
     ];
+}
+
+function reprocess_unarchived_jobs_for_active_archiving_rules(array $config): array
+{
+    return reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false);
 }
 
 function normalize_review_labels(array $labels, array $allowedIds): array
