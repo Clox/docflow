@@ -38,6 +38,11 @@ try {
         'ok' => true,
         'restoredSources' => $result['restoredSources'] ?? 0,
         'removedJobFolders' => $result['removedJobFolders'] ?? 0,
+        'resetJobIds' => array_values(array_filter(
+            is_array($result['resetJobIds'] ?? null) ? $result['resetJobIds'] : [],
+            static fn ($jobId) => is_string($jobId) && trim($jobId) !== ''
+        )),
+        'skippedArchivedJobFolders' => $result['skippedArchivedJobFolders'] ?? 0,
         'errors' => $result['errors'] ?? [],
         'jobId' => $result['jobId'] ?? null,
         'mode' => $result['mode'] ?? null,

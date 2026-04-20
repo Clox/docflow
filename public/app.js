@@ -331,7 +331,9 @@ let pollInFlight = false;
 let pendingFetchStateOptions = null;
 let stateStream = null;
 let statePollTimer = null;
+let processingStateSyncTimer = null;
 let reprocessWatchTimer = null;
+let bulkResetWatchTimer = null;
 let stateUpdateTransport = 'polling';
 let stateEventCursor = 0;
 let archivingRulesLocalRevision = 0;
@@ -458,6 +460,7 @@ let currentJobListMode = 'ready';
 let showDismissedArchivedReviewJobs = false;
 let archivingRulesReviewPayload = null;
 let archivingRulesReviewPayloadSignature = '';
+let bulkResetWatchState = null;
 let archivedJobReviewPayload = null;
 let archivedReviewRequestSeq = 0;
 let activeSidebarSplitPointerId = null;
@@ -513,6 +516,112 @@ function setProcessingInfo(processingJobs) {
 
   processingIndicatorEl.classList.remove('hidden');
   processingTextEl.textContent = `Bearbetar ${processingJobs.length} fil(er)...`;
+}
+
+function countUnarchivedJobsInState() {
+  return (
+    (Array.isArray(state.processingJobs) ? state.processingJobs.length : 0)
+    + (Array.isArray(state.readyJobs) ? state.readyJobs.length : 0)
+    + (Array.isArray(state.failedJobs) ? state.failedJobs.length : 0)
+  );
+}
+
+function clearProcessingStateSync() {
+  if (processingStateSyncTimer !== null) {
+    window.clearTimeout(processingStateSyncTimer);
+    processingStateSyncTimer = null;
+  }
+}
+
+function scheduleProcessingStateSync(delay = 2000) {
+  clearProcessingStateSync();
+  if (!Array.isArray(state.processingJobs) || state.processingJobs.length === 0) {
+    return;
+  }
+
+  processingStateSyncTimer = window.setTimeout(async () => {
+    processingStateSyncTimer = null;
+    if (!Array.isArray(state.processingJobs) || state.processingJobs.length === 0) {
+      return;
+    }
+
+    try {
+      await fetchState({ force: true });
+    } catch (_error) {
+      // Ignore and retry while jobs still appear to be processing.
+    } finally {
+      if (Array.isArray(state.processingJobs) && state.processingJobs.length > 0) {
+        scheduleProcessingStateSync(2000);
+      }
+    }
+  }, delay);
+}
+
+function clearBulkResetWatch() {
+  if (bulkResetWatchTimer !== null) {
+    window.clearTimeout(bulkResetWatchTimer);
+    bulkResetWatchTimer = null;
+  }
+  bulkResetWatchState = null;
+}
+
+function updateBulkResetWatchFromState() {
+  if (!bulkResetWatchState) {
+    return;
+  }
+
+  const expectedJobCount = Number.isInteger(bulkResetWatchState.expectedJobCount)
+    ? bulkResetWatchState.expectedJobCount
+    : 0;
+  const activeProcessingCount = Array.isArray(state.processingJobs) ? state.processingJobs.length : 0;
+  const currentUnarchivedJobCount = countUnarchivedJobsInState();
+  const settled = expectedJobCount > 0
+    && currentUnarchivedJobCount >= expectedJobCount
+    && activeProcessingCount === 0;
+  const timedOut = (Date.now() - bulkResetWatchState.startedAtMs) >= 120000;
+  if (settled || timedOut) {
+    clearBulkResetWatch();
+  }
+}
+
+function scheduleBulkResetWatchPoll(delay = 1200) {
+  if (!bulkResetWatchState) {
+    return;
+  }
+
+  if (bulkResetWatchTimer !== null) {
+    window.clearTimeout(bulkResetWatchTimer);
+  }
+
+  bulkResetWatchTimer = window.setTimeout(async () => {
+    bulkResetWatchTimer = null;
+    if (!bulkResetWatchState) {
+      return;
+    }
+
+    try {
+      await fetchState({ force: true });
+    } catch (_error) {
+      // Ignore and retry while the recreated jobs settle.
+    } finally {
+      updateBulkResetWatchFromState();
+      if (bulkResetWatchState) {
+        scheduleBulkResetWatchPoll(1500);
+      }
+    }
+  }, delay);
+}
+
+function startBulkResetWatch(expectedJobCount) {
+  clearBulkResetWatch();
+  if (!Number.isInteger(expectedJobCount) || expectedJobCount < 1) {
+    return;
+  }
+
+  bulkResetWatchState = {
+    expectedJobCount,
+    startedAtMs: Date.now(),
+  };
 }
 
 function pruneReprocessWatchJobs() {
@@ -8405,10 +8514,12 @@ function applyState(nextState) {
     }
   });
   pruneReprocessWatchJobs();
+  updateBulkResetWatchFromState();
   syncChromeExtensionOrganizationQueueRuntimeFromState();
   syncChromeExtensionPayeeQueueRuntimeFromState();
 
   setProcessingInfo(state.processingJobs);
+  scheduleProcessingStateSync();
   notifyFailedJobs(state.failedJobs);
   renderAppNotices();
   syncArchivingReviewTabIndicator();
@@ -9312,7 +9423,7 @@ function bindSettingsPanelRefs(tabId) {
     });
     settingsResetJobsEl.addEventListener('click', async () => {
       const confirmed = window.confirm(
-        'Detta flyttar tillbaka alla source.pdf till inbox och tar bort alla jobbmappar. Fortsätta?'
+        'Detta återställer alla oarkiverade jobb, flyttar tillbaka deras source.pdf till inbox och lämnar arkiverade dokument orörda. Fortsätta?'
       );
       if (!confirmed) {
         return;
@@ -17173,15 +17284,75 @@ async function resetAllJobs() {
     throw new Error('Reset jobs failed');
   }
 
+  const resetJobIds = Array.isArray(payload.resetJobIds)
+    ? payload.resetJobIds
+      .map((jobId) => typeof jobId === 'string' ? jobId.trim() : '')
+      .filter((jobId) => jobId !== '')
+    : [];
+
   clearOcrViewCache();
   loadedOcrJobId = '';
   loadedOcrSource = '';
   loadedMatchesJobId = '';
   loadedMetaJobId = '';
   clearPdfFrames();
-  selectedJobId = '';
   closeSettingsModal();
-  await fetchState();
+  if (resetJobIds.length > 0) {
+    applyOptimisticBulkReset(resetJobIds);
+    startBulkResetWatch(resetJobIds.length);
+  } else {
+    clearBulkResetWatch();
+  }
+
+  try {
+    await fetchState({ force: true });
+  } finally {
+    if (bulkResetWatchState) {
+      scheduleBulkResetWatchPoll(1000);
+    }
+  }
+}
+
+function applyOptimisticBulkReset(resetJobIds) {
+  const resetIdSet = new Set(
+    Array.isArray(resetJobIds)
+      ? resetJobIds.filter((jobId) => typeof jobId === 'string' && jobId !== '')
+      : []
+  );
+  if (resetIdSet.size === 0) {
+    return;
+  }
+
+  const removableJobs = []
+    .concat(Array.isArray(state.processingJobs) ? state.processingJobs : [])
+    .concat(Array.isArray(state.readyJobs) ? state.readyJobs : [])
+    .concat(Array.isArray(state.failedJobs) ? state.failedJobs : [])
+    .filter((job) => job && typeof job.id === 'string' && resetIdSet.has(job.id));
+  const placeholderCreatedAt = new Date().toISOString();
+  const processingPlaceholders = removableJobs.map((job) => ({
+    ...job,
+    id: `bulk-reset:${job.id}`,
+    status: 'processing',
+    error: null,
+    archived: false,
+    matchedClientDirName: '',
+    createdAt: typeof job.createdAt === 'string' && job.createdAt !== '' ? job.createdAt : placeholderCreatedAt,
+  }));
+
+  if (selectedJobId && resetIdSet.has(selectedJobId)) {
+    selectedJobId = '';
+  }
+
+  applyState({
+    processingJobs: sortJobsForList('processingJobs', processingPlaceholders),
+    readyJobs: Array.isArray(state.readyJobs)
+      ? state.readyJobs.filter((job) => job && !resetIdSet.has(job.id))
+      : [],
+    archivedJobs: state.archivedJobs,
+    failedJobs: Array.isArray(state.failedJobs)
+      ? state.failedJobs.filter((job) => job && !resetIdSet.has(job.id))
+      : [],
+  });
 }
 
 function cloneCurrentStateForRollback() {

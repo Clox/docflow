@@ -663,8 +663,8 @@
       <option value="sse">Automatisk push (SSE)</option>
     </select>
     <div class="settings-danger">
-      <p>Ogiltigförklara alla jobb och flytta tillbaka <code>source.pdf</code> till inbox.</p>
-      <button id="settings-reset-jobs" type="button">Återställ alla jobb</button>
+      <p>Återställ alla oarkiverade jobb och flytta tillbaka deras <code>source.pdf</code> till inbox. Arkiverade dokument lämnas orörda.</p>
+      <button id="settings-reset-jobs" type="button">Återställ oarkiverade jobb</button>
     </div>
   </template>
 

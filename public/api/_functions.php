@@ -15384,6 +15384,8 @@ function reset_all_jobs(array $config): array
 
     $restoredSources = 0;
     $removedJobFolders = 0;
+    $resetJobIds = [];
+    $skippedArchivedJobFolders = 0;
     $errors = [];
 
     foreach ($entries as $entry) {
@@ -15397,6 +15399,10 @@ function reset_all_jobs(array $config): array
         }
 
         $job = load_json_file($jobDir . '/job.json');
+        if (is_array($job) && ($job['archived'] ?? false) === true) {
+            $skippedArchivedJobFolders++;
+            continue;
+        }
         $originalFilename = is_array($job) && is_string($job['originalFilename'] ?? null)
             ? trim((string) $job['originalFilename'])
             : '';
@@ -15420,12 +15426,19 @@ function reset_all_jobs(array $config): array
         }
 
         $removedJobFolders++;
+        $resetJobIds[] = $entry;
         queue_job_remove_event($entry);
+    }
+
+    if ($restoredSources > 0 || $removedJobFolders > 0) {
+        ensure_job_dispatcher_running($config);
     }
 
     return [
         'restoredSources' => $restoredSources,
         'removedJobFolders' => $removedJobFolders,
+        'resetJobIds' => $resetJobIds,
+        'skippedArchivedJobFolders' => $skippedArchivedJobFolders,
         'errors' => $errors,
     ];
 }
