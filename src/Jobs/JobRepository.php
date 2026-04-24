@@ -228,6 +228,19 @@ final class JobRepository
         ]);
     }
 
+    public function deleteById(string $jobId): void
+    {
+        $normalizedId = trim($jobId);
+        if ($normalizedId === '') {
+            throw new RuntimeException('Job id is required.');
+        }
+
+        $statement = $this->pdo->prepare('DELETE FROM jobs WHERE id = :id');
+        $statement->execute([
+            ':id' => $normalizedId,
+        ]);
+    }
+
     public function findMergedObjectsPayload(string $jobId): ?array
     {
         $normalizedId = trim($jobId);

@@ -38,6 +38,10 @@ const jobListMenuWrapEl = document.getElementById('job-list-menu-wrap');
 const jobListMenuButtonEl = document.getElementById('job-list-menu-button');
 const jobListMenuEl = document.getElementById('job-list-menu');
 const jobListReanalyzeAllActionEl = document.getElementById('job-list-reanalyze-all-action');
+const selectedJobActionsMenuWrapEl = document.getElementById('selected-job-actions-menu-wrap');
+const selectedJobActionsMenuButtonEl = document.getElementById('selected-job-actions-menu-button');
+const selectedJobActionsMenuEl = document.getElementById('selected-job-actions-menu');
+const selectedJobDeleteActionEl = document.getElementById('selected-job-delete-action');
 const sidebarEl = document.querySelector('.sidebar');
 const sidebarSplitterEl = document.getElementById('sidebar-splitter');
 const clientSelectEl = document.getElementById('client-select');
@@ -331,9 +335,6 @@ let pollInFlight = false;
 let pendingFetchStateOptions = null;
 let stateStream = null;
 let statePollTimer = null;
-let processingStateSyncTimer = null;
-let reprocessWatchTimer = null;
-let bulkResetWatchTimer = null;
 let stateUpdateTransport = 'polling';
 let stateEventCursor = 0;
 let archivingRulesLocalRevision = 0;
@@ -526,42 +527,14 @@ function countUnarchivedJobsInState() {
   );
 }
 
-function clearProcessingStateSync() {
-  if (processingStateSyncTimer !== null) {
-    window.clearTimeout(processingStateSyncTimer);
-    processingStateSyncTimer = null;
-  }
-}
-
-function scheduleProcessingStateSync(delay = 2000) {
-  clearProcessingStateSync();
-  if (!Array.isArray(state.processingJobs) || state.processingJobs.length === 0) {
+function requestStateRefresh(delay = 0) {
+  if (stateUpdateTransport === 'sse') {
     return;
   }
-
-  processingStateSyncTimer = window.setTimeout(async () => {
-    processingStateSyncTimer = null;
-    if (!Array.isArray(state.processingJobs) || state.processingJobs.length === 0) {
-      return;
-    }
-
-    try {
-      await fetchState({ force: true });
-    } catch (_error) {
-      // Ignore and retry while jobs still appear to be processing.
-    } finally {
-      if (Array.isArray(state.processingJobs) && state.processingJobs.length > 0) {
-        scheduleProcessingStateSync(2000);
-      }
-    }
-  }, delay);
+  scheduleStatePoll(delay);
 }
 
 function clearBulkResetWatch() {
-  if (bulkResetWatchTimer !== null) {
-    window.clearTimeout(bulkResetWatchTimer);
-    bulkResetWatchTimer = null;
-  }
   bulkResetWatchState = null;
 }
 
@@ -584,34 +557,6 @@ function updateBulkResetWatchFromState() {
   }
 }
 
-function scheduleBulkResetWatchPoll(delay = 1200) {
-  if (!bulkResetWatchState) {
-    return;
-  }
-
-  if (bulkResetWatchTimer !== null) {
-    window.clearTimeout(bulkResetWatchTimer);
-  }
-
-  bulkResetWatchTimer = window.setTimeout(async () => {
-    bulkResetWatchTimer = null;
-    if (!bulkResetWatchState) {
-      return;
-    }
-
-    try {
-      await fetchState({ force: true });
-    } catch (_error) {
-      // Ignore and retry while the recreated jobs settle.
-    } finally {
-      updateBulkResetWatchFromState();
-      if (bulkResetWatchState) {
-        scheduleBulkResetWatchPoll(1500);
-      }
-    }
-  }, delay);
-}
-
 function startBulkResetWatch(expectedJobCount) {
   clearBulkResetWatch();
   if (!Number.isInteger(expectedJobCount) || expectedJobCount < 1) {
@@ -631,41 +576,6 @@ function pruneReprocessWatchJobs() {
       reprocessWatchJobIds.delete(jobId);
     }
   });
-
-  if (reprocessWatchJobIds.size === 0 && reprocessWatchTimer !== null) {
-    window.clearTimeout(reprocessWatchTimer);
-    reprocessWatchTimer = null;
-  }
-}
-
-function scheduleReprocessWatchPoll(delay = 1500) {
-  pruneReprocessWatchJobs();
-  if (reprocessWatchJobIds.size === 0) {
-    return;
-  }
-
-  if (reprocessWatchTimer !== null) {
-    window.clearTimeout(reprocessWatchTimer);
-  }
-
-  reprocessWatchTimer = window.setTimeout(async () => {
-    reprocessWatchTimer = null;
-    pruneReprocessWatchJobs();
-    if (reprocessWatchJobIds.size === 0) {
-      return;
-    }
-
-    try {
-      await fetchState({ force: true });
-    } catch (_error) {
-      // Ignore and retry while a watched job still appears to be processing.
-    } finally {
-      pruneReprocessWatchJobs();
-      if (reprocessWatchJobIds.size > 0) {
-        scheduleReprocessWatchPoll(1500);
-      }
-    }
-  }, delay);
 }
 
 function syncSelectOptions(selectEl, placeholderText, options, lastSignature) {
@@ -3110,6 +3020,14 @@ function closeJobListMenu() {
   jobListMenuEl.classList.add('hidden');
 }
 
+function closeSelectedJobActionsMenu() {
+  if (!(selectedJobActionsMenuButtonEl instanceof HTMLButtonElement) || !(selectedJobActionsMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  selectedJobActionsMenuButtonEl.setAttribute('aria-expanded', 'false');
+  selectedJobActionsMenuEl.classList.add('hidden');
+}
+
 function toggleJobListMenu(forceOpen = null) {
   if (!(jobListMenuButtonEl instanceof HTMLButtonElement) || !(jobListMenuEl instanceof HTMLElement)) {
     return;
@@ -3119,6 +3037,40 @@ function toggleJobListMenu(forceOpen = null) {
     : forceOpen === true;
   jobListMenuButtonEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
   jobListMenuEl.classList.toggle('hidden', !nextOpen);
+}
+
+function toggleSelectedJobActionsMenu(forceOpen = null) {
+  if (!(selectedJobActionsMenuButtonEl instanceof HTMLButtonElement) || !(selectedJobActionsMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  if (selectedJobActionsMenuButtonEl.disabled) {
+    closeSelectedJobActionsMenu();
+    return;
+  }
+  const nextOpen = forceOpen === null
+    ? selectedJobActionsMenuEl.classList.contains('hidden')
+    : forceOpen === true;
+  selectedJobActionsMenuButtonEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+  selectedJobActionsMenuEl.classList.toggle('hidden', !nextOpen);
+}
+
+function updateSelectedJobActionsMenu(job) {
+  const hasJob = !!job;
+
+  if (selectedJobActionsMenuButtonEl instanceof HTMLButtonElement) {
+    selectedJobActionsMenuButtonEl.disabled = !hasJob;
+    selectedJobActionsMenuButtonEl.title = hasJob ? 'Fler åtgärder för dokumentet.' : 'Markera ett jobb först.';
+    selectedJobActionsMenuButtonEl.setAttribute('aria-expanded', 'false');
+  }
+
+  if (selectedJobDeleteActionEl instanceof HTMLButtonElement) {
+    selectedJobDeleteActionEl.disabled = !hasJob;
+    selectedJobDeleteActionEl.title = hasJob ? 'Tar bort dokumentet från Docflow.' : 'Markera ett jobb först.';
+  }
+
+  if (!hasJob) {
+    closeSelectedJobActionsMenu();
+  }
 }
 
 function setJobListMode(mode, options = {}) {
@@ -3136,6 +3088,7 @@ function setJobListMode(mode, options = {}) {
     refreshSelection();
   }
   closeJobListMenu();
+  closeSelectedJobActionsMenu();
   const selectedJob = findJobById(selectedJobId);
   updateArchiveAction(selectedJob);
   updateSelectedJobResetActions(selectedJob);
@@ -4477,13 +4430,30 @@ function decrementArchivingReviewSummaryBucket(summary, type) {
   return summary;
 }
 
-function applyOptimisticArchivedReviewUnarchive(job) {
-  if (!job || typeof job.id !== 'string' || job.id === '') {
+function clearLocalArchivedReviewStateForJob(jobId) {
+  if (typeof jobId !== 'string' || jobId === '') {
     return;
   }
 
-  const payload = normalizeArchivingReviewPayload(archivingRulesReviewPayload || state.archivingRules?.updateReview);
-  const activeVersion = Number.parseInt(String(state.archivingRules?.activeVersion || 0), 10) || 0;
+  archivedReviewDraftByJobId.delete(jobId);
+  clearArchivedReviewEditorState(jobId);
+  archivedReviewPayloadByJobId.delete(jobId);
+  if (archivedJobReviewPayload && archivedJobReviewPayload.jobId === jobId) {
+    archivedJobReviewPayload = null;
+  }
+}
+
+function archivingRulesStateWithoutJob(archivingRulesState, job) {
+  if (!job || typeof job.id !== 'string' || job.id === '') {
+    return archivingRulesState;
+  }
+
+  const payload = normalizeArchivingReviewPayload(archivingRulesState && archivingRulesState.updateReview);
+  if (!payload.jobs.some((item) => item && item.jobId === job.id)) {
+    return archivingRulesState;
+  }
+
+  const activeVersion = Number.parseInt(String(archivingRulesState?.activeVersion || 0), 10) || 0;
   const payloadJob = payload.jobs.find((item) => item && item.jobId === job.id) || null;
   const reviewPayload = archivedJobReviewPayload && archivedJobReviewPayload.jobId === job.id
     ? archivedJobReviewPayload
@@ -4515,20 +4485,34 @@ function applyOptimisticArchivedReviewUnarchive(job) {
     },
     signature: '',
   };
+  const nextPendingCount = remainingJobs.filter((item) => item && item.dismissedForVersion !== true).length;
 
-  archivedReviewDraftByJobId.delete(job.id);
-  clearArchivedReviewEditorState(job.id);
-  archivedReviewPayloadByJobId.delete(job.id);
-  if (archivedJobReviewPayload && archivedJobReviewPayload.jobId === job.id) {
-    archivedJobReviewPayload = null;
-  }
-
-  state.archivingRules = {
-    ...state.archivingRules,
+  return {
+    ...(archivingRulesState && typeof archivingRulesState === 'object' ? archivingRulesState : state.archivingRules),
     hasPendingArchivedUpdates: nextSummary.affected > 0 || nextPayload.session.status === 'running',
-    pendingArchivedUpdateCount: nextSummary.affected,
+    pendingArchivedUpdateCount: nextPendingCount,
     updateReview: nextPayload,
   };
+}
+
+function removeJobFromArchivingReviewLocalState(job) {
+  if (!job || typeof job.id !== 'string' || job.id === '') {
+    return false;
+  }
+
+  clearLocalArchivedReviewStateForJob(job.id);
+  const nextArchivingRulesState = archivingRulesStateWithoutJob(state.archivingRules, job);
+  const changed = nextArchivingRulesState !== state.archivingRules;
+  state.archivingRules = nextArchivingRulesState;
+  return changed;
+}
+
+function applyOptimisticArchivedReviewUnarchive(job) {
+  if (!job || typeof job.id !== 'string' || job.id === '') {
+    return;
+  }
+
+  removeJobFromArchivingReviewLocalState(job);
   syncArchivingReviewPayloadFromState(true);
   renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
   refreshSelection();
@@ -4957,10 +4941,7 @@ function watchReprocessedJobIdsFromPayload(payload) {
     applyOptimisticReprocess(jobId, 'post-ocr', { forceOcr: false });
     reprocessWatchJobIds.add(jobId);
   });
-  scheduleReprocessWatchPoll(1000);
-  fetchState({ force: true, refreshArchiveStructure: true }).catch(() => {
-    scheduleStatePoll(0);
-  });
+  requestStateRefresh(0);
 }
 
 async function bumpArchivingRulesVersionDev() {
@@ -5505,6 +5486,17 @@ function displayedJobsForCurrentListMode() {
 
 function isJobVisibleInCurrentList(jobId) {
   return displayedJobsForCurrentListMode().some((job) => job && job.id === jobId);
+}
+
+function nextVisibleJobIdAfterRemoval(jobId) {
+  const visibleJobs = displayedJobsForCurrentListMode().filter((job) => job && typeof job.id === 'string' && job.id !== '');
+  const currentIndex = visibleJobs.findIndex((job) => job.id === jobId);
+  if (currentIndex < 0) {
+    return '';
+  }
+
+  const nextJob = visibleJobs[currentIndex + 1] || visibleJobs[currentIndex - 1] || null;
+  return nextJob && typeof nextJob.id === 'string' ? nextJob.id : '';
 }
 
 function findArchiveFolderById(folderId) {
@@ -6852,6 +6844,86 @@ function showAnalysisOutdatedArchiveDialog() {
   });
 }
 
+function showDeleteJobDialog(job) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'analysis-warning-dialog-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'analysis-warning-dialog';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Ta bort dokument?';
+
+    const message = document.createElement('p');
+    message.textContent = 'Detta tar bort dokumentet från Docflow.';
+
+    let deleteArchivedFileCheckbox = null;
+    if (job && job.archived === true) {
+      const option = document.createElement('label');
+      option.className = 'analysis-warning-dialog-option';
+
+      deleteArchivedFileCheckbox = document.createElement('input');
+      deleteArchivedFileCheckbox.type = 'checkbox';
+      deleteArchivedFileCheckbox.checked = true;
+
+      const optionText = document.createElement('span');
+      optionText.textContent = 'Ta bort även arkiverad fil';
+
+      option.append(deleteArchivedFileCheckbox, optionText);
+      dialog.append(title, message, option);
+    } else {
+      dialog.append(title, message);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'analysis-warning-dialog-actions';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = 'Avbryt';
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'is-danger';
+    deleteButton.textContent = 'Ta bort';
+
+    actions.append(cancelButton, deleteButton);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+
+    const finish = (confirmed) => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      overlay.remove();
+      resolve({
+        confirmed,
+        deleteArchivedFile: confirmed && deleteArchivedFileCheckbox instanceof HTMLInputElement
+          ? deleteArchivedFileCheckbox.checked
+          : false,
+      });
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    };
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        finish(false);
+      }
+    });
+    cancelButton.addEventListener('click', () => finish(false));
+    deleteButton.addEventListener('click', () => finish(true));
+
+    document.addEventListener('keydown', onKeyDown, true);
+    document.body.appendChild(overlay);
+    cancelButton.focus();
+  });
+}
+
 function showLabelImportDialog() {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -6971,6 +7043,64 @@ function restoreSelectedJobEditorState() {
   updateSelectedJobResetActions(currentJob);
 }
 
+async function deleteSelectedJob() {
+  const selectedJob = findJobById(selectedJobId);
+  if (!selectedJob) {
+    return;
+  }
+
+  closeSelectedJobActionsMenu();
+  const confirmation = await showDeleteJobDialog(selectedJob);
+  if (!confirmation || confirmation.confirmed !== true) {
+    return;
+  }
+
+  const nextSelectedJobId = nextVisibleJobIdAfterRemoval(selectedJob.id);
+  const deleteArchivedFile = selectedJob.archived === true && confirmation.deleteArchivedFile === true;
+
+  if (selectedJobDeleteActionEl instanceof HTMLButtonElement) {
+    selectedJobDeleteActionEl.disabled = true;
+  }
+  if (selectedJobActionsMenuButtonEl instanceof HTMLButtonElement) {
+    selectedJobActionsMenuButtonEl.disabled = true;
+  }
+
+  try {
+    const response = await fetch('/api/delete-job.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jobId: selectedJob.id,
+        deleteArchivedFile,
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) {
+      const message = payload && typeof payload.error === 'string'
+        ? payload.error
+        : 'Kunde inte ta bort dokumentet.';
+      throw new Error(message);
+    }
+
+    if (selectedJob.archived === true) {
+      removeJobFromArchivingReviewLocalState(selectedJob);
+    } else {
+      clearLocalArchivedReviewStateForJob(selectedJob.id);
+    }
+    preferredJobIdFromHash = nextSelectedJobId;
+    applyJobEvents([{
+      type: 'job.remove',
+      jobId: selectedJob.id,
+    }]);
+  } catch (error) {
+    alert(error.message || 'Kunde inte ta bort dokumentet.');
+  } finally {
+    updateSelectedJobActionsMenu(findJobById(selectedJobId));
+  }
+}
+
 async function saveSelectedJobFields(jobId, payload) {
   const requestSeq = ++saveSelectedJobFieldsSeq;
   const response = await fetch('/api/save-job-fields.php', {
@@ -7060,6 +7190,7 @@ function renderSelectedJobPanel() {
     syncFilenameField(null);
     updateArchiveAction(null);
     updateSelectedJobResetActions(null);
+    updateSelectedJobActionsMenu(null);
     return;
   }
 
@@ -7110,6 +7241,7 @@ function renderSelectedJobPanel() {
   syncFilenameField(selectedJob);
   updateArchiveAction(selectedJob);
   updateSelectedJobResetActions(selectedJob);
+  updateSelectedJobActionsMenu(selectedJob);
 }
 
 function buildDisplayedReadyJobs(processingJobs, readyJobs) {
@@ -8307,6 +8439,7 @@ function applySelectedJobId(jobId, options = {}) {
   const syncHash = options.syncHash !== false;
   if (jobId !== selectedJobId) {
     closeJobLabelsOverlay();
+    closeSelectedJobActionsMenu();
   }
   const selectedJob = findJobById(jobId);
   selectedJobId = selectedJob ? selectedJob.id : '';
@@ -8519,7 +8652,6 @@ function applyState(nextState) {
   syncChromeExtensionPayeeQueueRuntimeFromState();
 
   setProcessingInfo(state.processingJobs);
-  scheduleProcessingStateSync();
   notifyFailedJobs(state.failedJobs);
   renderAppNotices();
   syncArchivingReviewTabIndicator();
@@ -8647,8 +8779,16 @@ function applyJobEvents(events) {
       if (!jobId) {
         return;
       }
+      const archivedJob = Array.isArray(nextState.archivedJobs)
+        ? nextState.archivedJobs.find((entry) => entry && entry.id === jobId) || null
+        : null;
       pinnedProcessingJobIds.delete(jobId);
       pinnedProcessingOrderById.delete(jobId);
+      if (archivedJob) {
+        clearLocalArchivedReviewStateForJob(jobId);
+        nextState.archivingRules = archivingRulesStateWithoutJob(nextState.archivingRules, archivedJob);
+        archivingRulesMutated = true;
+      }
       removeJobFromAllLists(nextState, jobId);
       mutated = true;
       return;
@@ -17303,14 +17443,7 @@ async function resetAllJobs() {
   } else {
     clearBulkResetWatch();
   }
-
-  try {
-    await fetchState({ force: true });
-  } finally {
-    if (bulkResetWatchState) {
-      scheduleBulkResetWatchPoll(1000);
-    }
-  }
+  requestStateRefresh(0);
 }
 
 function applyOptimisticBulkReset(resetJobIds) {
@@ -17401,8 +17534,7 @@ async function reprocessSingleJob(jobId, mode, options = {}) {
     }
 
     reprocessWatchJobIds.add(jobId);
-    scheduleReprocessWatchPoll(1000);
-    scheduleStatePoll(0);
+    requestStateRefresh(0);
   } catch (error) {
     reprocessWatchJobIds.delete(jobId);
     pruneReprocessWatchJobs();
@@ -17442,6 +17574,14 @@ if (jobListMenuButtonEl instanceof HTMLButtonElement) {
   });
 }
 
+if (selectedJobActionsMenuButtonEl instanceof HTMLButtonElement) {
+  selectedJobActionsMenuButtonEl.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleSelectedJobActionsMenu();
+  });
+}
+
 if (jobListReanalyzeAllActionEl instanceof HTMLButtonElement) {
   jobListReanalyzeAllActionEl.addEventListener('click', async () => {
     closeJobListMenu();
@@ -17453,6 +17593,12 @@ if (jobListReanalyzeAllActionEl instanceof HTMLButtonElement) {
     } finally {
       jobListReanalyzeAllActionEl.disabled = false;
     }
+  });
+}
+
+if (selectedJobDeleteActionEl instanceof HTMLButtonElement) {
+  selectedJobDeleteActionEl.addEventListener('click', async () => {
+    await deleteSelectedJob();
   });
 }
 
@@ -18092,6 +18238,16 @@ document.addEventListener('pointerdown', (event) => {
     closeJobListMenu();
   }
 
+  if (
+    selectedJobActionsMenuWrapEl instanceof HTMLElement
+    && selectedJobActionsMenuButtonEl instanceof HTMLButtonElement
+    && selectedJobActionsMenuEl instanceof HTMLElement
+    && !selectedJobActionsMenuEl.classList.contains('hidden')
+    && !selectedJobActionsMenuWrapEl.contains(event.target)
+  ) {
+    closeSelectedJobActionsMenu();
+  }
+
   if (!jobLabelsOverlayOpen || !(jobLabelsFieldGroupEl instanceof HTMLElement)) {
     return;
   }
@@ -18131,6 +18287,11 @@ pdfFrameEls.forEach((frameEl) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && jobListMenuEl instanceof HTMLElement && !jobListMenuEl.classList.contains('hidden')) {
     closeJobListMenu();
+    return;
+  }
+
+  if (event.key === 'Escape' && selectedJobActionsMenuEl instanceof HTMLElement && !selectedJobActionsMenuEl.classList.contains('hidden')) {
+    closeSelectedJobActionsMenu();
     return;
   }
 
@@ -18380,8 +18541,7 @@ function startStateStream() {
     if (stateStream !== stream) {
       return;
     }
-    stopStateStream();
-    scheduleStatePoll(0);
+    // Let EventSource retry on its own while SSE remains the active transport.
   });
 
   stateStream = stream;

@@ -83,8 +83,24 @@
         <div class="selected-job-actions-panel-body">
           <div class="selected-job-panel-header-row selected-job-actions-panel-header-row">
             <div class="selected-job-panel-header">Åtgärder</div>
-            <div id="selected-job-actions-warning" class="selected-job-actions-warning hidden" aria-live="polite">
-              <span class="selected-job-actions-warning-text">Analys inaktuell</span>
+            <div class="selected-job-actions-panel-header-controls">
+              <div id="selected-job-actions-warning" class="selected-job-actions-warning hidden" aria-live="polite">
+                <span class="selected-job-actions-warning-text">Analys inaktuell</span>
+              </div>
+              <div id="selected-job-actions-menu-wrap" class="selected-job-actions-menu-wrap">
+                <button
+                  id="selected-job-actions-menu-button"
+                  class="selected-job-actions-menu-button"
+                  type="button"
+                  aria-label="Fler åtgärder"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  aria-controls="selected-job-actions-menu"
+                >⋮</button>
+                <div id="selected-job-actions-menu" class="selected-job-actions-menu hidden" role="menu" aria-label="Fler åtgärder för dokument">
+                  <button id="selected-job-delete-action" class="selected-job-actions-menu-item-danger" type="button" role="menuitem">Ta bort dokument…</button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="selected-job-panel-section selected-job-fields selected-job-actions-fields">

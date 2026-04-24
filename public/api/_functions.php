@@ -528,6 +528,25 @@ function clear_job_merged_objects_document(string $jobId): void
     }
 }
 
+function delete_job_repository_entry(string $jobId): void
+{
+    $normalizedId = trim($jobId);
+    if ($normalizedId === '') {
+        return;
+    }
+
+    $repository = job_repository_instance();
+    if ($repository === null) {
+        return;
+    }
+
+    try {
+        $repository->deleteById($normalizedId);
+    } catch (Throwable $e) {
+        // Best effort only. job.json on disk remains the source of truth.
+    }
+}
+
 function detect_org_number_from_ocr_text(string $ocrText): ?string
 {
     $pattern = '/\b(?:\d{6}[-\s]?\d{4}|(?:19|20)\d{2}[-\s]?\d{2}[-\s]?\d{2}[-\s]?\d{4})\b/u';
@@ -12575,6 +12594,23 @@ function invalidate_archiving_review_job(array $config, string $jobId, ?bool $is
     invalidate_archiving_update_job($config, $jobId, $isArchived);
 }
 
+function sync_archiving_update_session_after_job_removal(array $config, string $jobId): void
+{
+    if (!is_valid_job_id($jobId)) {
+        return;
+    }
+
+    with_archiving_rules_review_lock(static function () use ($config, $jobId): void {
+        $state = load_archiving_rules_review_state();
+        $session = is_array($state['updateSession'] ?? null) ? $state['updateSession'] : empty_archiving_update_session();
+        $jobIds = archived_job_ids($config);
+        archiving_review_session_sync_job_ids($session, $jobIds);
+        archiving_review_session_remove_job($session, $jobId);
+        $state['updateSession'] = $session;
+        save_archiving_rules_review_state($state);
+    });
+}
+
 function sort_archiving_review_items(array $items): array
 {
     $priority = [
@@ -13456,6 +13492,10 @@ function process_job_by_id(
             unset($jobData[DOCFLOW_OCR_METADATA_KEY]);
         }
 
+        if (!is_dir($jobDir) || !is_file($jobJsonPath)) {
+            return;
+        }
+
         $jobData['status'] = 'ready';
         $jobData['updatedAt'] = now_iso();
         unset($jobData['analysisOutdated'], $jobData['analysisAutoReprocessQueued']);
@@ -13463,6 +13503,9 @@ function process_job_by_id(
         write_json_file($jobJsonPath, $jobData);
         queue_job_upsert_event($config, $jobId);
     } catch (Throwable $e) {
+        if (!is_dir($jobDir) || !is_file($jobJsonPath)) {
+            return;
+        }
         $jobData['status'] = 'failed';
         $jobData['updatedAt'] = now_iso();
         $jobData['error'] = $e->getMessage();
@@ -15331,6 +15374,24 @@ function is_valid_job_id(string $id): bool
     return preg_match('/^[A-Za-z0-9_-]+$/', $id) === 1;
 }
 
+function normalized_realpath(string $path): ?string
+{
+    $resolved = realpath($path);
+    return is_string($resolved) && $resolved !== '' ? $resolved : null;
+}
+
+function path_is_within_directory(string $path, string $directory): bool
+{
+    $normalizedPath = str_replace('\\', '/', $path);
+    $normalizedDirectory = rtrim(str_replace('\\', '/', $directory), '/');
+    if ($normalizedDirectory === '') {
+        return false;
+    }
+
+    return $normalizedPath === $normalizedDirectory
+        || str_starts_with($normalizedPath, $normalizedDirectory . '/');
+}
+
 function delete_directory_recursive(string $path): bool
 {
     if (!is_dir($path)) {
@@ -15506,6 +15567,60 @@ function reset_job_by_id(array $config, string $jobId): array
         'restoredSources' => $restoredSources,
         'removedJobFolders' => $removedJobFolders,
         'errors' => $errors,
+    ];
+}
+
+function delete_job_by_id(array $config, string $jobId, bool $deleteArchivedFile = false): array
+{
+    if (!is_valid_job_id($jobId)) {
+        throw new RuntimeException('Invalid job id');
+    }
+
+    $jobsDir = rtrim((string) ($config['jobsDirectory'] ?? ''), DIRECTORY_SEPARATOR);
+    if ($jobsDir === '') {
+        throw new RuntimeException('Jobs directory is not configured');
+    }
+    ensure_directory($jobsDir);
+
+    $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $jobId;
+    $jobDirectoryExisted = is_dir($jobDir);
+    $job = load_json_file($jobDir . '/job.json');
+    $isArchived = is_array($job) && (($job['archived'] ?? false) === true);
+    $archivedPdfPath = is_array($job) && is_string($job['archivedPdfPath'] ?? null)
+        ? trim((string) $job['archivedPdfPath'])
+        : '';
+
+    if ($deleteArchivedFile && $isArchived && $archivedPdfPath !== '' && is_file($archivedPdfPath)) {
+        $outputBaseDirectory = trim((string) ($config['outputBaseDirectory'] ?? ''));
+        $resolvedOutputBaseDirectory = $outputBaseDirectory !== '' ? normalized_realpath($outputBaseDirectory) : null;
+        if ($resolvedOutputBaseDirectory === null || !is_dir($resolvedOutputBaseDirectory)) {
+            throw new RuntimeException('Arkivets bassökväg kunde inte verifieras.');
+        }
+
+        $resolvedArchivedPdfPath = normalized_realpath($archivedPdfPath);
+        if ($resolvedArchivedPdfPath === null || !is_file($resolvedArchivedPdfPath)) {
+            throw new RuntimeException('Den arkiverade filen kunde inte verifieras.');
+        }
+        if (!path_is_within_directory($resolvedArchivedPdfPath, $resolvedOutputBaseDirectory)) {
+            throw new RuntimeException('Den arkiverade filen ligger utanför tillåtet arkiv.');
+        }
+        if (!unlink($resolvedArchivedPdfPath)) {
+            throw new RuntimeException('Kunde inte ta bort den arkiverade filen.');
+        }
+    }
+
+    if (is_dir($jobDir) && !delete_directory_recursive($jobDir)) {
+        throw new RuntimeException('Kunde inte ta bort jobbets mapp.');
+    }
+
+    delete_job_repository_entry($jobId);
+    sync_archiving_update_session_after_job_removal($config, $jobId);
+    queue_job_remove_event($jobId);
+
+    return [
+        'jobId' => $jobId,
+        'deletedArchivedFile' => $deleteArchivedFile && $isArchived && $archivedPdfPath !== '',
+        'alreadyDeleted' => !$jobDirectoryExisted,
     ];
 }
 
