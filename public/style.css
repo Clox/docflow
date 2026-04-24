@@ -139,25 +139,71 @@ body.is-resizing-sidebar {
   background: #fff;
 }
 
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.icon-button:hover,
+.icon-button[aria-expanded="true"] {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.icon-button:focus-visible {
+  outline: none;
+  background: #eff6ff;
+  color: #0f172a;
+  box-shadow: 0 0 0 2px #bfdbfe;
+}
+
+.icon-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  background: transparent;
+  color: #94a3b8;
+  box-shadow: none;
+}
+
+.icon-menu-button {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.icon-settings-button {
+  color: #475569;
+}
+
+.icon-settings-button svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .job-list-menu-wrap {
   position: relative;
   flex: 0 0 auto;
 }
 
 .job-list-menu-button {
-  min-width: 34px;
-  padding: 5px 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #fff;
-  font: inherit;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.job-list-menu-button:hover,
-.job-list-menu-button[aria-expanded="true"] {
-  background: #f8fafc;
+  flex: 0 0 auto;
 }
 
 .job-list-menu {
@@ -833,27 +879,11 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-actions-menu-button {
-  min-width: 30px;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #fff;
-  color: #334155;
-  font: inherit;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.selected-job-actions-menu-button:hover,
-.selected-job-actions-menu-button[aria-expanded="true"] {
-  background: #f8fafc;
+  flex: 0 0 auto;
 }
 
 .selected-job-actions-menu-button:disabled {
-  opacity: 0.5;
-  cursor: default;
+  opacity: 0.45;
 }
 
 .selected-job-actions-menu {
@@ -2031,35 +2061,7 @@ body.is-resizing-sidebar {
 }
 
 #settings-button {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #f5f5f5;
-  cursor: pointer;
-}
-
-#settings-button:hover {
-  background: #ebebeb;
-}
-
-.hamburger {
-  display: inline-flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-}
-
-.hamburger span {
-  display: block;
-  width: 14px;
-  height: 2px;
-  background: #333;
-  border-radius: 1px;
+  flex: 0 0 auto;
 }
 
 .viewer-wrap {
