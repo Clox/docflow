@@ -484,6 +484,39 @@ function stored_merged_objects_pages(string $jobId): array
     return is_array($document['pages'] ?? null) ? $document['pages'] : [];
 }
 
+function fallback_merged_objects_pages_from_job_debug(string $jobId): array
+{
+    $normalizedId = trim($jobId);
+    if ($normalizedId === '') {
+        return [];
+    }
+
+    try {
+        $config = load_config();
+    } catch (Throwable $e) {
+        return [];
+    }
+
+    $jobsDirectory = is_string($config['jobsDirectory'] ?? null) ? trim((string) $config['jobsDirectory']) : '';
+    if ($jobsDirectory === '') {
+        return [];
+    }
+
+    $jobDir = rtrim($jobsDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $normalizedId;
+    if (!is_dir($jobDir)) {
+        return [];
+    }
+
+    $rapidocrPages = load_job_engine_debug_pages($jobDir, 'rapidocr');
+    if ($rapidocrPages === []) {
+        return [];
+    }
+
+    $tesseractPages = load_job_engine_debug_pages($jobDir, 'tesseract');
+    $document = build_merged_objects_document_from_rapidocr_pages($rapidocrPages, $tesseractPages);
+    return is_array($document['pages'] ?? null) ? $document['pages'] : [];
+}
+
 function sync_job_merged_objects_document(string $jobId, array $document): void
 {
     $normalizedId = trim($jobId);
@@ -1109,7 +1142,7 @@ function predefined_extraction_field_definitions(): array
             'ruleSets' => [[
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['plusgiro', 'pg'],
-                'valuePattern' => '\d{1,8}[ -]?\d',
+                'valuePattern' => '\d{1,8}(?:[ -]\d{1,4})+',
                 'normalizationType' => 'none',
                 'normalizationChars' => '',
             ]],
@@ -7103,6 +7136,9 @@ function build_matching_line_geometries_for_job(array $job, string $ocrText = ''
 
     $pages = stored_merged_objects_pages($jobId);
     if ($pages === []) {
+        $pages = fallback_merged_objects_pages_from_job_debug($jobId);
+    }
+    if ($pages === []) {
         return [];
     }
 
@@ -7189,11 +7225,90 @@ function build_matching_line_geometries_for_job(array $job, string $ocrText = ''
             $lineEntries
         );
         if ($ocrLines !== $geometryTexts) {
-            return [];
+            $alignedEntries = align_matching_line_geometries_to_ocr_lines($ocrLines, $lineEntries);
+            if ($alignedEntries === null) {
+                return [];
+            }
+            return $alignedEntries;
         }
     }
 
     return $lineEntries;
+}
+
+function blank_matching_line_geometry_entry(?array $referenceEntry = null): array
+{
+    $pageNumber = is_numeric($referenceEntry['pageNumber'] ?? null) ? (int) $referenceEntry['pageNumber'] : 1;
+    if ($pageNumber < 1) {
+        $pageNumber = 1;
+    }
+
+    return [
+        'text' => '',
+        'segments' => [],
+        'pageNumber' => $pageNumber,
+    ];
+}
+
+function align_matching_line_geometries_to_ocr_lines(array $ocrLines, array $lineEntries): ?array
+{
+    $aligned = [];
+    $ocrIndex = 0;
+    $geometryIndex = 0;
+    $ocrCount = count($ocrLines);
+    $geometryCount = count($lineEntries);
+
+    while ($ocrIndex < $ocrCount && $geometryIndex < $geometryCount) {
+        $ocrLine = is_string($ocrLines[$ocrIndex] ?? null) ? (string) $ocrLines[$ocrIndex] : '';
+        $geometryEntry = is_array($lineEntries[$geometryIndex] ?? null) ? $lineEntries[$geometryIndex] : null;
+        $geometryText = is_string($geometryEntry['text'] ?? null) ? (string) $geometryEntry['text'] : '';
+
+        if ($geometryEntry !== null && $ocrLine === $geometryText) {
+            $aligned[] = $geometryEntry;
+            $ocrIndex++;
+            $geometryIndex++;
+            continue;
+        }
+
+        if ($ocrLine === '') {
+            $referenceEntry = is_array($lineEntries[$geometryIndex] ?? null)
+                ? $lineEntries[$geometryIndex]
+                : (($aligned[count($aligned) - 1] ?? null) ?: null);
+            $aligned[] = blank_matching_line_geometry_entry(is_array($referenceEntry) ? $referenceEntry : null);
+            $ocrIndex++;
+            continue;
+        }
+
+        if ($geometryText === '') {
+            $geometryIndex++;
+            continue;
+        }
+
+        return null;
+    }
+
+    while ($ocrIndex < $ocrCount) {
+        $ocrLine = is_string($ocrLines[$ocrIndex] ?? null) ? (string) $ocrLines[$ocrIndex] : '';
+        if ($ocrLine !== '') {
+            return null;
+        }
+        $referenceEntry = is_array($lineEntries[$geometryIndex] ?? null)
+            ? $lineEntries[$geometryIndex]
+            : (($aligned[count($aligned) - 1] ?? null) ?: null);
+        $aligned[] = blank_matching_line_geometry_entry(is_array($referenceEntry) ? $referenceEntry : null);
+        $ocrIndex++;
+    }
+
+    while ($geometryIndex < $geometryCount) {
+        $geometryEntry = is_array($lineEntries[$geometryIndex] ?? null) ? $lineEntries[$geometryIndex] : null;
+        $geometryText = is_string($geometryEntry['text'] ?? null) ? (string) $geometryEntry['text'] : '';
+        if ($geometryText !== '') {
+            return null;
+        }
+        $geometryIndex++;
+    }
+
+    return $aligned;
 }
 
 function line_geometry_span_bbox(?array $lineGeometry, int $start, int $end): ?array
