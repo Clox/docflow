@@ -13,10 +13,6 @@
         <div class="sidebar-title">
           <div class="sidebar-title-main">
             <span class="sidebar-title-label">Dokument</span>
-            <span id="processing-indicator" class="processing hidden">
-              <span class="spinner" aria-hidden="true"></span>
-              <span id="processing-text"></span>
-            </span>
           </div>
           <div class="sidebar-title-controls">
             <select id="job-list-mode" aria-label="Jobblista">
@@ -47,7 +43,12 @@
             </div>
           </div>
         </div>
-        <ul id="job-list" class="job-list"></ul>
+        <ul id="job-list" class="job-list">
+          <li id="processing-indicator" class="job-list-processing-indicator processing hidden">
+            <span class="spinner" aria-hidden="true"></span>
+            <span id="processing-text"></span>
+          </li>
+        </ul>
       </div>
       <div
         id="sidebar-splitter"

@@ -18348,11 +18348,12 @@ function startStateStream() {
         return;
       }
       const eventId = Number.parseInt(String(event.lastEventId || ''), 10);
-      if (Number.isInteger(eventId) && eventId > 0 && eventId <= stateEventCursor) {
+      const payloadEventId = Number.parseInt(String(jobEvent.id || ''), 10);
+      const effectiveEventId = Number.isInteger(payloadEventId) && payloadEventId > 0
+        ? payloadEventId
+        : eventId;
+      if (Number.isInteger(effectiveEventId) && effectiveEventId > 0 && effectiveEventId <= stateEventCursor) {
         return;
-      }
-      if (Number.isInteger(eventId) && eventId > stateEventCursor) {
-        stateEventCursor = eventId;
       }
       applyJobEvents([jobEvent]);
     } catch (error) {
@@ -18379,6 +18380,8 @@ function startStateStream() {
     if (stateStream !== stream) {
       return;
     }
+    stopStateStream();
+    scheduleStatePoll(0);
   });
 
   stateStream = stream;

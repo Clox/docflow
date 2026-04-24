@@ -4874,12 +4874,24 @@ function fold_char_for_diacritic_match(string $char): string
 {
     $lower = lowercase_text($char);
     return match ($lower) {
-        'å', 'ä', 'à', 'á', 'â', 'ã', 'ā' => 'a',
-        'ö', 'ò', 'ó', 'ô', 'õ', 'ø', 'ō' => 'o',
+        'å', 'ä', 'à', 'á', 'â', 'ã', 'ā', 'ă', 'ą' => 'a',
+        'ö', 'ò', 'ó', 'ô', 'õ', 'ø', 'ō', 'ŏ', 'ő' => 'o',
         'ü', 'ù', 'ú', 'û', 'ū' => 'u',
         'é', 'è', 'ê', 'ë', 'ē' => 'e',
         'í', 'ì', 'î', 'ï', 'ī' => 'i',
         default => $lower,
+    };
+}
+
+function source_char_supports_swedish_diacritic_transfer(string $sourceChar, string $truthChar): bool
+{
+    $sourceLower = lowercase_text($sourceChar);
+    $truthLower = lowercase_text($truthChar);
+
+    return match ($truthLower) {
+        'å', 'ä' => in_array($sourceLower, ['à', 'á', 'â', 'ã', 'ä', 'å', 'ā', 'ă', 'ą'], true),
+        'ö' => in_array($sourceLower, ['ò', 'ó', 'ô', 'õ', 'ö', 'ō', 'ŏ', 'ő'], true),
+        default => false,
     };
 }
 
@@ -4992,6 +5004,7 @@ function transfer_swedish_diacritics(string $sourceText, string $truthText): str
             if (
                 $sourceFolded[$i - 1] === $truthFolded[$j - 1]
                 && is_swedish_diacritic_char($truthChar)
+                && source_char_supports_swedish_diacritic_transfer($sourceChar, $truthChar)
             ) {
                 $result[] = $truthChar;
             } else {
