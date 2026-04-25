@@ -59,9 +59,11 @@ const jobLabelsSelectedEl = document.getElementById('job-labels-selected');
 const jobLabelsFieldGroupEl = jobLabelsFieldEl ? jobLabelsFieldEl.closest('.field-group-job-labels') : null;
 const resetLabelsActionEl = document.getElementById('reset-labels-action');
 const filenameInputEl = document.getElementById('filename-input');
+const filenameControlRowEl = filenameInputEl ? filenameInputEl.closest('.field-group-control-row') : null;
 const resetFilenameActionEl = document.getElementById('reset-filename-action');
 const archiveActionEl = document.getElementById('archive-action');
 const appNoticesEl = document.getElementById('app-notices');
+const topbarEl = document.querySelector('.topbar');
 const archivedReviewPanelEl = document.getElementById('archived-review-panel');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
@@ -499,6 +501,10 @@ let jobLabelsFilterText = '';
 let jobLabelsActiveOptionIndex = -1;
 let jobLabelsRenderedOptions = [];
 let jobLabelsSummaryRenderFrame = null;
+let appNoticesOverflowOpen = false;
+let topbarExpandedMetricsFrame = null;
+const uiTextMeasureCanvas = document.createElement('canvas');
+const uiTextMeasureContext = uiTextMeasureCanvas.getContext('2d');
 
 jobListModeEl.value = currentJobListMode;
 
@@ -1058,11 +1064,108 @@ function createJobLabelsSummaryChip(text, className = 'job-labels-summary-chip')
   return chipEl;
 }
 
+function measureUiTextWidth(text, font) {
+  if (!uiTextMeasureContext) {
+    return String(text || '').length * 8;
+  }
+  uiTextMeasureContext.font = font || '14px Arial';
+  return uiTextMeasureContext.measureText(String(text || '')).width;
+}
+
+function computeExpandableRowMaxWidth(fieldGroupEl) {
+  if (!(fieldGroupEl instanceof HTMLElement)) {
+    return Math.max(320, window.innerWidth - 48);
+  }
+  const rect = fieldGroupEl.getBoundingClientRect();
+  return Math.max(rect.width, window.innerWidth - rect.left - 24);
+}
+
+function syncFilenameExpandedWidth(job = findJobById(selectedJobId)) {
+  if (!(filenameInputEl instanceof HTMLInputElement) || !(filenameControlRowEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const baseWidth = filenameControlRowEl.offsetWidth || filenameInputEl.offsetWidth || 0;
+  const font = window.getComputedStyle(filenameInputEl).font;
+  const text = job ? displayedFilenameForJob(job) : filenameInputEl.value;
+  const textWidth = Math.ceil(measureUiTextWidth(text || filenameInputEl.placeholder || '', font) + 28);
+  const resetWidth = resetFilenameActionEl instanceof HTMLButtonElement && !resetFilenameActionEl.hidden
+    ? (resetFilenameActionEl.offsetWidth || 28) + 6
+    : 0;
+  const desiredWidth = Math.max(baseWidth, textWidth + resetWidth);
+  const maxWidth = computeExpandableRowMaxWidth(filenameControlRowEl.closest('.field-group'));
+  const fieldGroupEl = filenameControlRowEl.closest('.field-group');
+  if (!(fieldGroupEl instanceof HTMLElement)) {
+    return;
+  }
+  fieldGroupEl.style.setProperty('--filename-expanded-row-width', `${Math.min(desiredWidth, maxWidth)}px`);
+  fieldGroupEl.style.setProperty('--filename-expanded-max-width', `${Math.floor(maxWidth)}px`);
+}
+
+function setFilenameFieldExpanded(expanded) {
+  const fieldGroupEl = filenameInputEl ? filenameInputEl.closest('.field-group-filename') : null;
+  if (!(fieldGroupEl instanceof HTMLElement) || !(filenameInputEl instanceof HTMLInputElement)) {
+    return;
+  }
+  const canExpand = expanded === true && filenameInputEl.disabled !== true;
+  fieldGroupEl.classList.toggle('is-expanded', canExpand);
+}
+
+function syncJobLabelsExpandedWidth(job = findJobById(selectedJobId)) {
+  if (!(jobLabelsFieldGroupEl instanceof HTMLElement) || !(jobLabelsFieldEl instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const controlRowEl = jobLabelsFieldEl.closest('.field-group-control-row');
+  if (!(controlRowEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const baseWidth = controlRowEl.offsetWidth || jobLabelsFieldEl.offsetWidth || 0;
+  const labelNames = normalizeSelectedLabelIds(effectiveSelectedLabelIds(job))
+    .map((labelId) => labelDisplayName(labelId))
+    .filter((labelName) => labelName !== '');
+  const chipFont = `11px ${window.getComputedStyle(jobLabelsFieldEl).fontFamily}`;
+  const chipWidths = labelNames.length > 0
+    ? labelNames.map((labelName) => Math.ceil(measureUiTextWidth(labelName, chipFont) + 24))
+    : [Math.ceil(measureUiTextWidth('Inga etiketter', window.getComputedStyle(jobLabelsFieldEl).font) + 20)];
+  const chipsTotalWidth = chipWidths.reduce((sum, width) => sum + width, 0) + Math.max(0, chipWidths.length - 1) * 6 + 18;
+  const resetWidth = resetLabelsActionEl instanceof HTMLButtonElement && !resetLabelsActionEl.hidden
+    ? (resetLabelsActionEl.offsetWidth || 28) + 6
+    : 0;
+  const desiredWidth = Math.max(baseWidth, chipsTotalWidth + resetWidth);
+  const maxWidth = computeExpandableRowMaxWidth(jobLabelsFieldGroupEl);
+  jobLabelsFieldGroupEl.style.setProperty('--job-labels-expanded-row-width', `${Math.min(desiredWidth, maxWidth)}px`);
+  jobLabelsFieldGroupEl.style.setProperty('--job-labels-expanded-max-width', `${Math.floor(maxWidth)}px`);
+}
+
+function queueTopbarExpandedMetricsSync() {
+  if (topbarExpandedMetricsFrame !== null) {
+    window.cancelAnimationFrame(topbarExpandedMetricsFrame);
+  }
+  topbarExpandedMetricsFrame = window.requestAnimationFrame(() => {
+    topbarExpandedMetricsFrame = null;
+    if (!(topbarEl instanceof HTMLElement) || !(appNoticesEl instanceof HTMLElement)) {
+      return;
+    }
+    const expandedListEl = appNoticesEl.querySelector('.app-notices-expanded-list');
+    if (!(expandedListEl instanceof HTMLElement) || appNoticesOverflowOpen !== true) {
+      topbarEl.style.setProperty('--app-notices-extra-height', '0px');
+      topbarEl.style.setProperty('--app-notices-expanded-list-height', '0px');
+      return;
+    }
+    const expandedHeight = expandedListEl.scrollHeight;
+    topbarEl.style.setProperty('--app-notices-expanded-list-height', `${expandedHeight}px`);
+    topbarEl.style.setProperty('--app-notices-extra-height', `${expandedHeight + 8}px`);
+  });
+}
+
 function renderJobLabelsSummary(labelIds) {
   if (!(jobLabelsSummaryEl instanceof HTMLElement)) {
     return;
   }
 
+  const summaryExpanded = jobLabelsOverlayOpen;
   const labels = normalizeSelectedLabelIds(labelIds)
     .map((labelId) => labelDisplayName(labelId))
     .filter((labelName) => labelName !== '');
@@ -1072,6 +1175,13 @@ function renderJobLabelsSummary(labelIds) {
 
   if (labels.length < 1) {
     jobLabelsSummaryEl.textContent = 'Inga etiketter';
+    return;
+  }
+
+  if (summaryExpanded) {
+    labels.forEach((labelName) => {
+      jobLabelsSummaryEl.appendChild(createJobLabelsSummaryChip(labelName));
+    });
     return;
   }
 
@@ -1108,6 +1218,7 @@ function scheduleJobLabelsSummaryRender(job = findJobById(selectedJobId)) {
   jobLabelsSummaryRenderFrame = window.requestAnimationFrame(() => {
     jobLabelsSummaryRenderFrame = null;
     renderJobLabelsSummary(effectiveSelectedLabelIds(job));
+    syncJobLabelsExpandedWidth(job);
   });
 }
 
@@ -1343,7 +1454,7 @@ function closeJobLabelsOverlay(options = {}) {
   }
 }
 
-function openJobLabelsOverlay() {
+function openJobLabelsOverlay(options = {}) {
   const job = findJobById(selectedJobId);
   if (!selectedJobLabelsEditable(job)) {
     return;
@@ -1354,13 +1465,15 @@ function openJobLabelsOverlay() {
   jobLabelsFilterText = '';
   jobLabelsActiveOptionIndex = -1;
   renderJobLabelsOverlay(job);
-  window.requestAnimationFrame(() => {
-    if (!(jobLabelsComboboxEl instanceof HTMLInputElement)) {
-      return;
-    }
-    jobLabelsComboboxEl.focus({ preventScroll: true });
-    jobLabelsComboboxEl.select();
-  });
+  if (options.focusCombobox === true) {
+    window.requestAnimationFrame(() => {
+      if (!(jobLabelsComboboxEl instanceof HTMLInputElement)) {
+        return;
+      }
+      jobLabelsComboboxEl.focus({ preventScroll: true });
+      jobLabelsComboboxEl.select();
+    });
+  }
 }
 
 function toggleJobLabelsOverlay() {
@@ -1368,7 +1481,7 @@ function toggleJobLabelsOverlay() {
     closeJobLabelsOverlay({ restoreFocus: true });
     return;
   }
-  openJobLabelsOverlay();
+  openJobLabelsOverlay({ focusCombobox: true });
 }
 
 async function persistSelectedJobLabelIds(nextLabelIds) {
@@ -3883,12 +3996,52 @@ async function extensionTest() {
 
 window.extensionTest = extensionTest;
 
-function renderAppNotices() {
-  if (!(appNoticesEl instanceof HTMLElement)) {
+function closeAppNoticesOverflow() {
+  if (!appNoticesOverflowOpen) {
     return;
   }
+  appNoticesOverflowOpen = false;
+  renderAppNotices();
+}
 
-  appNoticesEl.replaceChildren();
+function createAppNoticeButtonElement(action) {
+  if (!action || typeof action.label !== 'string' || typeof action.onClick !== 'function') {
+    return null;
+  }
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = action.label;
+  button.addEventListener('click', () => {
+    closeAppNoticesOverflow();
+    action.onClick();
+  });
+  return button;
+}
+
+function createAppNoticeElement(notice, options = {}) {
+  const noticeEl = document.createElement('div');
+  noticeEl.className = `app-notice is-${notice.kind || 'info'}`;
+  if (options.inline === true) {
+    noticeEl.classList.add('app-notice--inline');
+  }
+  if (options.popover === true) {
+    noticeEl.classList.add('app-notice--popover');
+  }
+
+  const textEl = document.createElement('span');
+  textEl.className = 'app-notice-text';
+  textEl.textContent = notice.text;
+  noticeEl.appendChild(textEl);
+
+  const actionButtonEl = createAppNoticeButtonElement(notice.action || null);
+  if (actionButtonEl instanceof HTMLButtonElement) {
+    noticeEl.appendChild(actionButtonEl);
+  }
+
+  return noticeEl;
+}
+
+function collectAppNoticeDescriptors() {
   const notices = [];
   const pendingPayeeLookups = currentSenderPayeeLookupRemainingCount();
   const pendingOrganizationLookups = currentSenderOrganizationLookupRemainingCount();
@@ -3904,110 +4057,171 @@ function renderAppNotices() {
   const showAllabolagOpenNotice = shouldShowAllabolagOpenNotice();
 
   if (state.archivingRules && state.archivingRules.hasPendingArchivedUpdates === true) {
-    const notice = document.createElement('div');
-    notice.className = 'app-notice is-warning';
-    const text = document.createElement('span');
-    text.textContent = 'Arkiveringsregler har ändrats. Du kan uppdatera arkiverade dokument.';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = 'Uppdatera arkivering';
-    button.addEventListener('click', () => {
-      openArchivingReviewSettingsDirect();
+    notices.push({
+      kind: 'warning',
+      text: 'Arkiveringsregler har ändrats. Du kan uppdatera arkiverade dokument.',
+      action: {
+        label: 'Uppdatera arkivering',
+        onClick: () => {
+          openArchivingReviewSettingsDirect();
+        }
+      }
     });
-    notice.append(text, button);
-    notices.push(notice);
   }
 
   if (chromeExtensionRuntime.status === 'missing' && chromeExtensionSuppressMissingNotice !== true) {
-    const notice = document.createElement('div');
-    notice.className = 'app-notice is-warning';
-    const text = document.createElement('span');
-    text.textContent = 'Chrome-tillägget för Swedbank saknas eller svarar inte.';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = 'Visa tillägg';
-    button.addEventListener('click', () => {
-      openExtensionsSettingsDirect();
+    notices.push({
+      kind: 'warning',
+      text: 'Chrome-tillägget för Swedbank saknas eller svarar inte.',
+      action: {
+        label: 'Visa tillägg',
+        onClick: () => {
+          openExtensionsSettingsDirect();
+        }
+      }
     });
-    notice.append(text, button);
-    notices.push(notice);
   } else if (chromeExtensionRuntime.status === 'outdated') {
-    const notice = document.createElement('div');
-    notice.className = 'app-notice is-warning';
-    const text = document.createElement('span');
-    text.textContent = `Chrome-tillägget är utdaterat. Krävd version är ${chromeExtensionRequiredVersion || 'okänd'}.`;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = 'Visa tillägg';
-    button.addEventListener('click', () => {
-      openExtensionsSettingsDirect();
+    notices.push({
+      kind: 'warning',
+      text: `Chrome-tillägget är utdaterat. Krävd version är ${chromeExtensionRequiredVersion || 'okänd'}.`,
+      action: {
+        label: 'Visa tillägg',
+        onClick: () => {
+          openExtensionsSettingsDirect();
+        }
+      }
     });
-    notice.append(text, button);
-    notices.push(notice);
   }
 
   if (showSwedbankLoginNotice) {
-    const notice = document.createElement('div');
-    notice.className = 'app-notice is-error';
-    const text = document.createElement('span');
-    text.textContent = chromeExtensionRuntime.profileSelectionRequired === true
-      ? 'Swedbank kräver att du väljer profil för att hämta namn för betalnummer.'
-      : 'Swedbank är inte tillgängligt just nu. Logga in för att hämta namn för betalnummer.';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = chromeExtensionRuntime.profileSelectionRequired === true ? 'Välj profil' : 'Logga in';
-    button.addEventListener('click', () => {
-      openSwedbankLoginFlow();
+    notices.push({
+      kind: 'error',
+      text: chromeExtensionRuntime.profileSelectionRequired === true
+        ? 'Swedbank kräver att du väljer profil för att hämta namn för betalnummer.'
+        : 'Swedbank är inte tillgängligt just nu. Logga in för att hämta namn för betalnummer.',
+      action: {
+        label: chromeExtensionRuntime.profileSelectionRequired === true ? 'Välj profil' : 'Logga in',
+        onClick: () => {
+          openSwedbankLoginFlow();
+        }
+      }
     });
-    notice.append(text, button);
-    notices.push(notice);
   } else if (
     chromeExtensionRuntime.status === 'installed'
     && pendingPayeeLookups > 0
     && chromeExtensionRuntime.lastError
   ) {
-    const notice = document.createElement('div');
-    notice.className = 'app-notice is-error';
-    const text = document.createElement('span');
-    text.textContent = `Swedbank-uppslaget misslyckades: ${chromeExtensionRuntime.lastError}`;
-    notice.append(text);
-    notices.push(notice);
+    notices.push({
+      kind: 'error',
+      text: `Swedbank-uppslaget misslyckades: ${chromeExtensionRuntime.lastError}`,
+    });
   }
 
   if (showAllabolagOpenNotice) {
-    const notice = document.createElement('div');
-    notice.className = 'app-notice is-warning';
-    const text = document.createElement('span');
-    text.textContent = 'Allabolag.se behöver vara öppet för att hämta namn för organisationsnummer.';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = 'Öppna allabolag.se';
-    button.addEventListener('click', () => {
-      openAllabolagLookupFlow();
+    notices.push({
+      kind: 'warning',
+      text: 'Allabolag.se behöver vara öppet för att hämta namn för organisationsnummer.',
+      action: {
+        label: 'Öppna allabolag.se',
+        onClick: () => {
+          openAllabolagLookupFlow();
+        }
+      }
     });
-    notice.append(text, button);
-    notices.push(notice);
   } else if (
     chromeExtensionRuntime.status === 'installed'
     && pendingOrganizationLookups > 0
     && chromeExtensionRuntime.organizationLookupLastError
   ) {
-    const notice = document.createElement('div');
-    notice.className = 'app-notice is-error';
-    const text = document.createElement('span');
-    text.textContent = `Allabolag-uppslaget misslyckades: ${chromeExtensionRuntime.organizationLookupLastError}`;
-    notice.append(text);
-    notices.push(notice);
+    notices.push({
+      kind: 'error',
+      text: `Allabolag-uppslaget misslyckades: ${chromeExtensionRuntime.organizationLookupLastError}`,
+    });
+  }
+
+  return notices;
+}
+
+function renderAppNotices() {
+  if (!(appNoticesEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const notices = collectAppNoticeDescriptors();
+  appNoticesEl.replaceChildren();
+  if (topbarEl instanceof HTMLElement) {
+    topbarEl.classList.remove('is-notices-expanded');
   }
 
   if (notices.length === 0) {
+    appNoticesOverflowOpen = false;
     appNoticesEl.classList.add('hidden');
+    if (topbarEl instanceof HTMLElement) {
+      topbarEl.style.setProperty('--app-notices-extra-height', '0px');
+      topbarEl.style.setProperty('--app-notices-expanded-list-height', '0px');
+    }
     syncArchivingReviewTabIndicator();
     return;
   }
 
+  if (notices.length < 2) {
+    appNoticesOverflowOpen = false;
+  }
+
+  const primaryRowEl = document.createElement('div');
+  primaryRowEl.className = 'app-notices-primary-row';
+  primaryRowEl.appendChild(createAppNoticeElement(notices[0], { inline: true }));
+  if (notices.length > 1) {
+    const overflowCountEl = document.createElement('span');
+    overflowCountEl.className = 'app-notices-more-count';
+    overflowCountEl.textContent = `+${notices.length - 1}`;
+    primaryRowEl.appendChild(overflowCountEl);
+
+    const overflowButtonEl = document.createElement('button');
+    overflowButtonEl.type = 'button';
+    overflowButtonEl.className = 'app-notices-toggle';
+    overflowButtonEl.textContent = appNoticesOverflowOpen ? 'Dölj' : 'Visa alla';
+    overflowButtonEl.setAttribute('aria-expanded', appNoticesOverflowOpen ? 'true' : 'false');
+    overflowButtonEl.title = appNoticesOverflowOpen ? 'Dölj notifieringar' : 'Visa alla notifieringar';
+    const toggleOverflow = () => {
+      appNoticesOverflowOpen = !appNoticesOverflowOpen;
+      renderAppNotices();
+    };
+    overflowButtonEl.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      toggleOverflow();
+    });
+    overflowButtonEl.addEventListener('click', (event) => {
+      if (event.detail !== 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      toggleOverflow();
+    });
+    primaryRowEl.appendChild(overflowButtonEl);
+  }
+
   appNoticesEl.classList.remove('hidden');
-  appNoticesEl.replaceChildren(...notices);
+  appNoticesEl.appendChild(primaryRowEl);
+
+  if (notices.length > 1) {
+    if (topbarEl instanceof HTMLElement && appNoticesOverflowOpen) {
+      topbarEl.classList.add('is-notices-expanded');
+    }
+    const expandedListEl = document.createElement('div');
+    expandedListEl.className = 'app-notices-expanded-list';
+    notices.slice(1).forEach((notice) => {
+      expandedListEl.appendChild(createAppNoticeElement(notice, { popover: true }));
+    });
+    appNoticesEl.appendChild(expandedListEl);
+  }
+
+  queueTopbarExpandedMetricsSync();
   syncArchivingReviewTabIndicator();
 }
 
@@ -6585,6 +6799,10 @@ function syncFilenameField(job) {
   filenameInputEl.disabled = disabled;
   filenameInputEl.value = job ? displayedFilenameForJob(job) : '';
   filenameInputEl.title = job ? filenameTooltipForJob(job, filenameInputEl.value) : '';
+  if (disabled || !job) {
+    setFilenameFieldExpanded(false);
+  }
+  syncFilenameExpandedWidth(job);
 }
 
 function currentJobValuesDifferFromProposed(job) {
@@ -6674,6 +6892,8 @@ function updateSelectedJobResetActions(job) {
   setFieldResetButtonVisibility(resetFolderActionEl, editable && diffs.folder, proposedResetTooltip('folder', job));
   setFieldResetButtonVisibility(resetFilenameActionEl, editable && diffs.filename, proposedResetTooltip('filename', job));
   setFieldResetButtonVisibility(resetLabelsActionEl, editable && diffs.labels, proposedResetTooltip('labels', job));
+  syncFilenameExpandedWidth(job);
+  syncJobLabelsExpandedWidth(job);
 }
 
 function selectedJobAnalysisOutdated(job) {
@@ -7163,6 +7383,7 @@ function applySelectedFilenameValue(value) {
   updateArchivedReviewDraftFromSidebar(currentJob);
   updateArchiveAction(currentJob);
   updateSelectedJobResetActions(currentJob);
+  syncFilenameExpandedWidth(currentJob);
   if (archivedReviewModeActiveForJob(currentJob)) {
     return;
   }
@@ -17697,7 +17918,7 @@ if (resetFolderActionEl instanceof HTMLButtonElement) {
 if (jobLabelsFieldEl instanceof HTMLButtonElement) {
   jobLabelsFieldEl.addEventListener('click', (event) => {
     event.preventDefault();
-    toggleJobLabelsOverlay();
+    openJobLabelsOverlay({ focusCombobox: true });
   });
 }
 
@@ -17809,6 +18030,32 @@ if (jobLabelsFieldGroupEl instanceof HTMLElement) {
 
 filenameInputEl.addEventListener('input', () => {
   applySelectedFilenameValue(filenameInputEl.value);
+});
+
+filenameInputEl.addEventListener('focus', () => {
+  setFilenameFieldExpanded(true);
+});
+
+filenameInputEl.addEventListener('click', () => {
+  setFilenameFieldExpanded(true);
+});
+
+filenameInputEl.addEventListener('blur', () => {
+  window.requestAnimationFrame(() => {
+    if (document.activeElement === filenameInputEl) {
+      return;
+    }
+    setFilenameFieldExpanded(false);
+  });
+});
+
+filenameInputEl.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') {
+    return;
+  }
+  event.preventDefault();
+  setFilenameFieldExpanded(false);
+  filenameInputEl.blur();
 });
 
 if (resetFilenameActionEl instanceof HTMLButtonElement) {
@@ -18248,6 +18495,14 @@ document.addEventListener('pointerdown', (event) => {
     closeSelectedJobActionsMenu();
   }
 
+  if (
+    appNoticesEl instanceof HTMLElement
+    && appNoticesOverflowOpen
+    && !appNoticesEl.contains(event.target)
+  ) {
+    closeAppNoticesOverflow();
+  }
+
   if (!jobLabelsOverlayOpen || !(jobLabelsFieldGroupEl instanceof HTMLElement)) {
     return;
   }
@@ -18272,19 +18527,36 @@ if (mainEl instanceof HTMLElement) {
 pdfFrameEls.forEach((frameEl) => {
   frameEl.addEventListener('pointerdown', () => {
     if (!jobLabelsOverlayOpen) {
+      if (appNoticesOverflowOpen) {
+        closeAppNoticesOverflow();
+      }
       return;
     }
     closeJobLabelsOverlay();
+    if (appNoticesOverflowOpen) {
+      closeAppNoticesOverflow();
+    }
   }, true);
   frameEl.addEventListener('focus', () => {
     if (!jobLabelsOverlayOpen) {
+      if (appNoticesOverflowOpen) {
+        closeAppNoticesOverflow();
+      }
       return;
     }
     closeJobLabelsOverlay();
+    if (appNoticesOverflowOpen) {
+      closeAppNoticesOverflow();
+    }
   }, true);
 });
 
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && appNoticesOverflowOpen) {
+    closeAppNoticesOverflow();
+    return;
+  }
+
   if (event.key === 'Escape' && jobListMenuEl instanceof HTMLElement && !jobListMenuEl.classList.contains('hidden')) {
     closeJobListMenu();
     return;
@@ -18338,6 +18610,8 @@ window.addEventListener('beforeunload', (event) => {
 
 window.addEventListener('resize', () => {
   scheduleJobLabelsSummaryRender();
+  syncFilenameExpandedWidth(findJobById(selectedJobId));
+  queueTopbarExpandedMetricsSync();
 });
 
 async function fetchState(options = {}) {
