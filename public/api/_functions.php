@@ -11485,6 +11485,19 @@ function load_job_ocr_text(string $jobDir): string
     return is_string($raw) ? $raw : '';
 }
 
+function load_job_analysis_text(string $jobDir, ?string $pdfPath = null): string
+{
+    $resolvedPdfPath = is_string($pdfPath) ? trim($pdfPath) : '';
+    if ($resolvedPdfPath !== '' && is_file($resolvedPdfPath)) {
+        $pdfText = extract_text_from_pdf($resolvedPdfPath);
+        if (is_string($pdfText) && trim($pdfText) !== '') {
+            return $pdfText;
+        }
+    }
+
+    return load_job_ocr_text($jobDir);
+}
+
 function calculate_auto_archiving_result_for_job(array $config, string $jobId, ?array $rules = null, ?array $job = null): array
 {
     if (!is_valid_job_id($jobId)) {
@@ -11498,7 +11511,8 @@ function calculate_auto_archiving_result_for_job(array $config, string $jobId, ?
         throw new RuntimeException('Jobbet kunde inte läsas');
     }
 
-    $ocrText = load_job_ocr_text($jobDir);
+    $analysisPdfPath = job_review_pdf_path($config, $jobId, $loadedJob);
+    $ocrText = load_job_analysis_text($jobDir, $analysisPdfPath);
     $matchingPayload = load_matching_settings_payload();
     $replacementMap = replacement_map(is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []);
 
@@ -13263,7 +13277,8 @@ function process_claimed_job(
     }
     unset($ocrTextExtractionMethod, $fallbackTxtPath);
 
-    $ocrText = load_job_ocr_text($jobDir);
+    $analysisPdfPath = is_file($reviewPdfPath) ? $reviewPdfPath : $sourcePdfPath;
+    $ocrText = load_job_analysis_text($jobDir, $analysisPdfPath);
 
     $activeRulesSource = load_active_archiving_rules();
     $allActiveFields = array_values(array_merge(
@@ -13565,8 +13580,11 @@ function process_job_by_id(
     }
 
     try {
-        if (!is_file($sourcePdfPath)) {
+        if ($reprocessMode !== 'post-ocr' && !is_file($sourcePdfPath)) {
             throw new RuntimeException('Missing source.pdf');
+        }
+        if ($reprocessMode === 'post-ocr' && !is_file($jobDir . '/review.pdf')) {
+            throw new RuntimeException('Missing review.pdf');
         }
 
         $fallbackTxtPath = is_string($jobData['fallbackTxtPath'] ?? null)
@@ -15773,9 +15791,6 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         throw new RuntimeException('Job metadata missing');
     }
     $sourcePath = $jobDir . '/source.pdf';
-    if (!is_file($sourcePath)) {
-        throw new RuntimeException('Missing source.pdf');
-    }
 
     $storedDocflowOcrVersion = job_docflow_ocr_version($job);
     $requiresFreshOcr = $storedDocflowOcrVersion === null || $storedDocflowOcrVersion < docflow_ocr_version();
@@ -15785,7 +15800,15 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
     }
 
     if ($normalizedMode === 'post-ocr' && !is_file($jobDir . '/review.pdf')) {
-        throw new RuntimeException('Missing review.pdf');
+        if (!is_file($sourcePath)) {
+            throw new RuntimeException('Missing review.pdf');
+        }
+        $normalizedMode = 'full';
+        $forceOcr = true;
+    }
+
+    if ($normalizedMode === 'full' && !is_file($sourcePath)) {
+        throw new RuntimeException('Missing source.pdf');
     }
 
     $artifactPaths = [

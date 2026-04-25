@@ -12,7 +12,7 @@ try {
     $config = load_config();
     ensure_job_dispatcher_running($config);
 
-    $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($config, 'full', false);
+    $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false);
 
     $activeRules = load_active_archiving_rules();
     $activeVersion = active_archiving_rules_version();

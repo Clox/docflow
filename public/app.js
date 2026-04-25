@@ -5164,8 +5164,12 @@ function watchReprocessedJobIdsFromPayload(payload) {
   if (reprocessedJobIds.length < 1) {
     return;
   }
+  const mode = typeof payload?.reprocessedJobs?.mode === 'string' && payload.reprocessedJobs.mode.trim() !== ''
+    ? payload.reprocessedJobs.mode.trim()
+    : 'post-ocr';
+  const forceOcr = mode === 'full';
   reprocessedJobIds.forEach((jobId) => {
-    applyOptimisticReprocess(jobId, 'post-ocr', { forceOcr: false });
+    applyOptimisticReprocess(jobId, mode, { forceOcr });
     reprocessWatchJobIds.add(jobId);
   });
   requestStateRefresh(0);
