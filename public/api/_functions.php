@@ -11490,6 +11490,11 @@ function load_job_ocr_text(string $jobDir): string
 
 function load_job_analysis_text(string $jobDir, ?string $pdfPath = null): string
 {
+    $storedText = load_job_ocr_text($jobDir);
+    if (trim($storedText) !== '') {
+        return $storedText;
+    }
+
     $resolvedPdfPath = is_string($pdfPath) ? trim($pdfPath) : '';
     if ($resolvedPdfPath !== '' && is_file($resolvedPdfPath)) {
         $pdfText = extract_text_from_pdf($resolvedPdfPath);
@@ -11498,7 +11503,7 @@ function load_job_analysis_text(string $jobDir, ?string $pdfPath = null): string
         }
     }
 
-    return load_job_ocr_text($jobDir);
+    return '';
 }
 
 function calculate_auto_archiving_result_for_job(array $config, string $jobId, ?array $rules = null, ?array $job = null): array
