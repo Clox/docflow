@@ -10058,6 +10058,60 @@ function apply_cross_matching_key_penalties(array $results, array $positionSetti
     return $results;
 }
 
+function apply_extraction_field_acceptance_threshold(array $results, float $acceptanceThreshold = 0.5): array
+{
+    $resolvedThreshold = clamp_confidence($acceptanceThreshold);
+
+    foreach ($results as &$result) {
+        if (!is_array($result) || !is_array($result['matches'] ?? null)) {
+            continue;
+        }
+
+        $rankedMatches = sort_extraction_field_matches_by_confidence(array_values(array_filter(
+            $result['matches'],
+            static fn ($match): bool => is_array($match)
+        )));
+        $result['matches'] = $rankedMatches;
+
+        $acceptedMatches = array_values(array_filter(
+            $rankedMatches,
+            static fn (array $match): bool => ($match['finalConfidence'] ?? 0) >= $resolvedThreshold
+        ));
+        $result['values'] = array_values(array_map(
+            static fn (array $match): mixed => $match['value'] ?? null,
+            $acceptedMatches
+        ));
+
+        $primaryMatch = is_array($acceptedMatches[0] ?? null) ? $acceptedMatches[0] : null;
+        if (is_array($primaryMatch)) {
+            $result['value'] = $primaryMatch['value'] ?? null;
+            $result['baseConfidence'] = isset($primaryMatch['baseConfidence']) ? clamp_confidence((float) $primaryMatch['baseConfidence']) : 0.0;
+            $result['finalConfidence'] = isset($primaryMatch['finalConfidence']) ? clamp_confidence((float) $primaryMatch['finalConfidence']) : (isset($primaryMatch['confidence']) ? clamp_confidence((float) $primaryMatch['confidence']) : 0.0);
+            $result['confidence'] = $result['finalConfidence'];
+            $result['lineIndex'] = is_int($primaryMatch['lineIndex'] ?? null) ? (int) $primaryMatch['lineIndex'] : null;
+            $result['source'] = is_string($primaryMatch['source'] ?? null) ? (string) $primaryMatch['source'] : 'none';
+            $result['raw'] = is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null;
+            $result['matchText'] = is_string($primaryMatch['matchText'] ?? null)
+                ? (string) $primaryMatch['matchText']
+                : (is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null);
+            continue;
+        }
+
+        $result['value'] = null;
+        $result['values'] = [];
+        $result['baseConfidence'] = 0.0;
+        $result['finalConfidence'] = 0.0;
+        $result['confidence'] = 0.0;
+        $result['lineIndex'] = null;
+        $result['source'] = 'none';
+        $result['raw'] = null;
+        $result['matchText'] = null;
+    }
+    unset($result);
+
+    return $results;
+}
+
 function document_date_result_matches(array $result): array
 {
     $matchesByKey = [];
@@ -10582,7 +10636,10 @@ function extract_configured_text_field_results(
         }
     }
 
-    return apply_cross_matching_key_penalties($results, $positionSettings);
+    return apply_extraction_field_acceptance_threshold(
+        apply_cross_matching_key_penalties($results, $positionSettings),
+        $acceptanceThreshold
+    );
 }
 
 function simplify_extraction_field_values(array $results): array
@@ -10613,6 +10670,7 @@ function simplify_extraction_field_values(array $results): array
 
 function simplify_extraction_field_meta(array $results, float $acceptanceThreshold = 0.5): array
 {
+    $resolvedThreshold = clamp_confidence($acceptanceThreshold);
     $meta = [];
     foreach ($results as $key => $result) {
         $resolvedKey = is_string($key) && trim($key) !== ''
@@ -10642,9 +10700,8 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
             $fieldMeta['finalConfidence'] = clamp_confidence((float) $result['finalConfidence']);
         }
         if (is_array($result['matches'] ?? null)) {
-            $filteredMatches = array_filter($result['matches'], static fn (array $match): bool => ($match['finalConfidence'] ?? 0) >= $acceptanceThreshold);
             $fieldMeta['matches'] = array_values(array_map(
-                static function (array $match): array {
+                static function (array $match) use ($resolvedThreshold): array {
                     return [
                         'value' => $match['value'] ?? null,
                         'raw' => is_string($match['raw'] ?? null) ? (string) $match['raw'] : null,
@@ -10662,6 +10719,7 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'matchType' => is_string($match['matchType'] ?? null) ? trim((string) $match['matchType']) : null,
                         'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : null,
                         'score' => is_numeric($match['score'] ?? null) ? (float) $match['score'] : null,
+                        'accepted' => ($match['finalConfidence'] ?? 0) >= $resolvedThreshold,
                         'noisePenalty' => is_numeric($match['noisePenalty'] ?? null) ? clamp_confidence((float) $match['noisePenalty']) : null,
                         'trailingDelimiterPenalty' => is_numeric($match['trailingDelimiterPenalty'] ?? null) ? max(0.0, (float) $match['trailingDelimiterPenalty']) : null,
                         'otherMatchKeyPenalty' => is_numeric($match['otherMatchKeyPenalty'] ?? null) ? max(0.0, (float) $match['otherMatchKeyPenalty']) : null,
@@ -10694,7 +10752,7 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         ), static fn ($segment): bool => is_array($segment))),
                     ];
                 },
-                $filteredMatches
+                array_values(array_filter($result['matches'], static fn ($match): bool => is_array($match)))
             ));
         }
 

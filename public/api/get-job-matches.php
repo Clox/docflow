@@ -54,15 +54,11 @@ try {
         }
 
         $resolvedKey = trim($fieldKey);
-        $values = normalize_auto_archiving_field_value_list($fieldValues[$resolvedKey] ?? null);
-        if ($values === []) {
-            continue;
-        }
-
         $legacyField = is_array($fieldValues[$resolvedKey] ?? null) ? $fieldValues[$resolvedKey] : [];
         $meta = is_array($fieldMeta[$resolvedKey] ?? null) ? $fieldMeta[$resolvedKey] : [];
         $matches = is_array($meta['matches'] ?? null) ? $meta['matches'] : [];
         $firstMatch = is_array($matches[0] ?? null) ? $matches[0] : [];
+        $values = normalize_auto_archiving_field_value_list($fieldValues[$resolvedKey] ?? null);
 
         $candidateRows = [];
         if ($matches !== []) {
@@ -145,6 +141,10 @@ try {
                     'matchType' => $matchType !== '' ? $matchType : null,
                 ];
             }
+        }
+
+        if ($values === [] && $candidateRows === []) {
+            continue;
         }
 
         if ($candidateRows === []) {
@@ -271,7 +271,7 @@ try {
             'name' => is_string($meta['name'] ?? null) && trim((string) $meta['name']) !== ''
                 ? trim((string) $meta['name'])
                 : (is_string($legacyField['name'] ?? null) && trim((string) $legacyField['name']) !== '' ? trim((string) $legacyField['name']) : $resolvedKey),
-            'value' => $values[0],
+            'value' => $values[0] ?? null,
             'values' => $values,
             'matches' => $candidateRows,
             'source' => is_string($firstMatch['source'] ?? null)
