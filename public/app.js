@@ -1506,7 +1506,19 @@ async function persistSelectedJobLabelIds(nextLabelIds) {
     if (archivedReviewModeActiveForJob(job)) {
       return;
     }
-    await saveSelectedJobFields(job.id, { selectedLabelIds: normalizedNext });
+    saveSelectedJobFields(job.id, { selectedLabelIds: normalizedNext }).catch((error) => {
+      if (hadLocalValue) {
+        selectedLabelIdsByJobId.set(job.id, previousLocalValue);
+      } else {
+        selectedLabelIdsByJobId.delete(job.id);
+      }
+      setLabelsForJob(findJobById(selectedJobId));
+      const rollbackJob = findJobById(selectedJobId);
+      syncFilenameField(rollbackJob);
+      updateArchiveAction(rollbackJob);
+      updateSelectedJobResetActions(rollbackJob);
+      alert(error.message || 'Kunde inte spara etiketter.');
+    });
   } catch (error) {
     if (hadLocalValue) {
       selectedLabelIdsByJobId.set(job.id, previousLocalValue);
@@ -7379,6 +7391,9 @@ function applySelectedFilenameValue(value) {
   } else {
     filenameByJobId.set(selectedJobId, value);
   }
+  if (filenameInputEl instanceof HTMLInputElement) {
+    filenameInputEl.value = value;
+  }
   filenameInputEl.title = filenameTooltipForJob(currentJob, value);
   updateArchivedReviewDraftFromSidebar(currentJob);
   updateArchiveAction(currentJob);
@@ -7387,7 +7402,10 @@ function applySelectedFilenameValue(value) {
   if (archivedReviewModeActiveForJob(currentJob)) {
     return;
   }
-  scheduleFilenameSave(selectedJobId, value);
+  saveSelectedJobFields(selectedJobId, { filename: value }).catch((error) => {
+    restoreSelectedJobEditorState();
+    alert(error.message || 'Kunde inte spara filnamn.');
+  });
 }
 
 function renderSelectedJobPanel() {
