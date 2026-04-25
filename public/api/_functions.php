@@ -10611,7 +10611,7 @@ function simplify_extraction_field_values(array $results): array
     return $values;
 }
 
-function simplify_extraction_field_meta(array $results): array
+function simplify_extraction_field_meta(array $results, float $acceptanceThreshold = 0.5): array
 {
     $meta = [];
     foreach ($results as $key => $result) {
@@ -10642,6 +10642,7 @@ function simplify_extraction_field_meta(array $results): array
             $fieldMeta['finalConfidence'] = clamp_confidence((float) $result['finalConfidence']);
         }
         if (is_array($result['matches'] ?? null)) {
+            $filteredMatches = array_filter($result['matches'], static fn (array $match): bool => ($match['finalConfidence'] ?? 0) >= $acceptanceThreshold);
             $fieldMeta['matches'] = array_values(array_map(
                 static function (array $match): array {
                     return [
@@ -10693,7 +10694,7 @@ function simplify_extraction_field_meta(array $results): array
                         ), static fn ($segment): bool => is_array($segment))),
                     ];
                 },
-                array_values(array_filter($result['matches'], static fn ($match): bool => is_array($match)))
+                $filteredMatches
             ));
         }
 
@@ -11388,7 +11389,9 @@ function calculate_auto_archiving_result_from_text(
             : 0.5
     );
     $configuredFieldValues = simplify_extraction_field_values($configuredFieldResults);
-    $configuredFieldMeta = simplify_extraction_field_meta($configuredFieldResults);
+    $configuredFieldMeta = simplify_extraction_field_meta($configuredFieldResults, is_numeric($matchingPayload['dataFieldAcceptanceThreshold'] ?? null)
+        ? (float) $matchingPayload['dataFieldAcceptanceThreshold']
+        : 0.5);
     $fieldPartitions = partition_archiving_field_values($configuredFieldValues, $rules);
     $fieldNamesByKey = build_label_matching_field_name_map($configuredFields);
 
