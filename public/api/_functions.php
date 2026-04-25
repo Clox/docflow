@@ -8230,7 +8230,7 @@ function bankgiro_candidates_from_text(string $text, int $offsetBase = 0): array
 function plusgiro_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
-    if (@preg_match_all('/\b(\d{1,8}\s*-\s*\d{1,5})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
+    if (@preg_match_all('/\b((?:\d{1,8}|\d{1,3}(?:\s+\d{1,3}){1,4})\s*-\s*\d{1,5})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
         return [];
     }
 
@@ -9247,12 +9247,25 @@ function generic_text_segment_candidates_from_text(string $text, int $offsetBase
     ]];
 }
 
+function normalize_extraction_field_regex_pattern(string $pattern): string
+{
+    $normalized = preg_replace_callback(
+        '/\\\\u([0-9A-Fa-f]{4})/',
+        static fn (array $matches): string => '\\x{' . strtoupper((string) ($matches[1] ?? '')) . '}',
+        $pattern
+    );
+
+    return is_string($normalized) ? $normalized : $pattern;
+}
+
 function extraction_field_pattern_candidates_from_text(string $text, string $searchString, bool $isRegex, int $offsetBase = 0): array
 {
     $pattern = trim($searchString);
     if ($pattern === '') {
         return generic_text_segment_candidates_from_text($text, $offsetBase);
     }
+
+    $pattern = normalize_extraction_field_regex_pattern($pattern);
 
     $delimitedPattern = $isRegex
         ? '/' . str_replace('/', '\/', $pattern) . '/iu'
