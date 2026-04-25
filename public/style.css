@@ -187,12 +187,12 @@ body.is-resizing-sidebar {
 }
 
 .icon-settings-button svg {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   display: block;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.85;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
