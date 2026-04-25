@@ -2887,6 +2887,7 @@ function load_matching_settings_payload(): array
     $defaultPayload = [
         'replacements' => [],
         'positionAdjustment' => $defaultPositionAdjustment,
+        'dataFieldAcceptanceThreshold' => 0.5,
     ];
 
     $path = DATA_DIR . '/matching.json';
@@ -2934,6 +2935,9 @@ function load_matching_settings_payload(): array
     return [
         'replacements' => $replacements,
         'positionAdjustment' => $positionAdjustment,
+        'dataFieldAcceptanceThreshold' => is_numeric($decoded['dataFieldAcceptanceThreshold'] ?? null)
+            ? clamp_confidence((float) $decoded['dataFieldAcceptanceThreshold'])
+            : 0.5,
     ];
 }
 
@@ -10432,7 +10436,8 @@ function extract_configured_text_field_results(
     array $replacementMap,
     array $fields,
     array $positionSettings = [],
-    array $lineGeometries = []
+    array $lineGeometries = [],
+    float $acceptanceThreshold = 0.5
 ): array
 {
     $results = [];
@@ -10539,11 +10544,12 @@ function extract_configured_text_field_results(
         }
 
         $resolvedMatches = sort_extraction_field_matches_by_confidence($resolvedMatches);
+        $acceptedMatches = array_filter($resolvedMatches, static fn (array $match): bool => ($match['finalConfidence'] ?? 0) >= $acceptanceThreshold);
         $resolvedValues = array_values(array_map(
             static fn (array $match): mixed => $match['value'] ?? null,
-            $resolvedMatches
+            $acceptedMatches
         ));
-        $primaryMatch = is_array($resolvedMatches[0] ?? null) ? $resolvedMatches[0] : null;
+        $primaryMatch = is_array($acceptedMatches[0] ?? null) ? $acceptedMatches[0] : null;
 
         $results[$key] = [
             'key' => $key,
@@ -11376,7 +11382,10 @@ function calculate_auto_archiving_result_from_text(
         $replacementMap,
         $configuredFields,
         $positionSettings,
-        $lineGeometries
+        $lineGeometries,
+        is_numeric($matchingPayload['dataFieldAcceptanceThreshold'] ?? null)
+            ? (float) $matchingPayload['dataFieldAcceptanceThreshold']
+            : 0.5
     );
     $configuredFieldValues = simplify_extraction_field_values($configuredFieldResults);
     $configuredFieldMeta = simplify_extraction_field_meta($configuredFieldResults);

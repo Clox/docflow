@@ -364,6 +364,7 @@ let sendersDraft = [];
 let sendersUnlinkedIdentifiers = [];
 let matchingDraft = [];
 let matchingPositionAdjustmentDraft = defaultMatchingPositionAdjustmentSettings();
+let matchingDataFieldAcceptanceThresholdDraft = 0.5;
 let ocrSkipExistingTextBaseline = true;
 let ocrOptimizeLevelBaseline = 1;
 let ocrTextExtractionMethodBaseline = 'layout';
@@ -9441,6 +9442,7 @@ function bindSettingsPanelRefs(tabId) {
     matchingOtherMatchKeyPenaltyEl = document.getElementById('matching-other-match-key-penalty');
     matchingRightYOffsetPenaltyEl = document.getElementById('matching-right-y-offset-penalty');
     matchingDownXOffsetPenaltyEl = document.getElementById('matching-down-x-offset-penalty');
+    matchingDataFieldAcceptanceThresholdEl = document.getElementById('matching-data-field-acceptance-threshold');
     const bindMatchingPenaltyInput = (inputEl, key) => {
       if (!(inputEl instanceof HTMLInputElement)) {
         return;
@@ -9460,6 +9462,16 @@ function bindSettingsPanelRefs(tabId) {
     bindMatchingPenaltyInput(matchingOtherMatchKeyPenaltyEl, 'otherMatchKeyPenalty');
     bindMatchingPenaltyInput(matchingRightYOffsetPenaltyEl, 'rightYOffsetPenalty');
     bindMatchingPenaltyInput(matchingDownXOffsetPenaltyEl, 'downXOffsetPenalty');
+    if (matchingDataFieldAcceptanceThresholdEl instanceof HTMLInputElement) {
+      matchingDataFieldAcceptanceThresholdEl.addEventListener('input', () => {
+        matchingDataFieldAcceptanceThresholdDraft = sanitizeMatchingPercentInput(
+          matchingDataFieldAcceptanceThresholdEl.value,
+          matchingDataFieldAcceptanceThresholdDraft,
+          null
+        );
+        updateSettingsActionButtons();
+      });
+    }
     matchingAddRowEl.addEventListener('click', () => {
       matchingDraft.push(defaultReplacement());
       renderMatchingEditor();
@@ -9475,6 +9487,7 @@ function bindSettingsPanelRefs(tabId) {
       const replacements = Array.isArray(parsed.replacements) ? parsed.replacements : [];
       matchingDraft = replacements.map(sanitizeReplacement);
       matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(parsed.positionAdjustment);
+      matchingDataFieldAcceptanceThresholdDraft = parsed.dataFieldAcceptanceThreshold ?? 0.5;
       if (matchingDraft.length === 0) {
         matchingDraft = [defaultReplacement()];
       }
@@ -10113,10 +10126,11 @@ function sanitizeOcrTextExtractionMethod(value, fallback = 'layout') {
   return fallback;
 }
 
-function normalizedMatchingJson(replacements, positionAdjustment = matchingPositionAdjustmentDraft) {
+function normalizedMatchingJson(replacements, positionAdjustment = matchingPositionAdjustmentDraft, dataFieldAcceptanceThreshold = matchingDataFieldAcceptanceThresholdDraft) {
   return JSON.stringify({
     replacements: replacements.map(sanitizeReplacement),
-    positionAdjustment: sanitizeMatchingPositionAdjustmentSettings(positionAdjustment)
+    positionAdjustment: sanitizeMatchingPositionAdjustmentSettings(positionAdjustment),
+    dataFieldAcceptanceThreshold
   });
 }
 
@@ -10160,7 +10174,7 @@ function isClientsDirty() {
 }
 
 function isMatchingDirty() {
-  return normalizedMatchingJson(matchingDraft) !== matchingBaselineJson;
+  return normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft) !== matchingBaselineJson;
 }
 
 function isSendersDirty() {
@@ -12942,6 +12956,9 @@ function syncMatchingPositionAdjustmentInputs() {
   }
   if (matchingDownXOffsetPenaltyEl) {
     matchingDownXOffsetPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.downXOffsetPenalty, null);
+  }
+  if (matchingDataFieldAcceptanceThresholdEl) {
+    matchingDataFieldAcceptanceThresholdEl.value = formatMatchingPercentInput(matchingDataFieldAcceptanceThresholdDraft, null);
   }
 }
 
@@ -17159,10 +17176,11 @@ async function loadMatchingSettings() {
 
   matchingDraft = payload.replacements.map(sanitizeReplacement);
   matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(payload.positionAdjustment);
+  matchingDataFieldAcceptanceThresholdDraft = payload.dataFieldAcceptanceThreshold ?? 0.5;
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -17423,7 +17441,8 @@ async function saveMatchingSettings() {
     },
     body: JSON.stringify({
       replacements: normalized,
-      positionAdjustment
+      positionAdjustment,
+      dataFieldAcceptanceThreshold: matchingDataFieldAcceptanceThresholdDraft
     })
   });
 
@@ -17437,10 +17456,11 @@ async function saveMatchingSettings() {
 
   matchingDraft = payload.replacements.map(sanitizeReplacement);
   matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(payload.positionAdjustment);
+  matchingDataFieldAcceptanceThresholdDraft = payload.dataFieldAcceptanceThreshold ?? 0.5;
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft);
   renderMatchingEditor();
   watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
@@ -18226,7 +18246,8 @@ settingsTabEls.forEach((tabButton) => {
         alert('Kunde inte ladda matchningsinställningar.');
         matchingDraft = [defaultReplacement()];
         matchingPositionAdjustmentDraft = defaultMatchingPositionAdjustmentSettings();
-        matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft);
+        matchingDataFieldAcceptanceThresholdDraft = 0.5;
+        matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft);
         renderMatchingEditor();
       } else if (tabId === 'ocr-processing') {
         alert('Kunde inte ladda OCR-inställningar.');

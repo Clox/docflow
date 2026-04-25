@@ -47,6 +47,10 @@ $positionAdjustment = normalize_matching_position_adjustment_settings(
     is_array($payload['positionAdjustment'] ?? null) ? $payload['positionAdjustment'] : []
 );
 
+$dataFieldAcceptanceThreshold = is_numeric($payload['dataFieldAcceptanceThreshold'] ?? null)
+    ? clamp_confidence((float) $payload['dataFieldAcceptanceThreshold'])
+    : 0.5;
+
 try {
     $config = load_config();
     ensure_job_dispatcher_running($config);
@@ -54,6 +58,7 @@ try {
     write_json_file(DATA_DIR . '/matching.json', [
         'replacements' => $normalized,
         'positionAdjustment' => $positionAdjustment,
+        'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
     ]);
 
     $reprocessedJobs = [
@@ -66,6 +71,7 @@ try {
         !== json_encode([
             'replacements' => $normalized,
             'positionAdjustment' => $positionAdjustment,
+            'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
     ) {
         $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false);
@@ -75,6 +81,7 @@ try {
         'ok' => true,
         'replacements' => $normalized,
         'positionAdjustment' => $positionAdjustment,
+        'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
         'reprocessedJobs' => $reprocessedJobs,
     ]);
 } catch (Throwable $e) {

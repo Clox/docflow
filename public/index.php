@@ -205,10 +205,10 @@
             aria-label="Inställningar"
             title="Inställningar"
           >
-<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-	<path d="M9.94 4.08c.09-.57.58-.98 1.15-.98h2.68c.57 0 1.06.41 1.15.98l.22 1.33c.07.39.33.71.67.91l.23.14c.34.21.76.26 1.11.12l1.27-.46c.53-.2 1.13.02 1.42.5l1.34 2.33c.29.5.17 1.12-.27 1.48l-1.03.86c-.31.25-.46.63-.45 1.03a8.06 8.06 0 0 1 0 .27c-.01.39.14.77.45 1.02l1.03.86c.44.36.56.98.27 1.48l-1.34 2.33c-.29.49-.89.7-1.42.5l-1.27-.47a1.31 1.31 0 0 0-1.11.14l-.23.13c-.34.19-.6.52-.67.91l-.22 1.33c-.09.56-.58.97-1.15.97h-2.68c-.57 0-1.06-.41-1.15-.97l-.22-1.33c-.06-.39-.32-.72-.67-.91l-.23-.13a1.31 1.31 0 0 0-1.11-.14l-1.27.47c-.53.2-1.13-.01-1.42-.5l-1.34-2.33c-.29-.5-.17-1.12.27-1.48l1.03-.86c.31-.25.46-.63.45-1.02a7.2 7.2 0 0 1 0-.27c.01-.4-.14-.78-.45-1.03l-1.03-.86c-.44-.36-.56-.98-.27-1.48l1.34-2.33c.29-.48.89-.7 1.42-.5l1.27.46c.35.14.77.09 1.11-.12l.23-.14c.35-.2.61-.52.67-.91l.22-1.33Z"/>
-	<path d="M15.54 12.43a3.11 3.11 0 1 1-6.21 0 3.11 3.11 0 0 1 6.21 0Z"/>
-</svg>
+		<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+			<path d="M9.94 4.08c.09-.57.58-.98 1.15-.98h2.68c.57 0 1.06.41 1.15.98l.22 1.33c.07.39.33.71.67.91l.23.14c.34.21.76.26 1.11.12l1.27-.46c.53-.2 1.13.02 1.42.5l1.34 2.33c.29.5.17 1.12-.27 1.48l-1.03.86c-.31.25-.46.63-.45 1.03a8.06 8.06 0 0 1 0 .27c-.01.39.14.77.45 1.02l1.03.86c.44.36.56.98.27 1.48l-1.34 2.33c-.29.49-.89.7-1.42.5l-1.27-.47a1.31 1.31 0 0 0-1.11.14l-.23.13c-.34.19-.6.52-.67.91l-.22 1.33c-.09.56-.58.97-1.15.97h-2.68c-.57 0-1.06-.41-1.15-.97l-.22-1.33c-.06-.39-.32-.72-.67-.91l-.23-.13a1.31 1.31 0 0 0-1.11-.14l-1.27.47c-.53.2-1.13-.01-1.42-.5l-1.34-2.33c-.29-.5-.17-1.12.27-1.48l1.03-.86c.31-.25.46-.63.45-1.02a7.2 7.2 0 0 1 0-.27c.01-.4-.14-.78-.45-1.03l-1.03-.86c-.44-.36-.56-.98-.27-1.48l1.34-2.33c.29-.48.89-.7 1.42-.5l1.27.46c.35.14.77.09 1.11-.12l.23-.14c.35-.2.61-.52.67-.91l.22-1.33Z"/>
+			<path d="M15.54 12.43a3.11 3.11 0 1 1-6.21 0 3.11 3.11 0 0 1 6.21 0Z"/>
+		</svg>
           </button>
         </div>
       </div>
@@ -461,6 +461,18 @@
         </div>
       </div>
       <p>Kandidater som ligger till vänster eller ovanför förkastas. För kandidater till höger används bara y-avvikelse, och för kandidater under används bara x-avvikelse.</p>
+    </div>
+    <div class="matching-acceptance-threshold-section">
+      <h4>Accepterade datafältsvärden</h4>
+      <p>Minsta säkerhet som krävs för att en datafältsmatchning ska accepteras som ett giltigt värde.</p>
+      <div class="matching-threshold-field">
+        <label class="settings-label" for="matching-data-field-acceptance-threshold">Minsta säkerhet för accepterat datafältsvärde</label>
+        <div class="matching-percent-field">
+          <input id="matching-data-field-acceptance-threshold" type="number" min="0" max="100" step="0.1" inputmode="decimal">
+          <span>%</span>
+        </div>
+      </div>
+      <p>Matchningar under denna tröskel visas fortfarande i matchningsvyer men används inte som accepterade värden i fakturadetaljer, filnamnsmallar eller arkiveringslogik.</p>
     </div>
     <div class="matching-replacements-section">
       <p>Definiera teckenersättningar för OCR-text före matchning.</p>
