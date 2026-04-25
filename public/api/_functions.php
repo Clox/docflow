@@ -201,19 +201,91 @@ function load_clients(): array
         $pin = is_string($row['personal_identity_number'] ?? null)
             ? trim((string) $row['personal_identity_number'])
             : '';
+        $preferredFirstNameIndex = normalize_client_preferred_first_name_index(
+            $row['preferred_first_name_index'] ?? null,
+            $firstName
+        );
+        $preferredFirstName = client_preferred_first_name_from_parts(
+            split_client_first_names($firstName),
+            $preferredFirstNameIndex
+        );
 
-        if ($name === '' || $dirName === '' || $pin === '') {
+        if ($dirName === '' || $pin === '') {
             continue;
         }
 
         $clients[] = [
             'name' => $name,
             'dirName' => $dirName,
+            'firstName' => $firstName,
+            'lastName' => $lastName,
             'personalIdentityNumber' => $pin,
+            'preferredFirstNameIndex' => $preferredFirstNameIndex,
+            'preferredFirstName' => $preferredFirstName,
         ];
     }
 
     return $clients;
+}
+
+function split_client_first_names(string $firstName): array
+{
+    $normalized = normalize_inline_whitespace($firstName);
+    if ($normalized === '') {
+        return [];
+    }
+
+    $parts = preg_split('/\s+/u', $normalized, -1, PREG_SPLIT_NO_EMPTY);
+    return is_array($parts) ? array_values($parts) : [];
+}
+
+function normalize_client_preferred_first_name_index(mixed $value, string $firstName): ?int
+{
+    return normalize_client_preferred_first_name_index_from_parts($value, split_client_first_names($firstName));
+}
+
+function normalize_client_preferred_first_name_index_from_parts(mixed $value, array $parts): ?int
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+
+    if (is_string($value)) {
+        $value = trim($value);
+    }
+
+    if (!is_int($value) && !is_string($value) && !is_float($value)) {
+        return null;
+    }
+
+    if (!is_numeric($value)) {
+        return null;
+    }
+
+    $index = (int) $value;
+    if ($index < 0 || !array_key_exists($index, $parts)) {
+        return null;
+    }
+
+    return $index;
+}
+
+function client_preferred_first_name_from_parts(array $parts, ?int $preferredFirstNameIndex): ?string
+{
+    if ($preferredFirstNameIndex === null || !array_key_exists($preferredFirstNameIndex, $parts)) {
+        return null;
+    }
+
+    $value = trim((string) $parts[$preferredFirstNameIndex]);
+    return $value !== '' ? $value : null;
+}
+
+function client_preferred_first_name(array $client): ?string
+{
+    $firstName = is_string($client['firstName'] ?? null) ? (string) $client['firstName'] : '';
+    $parts = split_client_first_names($firstName);
+    $index = normalize_client_preferred_first_name_index_from_parts($client['preferredFirstNameIndex'] ?? null, $parts);
+    return client_preferred_first_name_from_parts($parts, $index);
 }
 
 function client_repository_instance(): ?\Docflow\Clients\ClientRepository
@@ -6014,33 +6086,129 @@ function fallback_ocr_text_from_path(?string $txtPath): string
     return $text === false ? '' : $text;
 }
 
-function match_client_dir_name(string $ocrText, array $clients): ?string
+function normalize_client_match_haystack(string $text): string
+{
+    return normalize_inline_whitespace(lowercase_text($text));
+}
+
+function find_client_matches(string $ocrText, array $clients): array
 {
     $normalizedText = preg_replace('/\D+/', '', $ocrText);
     if (!is_string($normalizedText)) {
         $normalizedText = '';
     }
+    $normalizedHaystack = normalize_client_match_haystack($ocrText);
 
-    foreach ($clients as $client) {
-        $pin = $client['personalIdentityNumber'] ?? '';
-        $dirName = $client['dirName'] ?? '';
-
-        if (!is_string($pin) || !is_string($dirName) || $dirName === '') {
+    $matches = [];
+    foreach (array_values($clients) as $clientIndex => $client) {
+        if (!is_array($client)) {
             continue;
         }
+
+        $dirName = is_string($client['dirName'] ?? null) ? trim((string) $client['dirName']) : '';
+        $pin = is_string($client['personalIdentityNumber'] ?? null) ? trim((string) $client['personalIdentityNumber']) : '';
+        $lastName = is_string($client['lastName'] ?? null) ? trim((string) $client['lastName']) : '';
+        $preferredFirstName = client_preferred_first_name($client);
+        if ($dirName === '' || $pin === '') {
+            continue;
+        }
+
+        $matchedSignals = [];
+        $bestPosition = PHP_INT_MAX;
+        $score = 0;
 
         $pinNoHyphen = str_replace('-', '', $pin);
         $pinDigits = preg_replace('/\D+/', '', $pinNoHyphen);
-        if (!is_string($pinDigits) || $pinDigits === '') {
+        if (!is_string($pinDigits)) {
+            $pinDigits = '';
+        }
+        $pinPosition = null;
+        if ($pin !== '' && str_contains($ocrText, $pin)) {
+            $pinPosition = strpos($ocrText, $pin);
+        } elseif ($pinNoHyphen !== '' && str_contains($ocrText, $pinNoHyphen)) {
+            $pinPosition = strpos($ocrText, $pinNoHyphen);
+        } elseif ($pinDigits !== '' && str_contains($normalizedText, $pinDigits)) {
+            $pinPosition = strpos($normalizedText, $pinDigits);
+        }
+        if ($pinPosition !== false && $pinPosition !== null) {
+            $matchedSignals[] = [
+                'type' => 'personal_identity_number',
+                'label' => 'Personnummer',
+                'value' => $pin,
+            ];
+            $bestPosition = min($bestPosition, (int) $pinPosition);
+            $score += 2;
+        }
+
+        if ($preferredFirstName !== null && $lastName !== '') {
+            $formattedName = trim($lastName . ', ' . $preferredFirstName);
+            $normalizedNeedle = normalize_client_match_haystack($formattedName);
+            $namePosition = $normalizedNeedle !== '' ? strpos($normalizedHaystack, $normalizedNeedle) : false;
+            if ($namePosition !== false) {
+                $matchedSignals[] = [
+                    'type' => 'name',
+                    'label' => 'Namn',
+                    'value' => $formattedName,
+                ];
+                $bestPosition = min($bestPosition, (int) $namePosition);
+                $score += 1;
+            }
+        }
+
+        if ($matchedSignals === []) {
             continue;
         }
 
-        if (str_contains($ocrText, $pin) || str_contains($ocrText, $pinNoHyphen) || str_contains($normalizedText, $pinDigits)) {
-            return $dirName;
-        }
+        $matches[] = [
+            'dirName' => $dirName,
+            'displayName' => $dirName,
+            'matchedName' => null,
+            'matchedPersonalIdentityNumber' => null,
+            'matchedSignals' => $matchedSignals,
+            '_score' => $score,
+            '_position' => $bestPosition,
+            '_clientIndex' => $clientIndex,
+        ];
     }
 
-    return null;
+    usort($matches, static function (array $left, array $right): int {
+        $scoreCompare = ((int) ($right['_score'] ?? 0)) <=> ((int) ($left['_score'] ?? 0));
+        if ($scoreCompare !== 0) {
+            return $scoreCompare;
+        }
+
+        $positionCompare = ((int) ($left['_position'] ?? PHP_INT_MAX)) <=> ((int) ($right['_position'] ?? PHP_INT_MAX));
+        if ($positionCompare !== 0) {
+            return $positionCompare;
+        }
+
+        return ((int) ($left['_clientIndex'] ?? PHP_INT_MAX)) <=> ((int) ($right['_clientIndex'] ?? PHP_INT_MAX));
+    });
+
+    return array_values(array_map(static function (array $match): array {
+        foreach ($match['matchedSignals'] as $signal) {
+            if (!is_array($signal)) {
+                continue;
+            }
+            if (($signal['type'] ?? null) === 'name' && is_string($signal['value'] ?? null)) {
+                $match['matchedName'] = trim((string) $signal['value']);
+            }
+            if (($signal['type'] ?? null) === 'personal_identity_number' && is_string($signal['value'] ?? null)) {
+                $match['matchedPersonalIdentityNumber'] = trim((string) $signal['value']);
+            }
+        }
+
+        unset($match['_score'], $match['_position'], $match['_clientIndex']);
+        return $match;
+    }, $matches));
+}
+
+function match_client_dir_name(string $ocrText, array $clients): ?string
+{
+    $matches = find_client_matches($ocrText, $clients);
+    $firstMatch = is_array($matches[0] ?? null) ? $matches[0] : null;
+    $dirName = is_string($firstMatch['dirName'] ?? null) ? trim((string) $firstMatch['dirName']) : '';
+    return $dirName !== '' ? $dirName : null;
 }
 
 function lowercase_text(string $text): string
@@ -11466,7 +11634,11 @@ function calculate_auto_archiving_result_from_text(
     $fieldPartitions = partition_archiving_field_values($configuredFieldValues, $rules);
     $fieldNamesByKey = build_label_matching_field_name_map($configuredFields);
 
-    $matchedClientDirName = match_client_dir_name($ocrText, $clients);
+    $clientMatches = find_client_matches($ocrText, $clients);
+    $firstClientMatch = is_array($clientMatches[0] ?? null) ? $clientMatches[0] : null;
+    $matchedClientDirName = is_string($firstClientMatch['dirName'] ?? null)
+        ? trim((string) $firstClientMatch['dirName'])
+        : null;
     $preselectedClient = null;
     if (is_string($matchedClientDirName) && trim($matchedClientDirName) !== '') {
         $preselectedClient = [
@@ -11539,6 +11711,7 @@ function calculate_auto_archiving_result_from_text(
     return [
         'matchedClientDirName' => $matchedClientDirName,
         'matchedSenderId' => $matchedSenderId,
+        'clientMatches' => $clientMatches,
         'preselectedClient' => $preselectedClient,
         'preselectedSender' => $preselectedSender,
         'systemLabelMatches' => $systemLabelMatches,
@@ -13191,6 +13364,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
         'analysis' => [
             'preselectedClient' => null,
             'preselectedSender' => null,
+            'clientMatches' => [],
             'senderMatches' => [],
             'extractionFields' => new stdClass(),
             'extractionFieldMeta' => new stdClass(),
@@ -13433,6 +13607,7 @@ function process_claimed_job(
         'labels' => $analysisPayload['labels'],
         'extractionFields' => $analysisPayload['extractionFieldValues'],
         'extractionFieldMeta' => $analysisPayload['extractionFieldMeta'] !== [] ? $analysisPayload['extractionFieldMeta'] : new stdClass(),
+        'clientMatches' => $analysisPayload['clientMatches'],
         'preselectedClient' => $analysisPayload['preselectedClient'],
         'preselectedSender' => null,
         'autoArchivingResult' => $analysisPayload['autoArchivingResult'],
@@ -13467,6 +13642,7 @@ function process_claimed_job(
         'labels' => $analysisPayload['labels'],
         'extractionFields' => $analysisPayload['extractionFieldValues'],
         'extractionFieldMeta' => $analysisPayload['extractionFieldMeta'] !== [] ? $analysisPayload['extractionFieldMeta'] : new stdClass(),
+        'clientMatches' => $analysisPayload['clientMatches'],
         'preselectedClient' => $analysisPayload['preselectedClient'],
         'preselectedSender' => $analysisPayload['preselectedSender'],
         'senderMatches' => $analysisPayload['senderMatches'],
@@ -13486,6 +13662,7 @@ function process_claimed_job(
         'analysis' => [
             'preselectedClient' => $analysisPayload['preselectedClient'],
             'preselectedSender' => $analysisPayload['preselectedSender'],
+            'clientMatches' => $analysisPayload['clientMatches'],
             'senderMatches' => $analysisPayload['senderMatches'],
             'extractionFields' => $analysisPayload['extractionFieldValues'],
             'extractionFieldMeta' => $analysisPayload['extractionFieldMeta'] !== [] ? $analysisPayload['extractionFieldMeta'] : new stdClass(),

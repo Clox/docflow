@@ -71,6 +71,12 @@
             <div class="selected-job-panel-section-title">Okända avsändaruppgifter</div>
             <div id="selected-job-sender-unknown-info" class="selected-job-sender-info"></div>
           </div>
+          <div id="selected-job-clients-section" class="selected-job-panel-section">
+            <div class="selected-job-panel-section-title">Huvudman</div>
+            <div id="selected-job-client-linked-info" class="selected-job-sender-info">
+              Ingen huvudmansinformation tillgänglig ännu.
+            </div>
+          </div>
           <div id="selected-job-senders-section" class="selected-job-panel-section">
             <div class="selected-job-panel-section-title">Avsändare</div>
             <div id="selected-job-sender-linked-info" class="selected-job-sender-info">

@@ -3381,7 +3381,8 @@ body.is-resizing-sidebar {
   justify-self: end;
 }
 
-.client-fields input {
+.client-fields input,
+.client-fields select {
   width: 100%;
   font: inherit;
   padding: 6px 8px;

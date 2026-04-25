@@ -77,6 +77,8 @@ const selectedJobPanelEl = document.getElementById('selected-job-panel');
 const selectedJobActionsPanelEl = document.getElementById('selected-job-actions-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
 const selectedJobMetaEl = document.getElementById('selected-job-meta');
+const selectedJobClientsSectionEl = document.getElementById('selected-job-clients-section');
+const selectedJobClientLinkedInfoEl = document.getElementById('selected-job-client-linked-info');
 const selectedJobSendersSectionEl = document.getElementById('selected-job-senders-section');
 const selectedJobSenderLinkedInfoEl = document.getElementById('selected-job-sender-linked-info');
 const selectedJobSenderUnknownSectionEl = document.getElementById('selected-job-sender-unknown-section');
@@ -2946,14 +2948,116 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
   container.appendChild(tableWrap);
 }
 
+function appendClientMatchesSection(container, title, clientMatches, emptyMessage) {
+  const heading = document.createElement('h3');
+  heading.className = 'matches-header';
+  heading.textContent = title;
+  container.appendChild(heading);
+
+  if (!Array.isArray(clientMatches) || clientMatches.length < 1) {
+    const empty = document.createElement('div');
+    empty.className = 'matches-empty';
+    empty.textContent = emptyMessage;
+    container.appendChild(empty);
+    return;
+  }
+
+  const groups = clientMatches
+    .map((match) => {
+      const displayName = typeof match?.displayName === 'string' ? match.displayName.trim() : '';
+      const signals = Array.isArray(match?.signals)
+        ? match.signals.filter((signal) => signal && typeof signal === 'object')
+        : [];
+      if (!displayName || signals.length < 1) {
+        return null;
+      }
+      return { displayName, signals };
+    })
+    .filter(Boolean);
+
+  if (groups.length < 1) {
+    const empty = document.createElement('div');
+    empty.className = 'matches-empty';
+    empty.textContent = emptyMessage;
+    container.appendChild(empty);
+    return;
+  }
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'matches-table-wrap';
+
+  const table = document.createElement('table');
+  table.className = 'matches-table';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  ['Huvudman', 'Matchning', 'Värde'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  groups.forEach((group, groupIndex) => {
+    if (groupIndex > 0) {
+      const separatorRow = document.createElement('tr');
+      separatorRow.className = 'matches-group-separator';
+      const separatorCell = document.createElement('td');
+      separatorCell.colSpan = 3;
+      separatorRow.appendChild(separatorCell);
+      tbody.appendChild(separatorRow);
+    }
+
+    group.signals.forEach((signal, signalIndex) => {
+      const tr = document.createElement('tr');
+      if (signalIndex === 0) {
+        tr.classList.add('matches-group-start');
+      }
+      if (signalIndex === group.signals.length - 1) {
+        tr.classList.add('matches-group-end');
+      }
+      if (signalIndex > 0) {
+        tr.classList.add('matches-group-rowspan-continuation');
+      }
+
+      if (signalIndex === 0) {
+        const nameCell = document.createElement('td');
+        nameCell.className = 'matches-field-name-cell';
+        nameCell.textContent = group.displayName;
+        nameCell.rowSpan = group.signals.length;
+        tr.appendChild(nameCell);
+      }
+
+      const typeCell = document.createElement('td');
+      typeCell.className = 'matches-group-detail-start';
+      typeCell.textContent = typeof signal.label === 'string' && signal.label.trim() !== '' ? signal.label.trim() : 'Matchning';
+      tr.appendChild(typeCell);
+
+      const valueCell = document.createElement('td');
+      valueCell.textContent = typeof signal.value === 'string' ? signal.value : '';
+      tr.appendChild(valueCell);
+
+      tbody.appendChild(tr);
+    });
+  });
+
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  container.appendChild(tableWrap);
+}
+
 function renderMatchesContent(payload) {
   matchesViewEl.innerHTML = '';
 
   const labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
   const fields = payload && typeof payload.fields === 'object' && payload.fields !== null ? payload.fields : {};
+  const clients = payload && Array.isArray(payload.clients) ? payload.clients : [];
 
   appendRuleMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
   appendFieldMatchesSection(matchesViewEl, 'Datafält', fields, 'Inga datafältsmatchningar hittades.');
+  appendClientMatchesSection(matchesViewEl, 'Huvudman', clients, 'Inga huvudmansmatchningar hittades.');
 }
 
 async function setViewerMatches(jobId) {
@@ -5952,6 +6056,15 @@ function senderLinkedRowsForJob(job) {
     : [];
 }
 
+function clientMatchRowsForJob(job) {
+  const analysis = job && job.analysis && typeof job.analysis === 'object'
+    ? job.analysis
+    : null;
+  return analysis && Array.isArray(analysis.clientMatches)
+    ? analysis.clientMatches.filter((row) => row && typeof row === 'object')
+    : [];
+}
+
 function selectedJobSenderObservationSpinnerPaused(observation) {
   if (!observation || typeof observation !== 'object') {
     return false;
@@ -5990,6 +6103,16 @@ function clearSelectedJobSenderSectionMessage(message) {
   }
 }
 
+function clearSelectedJobClientSectionMessage(message) {
+  if (!(selectedJobClientLinkedInfoEl instanceof HTMLElement)) {
+    return;
+  }
+  if (selectedJobClientsSectionEl instanceof HTMLElement) {
+    selectedJobClientsSectionEl.removeAttribute('hidden');
+  }
+  selectedJobClientLinkedInfoEl.textContent = message;
+}
+
 function applySelectedClientValue(value) {
   if (!selectedJobId) {
     return;
@@ -6008,6 +6131,7 @@ function applySelectedClientValue(value) {
 
   const currentJob = findJobById(selectedJobId);
   updateArchivedReviewDraftFromSidebar(currentJob);
+  renderSelectedJobClientSection(currentJob);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
   updateSelectedJobResetActions(currentJob);
@@ -6016,6 +6140,7 @@ function applySelectedClientValue(value) {
   }
   saveSelectedJobFields(selectedJobId, { selectedClientDirName: value || null }).catch((error) => {
     restoreSelectedJobEditorState();
+    renderSelectedJobClientSection(findJobById(selectedJobId));
     alert(error.message || 'Kunde inte spara huvudman.');
   });
 }
@@ -6104,6 +6229,7 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
     setClientForJob(findJobById(job.id));
     const currentJob = findJobById(job.id);
     updateArchivedReviewDraftFromSidebar(currentJob);
+    renderSelectedJobClientSection(currentJob);
     syncFilenameField(currentJob);
     updateArchiveAction(currentJob);
     updateSelectedJobResetActions(currentJob);
@@ -6178,6 +6304,137 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
     syncFilenameField(currentJob);
     updateArchiveAction(currentJob);
     updateSelectedJobResetActions(currentJob);
+  }
+}
+
+function renderSelectedJobClientSection(job) {
+  if (!(selectedJobClientLinkedInfoEl instanceof HTMLElement)) {
+    return;
+  }
+
+  if (!job) {
+    clearSelectedJobClientSectionMessage('Ingen huvudmansinformation tillgänglig ännu.');
+    return;
+  }
+
+  const clients = clientMatchRowsForJob(job);
+  if (clients.length < 1) {
+    clearSelectedJobClientSectionMessage('Ingen huvudmansinformation tillgänglig ännu.');
+    return;
+  }
+
+  const clientList = document.createElement('ul');
+  clientList.className = 'selected-job-sender-linked-list';
+  const resolvedSelectedClientDirName = effectiveClientDirName(job);
+  clients.forEach((clientRow, index) => {
+    const dirName = typeof clientRow.dirName === 'string' ? clientRow.dirName.trim() : '';
+    const displayName = typeof clientRow.displayName === 'string' && clientRow.displayName.trim() !== ''
+      ? clientRow.displayName.trim()
+      : dirName;
+    const matchedName = typeof clientRow.matchedName === 'string' ? clientRow.matchedName.trim() : '';
+    const matchedPin = typeof clientRow.matchedPersonalIdentityNumber === 'string'
+      ? clientRow.matchedPersonalIdentityNumber.trim()
+      : '';
+    if (displayName === '') {
+      return;
+    }
+
+    const item = document.createElement('li');
+    item.className = 'selected-job-sender-linked-item';
+
+    const clientChoiceId = `selected-job-client-choice-${index}`;
+    const clientChoiceWrap = document.createElement('label');
+    clientChoiceWrap.className = 'selected-job-sender-radio-wrap';
+    clientChoiceWrap.htmlFor = clientChoiceId;
+
+    const clientChoice = document.createElement('input');
+    clientChoice.type = 'radio';
+    clientChoice.name = 'selected-job-client-choice';
+    clientChoice.id = clientChoiceId;
+    clientChoice.className = 'selected-job-sender-radio';
+    clientChoice.value = dirName;
+    clientChoice.checked = dirName !== '' && dirName === resolvedSelectedClientDirName;
+    clientChoice.disabled = !selectedJobArchivingEditable(job) || dirName === '';
+    clientChoice.addEventListener('change', () => {
+      if (!clientChoice.checked || dirName === '') {
+        return;
+      }
+      applySelectedClientValue(dirName);
+    });
+    clientChoiceWrap.appendChild(clientChoice);
+
+    const body = document.createElement('div');
+    body.className = 'selected-job-sender-linked-body';
+
+    const header = document.createElement('div');
+    header.className = 'selected-job-sender-linked-header is-found';
+
+    const headerMain = document.createElement('div');
+    headerMain.className = 'selected-job-sender-linked-header-main';
+
+    const headerName = document.createElement('div');
+    headerName.className = 'selected-job-sender-linked-title';
+    headerName.textContent = displayName;
+    headerMain.appendChild(headerName);
+    header.appendChild(headerMain);
+
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'selected-job-sender-open';
+    openButton.textContent = '↗';
+    openButton.title = 'Öppna i huvudmansregister';
+    openButton.setAttribute('aria-label', 'Öppna i huvudmansregister');
+    openButton.addEventListener('click', () => {
+      openClientInRegister(dirName);
+    });
+    header.appendChild(openButton);
+
+    const components = document.createElement('div');
+    components.className = 'selected-job-sender-components';
+
+    const appendComponentRow = (label, valueText) => {
+      if (typeof valueText !== 'string' || valueText.trim() === '') {
+        return;
+      }
+      const row = document.createElement('div');
+      row.className = 'selected-job-sender-component-row is-found';
+
+      const marker = document.createElement('span');
+      marker.className = 'selected-job-sender-component-marker';
+      marker.textContent = '✓';
+
+      const text = document.createElement('span');
+      text.className = 'selected-job-sender-component-text';
+
+      const key = document.createElement('span');
+      key.className = 'selected-job-sender-component-key';
+      key.textContent = label;
+
+      const value = document.createElement('span');
+      value.className = 'selected-job-sender-component-value';
+      value.textContent = ` ${valueText.trim()}`;
+
+      text.append(key, value);
+      row.append(text, marker);
+      components.appendChild(row);
+    };
+
+    appendComponentRow('Namn', matchedName);
+    appendComponentRow('Personnummer', matchedPin);
+
+    body.append(header, components);
+    item.append(clientChoiceWrap, body);
+    clientList.appendChild(item);
+  });
+
+  if (clientList.childElementCount < 1) {
+    clearSelectedJobClientSectionMessage('Ingen huvudmansinformation tillgänglig ännu.');
+    return;
+  }
+
+  selectedJobClientLinkedInfoEl.replaceChildren(clientList);
+  if (selectedJobClientsSectionEl instanceof HTMLElement) {
+    selectedJobClientsSectionEl.removeAttribute('hidden');
   }
 }
 
@@ -7424,6 +7681,7 @@ function renderSelectedJobPanel() {
       selectedJobStatusEl.textContent = '';
     }
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
+    renderSelectedJobClientSection(null);
     renderSelectedJobSenderSection(null);
     syncSelectedJobActionsWarning(null);
     setLabelsForJob(null);
@@ -7468,6 +7726,7 @@ function renderSelectedJobPanel() {
   }
 
   selectedJobMetaEl.replaceChildren(...metaLines);
+  renderSelectedJobClientSection(selectedJob);
   renderSelectedJobSenderSection(selectedJob);
   syncSelectedJobActionsWarning(selectedJob);
   if (reprocessButtonEl instanceof HTMLButtonElement) {
@@ -10023,6 +10282,28 @@ async function openSenderInRegister(senderId) {
   focusSenderDraftRow(senderUiKey(senderRow));
 }
 
+async function openClientInRegister(clientDirName) {
+  const normalizedDirName = typeof clientDirName === 'string' ? clientDirName.trim() : '';
+  if (!normalizedDirName) {
+    return;
+  }
+
+  const opened = await openClientsSettingsDirect();
+  if (opened === false) {
+    return;
+  }
+
+  renderClientsEditor();
+  const clientRow = clientsDraft.find((row) => {
+    return row && typeof row.folderName === 'string' && row.folderName.trim() === normalizedDirName;
+  }) || null;
+  if (!clientRow) {
+    return;
+  }
+
+  focusClientDraftRow(clientUiKey(clientRow));
+}
+
 async function openArchiveStructureSettingsDirect() {
   if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
     return false;
@@ -10504,6 +10785,32 @@ function clientUiKey(row) {
   return `tmp-client-${clientDraftUiKeySeq++}`;
 }
 
+function splitClientFirstNames(value) {
+  const normalized = typeof value === 'string'
+    ? value.trim().replace(/\s+/gu, ' ')
+    : '';
+  return normalized === '' ? [] : normalized.split(' ');
+}
+
+function normalizePreferredFirstNameIndex(value, firstName) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const parts = Array.isArray(firstName) ? firstName : splitClientFirstNames(firstName);
+  const numeric = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(numeric) || numeric < 0 || numeric >= parts.length) {
+    return null;
+  }
+  return numeric;
+}
+
+function preferredFirstNameForClientRow(row) {
+  const client = row && typeof row === 'object' ? row : {};
+  const parts = splitClientFirstNames(typeof client.firstName === 'string' ? client.firstName : '');
+  const index = normalizePreferredFirstNameIndex(client.preferredFirstNameIndex, parts);
+  return index === null ? '' : parts[index];
+}
+
 function sanitizeClientDraft(row) {
   const input = row && typeof row === 'object' ? row : {};
   const uiKey = clientUiKey(input);
@@ -10526,13 +10833,18 @@ function sanitizeClientDraft(row) {
   const personalIdentityNumber = typeof pinRaw === 'string' || typeof pinRaw === 'number'
     ? String(pinRaw)
     : '';
+  const preferredFirstNameIndex = normalizePreferredFirstNameIndex(
+    input.preferredFirstNameIndex,
+    firstName
+  );
 
   return {
     uiKey,
     firstName,
     lastName,
     folderName,
-    personalIdentityNumber
+    personalIdentityNumber,
+    preferredFirstNameIndex
   };
 }
 
@@ -10542,7 +10854,8 @@ function serializeClientDraft(row) {
     firstName: client.firstName.trim(),
     lastName: client.lastName.trim(),
     folderName: client.folderName.trim(),
-    personalIdentityNumber: client.personalIdentityNumber.trim()
+    personalIdentityNumber: client.personalIdentityNumber.trim(),
+    preferredFirstNameIndex: client.preferredFirstNameIndex
   };
 }
 
@@ -10556,7 +10869,8 @@ function defaultClientDraft() {
     firstName: '',
     lastName: '',
     folderName: '',
-    personalIdentityNumber: ''
+    personalIdentityNumber: '',
+    preferredFirstNameIndex: null
   });
 }
 
@@ -12822,12 +13136,56 @@ function renderClientsEditor() {
 
     const firstNameInput = document.createElement('input');
     firstNameInput.type = 'text';
-    firstNameInput.placeholder = 'Ex: Johan';
+    firstNameInput.placeholder = 'Ex: Johan Petter';
     firstNameInput.value = row.firstName || '';
     firstNameInput.addEventListener('input', () => {
       clientsDraft[rowIndex].firstName = firstNameInput.value;
       updateSettingsActionButtons();
     });
+
+    const preferredFirstNameSelect = document.createElement('select');
+    const syncPreferredFirstNameOptions = (preferredName = null) => {
+      const parts = splitClientFirstNames(firstNameInput.value);
+      const currentDraft = clientsDraft[rowIndex];
+      let nextIndex = null;
+      if (typeof preferredName === 'string' && preferredName.trim() !== '') {
+        const matchIndex = parts.findIndex((part) => part === preferredName.trim());
+        nextIndex = matchIndex >= 0 ? matchIndex : null;
+      } else {
+        nextIndex = normalizePreferredFirstNameIndex(currentDraft.preferredFirstNameIndex, parts);
+      }
+      currentDraft.preferredFirstNameIndex = nextIndex;
+
+      preferredFirstNameSelect.innerHTML = '';
+      const placeholderOption = document.createElement('option');
+      placeholderOption.value = '';
+      placeholderOption.textContent = 'Välj tilltalsnamn';
+      preferredFirstNameSelect.appendChild(placeholderOption);
+      parts.forEach((part, partIndex) => {
+        const option = document.createElement('option');
+        option.value = String(partIndex);
+        option.textContent = part;
+        preferredFirstNameSelect.appendChild(option);
+      });
+      preferredFirstNameSelect.disabled = parts.length < 1;
+      preferredFirstNameSelect.value = nextIndex === null ? '' : String(nextIndex);
+    };
+    preferredFirstNameSelect.addEventListener('change', () => {
+      clientsDraft[rowIndex].preferredFirstNameIndex = normalizePreferredFirstNameIndex(
+        preferredFirstNameSelect.value,
+        firstNameInput.value
+      );
+      updateSettingsActionButtons();
+    });
+    firstNameInput.addEventListener('blur', () => {
+      const selectedOption = preferredFirstNameSelect.selectedOptions[0] || null;
+      const previousPreferredName = selectedOption && preferredFirstNameSelect.value !== ''
+        ? selectedOption.textContent
+        : preferredFirstNameForClientRow(clientsDraft[rowIndex]);
+      syncPreferredFirstNameOptions(previousPreferredName || null);
+      updateSettingsActionButtons();
+    });
+    syncPreferredFirstNameOptions(preferredFirstNameForClientRow(row) || null);
 
     const lastNameInput = document.createElement('input');
     lastNameInput.type = 'text';
@@ -12859,6 +13217,7 @@ function renderClientsEditor() {
 
     fields.appendChild(createFloatingField('Visningsnamn/Mappnamn', folderInput));
     fields.appendChild(createFloatingField('Förnamn', firstNameInput));
+    fields.appendChild(createFloatingField('Tilltalsnamn', preferredFirstNameSelect));
     fields.appendChild(createFloatingField('Efternamn', lastNameInput));
     fields.appendChild(createFloatingField('Personnummer', pinInput));
     fields.appendChild(removeButton);
@@ -12880,6 +13239,28 @@ function focusFirstClientsField() {
   if (firstInput) {
     firstInput.focus();
   }
+}
+
+function focusClientDraftRow(clientUiKeyValue) {
+  if (!clientsListEl || typeof clientUiKeyValue !== 'string' || clientUiKeyValue.trim() === '') {
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    const clientNode = clientsListEl.querySelector(`[data-client-ui-key="${CSS.escape(clientUiKeyValue)}"]`);
+    if (!(clientNode instanceof HTMLElement)) {
+      return;
+    }
+    const firstInput = clientNode.querySelector('input[type="text"], select');
+    if (firstInput instanceof HTMLElement) {
+      firstInput.focus();
+      if ('select' in firstInput && typeof firstInput.select === 'function') {
+        firstInput.select();
+      }
+      return;
+    }
+    clientNode.scrollIntoView({ block: 'nearest' });
+  });
 }
 
 function renderMatchingEditor() {

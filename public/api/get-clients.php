@@ -22,6 +22,9 @@ try {
             'personalIdentityNumber' => is_string($row['personal_identity_number'] ?? null)
                 ? (string) $row['personal_identity_number']
                 : '',
+            'preferredFirstNameIndex' => isset($row['preferred_first_name_index']) && is_numeric($row['preferred_first_name_index'])
+                ? (int) $row['preferred_first_name_index']
+                : null,
         ];
     }
 

@@ -23,7 +23,7 @@ try {
 
     $extracted = load_json_file($extractedPath);
     if (!is_array($extracted)) {
-        json_response(['labels' => [], 'fields' => []]);
+        json_response(['labels' => [], 'fields' => [], 'clients' => []]);
         exit;
     }
 
@@ -44,6 +44,10 @@ try {
     $fieldMeta = $extracted['extractionFieldMeta'] ?? [];
     if (!is_array($fieldMeta)) {
         $fieldMeta = [];
+    }
+    $clientMatches = $extracted['clientMatches'] ?? [];
+    if (!is_array($clientMatches)) {
+        $clientMatches = [];
     }
 
     $fields = [];
@@ -299,13 +303,54 @@ try {
         ];
     }
 
+    $clients = [];
+    foreach ($clientMatches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+
+        $dirName = is_string($match['dirName'] ?? null) ? trim((string) $match['dirName']) : '';
+        $displayName = is_string($match['displayName'] ?? null) ? trim((string) $match['displayName']) : $dirName;
+        $signals = [];
+        foreach (is_array($match['matchedSignals'] ?? null) ? $match['matchedSignals'] : [] as $signal) {
+            if (!is_array($signal)) {
+                continue;
+            }
+
+            $label = is_string($signal['label'] ?? null) ? trim((string) $signal['label']) : '';
+            $value = is_string($signal['value'] ?? null) ? trim((string) $signal['value']) : '';
+            $type = is_string($signal['type'] ?? null) ? trim((string) $signal['type']) : '';
+            if ($label === '' || $value === '') {
+                continue;
+            }
+
+            $signals[] = [
+                'type' => $type,
+                'label' => $label,
+                'value' => $value,
+            ];
+        }
+
+        if ($displayName === '' || $signals === []) {
+            continue;
+        }
+
+        $clients[] = [
+            'dirName' => $dirName,
+            'displayName' => $displayName,
+            'signals' => $signals,
+        ];
+    }
+
     json_response([
         'labels' => $labels,
         'fields' => $fields,
+        'clients' => $clients,
     ]);
 } catch (Throwable $e) {
     json_response([
         'labels' => [],
         'fields' => [],
+        'clients' => [],
     ], 500);
 }
