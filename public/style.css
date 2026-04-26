@@ -1075,8 +1075,8 @@ body.is-resizing-sidebar {
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
-  flex-direction: row;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: flex-start;
   padding: 0;
   background: transparent;
@@ -1084,17 +1084,25 @@ body.is-resizing-sidebar {
   position: relative;
 }
 
-.app-notices-primary-row {
+.app-notices-preview-row {
+  width: 100%;
+  min-width: 0;
+  max-height: 76px;
+  overflow: hidden;
+}
+
+.app-notices-preview {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  max-width: 100%;
-  flex: 0 1 auto;
+  width: 100%;
+  overflow: hidden;
 }
 
 .app-notice {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: flex-start;
   flex: 0 1 auto;
@@ -1110,10 +1118,9 @@ body.is-resizing-sidebar {
 
 .app-notice--inline {
   flex: 0 1 auto;
-  max-width: min(820px, 100%);
 }
 
-.app-notice--popover {
+.app-notice--expanded {
   width: 100%;
   align-items: flex-start;
 }
@@ -1121,12 +1128,15 @@ body.is-resizing-sidebar {
 .app-notice-text {
   min-width: 0;
   flex: 1 1 auto;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.app-notice--inline .app-notice-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.app-notice--expanded .app-notice-text {
+  display: block;
+  overflow: visible;
 }
 
 .app-notice.is-warning {
@@ -1170,6 +1180,13 @@ body.is-resizing-sidebar {
   background: #e2e8f0;
 }
 
+.app-notices-overflow-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .app-notices-toggle {
   display: inline-flex;
   align-items: center;
@@ -1202,7 +1219,7 @@ body.is-resizing-sidebar {
   position: absolute;
   left: 0;
   top: calc(100% + 8px);
-  width: min(100%, 860px);
+  right: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1225,6 +1242,15 @@ body.is-resizing-sidebar {
   .app-notices-expanded-list {
     transition: none;
   }
+}
+
+.app-notices--measuring {
+  transition: none !important;
+}
+
+.app-notices--measuring .app-notices-expanded-list,
+.app-notices--measuring .app-notices-toggle {
+  transition: none !important;
 }
 
 .topbar-right {

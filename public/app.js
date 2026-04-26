@@ -506,6 +506,7 @@ let jobLabelsRenderedOptions = [];
 let jobLabelsSummaryRenderFrame = null;
 let appNoticesOverflowOpen = false;
 let topbarExpandedMetricsFrame = null;
+const APP_NOTICES_COLLAPSED_MAX_HEIGHT = 76;
 const uiTextMeasureCanvas = document.createElement('canvas');
 const uiTextMeasureContext = uiTextMeasureCanvas.getContext('2d');
 
@@ -1161,6 +1162,12 @@ function queueTopbarExpandedMetricsSync() {
     topbarEl.style.setProperty('--app-notices-expanded-list-height', `${expandedHeight}px`);
     topbarEl.style.setProperty('--app-notices-extra-height', `${expandedHeight + 8}px`);
   });
+}
+
+function normalizedAppNoticeText(text) {
+  return typeof text === 'string'
+    ? text.replace(/\s+/gu, ' ').trim()
+    : '';
 }
 
 function renderJobLabelsSummary(labelIds) {
@@ -4141,13 +4148,13 @@ function createAppNoticeElement(notice, options = {}) {
   if (options.inline === true) {
     noticeEl.classList.add('app-notice--inline');
   }
-  if (options.popover === true) {
-    noticeEl.classList.add('app-notice--popover');
+  if (options.expanded === true) {
+    noticeEl.classList.add('app-notice--expanded');
   }
 
   const textEl = document.createElement('span');
   textEl.className = 'app-notice-text';
-  textEl.textContent = notice.text;
+  textEl.textContent = normalizedAppNoticeText(notice.text);
   noticeEl.appendChild(textEl);
 
   const actionButtonEl = createAppNoticeButtonElement(notice.action || null);
@@ -4156,6 +4163,119 @@ function createAppNoticeElement(notice, options = {}) {
   }
 
   return noticeEl;
+}
+
+function createAppNoticesOverflowControls(overflowCount) {
+  const controlsEl = document.createElement('div');
+  controlsEl.className = 'app-notices-overflow-controls';
+
+  const overflowCountEl = document.createElement('span');
+  overflowCountEl.className = 'app-notices-more-count';
+  overflowCountEl.textContent = `+${overflowCount}`;
+  controlsEl.appendChild(overflowCountEl);
+
+  const overflowButtonEl = document.createElement('button');
+  overflowButtonEl.type = 'button';
+  overflowButtonEl.className = 'app-notices-toggle';
+  overflowButtonEl.textContent = appNoticesOverflowOpen ? 'Dölj' : 'Visa alla';
+  overflowButtonEl.setAttribute('aria-expanded', appNoticesOverflowOpen ? 'true' : 'false');
+  overflowButtonEl.title = appNoticesOverflowOpen ? 'Dölj notifieringar' : 'Visa alla notifieringar';
+  const toggleOverflow = () => {
+    appNoticesOverflowOpen = !appNoticesOverflowOpen;
+    renderAppNotices();
+  };
+  overflowButtonEl.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    toggleOverflow();
+  });
+  overflowButtonEl.addEventListener('click', (event) => {
+    if (event.detail !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    toggleOverflow();
+  });
+  controlsEl.appendChild(overflowButtonEl);
+
+  return controlsEl;
+}
+
+function measureCollapsedVisibleNoticeCount(notices) {
+  if (!(appNoticesEl instanceof HTMLElement) || !(topbarEl instanceof HTMLElement)) {
+    return Array.isArray(notices) ? notices.length : 0;
+  }
+  if (!Array.isArray(notices) || notices.length < 1) {
+    return 0;
+  }
+
+  const width = Math.max(0, Math.floor(appNoticesEl.getBoundingClientRect().width));
+  if (width < 1) {
+    return notices.length;
+  }
+
+  const measureHostEl = document.createElement('div');
+  measureHostEl.className = 'app-notices app-notices--measuring';
+  measureHostEl.style.position = 'fixed';
+  measureHostEl.style.left = '-10000px';
+  measureHostEl.style.top = '0';
+  measureHostEl.style.width = `${width}px`;
+  measureHostEl.style.visibility = 'hidden';
+  measureHostEl.style.pointerEvents = 'none';
+
+  const previewRowEl = document.createElement('div');
+  previewRowEl.className = 'app-notices-preview-row';
+  previewRowEl.style.maxHeight = `${APP_NOTICES_COLLAPSED_MAX_HEIGHT}px`;
+
+  const previewEl = document.createElement('div');
+  previewEl.className = 'app-notices-preview';
+  previewRowEl.appendChild(previewEl);
+  measureHostEl.appendChild(previewRowEl);
+  document.body.appendChild(measureHostEl);
+
+  try {
+    notices.forEach((notice) => {
+      previewEl.appendChild(createAppNoticeElement(notice, { inline: true }));
+    });
+
+    const noticeEls = Array.from(previewEl.children);
+    let visibleCount = noticeEls.length;
+    for (let index = 0; index < noticeEls.length; index += 1) {
+      const noticeEl = noticeEls[index];
+      if (!(noticeEl instanceof HTMLElement)) {
+        continue;
+      }
+      const bottom = noticeEl.offsetTop + noticeEl.offsetHeight;
+      if (bottom > APP_NOTICES_COLLAPSED_MAX_HEIGHT + 1) {
+        visibleCount = index;
+        break;
+      }
+    }
+
+    if (visibleCount >= notices.length) {
+      return notices.length;
+    }
+
+    while (visibleCount > 0) {
+      previewEl.replaceChildren();
+      notices.slice(0, visibleCount).forEach((notice) => {
+        previewEl.appendChild(createAppNoticeElement(notice, { inline: true }));
+      });
+      previewEl.appendChild(createAppNoticesOverflowControls(notices.length - visibleCount));
+      if (previewRowEl.scrollHeight <= APP_NOTICES_COLLAPSED_MAX_HEIGHT + 1) {
+        break;
+      }
+      visibleCount -= 1;
+    }
+
+    return Math.max(0, visibleCount);
+  } finally {
+    measureHostEl.remove();
+  }
 }
 
 function collectAppNoticeDescriptors() {
@@ -4281,59 +4401,35 @@ function renderAppNotices() {
     return;
   }
 
-  if (notices.length < 2) {
+  appNoticesEl.classList.remove('hidden');
+  const previewRowEl = document.createElement('div');
+  previewRowEl.className = 'app-notices-preview-row';
+  const previewEl = document.createElement('div');
+  previewEl.className = 'app-notices-preview';
+  previewRowEl.appendChild(previewEl);
+  appNoticesEl.appendChild(previewRowEl);
+
+  const visibleCount = measureCollapsedVisibleNoticeCount(notices);
+  const overflowCount = Math.max(0, notices.length - visibleCount);
+  if (overflowCount < 1) {
     appNoticesOverflowOpen = false;
   }
 
-  const primaryRowEl = document.createElement('div');
-  primaryRowEl.className = 'app-notices-primary-row';
-  primaryRowEl.appendChild(createAppNoticeElement(notices[0], { inline: true }));
-  if (notices.length > 1) {
-    const overflowCountEl = document.createElement('span');
-    overflowCountEl.className = 'app-notices-more-count';
-    overflowCountEl.textContent = `+${notices.length - 1}`;
-    primaryRowEl.appendChild(overflowCountEl);
-
-    const overflowButtonEl = document.createElement('button');
-    overflowButtonEl.type = 'button';
-    overflowButtonEl.className = 'app-notices-toggle';
-    overflowButtonEl.textContent = appNoticesOverflowOpen ? 'Dölj' : 'Visa alla';
-    overflowButtonEl.setAttribute('aria-expanded', appNoticesOverflowOpen ? 'true' : 'false');
-    overflowButtonEl.title = appNoticesOverflowOpen ? 'Dölj notifieringar' : 'Visa alla notifieringar';
-    const toggleOverflow = () => {
-      appNoticesOverflowOpen = !appNoticesOverflowOpen;
-      renderAppNotices();
-    };
-    overflowButtonEl.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      toggleOverflow();
-    });
-    overflowButtonEl.addEventListener('click', (event) => {
-      if (event.detail !== 0) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      toggleOverflow();
-    });
-    primaryRowEl.appendChild(overflowButtonEl);
+  notices.slice(0, overflowCount > 0 ? visibleCount : notices.length).forEach((notice) => {
+    previewEl.appendChild(createAppNoticeElement(notice, { inline: true }));
+  });
+  if (overflowCount > 0) {
+    previewEl.appendChild(createAppNoticesOverflowControls(overflowCount));
   }
 
-  appNoticesEl.classList.remove('hidden');
-  appNoticesEl.appendChild(primaryRowEl);
-
-  if (notices.length > 1) {
-    if (topbarEl instanceof HTMLElement && appNoticesOverflowOpen) {
+  if (overflowCount > 0 && appNoticesOverflowOpen) {
+    if (topbarEl instanceof HTMLElement) {
       topbarEl.classList.add('is-notices-expanded');
     }
     const expandedListEl = document.createElement('div');
     expandedListEl.className = 'app-notices-expanded-list';
-    notices.slice(1).forEach((notice) => {
-      expandedListEl.appendChild(createAppNoticeElement(notice, { popover: true }));
+    notices.forEach((notice) => {
+      expandedListEl.appendChild(createAppNoticeElement(notice, { expanded: true }));
     });
     appNoticesEl.appendChild(expandedListEl);
   }
@@ -19035,7 +19131,7 @@ window.addEventListener('beforeunload', (event) => {
 window.addEventListener('resize', () => {
   scheduleJobLabelsSummaryRender();
   syncFilenameExpandedWidth(findJobById(selectedJobId));
-  queueTopbarExpandedMetricsSync();
+  renderAppNotices();
 });
 
 async function fetchState(options = {}) {
