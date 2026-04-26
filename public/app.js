@@ -382,10 +382,11 @@ let clientDraftUiKeySeq = 1;
 let sendersBaselineJson = '[]';
 let sendersSortOrder = 'name';
 let senderDraftUiKeySeq = 1;
-let matchingBaselineJson = JSON.stringify({
-  replacements: [],
-  positionAdjustment: defaultMatchingPositionAdjustmentSettings()
-});
+let matchingBaselineJson = normalizedMatchingJson(
+  [],
+  defaultMatchingPositionAdjustmentSettings(),
+  matchingDataFieldAcceptanceThresholdDraft
+);
 let pathsBaselineValue = '';
 let inboxPathBaselineValue = '';
 let archiveStructureBaselineJson = JSON.stringify({
