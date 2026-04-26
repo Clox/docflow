@@ -4151,6 +4151,9 @@ function createAppNoticeElement(notice, options = {}) {
   if (options.expanded === true) {
     noticeEl.classList.add('app-notice--expanded');
   }
+  if (options.measuring === true) {
+    noticeEl.classList.add('app-notice--measuring');
+  }
 
   const textEl = document.createElement('span');
   textEl.className = 'app-notice-text';
@@ -4205,18 +4208,39 @@ function createAppNoticesOverflowControls(overflowCount) {
   return controlsEl;
 }
 
-function measureCollapsedVisibleNoticeCount(notices) {
-  if (!(appNoticesEl instanceof HTMLElement) || !(topbarEl instanceof HTMLElement)) {
-    return Array.isArray(notices) ? notices.length : 0;
-  }
-  if (!Array.isArray(notices) || notices.length < 1) {
+function appNoticeTextLineCount(textEl) {
+  if (!(textEl instanceof HTMLElement)) {
     return 0;
+  }
+  const style = window.getComputedStyle(textEl);
+  let lineHeight = Number.parseFloat(style.lineHeight);
+  if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
+    const fontSize = Number.parseFloat(style.fontSize);
+    lineHeight = Number.isFinite(fontSize) && fontSize > 0 ? fontSize * 1.2 : 16;
+  }
+  return Math.max(1, Math.round(textEl.getBoundingClientRect().height / lineHeight));
+}
+
+function measureCollapsedAppNoticeLayout(notices) {
+  if (!(appNoticesEl instanceof HTMLElement) || !(topbarEl instanceof HTMLElement) || !Array.isArray(notices) || notices.length < 1) {
+    return {
+      visibleCount: Array.isArray(notices) ? notices.length : 0,
+      widths: [],
+      overflowCount: 0,
+    };
   }
 
   const width = Math.max(0, Math.floor(appNoticesEl.getBoundingClientRect().width));
   if (width < 1) {
-    return notices.length;
+    return {
+      visibleCount: notices.length,
+      widths: [],
+      overflowCount: 0,
+    };
   }
+
+  const MIN_NOTICE_WIDTH = 100;
+  const WIDTH_STEP = 10;
 
   const measureHostEl = document.createElement('div');
   measureHostEl.className = 'app-notices app-notices--measuring';
@@ -4229,7 +4253,6 @@ function measureCollapsedVisibleNoticeCount(notices) {
 
   const previewRowEl = document.createElement('div');
   previewRowEl.className = 'app-notices-preview-row';
-  previewRowEl.style.maxHeight = `${APP_NOTICES_COLLAPSED_MAX_HEIGHT}px`;
 
   const previewEl = document.createElement('div');
   previewEl.className = 'app-notices-preview';
@@ -4237,42 +4260,77 @@ function measureCollapsedVisibleNoticeCount(notices) {
   measureHostEl.appendChild(previewRowEl);
   document.body.appendChild(measureHostEl);
 
-  try {
-    notices.forEach((notice) => {
-      previewEl.appendChild(createAppNoticeElement(notice, { inline: true }));
+  const measureState = (visibleNotices, widths, overflowCount) => {
+    previewEl.replaceChildren();
+    const noticeEls = visibleNotices.map((notice, index) => {
+      const noticeEl = createAppNoticeElement(notice, { inline: true, measuring: true });
+      if (Number.isFinite(widths[index]) && widths[index] > 0) {
+        noticeEl.style.width = `${Math.round(widths[index])}px`;
+      }
+      previewEl.appendChild(noticeEl);
+      return noticeEl;
     });
+    if (overflowCount > 0) {
+      previewEl.appendChild(createAppNoticesOverflowControls(overflowCount));
+    }
 
-    const noticeEls = Array.from(previewEl.children);
-    let visibleCount = noticeEls.length;
-    for (let index = 0; index < noticeEls.length; index += 1) {
-      const noticeEl = noticeEls[index];
-      if (!(noticeEl instanceof HTMLElement)) {
-        continue;
+    const lineCounts = noticeEls.map((noticeEl) => {
+      const textEl = noticeEl.querySelector('.app-notice-text');
+      return appNoticeTextLineCount(textEl);
+    });
+    return {
+      fits: previewEl.scrollWidth <= width + 1,
+      lineCounts,
+    };
+  };
+
+  const naturalWidths = notices.map((notice) => {
+    const noticeEl = createAppNoticeElement(notice, { inline: true, measuring: true });
+    previewEl.appendChild(noticeEl);
+    return Math.ceil(noticeEl.getBoundingClientRect().width);
+  });
+  previewEl.replaceChildren();
+
+  try {
+    for (let visibleCount = notices.length; visibleCount >= 1; visibleCount -= 1) {
+      const visibleNotices = notices.slice(0, visibleCount);
+      const overflowCount = notices.length - visibleCount;
+      const widths = naturalWidths.slice(0, visibleCount);
+
+      let result = measureState(visibleNotices, widths, overflowCount);
+      if (result.fits) {
+        return { visibleCount, widths, overflowCount };
       }
-      const bottom = noticeEl.offsetTop + noticeEl.offsetHeight;
-      if (bottom > APP_NOTICES_COLLAPSED_MAX_HEIGHT + 1) {
-        visibleCount = index;
-        break;
+
+      for (let noticeIndex = 0; noticeIndex < widths.length; noticeIndex += 1) {
+        let lastGoodWidth = widths[noticeIndex];
+        while ((widths[noticeIndex] - WIDTH_STEP) >= MIN_NOTICE_WIDTH) {
+          widths[noticeIndex] -= WIDTH_STEP;
+          result = measureState(visibleNotices, widths, overflowCount);
+          const lineCount = result.lineCounts[noticeIndex] || 0;
+          if (lineCount > 2) {
+            widths[noticeIndex] = lastGoodWidth;
+            result = measureState(visibleNotices, widths, overflowCount);
+            break;
+          }
+          lastGoodWidth = widths[noticeIndex];
+          if (result.fits) {
+            return { visibleCount, widths, overflowCount };
+          }
+        }
+      }
+
+      result = measureState(visibleNotices, widths, overflowCount);
+      if (result.fits) {
+        return { visibleCount, widths, overflowCount };
       }
     }
 
-    if (visibleCount >= notices.length) {
-      return notices.length;
-    }
-
-    while (visibleCount > 0) {
-      previewEl.replaceChildren();
-      notices.slice(0, visibleCount).forEach((notice) => {
-        previewEl.appendChild(createAppNoticeElement(notice, { inline: true }));
-      });
-      previewEl.appendChild(createAppNoticesOverflowControls(notices.length - visibleCount));
-      if (previewRowEl.scrollHeight <= APP_NOTICES_COLLAPSED_MAX_HEIGHT + 1) {
-        break;
-      }
-      visibleCount -= 1;
-    }
-
-    return Math.max(0, visibleCount);
+    return {
+      visibleCount: Math.min(1, notices.length),
+      widths: naturalWidths.slice(0, 1),
+      overflowCount: Math.max(0, notices.length - 1),
+    };
   } finally {
     measureHostEl.remove();
   }
@@ -4409,14 +4467,20 @@ function renderAppNotices() {
   previewRowEl.appendChild(previewEl);
   appNoticesEl.appendChild(previewRowEl);
 
-  const visibleCount = measureCollapsedVisibleNoticeCount(notices);
+  const collapsedLayout = measureCollapsedAppNoticeLayout(notices);
+  const visibleCount = Math.max(0, Math.min(notices.length, collapsedLayout.visibleCount));
   const overflowCount = Math.max(0, notices.length - visibleCount);
   if (overflowCount < 1) {
     appNoticesOverflowOpen = false;
   }
 
-  notices.slice(0, overflowCount > 0 ? visibleCount : notices.length).forEach((notice) => {
-    previewEl.appendChild(createAppNoticeElement(notice, { inline: true }));
+  notices.slice(0, overflowCount > 0 ? visibleCount : notices.length).forEach((notice, index) => {
+    const noticeEl = createAppNoticeElement(notice, { inline: true });
+    const width = collapsedLayout.widths[index];
+    if (Number.isFinite(width) && width > 0) {
+      noticeEl.style.width = `${Math.round(width)}px`;
+    }
+    previewEl.appendChild(noticeEl);
   });
   if (overflowCount > 0) {
     previewEl.appendChild(createAppNoticesOverflowControls(overflowCount));
