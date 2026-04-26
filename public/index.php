@@ -93,6 +93,13 @@
             <div class="selected-job-actions-panel-header-controls">
               <div id="selected-job-actions-warning" class="selected-job-actions-warning hidden" aria-live="polite">
                 <span class="selected-job-actions-warning-text">Analys inaktuell</span>
+                <button
+                  id="selected-job-actions-warning-reprocess"
+                  class="selected-job-actions-warning-button"
+                  type="button"
+                  aria-label="Analysera om jobbet"
+                  title="Analysera om dokumentet"
+                >↻</button>
               </div>
               <div id="selected-job-actions-menu-wrap" class="selected-job-actions-menu-wrap">
                 <button

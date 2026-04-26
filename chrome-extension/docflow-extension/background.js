@@ -3,6 +3,9 @@ const DOCFLOW_ALLABOLAG_SEARCH_BASE = 'https://www.allabolag.se/bransch-s%C3%B6k
 const DOCFLOW_SWEDBANK_APP_PATTERNS = [
   'https://online.swedbank.se/app*'
 ];
+const DOCFLOW_SWEDBANK_ONLINE_PATTERNS = [
+  'https://online.swedbank.se/*'
+];
 const DOCFLOW_SWEDBANK_FALLBACK_PATTERNS = [
   'https://www.swedbank.se/*'
 ];
@@ -139,42 +142,57 @@ async function waitForTabComplete(tabId, timeoutMs = 15000) {
 }
 
 async function findSwedbankSessionTab() {
-  const appTabs = await queryTabs(DOCFLOW_SWEDBANK_APP_PATTERNS);
-  const candidateAppTabs = appTabs.filter((tab) => typeof tab.id === 'number' && tab.id > 0);
-  const usableSessionTabs = candidateAppTabs.filter((tab) => isUsableSwedbankAppUrl(normalizeTabUrl(tab)));
-  const loginTabs = candidateAppTabs.filter((tab) => !isUsableSwedbankAppUrl(normalizeTabUrl(tab)));
+  const onlineTabs = await queryTabs(DOCFLOW_SWEDBANK_ONLINE_PATTERNS);
+  const candidateOnlineTabs = Array.from(
+    new Map(
+      onlineTabs
+        .filter((tab) => typeof tab.id === 'number' && tab.id > 0)
+        .map((tab) => [tab.id, tab])
+    ).values()
+  );
+  const usableSessionTabs = candidateOnlineTabs.filter((tab) => isUsableSwedbankAppUrl(normalizeTabUrl(tab)));
+  const nonUsableOnlineTabs = candidateOnlineTabs.filter((tab) => !isUsableSwedbankAppUrl(normalizeTabUrl(tab)));
+  const loginTabs = nonUsableOnlineTabs.filter((tab) => isSwedbankLoginUrl(normalizeTabUrl(tab)));
   const usableAppTab = usableSessionTabs[0] || null;
   if (usableAppTab) {
     logInfo('found usable Swedbank app tabs', {
       sessionTabIds: usableSessionTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
-      loginTabIds: loginTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
+      nonUsableTabIds: nonUsableOnlineTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
       urls: usableSessionTabs.map((tab) => normalizeTabUrl(tab)),
     });
     return {
       tab: usableAppTab,
       sessionAvailable: true,
       sessionTabs: usableSessionTabs,
+      candidateTabs: candidateOnlineTabs,
       loginTabs,
     };
   }
 
-  const loginTab = loginTabs[0] || null;
-  if (loginTab) {
-    logWarn('only non-usable Swedbank login tabs found', {
-      loginTabIds: loginTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
-      urls: loginTabs.map((tab) => normalizeTabUrl(tab)),
+  const candidateTab = candidateOnlineTabs[0] || null;
+  if (candidateTab) {
+    logWarn('only non-usable Swedbank online tabs found', {
+      candidateTabIds: candidateOnlineTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
+      urls: candidateOnlineTabs.map((tab) => normalizeTabUrl(tab)),
     });
     return {
-      tab: loginTab,
+      tab: candidateTab,
       sessionAvailable: false,
       sessionTabs: [],
+      candidateTabs: candidateOnlineTabs,
       loginTabs,
     };
   }
 
   const fallbackTabs = await queryTabs(DOCFLOW_SWEDBANK_FALLBACK_PATTERNS);
   const fallbackTab = fallbackTabs.find((tab) => typeof tab.id === 'number' && tab.id > 0) || null;
-  return { tab: fallbackTab, sessionAvailable: false, sessionTabs: [], loginTabs: [] };
+  return {
+    tab: fallbackTab,
+    sessionAvailable: false,
+    sessionTabs: [],
+    candidateTabs: [],
+    loginTabs: [],
+  };
 }
 
 async function executeLookupInTab(tabId, payload) {
@@ -185,7 +203,7 @@ async function executeLookupInTab(tabId, payload) {
       const prefix = '[Docflow Chrome Connector]';
       const normalizedType = String(type || '').trim().toLowerCase() === 'plusgiro' ? 'PGACCOUNT' : 'BGACCOUNT';
       const normalizedNumber = String(number || '').trim();
-      const url = `https://online.swedbank.se/TDE_DAP_Portal_REST_WEB/api/v5/payment/payee/${normalizedType}/${encodeURIComponent(normalizedNumber)}`;
+      const url = `https://apionline.swedbank.se/TDE_DAP_Portal_REST_WEB/api/v5/payment/payee/${normalizedType}/${encodeURIComponent(normalizedNumber)}`;
       try {
         console.info(`${prefix} injected lookup start`, {
           type,
@@ -509,14 +527,18 @@ async function handleLookupPayee(message) {
 
   const swedbank = await findSwedbankSessionTab();
   const sessionTabs = Array.isArray(swedbank.sessionTabs) ? swedbank.sessionTabs : [];
+  const candidateTabs = sessionTabs.length > 0
+    ? sessionTabs
+    : (Array.isArray(swedbank.candidateTabs) ? swedbank.candidateTabs : []);
   logInfo('lookup requested', {
     type,
     number,
     sessionAvailable: swedbank.sessionAvailable === true,
     hasAnySwedbankTab: !!swedbank.tab,
     sessionTabIds: sessionTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
+    candidateTabIds: candidateTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
   });
-  if (sessionTabs.length < 1) {
+  if (candidateTabs.length < 1) {
     const payload = {
       ok: false,
       errorCode: 'NO_SESSION',
@@ -528,7 +550,7 @@ async function handleLookupPayee(message) {
   }
 
   let firstNonSessionError = null;
-  for (const tab of sessionTabs) {
+  for (const tab of candidateTabs) {
     if (typeof tab?.id !== 'number' || tab.id < 1) {
       continue;
     }

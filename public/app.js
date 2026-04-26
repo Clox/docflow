@@ -87,6 +87,7 @@ const selectedJobStatusEl = document.getElementById('selected-job-status');
 let selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
 const dismissArchivedUpdateActionEl = document.getElementById('dismiss-archived-update-action');
 const selectedJobActionsWarningEl = document.getElementById('selected-job-actions-warning');
+const selectedJobActionsWarningReprocessEl = document.getElementById('selected-job-actions-warning-reprocess');
 const settingsPanelTemplateIds = {
   clients: 'settings-template-clients',
   senders: 'settings-template-senders',
@@ -7341,19 +7342,37 @@ function syncSelectedJobActionsWarning(job) {
   }
 
   const textEl = selectedJobActionsWarningEl.querySelector('.selected-job-actions-warning-text');
+  const reprocessButtonEl = selectedJobActionsWarningReprocessEl instanceof HTMLButtonElement
+    ? bindSelectedJobReprocessButton(selectedJobActionsWarningReprocessEl)
+    : null;
   if (!(textEl instanceof HTMLElement) || !selectedJobAnalysisOutdated(job)) {
     selectedJobActionsWarningEl.classList.add('hidden');
     selectedJobActionsWarningEl.classList.remove('is-marquee');
+    if (reprocessButtonEl instanceof HTMLButtonElement) {
+      reprocessButtonEl.disabled = true;
+    }
     return;
   }
 
   selectedJobActionsWarningEl.classList.remove('hidden');
+  if (reprocessButtonEl instanceof HTMLButtonElement) {
+    const reprocessDisabled = !job
+      || job.status === 'processing'
+      || job.archived === true
+      || (!job.hasReviewPdf && !job.hasSourcePdf);
+    reprocessButtonEl.disabled = reprocessDisabled;
+    reprocessButtonEl.title = reprocessDisabled
+      ? 'Jobbet kan inte analyseras om just nu.'
+      : 'Analysera om dokumentet';
+  }
   requestAnimationFrame(() => {
     if (!(selectedJobActionsWarningEl instanceof HTMLElement) || !(textEl instanceof HTMLElement)) {
       return;
     }
-    selectedJobActionsWarningEl.style.setProperty('--warning-visible-width', `${selectedJobActionsWarningEl.clientWidth}px`);
-    const shouldMarquee = textEl.scrollWidth > selectedJobActionsWarningEl.clientWidth + 2;
+    const visibleWidth = selectedJobActionsWarningEl.clientWidth
+      - (reprocessButtonEl instanceof HTMLButtonElement ? reprocessButtonEl.offsetWidth + 8 : 0);
+    selectedJobActionsWarningEl.style.setProperty('--warning-visible-width', `${Math.max(0, visibleWidth)}px`);
+    const shouldMarquee = textEl.scrollWidth > Math.max(0, visibleWidth) + 2;
     selectedJobActionsWarningEl.classList.toggle('is-marquee', shouldMarquee);
   });
 }
@@ -7452,20 +7471,13 @@ function showAnalysisOutdatedArchiveDialog() {
     cancelButton.type = 'button';
     cancelButton.textContent = 'Avbryt';
 
-    const reprocessButton = reprocessUiEnabled()
-      ? (() => {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.textContent = 'Analysera igen';
-          return button;
-        })()
-      : null;
+    const reprocessButton = document.createElement('button');
+    reprocessButton.type = 'button';
+    reprocessButton.className = 'analysis-warning-dialog-reprocess';
+    reprocessButton.innerHTML = '<span>Analysera om</span><span aria-hidden="true">↻</span>';
+    reprocessButton.title = 'Analysera om dokumentet';
 
-    if (reprocessButton instanceof HTMLButtonElement) {
-      actions.append(reprocessButton, archiveAnywayButton, cancelButton);
-    } else {
-      actions.append(archiveAnywayButton, cancelButton);
-    }
+    actions.append(reprocessButton, archiveAnywayButton, cancelButton);
     dialog.append(title, message, actions);
     overlay.appendChild(dialog);
 
@@ -7487,15 +7499,13 @@ function showAnalysisOutdatedArchiveDialog() {
         finish('cancel');
       }
     });
-    if (reprocessButton instanceof HTMLButtonElement) {
-      reprocessButton.addEventListener('click', () => finish('reprocess'));
-    }
+    reprocessButton.addEventListener('click', () => finish('reprocess'));
     archiveAnywayButton.addEventListener('click', () => finish('archive'));
     cancelButton.addEventListener('click', () => finish('cancel'));
 
     document.addEventListener('keydown', onKeyDown);
     document.body.appendChild(overlay);
-    (reprocessButton instanceof HTMLButtonElement ? reprocessButton : archiveAnywayButton).focus();
+    reprocessButton.focus();
   });
 }
 
