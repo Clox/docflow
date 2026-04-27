@@ -30,6 +30,10 @@ const ocrSearchRegexEl = document.getElementById('ocr-search-regex');
 const ocrSearchPrevEl = document.getElementById('ocr-search-prev');
 const ocrSearchNextEl = document.getElementById('ocr-search-next');
 const ocrSearchStatusEl = document.getElementById('ocr-search-status');
+const ocrMenuWrapEl = document.getElementById('ocr-menu-wrap');
+const ocrMenuButtonEl = document.getElementById('ocr-menu-button');
+const ocrMenuEl = document.getElementById('ocr-menu');
+const ocrDownloadActionEl = document.getElementById('ocr-download-action');
 const mainEl = document.querySelector('.main');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
@@ -2047,6 +2051,7 @@ function setViewerPdf(jobId) {
   setOcrSourceTabsVisible(false);
   setOcrControlsVisible(false);
   setOcrPageImageToggleVisible(false);
+  syncOcrMenuState(findJobById(jobId));
   archivedReviewPanelEl.classList.add('hidden');
   ocrPagesViewEl.classList.add('hidden');
   ocrHighlightViewEl.classList.add('hidden');
@@ -2073,6 +2078,7 @@ async function setViewerOcr(jobId) {
   setOcrSourceTabsVisible(true);
   setOcrControlsVisible(true);
   setOcrPageImageToggleVisible(true);
+  syncOcrMenuState(findJobById(jobId));
   archivedReviewPanelEl.classList.add('hidden');
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
@@ -3259,6 +3265,14 @@ function closeJobListMenu() {
   jobListMenuEl.classList.add('hidden');
 }
 
+function closeOcrMenu() {
+  if (!(ocrMenuButtonEl instanceof HTMLButtonElement) || !(ocrMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  ocrMenuButtonEl.setAttribute('aria-expanded', 'false');
+  ocrMenuEl.classList.add('hidden');
+}
+
 function closeSelectedJobActionsMenu() {
   if (!(selectedJobActionsMenuButtonEl instanceof HTMLButtonElement) || !(selectedJobActionsMenuEl instanceof HTMLElement)) {
     return;
@@ -3276,6 +3290,21 @@ function toggleJobListMenu(forceOpen = null) {
     : forceOpen === true;
   jobListMenuButtonEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
   jobListMenuEl.classList.toggle('hidden', !nextOpen);
+}
+
+function toggleOcrMenu(forceOpen = null) {
+  if (!(ocrMenuButtonEl instanceof HTMLButtonElement) || !(ocrMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  if (ocrMenuButtonEl.disabled) {
+    closeOcrMenu();
+    return;
+  }
+  const nextOpen = forceOpen === null
+    ? ocrMenuEl.classList.contains('hidden')
+    : forceOpen === true;
+  ocrMenuButtonEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+  ocrMenuEl.classList.toggle('hidden', !nextOpen);
 }
 
 function toggleSelectedJobActionsMenu(forceOpen = null) {
@@ -7861,6 +7890,7 @@ function renderSelectedJobPanel() {
       reprocessButtonEl.title = 'Markera ett jobb först.';
     }
     syncFilenameField(null);
+    syncOcrMenuState(null);
     updateArchiveAction(null);
     updateSelectedJobResetActions(null);
     updateSelectedJobActionsMenu(null);
@@ -7913,6 +7943,7 @@ function renderSelectedJobPanel() {
       : 'Klicka för att analysera igen från review.pdf. Håll Ctrl nedtryckt för att tvinga en helomkörning från source.pdf.';
   }
   syncFilenameField(selectedJob);
+  syncOcrMenuState(selectedJob);
   updateArchiveAction(selectedJob);
   updateSelectedJobResetActions(selectedJob);
   updateSelectedJobActionsMenu(selectedJob);
@@ -8024,6 +8055,12 @@ function notifyFailedJobs(failedJobs) {
 
 function setOcrSearchVisible(visible) {
   ocrSearchBarEl.classList.toggle('hidden', !visible);
+  if (ocrMenuWrapEl instanceof HTMLElement) {
+    ocrMenuWrapEl.classList.toggle('hidden', !visible);
+  }
+  if (!visible) {
+    closeOcrMenu();
+  }
 }
 
 function normalizeOcrSource(source) {
@@ -8099,6 +8136,87 @@ function ocrSourceDisplayName(source) {
     return 'Sammanfogade objekt';
   }
   return 'Sammanfogad text';
+}
+
+function syncOcrMenuState(job = findJobById(selectedJobId)) {
+  if (!(ocrMenuButtonEl instanceof HTMLButtonElement) || !(ocrDownloadActionEl instanceof HTMLButtonElement)) {
+    return;
+  }
+  const disabled = !job || job.status === 'processing';
+  ocrMenuButtonEl.disabled = disabled;
+  ocrMenuButtonEl.title = disabled ? 'Markera ett färdigbearbetat dokument först.' : 'Fler alternativ';
+  ocrDownloadActionEl.disabled = disabled;
+}
+
+function ocrDownloadBaseName(job) {
+  const base = job && typeof job.originalFilename === 'string' && job.originalFilename.trim() !== ''
+    ? job.originalFilename.trim()
+    : (job && typeof job.id === 'string' && job.id.trim() !== '' ? job.id.trim() : 'dokument');
+  return base.replace(/\.pdf$/i, '').replace(/[^\p{L}\p{N}._ -]+/gu, '_').trim() || 'dokument';
+}
+
+async function loadOcrPayload(jobId, source) {
+  const response = await fetch(
+    '/api/get-job-ocr.php?id='
+      + encodeURIComponent(jobId)
+      + '&source='
+      + encodeURIComponent(source),
+    { cache: 'no-store' }
+  );
+  if (response.status === 404) {
+    throw new Error('Ingen OCR-data finns för aktuell källa.');
+  }
+  if (!response.ok) {
+    throw new Error('Kunde inte hämta OCR-data för nedladdning.');
+  }
+  const payload = await response.json().catch(() => null);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Ogiltigt OCR-svar för nedladdning.');
+  }
+  return payload;
+}
+
+function triggerDownloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function downloadCurrentOcrRepresentation() {
+  const job = findJobById(selectedJobId);
+  if (!job || job.status === 'processing') {
+    return;
+  }
+
+  const source = normalizeOcrSource(currentOcrSource);
+  const payload = await loadOcrPayload(job.id, source);
+  const mode = typeof payload.mode === 'string' ? payload.mode : 'text';
+  const baseName = ocrDownloadBaseName(job);
+  const sourceSuffix = source === 'merged' ? 'sammanfogad-text'
+    : source === 'merged-objects' ? 'sammanfogade-objekt'
+    : source;
+
+  if (mode === 'objects') {
+    const filename = `${baseName}.${sourceSuffix}.json`;
+    const json = JSON.stringify({
+      jobId: job.id,
+      source,
+      mode,
+      text: typeof payload.text === 'string' ? payload.text : '',
+      pages: Array.isArray(payload.pages) ? payload.pages : [],
+    }, null, 2);
+    triggerDownloadBlob(filename, new Blob([json], { type: 'application/json;charset=utf-8' }));
+    return;
+  }
+
+  const filename = `${baseName}.${sourceSuffix}.txt`;
+  const text = typeof payload.text === 'string' ? payload.text : '';
+  triggerDownloadBlob(filename, new Blob([text], { type: 'text/plain;charset=utf-8' }));
 }
 
 function parseOcrZoomValue(value) {
@@ -18389,6 +18507,14 @@ if (jobListMenuButtonEl instanceof HTMLButtonElement) {
   });
 }
 
+if (ocrMenuButtonEl instanceof HTMLButtonElement) {
+  ocrMenuButtonEl.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleOcrMenu();
+  });
+}
+
 if (selectedJobActionsMenuButtonEl instanceof HTMLButtonElement) {
   selectedJobActionsMenuButtonEl.addEventListener('click', (event) => {
     event.preventDefault();
@@ -18407,6 +18533,20 @@ if (jobListReanalyzeAllActionEl instanceof HTMLButtonElement) {
       alert(error.message || 'Kunde inte köra om analysen för alla dokument.');
     } finally {
       jobListReanalyzeAllActionEl.disabled = false;
+    }
+  });
+}
+
+if (ocrDownloadActionEl instanceof HTMLButtonElement) {
+  ocrDownloadActionEl.addEventListener('click', async () => {
+    closeOcrMenu();
+    ocrDownloadActionEl.disabled = true;
+    try {
+      await downloadCurrentOcrRepresentation();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Kunde inte ladda ner OCR-representationen.');
+    } finally {
+      syncOcrMenuState(findJobById(selectedJobId));
     }
   });
 }
@@ -19081,6 +19221,16 @@ document.addEventListener('pointerdown', (event) => {
   }
 
   if (
+    ocrMenuWrapEl instanceof HTMLElement
+    && ocrMenuButtonEl instanceof HTMLButtonElement
+    && ocrMenuEl instanceof HTMLElement
+    && !ocrMenuEl.classList.contains('hidden')
+    && !ocrMenuWrapEl.contains(event.target)
+  ) {
+    closeOcrMenu();
+  }
+
+  if (
     selectedJobActionsMenuWrapEl instanceof HTMLElement
     && selectedJobActionsMenuButtonEl instanceof HTMLButtonElement
     && selectedJobActionsMenuEl instanceof HTMLElement
@@ -19121,6 +19271,9 @@ if (mainEl instanceof HTMLElement) {
 
 pdfFrameEls.forEach((frameEl) => {
   frameEl.addEventListener('pointerdown', () => {
+    if (ocrMenuEl instanceof HTMLElement && !ocrMenuEl.classList.contains('hidden')) {
+      closeOcrMenu();
+    }
     if (!jobLabelsOverlayOpen) {
       if (appNoticesOverflowOpen) {
         closeAppNoticesOverflow();
@@ -19133,6 +19286,9 @@ pdfFrameEls.forEach((frameEl) => {
     }
   }, true);
   frameEl.addEventListener('focus', () => {
+    if (ocrMenuEl instanceof HTMLElement && !ocrMenuEl.classList.contains('hidden')) {
+      closeOcrMenu();
+    }
     if (!jobLabelsOverlayOpen) {
       if (appNoticesOverflowOpen) {
         closeAppNoticesOverflow();
@@ -19154,6 +19310,11 @@ document.addEventListener('keydown', (event) => {
 
   if (event.key === 'Escape' && jobListMenuEl instanceof HTMLElement && !jobListMenuEl.classList.contains('hidden')) {
     closeJobListMenu();
+    return;
+  }
+
+  if (event.key === 'Escape' && ocrMenuEl instanceof HTMLElement && !ocrMenuEl.classList.contains('hidden')) {
+    closeOcrMenu();
     return;
   }
 

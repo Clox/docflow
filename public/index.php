@@ -280,6 +280,26 @@
             <button id="ocr-search-next" type="button" aria-label="Nästa träff">↓</button>
             <span id="ocr-search-status" class="ocr-search-status"></span>
           </div>
+          <div id="ocr-menu-wrap" class="ocr-toolbar-menu-wrap hidden">
+            <button
+              id="ocr-menu-button"
+              class="ocr-toolbar-menu-button icon-button icon-menu-button"
+              type="button"
+              aria-label="Fler alternativ"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="ocr-menu"
+              title="Fler alternativ"
+            >⋮</button>
+            <div id="ocr-menu" class="ocr-toolbar-menu hidden" role="menu" aria-label="OCR-vyns meny">
+              <button
+                id="ocr-download-action"
+                type="button"
+                role="menuitem"
+                title="Ladda ner aktuell OCR-representation för valt dokument"
+              >Ladda ner</button>
+            </div>
+          </div>
         </div>
         <div id="pdf-stack" class="pdf-stack">
           <iframe class="pdf-frame"></iframe>
