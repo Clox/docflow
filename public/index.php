@@ -1,10 +1,14 @@
+<?php
+$styleVersion = @filemtime(__DIR__ . '/style.css') ?: time();
+$appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
+?>
 <!doctype html>
 <html lang="sv">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Docflow</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=<?= htmlspecialchars((string) $styleVersion, ENT_QUOTES, 'UTF-8') ?>">
 </head>
 <body>
   <div class="app">
@@ -786,6 +790,6 @@
     </section>
   </template>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=<?= htmlspecialchars((string) $appVersion, ENT_QUOTES, 'UTF-8') ?>"></script>
 </body>
 </html>

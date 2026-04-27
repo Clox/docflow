@@ -859,6 +859,26 @@ function positive_int(mixed $value, int $fallback = 1): int
     return $fallback;
 }
 
+function signed_int(mixed $value, int $fallback = 0): int
+{
+    if (is_int($value)) {
+        return $value;
+    }
+
+    if (is_float($value)) {
+        return (int) floor($value);
+    }
+
+    if (is_string($value) && trim($value) !== '') {
+        $parsed = filter_var($value, FILTER_VALIDATE_INT);
+        if ($parsed !== false) {
+            return (int) $parsed;
+        }
+    }
+
+    return $fallback;
+}
+
 function system_label_definitions(): array
 {
     return [
@@ -922,7 +942,7 @@ function normalize_archive_rule(mixed $input): array
             && (array_key_exists('isRegex', $rule) && ($rule['isRegex'] === true || $rule['isRegex'] === 1 || $rule['isRegex'] === '1')),
         'senderId' => $type === 'sender_is' ? $senderId : null,
         'field' => $type === 'field_exists' ? $field : '',
-        'score' => positive_int($rule['score'] ?? 1, 1),
+        'score' => signed_int($rule['score'] ?? 1, 1),
     ];
 }
 
@@ -2310,22 +2330,6 @@ function load_archiving_rules_state(): array
             // Fall back to the inline JSON state if the dedicated rule-set tables are unavailable.
         }
     }
-    $activeJson = json_encode(
-        $normalized['activeArchivingRules'],
-        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-    );
-    $draftJson = $activeJson;
-
-    if (
-        !is_string($activeJson)
-        || !is_string($draftJson)
-        || (int) ($row['active_archiving_rules_version'] ?? 1) !== (int) $normalized['activeArchivingRulesVersion']
-        || trim((string) ($row['active_archiving_rules_json'] ?? '')) !== trim($activeJson)
-        || trim((string) ($row['draft_archiving_rules_json'] ?? '')) !== trim($draftJson)
-    ) {
-        save_archiving_rules_state($normalized);
-    }
-
     return $normalized;
 }
 
@@ -6560,7 +6564,7 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
             $ruleText = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
             $ruleSenderId = isset($rule['senderId']) ? (int) $rule['senderId'] : 0;
             $ruleField = is_string($rule['field'] ?? null) ? trim((string) $rule['field']) : '';
-            $ruleScore = positive_int($rule['score'] ?? 1, 1);
+            $ruleScore = signed_int($rule['score'] ?? 1, 1);
             $sourceText = '';
             $displayText = $ruleText;
 

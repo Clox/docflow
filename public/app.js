@@ -11005,6 +11005,14 @@ function sanitizePositiveInt(value, fallback = 1) {
   return parsed < 1 ? 1 : parsed;
 }
 
+function sanitizeInt(value, fallback = 0) {
+  const parsed = parseInt(String(value), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return parsed;
+}
+
 function sanitizeStateUpdateTransport(value, fallback = 'polling') {
   const normalizedValue = String(value || '').trim().toLowerCase();
   if (normalizedValue === 'sse') {
@@ -12050,7 +12058,7 @@ function sanitizeRule(rule) {
     isRegex: type === 'text' && input.isRegex === true,
     senderId: type === 'sender_is' && Number.isInteger(senderId) && senderId > 0 ? senderId : null,
     field: type === 'field_exists' && typeof input.field === 'string' ? input.field : '',
-    score: sanitizePositiveInt(input.score, 1)
+    score: sanitizeInt(input.score, 1)
   };
 }
 
@@ -15420,14 +15428,13 @@ function renderSingleLabelEditor(container, options = {}) {
     const scoreInput = document.createElement('input');
     scoreInput.type = 'number';
     scoreInput.step = '1';
-    scoreInput.min = '1';
     scoreInput.value = String(rule.score);
     scoreInput.addEventListener('input', () => {
       const draft = currentLabelDraftForEditor(options);
       if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
         return;
       }
-      draft.rules[ruleIndex].score = sanitizePositiveInt(scoreInput.value, 1);
+      draft.rules[ruleIndex].score = sanitizeInt(scoreInput.value, 1);
       updateSettingsActionButtons();
     });
 
