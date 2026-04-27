@@ -6,6 +6,7 @@ HOST="127.0.0.1"
 PORT="4321"
 URL="http://${HOST}:${PORT}"
 WORKERS="${PHP_CLI_SERVER_WORKERS:-4}"
+OPEN_BROWSER="${DOCFLOW_OPEN_BROWSER:-1}"
 DOCROOT="public"
 LOG_FILE="/tmp/pdf-viewer-php.log"
 PID_FILE="/tmp/docflow-php-server.pid"
@@ -67,10 +68,12 @@ php "${DISPATCHER_SCRIPT}" > "${DISPATCHER_LOG_FILE}" 2>&1 &
 DISPATCHER_PID=$!
 echo "${DISPATCHER_PID}" > "${DISPATCHER_PID_FILE}"
 
-if command -v xdg-open >/dev/null 2>&1; then
-  xdg-open "${URL}" >/dev/null 2>&1 || true
-elif command -v open >/dev/null 2>&1; then
-  open "${URL}" >/dev/null 2>&1 || true
+if [[ "${OPEN_BROWSER}" != "0" ]]; then
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "${URL}" >/dev/null 2>&1 || true
+  elif command -v open >/dev/null 2>&1; then
+    open "${URL}" >/dev/null 2>&1 || true
+  fi
 fi
 
 echo "PDF viewer started at ${URL}"
