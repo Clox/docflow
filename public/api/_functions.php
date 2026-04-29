@@ -1500,7 +1500,25 @@ function normalize_extraction_field_normalization_replacements(mixed $input): ar
     return $normalized;
 }
 
-function extraction_field_date_value_pattern(): string
+function extraction_field_date_atom_pattern(): string
+{
+    return '\\d{4}\\s*[-.\\/ ]\\s*\\d{2}\\s*[-.\\/ ]\\s*\\d{2}';
+}
+
+function extraction_field_date_value_pattern(string $position = 'first'): string
+{
+    $atomPattern = extraction_field_date_atom_pattern();
+    $normalizedPosition = normalize_extraction_field_position($position);
+    if ($normalizedPosition === 'second') {
+        return '(?:' . $atomPattern . '\\s*[-]\\s*)(' . $atomPattern . ')';
+    }
+    if ($normalizedPosition === 'last') {
+        return '(?:' . $atomPattern . '\\s*[-]\\s*)*(' . $atomPattern . ')';
+    }
+    return '(' . $atomPattern . ')(?:\\s*[-]\\s*' . $atomPattern . ')*';
+}
+
+function extraction_field_date_capture_pattern(): string
 {
     return '(\\d{4})\\s*[-.\\/ ]\\s*(\\d{2})\\s*[-.\\/ ]\\s*(\\d{2})';
 }
@@ -1508,7 +1526,7 @@ function extraction_field_date_value_pattern(): string
 function extraction_field_date_normalization_replacements(): array
 {
     return [[
-        'find' => '^' . extraction_field_date_value_pattern() . '$',
+        'find' => '^' . extraction_field_date_capture_pattern() . '$',
         'replace' => '$1-$2-$3',
         'isRegex' => true,
     ]];
@@ -1521,8 +1539,9 @@ function extraction_field_runtime_rule_set(array $ruleSet): array
         return $ruleSet;
     }
 
+    $datePosition = extraction_field_rule_set_position($ruleSet, 'date');
     $runtimeRuleSet = $ruleSet;
-    $runtimeRuleSet['valuePattern'] = extraction_field_date_value_pattern();
+    $runtimeRuleSet['valuePattern'] = extraction_field_date_value_pattern($datePosition);
     $runtimeRuleSet['normalizationType'] = 'replacements';
     $runtimeRuleSet['normalizationChars'] = '';
     $runtimeRuleSet['normalizationReplacements'] = extraction_field_date_normalization_replacements();
@@ -10971,7 +10990,7 @@ function extract_configured_rule_set_field_matches(
     );
     $valuePattern = is_string($runtimeRuleSet['valuePattern'] ?? null) ? trim((string) $runtimeRuleSet['valuePattern']) : '';
 
-    $preferCaptureGroupValue = $normalizationType !== 'replacements';
+    $preferCaptureGroupValue = $type === 'date' || $normalizationType !== 'replacements';
     $candidateExtractor = match ($type) {
         'amount' => 'amount_candidates_from_text',
         default => static function (string $text, int $offsetBase) use ($valuePattern, $preferCaptureGroupValue): array {

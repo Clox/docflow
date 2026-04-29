@@ -2391,6 +2391,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
               return {
                 value: rawValue,
                 raw: typeof match.raw === 'string' ? match.raw : '',
+                matchText: typeof match.matchText === 'string' ? match.matchText : '',
                 extractedRaw: typeof match.extractedRaw === 'string' ? match.extractedRaw : '',
                 source: typeof match.source === 'string' ? match.source : '',
                 labelText: typeof match.labelText === 'string' ? match.labelText : '',
@@ -2438,6 +2439,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
             : [{
               value: fallbackValue,
               raw: typeof field.raw === 'string' ? field.raw : '',
+              matchText: typeof field.matchText === 'string' ? field.matchText : '',
               extractedRaw: typeof field.extractedRaw === 'string' ? field.extractedRaw : '',
               source: typeof field.source === 'string' ? field.source : '',
               labelText: typeof field.labelText === 'string' ? field.labelText : '',
@@ -2790,7 +2792,8 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
     }
     const keyText = typeof row?.labelText === 'string' ? row.labelText : '';
     const betweenText = typeof row?.between === 'string' ? row.between : '';
-    const valueText = typeof row?.raw === 'string' ? row.raw : '';
+    const matchText = typeof row?.matchText === 'string' ? row.matchText : '';
+    const valueText = matchText !== '' ? matchText : (typeof row?.raw === 'string' ? row.raw : '');
     const labelLineIndex = Number.isInteger(row?.labelLineIndex) ? row.labelLineIndex : null;
     const candidateLineIndex = Number.isInteger(row?.lineIndex) ? row.lineIndex : null;
     const isDifferentRows = labelLineIndex !== null && candidateLineIndex !== null
