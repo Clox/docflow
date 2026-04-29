@@ -1202,9 +1202,12 @@ function predefined_extraction_field_definitions(): array
         'amount' => [
             'name' => 'Belopp',
             'ruleSets' => [[
+                'type' => 'amount',
+                'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['att betala', 'fakturabelopp', 'summa att betala', 'belopp att betala', 'total att betala'],
-                'valuePattern' => '(?:SEK\s*)?(-?\d[\d\s.,]*\d(?:[.,:]\d{2})?)(?:\s*kr)?',
+                'amountPosition' => 'first',
+                'valuePattern' => '',
                 'normalizationType' => 'none',
                 'normalizationChars' => '',
             ]],
@@ -1212,16 +1215,18 @@ function predefined_extraction_field_definitions(): array
         'due_date' => [
             'name' => 'Förfallodatum',
             'ruleSets' => [[
+                'type' => 'date',
+                'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['förfallodatum', 'förfallodag', 'att betala senast'],
-                'valuePattern' => '\d{4}-\d{2}-\d{2}|\d{2}[./-]\d{2}[./-]\d{2,4}',
-                'normalizationType' => 'none',
-                'normalizationChars' => '',
+                'datePosition' => 'first',
             ]],
         ],
         'bankgiro' => [
             'name' => 'Bankgiro',
             'ruleSets' => [[
+                'type' => 'regex',
+                'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['bankgiro', 'bg'],
                 'valuePattern' => '\d{3,4}[ -]?\d{4}',
@@ -1232,6 +1237,8 @@ function predefined_extraction_field_definitions(): array
         'plusgiro' => [
             'name' => 'Plusgiro',
             'ruleSets' => [[
+                'type' => 'regex',
+                'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['plusgiro', 'pg'],
                 'valuePattern' => '\d{1,8}(?:[ -]\d{1,4})+',
@@ -1242,6 +1249,8 @@ function predefined_extraction_field_definitions(): array
         'supplier' => [
             'name' => 'Leverantör',
             'ruleSets' => [[
+                'type' => 'regex',
+                'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['leverantör', 'leverantor'],
                 'valuePattern' => '',
@@ -1252,6 +1261,8 @@ function predefined_extraction_field_definitions(): array
         'payment_receiver' => [
             'name' => 'Betalningsmottagare',
             'ruleSets' => [[
+                'type' => 'regex',
+                'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['betalningsmottagare', 'mottagare'],
                 'valuePattern' => '',
@@ -1262,6 +1273,8 @@ function predefined_extraction_field_definitions(): array
         'iban' => [
             'name' => 'IBAN',
             'ruleSets' => [[
+                'type' => 'regex',
+                'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['iban'],
                 'valuePattern' => '[A-Z]{2}\d{2}[A-Z0-9 ]{11,30}',
@@ -1272,6 +1285,8 @@ function predefined_extraction_field_definitions(): array
         'swift' => [
             'name' => 'SWIFT',
             'ruleSets' => [[
+                'type' => 'regex',
+                'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['swift', 'bic'],
                 'valuePattern' => '[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?',
@@ -1282,6 +1297,8 @@ function predefined_extraction_field_definitions(): array
         'ocr' => [
             'name' => 'OCR',
             'ruleSets' => [[
+                'type' => 'regex',
+                'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['ocr-nummer', 'ocr nummer', 'ocr'],
                 'valuePattern' => '\d[\d ]{6,40}\d',
@@ -1293,6 +1310,8 @@ function predefined_extraction_field_definitions(): array
             'name' => 'Organisationsnummer',
             'ruleSets' => [
                 [
+                    'type' => 'regex',
+                    'useSearchText' => true,
                     'requiresSearchTerms' => true,
                     'searchTerms' => ['organisationsnr', 'org.nr', 'org nr'],
                     'valuePattern' => '\d{2}[2-9]\d{3}[- ]?\d{4}',
@@ -1300,6 +1319,8 @@ function predefined_extraction_field_definitions(): array
                     'normalizationChars' => '0123456789',
                 ],
                 [
+                    'type' => 'regex',
+                    'useSearchText' => false,
                     'requiresSearchTerms' => false,
                     'searchTerms' => [],
                     'valuePattern' => '\bSE(\d{6}[- ]?\d{4})01\b',
@@ -1434,7 +1455,7 @@ function normalize_extraction_field_is_regex(mixed $value): bool
 function normalize_extraction_field_normalization_type(mixed $value): string
 {
     $normalized = is_string($value) ? trim(strtolower($value)) : '';
-    return in_array($normalized, ['whitelist', 'blacklist'], true) ? $normalized : 'none';
+    return in_array($normalized, ['whitelist', 'blacklist', 'replacements'], true) ? $normalized : 'none';
 }
 
 function normalize_extraction_field_normalization_chars(mixed $value): string
@@ -1442,15 +1463,130 @@ function normalize_extraction_field_normalization_chars(mixed $value): string
     return is_string($value) ? (string) $value : '';
 }
 
+function normalize_extraction_field_normalization_replacement_item(mixed $input): ?array
+{
+    if (!is_array($input)) {
+        return null;
+    }
+
+    $find = is_string($input['find'] ?? null)
+        ? trim((string) $input['find'])
+        : (is_string($input['from'] ?? null) ? trim((string) $input['from']) : '');
+    $replace = is_string($input['replace'] ?? null)
+        ? (string) $input['replace']
+        : (is_string($input['to'] ?? null) ? (string) $input['to'] : '');
+    if ($find === '') {
+        return null;
+    }
+
+    return [
+        'find' => $find,
+        'replace' => $replace,
+        'isRegex' => normalize_extraction_field_is_regex($input['isRegex'] ?? false),
+    ];
+}
+
+function normalize_extraction_field_normalization_replacements(mixed $input): array
+{
+    $rows = is_array($input) ? $input : [];
+    $normalized = [];
+    foreach ($rows as $row) {
+        $item = normalize_extraction_field_normalization_replacement_item($row);
+        if (is_array($item)) {
+            $normalized[] = $item;
+        }
+    }
+
+    return $normalized;
+}
+
+function extraction_field_date_value_pattern(): string
+{
+    return '(\\d{4})\\s*[-.\\/ ]\\s*(\\d{2})\\s*[-.\\/ ]\\s*(\\d{2})';
+}
+
+function extraction_field_date_normalization_replacements(): array
+{
+    return [[
+        'find' => '^' . extraction_field_date_value_pattern() . '$',
+        'replace' => '$1-$2-$3',
+        'isRegex' => true,
+    ]];
+}
+
+function extraction_field_runtime_rule_set(array $ruleSet): array
+{
+    $type = extraction_field_rule_set_type($ruleSet);
+    if ($type !== 'date') {
+        return $ruleSet;
+    }
+
+    $runtimeRuleSet = $ruleSet;
+    $runtimeRuleSet['valuePattern'] = extraction_field_date_value_pattern();
+    $runtimeRuleSet['normalizationType'] = 'replacements';
+    $runtimeRuleSet['normalizationChars'] = '';
+    $runtimeRuleSet['normalizationReplacements'] = extraction_field_date_normalization_replacements();
+    return $runtimeRuleSet;
+}
+
+function normalize_extraction_field_type(mixed $value, ?array $legacyField = null, ?array $legacyRuleSet = null): string
+{
+    $normalized = is_string($value) ? trim(strtolower($value)) : '';
+    if (in_array($normalized, ['regex', 'date', 'amount'], true)) {
+        return $normalized;
+    }
+
+    $legacy = is_array($legacyField) ? $legacyField : [];
+    $legacyRule = is_array($legacyRuleSet) ? $legacyRuleSet : [];
+    $legacyKey = is_string($legacy['predefinedFieldKey'] ?? null)
+        ? trim((string) $legacy['predefinedFieldKey'])
+        : (is_string($legacy['key'] ?? null) ? trim((string) $legacy['key']) : '');
+    $legacyExtractor = valid_extraction_field_extractor(
+        is_string($legacy['extractor'] ?? null)
+            ? (string) $legacy['extractor']
+            : (is_string($legacyRule['extractor'] ?? null) ? (string) $legacyRule['extractor'] : 'generic_label')
+    );
+
+    if ($legacyKey === 'amount' || $legacyExtractor === 'amount') {
+        return 'amount';
+    }
+
+    if (in_array($legacyKey, ['due_date', 'document_date'], true) || in_array($legacyExtractor, ['due_date', 'document_date'], true)) {
+        return 'date';
+    }
+
+    return 'regex';
+}
+
+function normalize_extraction_field_position(mixed $value): string
+{
+    $normalized = is_string($value) ? trim(strtolower($value)) : '';
+    return in_array($normalized, ['first', 'second', 'last'], true) ? $normalized : 'first';
+}
+
+function normalize_extraction_field_use_search_text(mixed $value, bool $fallback = true): bool
+{
+    if ($value === null) {
+        return $fallback;
+    }
+
+    return $value === true || $value === 1 || $value === '1';
+}
+
 function default_extraction_field_rule_set(array $overrides = []): array
 {
     $defaults = [
+        'type' => 'regex',
+        'useSearchText' => true,
         'requiresSearchTerms' => true,
         'searchTerms' => [],
         'isRegex' => false,
         'valuePattern' => '',
         'normalizationType' => 'none',
         'normalizationChars' => '',
+        'normalizationReplacements' => [],
+        'datePosition' => 'first',
+        'amountPosition' => 'first',
     ];
 
     return array_merge($defaults, $overrides);
@@ -1466,13 +1602,32 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             continue;
         }
 
-        $requiresSearchTerms = !array_key_exists('requiresSearchTerms', $row)
-            || $row['requiresSearchTerms'] === true
-            || $row['requiresSearchTerms'] === 1
-            || $row['requiresSearchTerms'] === '1';
+        $type = normalize_extraction_field_type($row['type'] ?? null, $legacyField, $row);
+        $requiresSearchTerms = array_key_exists('useSearchText', $row)
+            ? normalize_extraction_field_use_search_text($row['useSearchText'] ?? null, true)
+            : (
+                !array_key_exists('requiresSearchTerms', $row)
+                || $row['requiresSearchTerms'] === true
+                || $row['requiresSearchTerms'] === 1
+                || $row['requiresSearchTerms'] === '1'
+            );
         $legacyIsRegex = normalize_extraction_field_is_regex($row['isRegex'] ?? false);
         $searchTerms = normalize_extraction_field_search_terms($row['searchTerms'] ?? null, $legacyIsRegex);
+        $datePosition = normalize_extraction_field_position($row['datePosition'] ?? null);
+        if ($type === 'date') {
+            $normalized[] = [
+                'type' => 'date',
+                'useSearchText' => $requiresSearchTerms,
+                'requiresSearchTerms' => $requiresSearchTerms,
+                'searchTerms' => $searchTerms,
+                'datePosition' => $datePosition,
+            ];
+            continue;
+        }
+
         $normalized[] = default_extraction_field_rule_set([
+            'type' => $type,
+            'useSearchText' => $requiresSearchTerms,
             'requiresSearchTerms' => $requiresSearchTerms,
             'searchTerms' => $searchTerms,
             'isRegex' => false,
@@ -1485,6 +1640,9 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
                 ),
             'normalizationType' => normalize_extraction_field_normalization_type($row['normalizationType'] ?? null),
             'normalizationChars' => normalize_extraction_field_normalization_chars($row['normalizationChars'] ?? null),
+            'normalizationReplacements' => normalize_extraction_field_normalization_replacements($row['normalizationReplacements'] ?? null),
+            'datePosition' => $datePosition,
+            'amountPosition' => normalize_extraction_field_position($row['amountPosition'] ?? null),
         ]);
     }
 
@@ -1499,14 +1657,37 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
     $legacyIsRegex = normalize_extraction_field_is_regex($legacy['isRegex'] ?? false);
     $legacyAliases = normalize_extraction_field_search_terms($legacy['aliases'] ?? null, $legacyIsRegex, $legacyPattern);
     $requiresSearchTerms = $legacyAliases !== [];
+    $type = normalize_extraction_field_type($legacy['type'] ?? null, $legacy);
+    $normalizationType = $type === 'date'
+        ? 'none'
+        : normalize_extraction_field_normalization_type($legacy['normalizationType'] ?? null);
+    $normalizationReplacements = $type === 'date'
+        ? []
+        : normalize_extraction_field_normalization_replacements($legacy['normalizationReplacements'] ?? null);
     if ($legacyPattern !== '' || $legacyAliases !== [] || $legacy !== []) {
+        $datePosition = normalize_extraction_field_position($legacy['datePosition'] ?? null);
+        if ($type === 'date') {
+            return [[
+                'type' => 'date',
+                'useSearchText' => $requiresSearchTerms,
+                'requiresSearchTerms' => $requiresSearchTerms,
+                'searchTerms' => $requiresSearchTerms ? $legacyAliases : [],
+                'datePosition' => $datePosition,
+            ]];
+        }
+
         return [default_extraction_field_rule_set([
+            'type' => $type,
+            'useSearchText' => $requiresSearchTerms,
             'requiresSearchTerms' => $requiresSearchTerms,
             'searchTerms' => $requiresSearchTerms ? $legacyAliases : [],
             'isRegex' => false,
             'valuePattern' => $legacyPattern,
-            'normalizationType' => normalize_extraction_field_normalization_type($legacy['normalizationType'] ?? null),
+            'normalizationType' => $normalizationType,
             'normalizationChars' => normalize_extraction_field_normalization_chars($legacy['normalizationChars'] ?? null),
+            'normalizationReplacements' => $normalizationReplacements,
+            'datePosition' => $datePosition,
+            'amountPosition' => normalize_extraction_field_position($legacy['amountPosition'] ?? null),
         ])];
     }
 
@@ -9222,7 +9403,7 @@ function extract_document_date_field_result(array $lines): array
 function amount_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
-    if (@preg_match_all('/\b(\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?)\b|\b(\d+(?:,\d{2}))\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
+    if (@preg_match_all('/\b((?:\d{1,3}(?:[ \x{00A0}.]\d{3})+|\d+),\d{2}|(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
         return [];
     }
 
@@ -9251,6 +9432,7 @@ function amount_candidates_from_text(string $text, int $offsetBase = 0): array
             'value' => $value,
             'raw' => $raw,
             'start' => $offsetBase + $start,
+            'matchType' => 'amount',
         ];
     }
 
@@ -9430,7 +9612,7 @@ function normalize_extraction_field_regex_pattern(string $pattern): string
     return is_string($normalized) ? $normalized : $pattern;
 }
 
-function extraction_field_pattern_candidates_from_text(string $text, string $searchString, bool $isRegex, int $offsetBase = 0): array
+function extraction_field_pattern_candidates_from_text(string $text, string $searchString, bool $isRegex, int $offsetBase = 0, bool $preferCaptureGroupValue = true): array
 {
     $pattern = trim($searchString);
     if ($pattern === '') {
@@ -9440,8 +9622,8 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
     $pattern = normalize_extraction_field_regex_pattern($pattern);
 
     $delimitedPattern = $isRegex
-        ? '/' . str_replace('/', '\/', $pattern) . '/iu'
-        : '/' . preg_quote($pattern, '/') . '/iu';
+        ? '~' . str_replace('~', '\~', $pattern) . '~iu'
+        : '~' . preg_quote($pattern, '~') . '~iu';
 
     $matches = [];
     if (@preg_match_all($delimitedPattern, $text, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) < 1) {
@@ -9476,7 +9658,7 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
 
         $value = $raw;
         $extractedRaw = $raw;
-        if ($isRegex && array_key_exists(1, $match)) {
+        if ($isRegex && $preferCaptureGroupValue && array_key_exists(1, $match)) {
             $captureGroup = $match[1];
             $captureValue = is_array($captureGroup) && is_string($captureGroup[0] ?? null)
                 ? (string) $captureGroup[0]
@@ -9504,13 +9686,25 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
     return $candidates;
 }
 
-function apply_extraction_field_normalization(mixed $value, string $type, string $chars): mixed
+function apply_extraction_field_normalization(mixed $value, array $ruleSet): mixed
 {
-    $normalizedType = normalize_extraction_field_normalization_type($type);
-    if ($normalizedType === 'none' || !is_string($value)) {
+    if (!is_string($value)) {
         return $value;
     }
 
+    $normalizedType = normalize_extraction_field_normalization_type($ruleSet['normalizationType'] ?? null);
+    if ($normalizedType === 'none') {
+        return $value;
+    }
+
+    if ($normalizedType === 'replacements') {
+        return apply_extraction_field_replacements(
+            $value,
+            normalize_extraction_field_normalization_replacements($ruleSet['normalizationReplacements'] ?? null)
+        );
+    }
+
+    $chars = is_string($ruleSet['normalizationChars'] ?? null) ? (string) $ruleSet['normalizationChars'] : '';
     $characters = utf8_chars($chars);
     $characterMap = [];
     foreach ($characters as $character) {
@@ -9523,6 +9717,37 @@ function apply_extraction_field_normalization(mixed $value, string $type, string
         if (($normalizedType === 'whitelist' && $isListed) || ($normalizedType === 'blacklist' && !$isListed)) {
             $result .= $character;
         }
+    }
+
+    return $result;
+}
+
+function apply_extraction_field_replacements(string $value, array $replacements): string
+{
+    $result = $value;
+    foreach ($replacements as $replacement) {
+        if (!is_array($replacement)) {
+            continue;
+        }
+
+        $find = is_string($replacement['find'] ?? null) ? trim((string) $replacement['find']) : '';
+        if ($find === '') {
+            continue;
+        }
+        $replace = is_string($replacement['replace'] ?? null) ? (string) $replacement['replace'] : '';
+        $isRegex = normalize_extraction_field_is_regex($replacement['isRegex'] ?? false);
+
+        if ($isRegex) {
+            $pattern = normalize_extraction_field_regex_pattern($find);
+            $delimitedPattern = '~' . str_replace('~', '\~', $pattern) . '~u';
+            $next = @preg_replace($delimitedPattern, $replace, $result);
+            if (is_string($next)) {
+                $result = $next;
+            }
+            continue;
+        }
+
+        $result = str_replace($find, $replace, $result);
     }
 
     return $result;
@@ -9590,20 +9815,10 @@ function extract_plusgiro_from_text(string $text): ?string
 function extract_date_from_text(string $text): ?string
 {
     $matches = [];
-    if (@preg_match('/\b(20\d{2})[-\/](\d{2})[-\/](\d{2})\b/u', $text, $matches) === 1) {
+    if (@preg_match('/\b(20\d{2})\s*[-.\/ ]\s*(\d{2})\s*[-.\/ ]\s*(\d{2})\b/u', $text, $matches) === 1) {
         $year = (int) ($matches[1] ?? 0);
         $month = (int) ($matches[2] ?? 0);
         $day = (int) ($matches[3] ?? 0);
-        if (checkdate($month, $day, $year)) {
-            return sprintf('%04d-%02d-%02d', $year, $month, $day);
-        }
-    }
-
-    $matches = [];
-    if (@preg_match('/\b(\d{2})[-\/](\d{2})[-\/](20\d{2})\b/u', $text, $matches) === 1) {
-        $day = (int) ($matches[1] ?? 0);
-        $month = (int) ($matches[2] ?? 0);
-        $year = (int) ($matches[3] ?? 0);
         if (checkdate($month, $day, $year)) {
             return sprintf('%04d-%02d-%02d', $year, $month, $day);
         }
@@ -9620,15 +9835,36 @@ function normalize_swedish_amount(string $value): ?float
         return null;
     }
 
-    $clean = preg_replace('/[^\d,.\s]/u', '', $clean);
+    $clean = preg_replace('/[^\d,.\s\-]/u', '', $clean);
     if (!is_string($clean) || trim($clean) === '') {
         return null;
     }
 
-    $clean = str_replace(' ', '', $clean);
-    if (str_contains($clean, ',')) {
-        $clean = str_replace('.', '', $clean);
-        $clean = str_replace(',', '.', $clean);
+    $clean = preg_replace('/\s+/u', '', $clean);
+    if (!is_string($clean) || $clean === '') {
+        return null;
+    }
+
+    $lastComma = strrpos($clean, ',');
+    $lastDot = strrpos($clean, '.');
+    if ($lastComma !== false && $lastDot !== false) {
+        if ($lastComma > $lastDot) {
+            $clean = str_replace('.', '', $clean);
+            $clean = str_replace(',', '.', $clean);
+        } else {
+            $clean = str_replace(',', '', $clean);
+        }
+    } elseif ($lastComma !== false) {
+        if (@preg_match('/,\d{2}$/', $clean) === 1) {
+            $clean = str_replace('.', '', $clean);
+            $clean = str_replace(',', '.', $clean);
+        } else {
+            $clean = str_replace(',', '', $clean);
+        }
+    } elseif ($lastDot !== false) {
+        if (@preg_match('/\.\d{2}$/', $clean) !== 1) {
+            $clean = str_replace('.', '', $clean);
+        }
     }
 
     if (!is_numeric($clean)) {
@@ -9646,7 +9882,7 @@ function normalize_swedish_amount(string $value): ?float
 function extract_amount_from_text(string $text): ?float
 {
     $matches = [];
-    if (@preg_match_all('/\b\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?\b|\b\d+(?:,\d{2})\b/u', $text, $matches) < 1) {
+    if (@preg_match_all('/\b(?:\d{1,3}(?:[ \x{00A0}.]\d{3})+|\d+),\d{2}\b|\b(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}\b/u', $text, $matches) < 1) {
         return null;
     }
 
@@ -10243,6 +10479,34 @@ function apply_cross_matching_key_penalties(array $results, array $positionSetti
     return $results;
 }
 
+function configured_field_selection_rule_set(array $result): array
+{
+    $ruleSets = is_array($result['ruleSets'] ?? null) ? $result['ruleSets'] : [];
+    $matchedRuleSetIndex = is_int($result['matchedRuleSetIndex'] ?? null) ? (int) $result['matchedRuleSetIndex'] : null;
+    if ($matchedRuleSetIndex !== null && is_array($ruleSets[$matchedRuleSetIndex] ?? null)) {
+        return $ruleSets[$matchedRuleSetIndex];
+    }
+    return is_array($ruleSets[0] ?? null) ? $ruleSets[0] : default_extraction_field_rule_set();
+}
+
+function selected_occurrence_match(array $matches, string $position): ?array
+{
+    $ordered = sort_extraction_field_matches(array_values(array_filter(
+        $matches,
+        static fn ($match): bool => is_array($match)
+    )));
+    if ($ordered === []) {
+        return null;
+    }
+    if ($position === 'last') {
+        return is_array($ordered[count($ordered) - 1] ?? null) ? $ordered[count($ordered) - 1] : null;
+    }
+    if ($position === 'second') {
+        return is_array($ordered[1] ?? null) ? $ordered[1] : null;
+    }
+    return is_array($ordered[0] ?? null) ? $ordered[0] : null;
+}
+
 function apply_extraction_field_acceptance_threshold(array $results, float $acceptanceThreshold = 0.5): array
 {
     $resolvedThreshold = clamp_confidence($acceptanceThreshold);
@@ -10262,12 +10526,27 @@ function apply_extraction_field_acceptance_threshold(array $results, float $acce
             $rankedMatches,
             static fn (array $match): bool => ($match['finalConfidence'] ?? 0) >= $resolvedThreshold
         ));
-        $result['values'] = array_values(array_map(
-            static fn (array $match): mixed => $match['value'] ?? null,
-            $acceptedMatches
-        ));
+        $selectionRuleSet = configured_field_selection_rule_set($result);
+        $selectionType = extraction_field_rule_set_type($selectionRuleSet);
+        if (in_array($selectionType, ['date', 'amount'], true)) {
+            $selectedMatch = selected_occurrence_match(
+                $acceptedMatches,
+                extraction_field_rule_set_position($selectionRuleSet, $selectionType)
+            );
+            $result['candidateMatches'] = $acceptedMatches;
+            $result['matches'] = is_array($selectedMatch) ? [$selectedMatch] : [];
+            $result['values'] = is_array($selectedMatch) && array_key_exists('value', $selectedMatch)
+                ? [$selectedMatch['value']]
+                : [];
+            $primaryMatch = $selectedMatch;
+        } else {
+            $result['values'] = array_values(array_map(
+                static fn (array $match): mixed => $match['value'] ?? null,
+                $acceptedMatches
+            ));
+            $primaryMatch = is_array($acceptedMatches[0] ?? null) ? $acceptedMatches[0] : null;
+        }
 
-        $primaryMatch = is_array($acceptedMatches[0] ?? null) ? $acceptedMatches[0] : null;
         if (is_array($primaryMatch)) {
             $result['value'] = $primaryMatch['value'] ?? null;
             $result['baseConfidence'] = isset($primaryMatch['baseConfidence']) ? clamp_confidence((float) $primaryMatch['baseConfidence']) : 0.0;
@@ -10346,6 +10625,80 @@ function document_date_result_matches(array $result): array
                 is_numeric($result['selectedCandidate']['score'] ?? null)
                     ? (float) $result['selectedCandidate']['score']
                     : null
+            );
+        }
+    }
+
+    return sort_extraction_field_matches(array_values($matchesByKey));
+}
+
+function extraction_field_rule_set_type(array $ruleSet, ?array $legacyField = null): string
+{
+    return normalize_extraction_field_type($ruleSet['type'] ?? null, $legacyField, $ruleSet);
+}
+
+function extraction_field_rule_set_uses_search_text(array $ruleSet): bool
+{
+    if (array_key_exists('useSearchText', $ruleSet)) {
+        return normalize_extraction_field_use_search_text($ruleSet['useSearchText'] ?? null, true);
+    }
+
+    return !array_key_exists('requiresSearchTerms', $ruleSet)
+        || $ruleSet['requiresSearchTerms'] === true
+        || $ruleSet['requiresSearchTerms'] === 1
+        || $ruleSet['requiresSearchTerms'] === '1';
+}
+
+function extraction_field_rule_set_position(array $ruleSet, string $type): string
+{
+    if ($type === 'date') {
+        return normalize_extraction_field_position($ruleSet['datePosition'] ?? null);
+    }
+    if ($type === 'amount') {
+        return normalize_extraction_field_position($ruleSet['amountPosition'] ?? null);
+    }
+    return 'first';
+}
+
+function collect_document_candidate_matches(
+    array $lines,
+    callable $candidateExtractor,
+    float $confidence = 0.55
+): array {
+    $matchesByKey = [];
+    foreach ($lines as $lineIndex => $line) {
+        $resolvedLine = is_string($line) ? $line : '';
+        if ($resolvedLine === '' || !is_int($lineIndex)) {
+            continue;
+        }
+
+        $candidates = $candidateExtractor($resolvedLine, 0);
+        if (!is_array($candidates)) {
+            continue;
+        }
+
+        foreach ($candidates as $candidate) {
+            if (!is_array($candidate)) {
+                continue;
+            }
+
+            $value = $candidate['value'] ?? null;
+            $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+            $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+            if ($value === null || $start < 0) {
+                continue;
+            }
+
+            add_extraction_field_match(
+                $matchesByKey,
+                $lineIndex,
+                $start,
+                $value,
+                $raw,
+                is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
+                'pattern',
+                $confidence,
+                is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null
             );
         }
     }
@@ -10442,7 +10795,8 @@ function extract_generic_text_field_result(
     string $searchString,
     array $replacementMap,
     array $positionSettings = [],
-    array $lineGeometries = []
+    array $lineGeometries = [],
+    bool $preferCaptureGroupValue = true
 ): array {
     $resolvedAliases = normalize_extraction_field_search_terms($searchTerms);
     if ($resolvedAliases === []) {
@@ -10467,8 +10821,8 @@ function extract_generic_text_field_result(
         $lines,
         $resolvedAliases,
         $replacementMap,
-        static function (string $text, int $offsetBase) use ($pattern): array {
-            return extraction_field_pattern_candidates_from_text($text, $pattern, true, $offsetBase);
+        static function (string $text, int $offsetBase) use ($pattern, $preferCaptureGroupValue): array {
+            return extraction_field_pattern_candidates_from_text($text, $pattern, true, $offsetBase, $preferCaptureGroupValue);
         },
         1,
         $positionSettings,
@@ -10483,7 +10837,8 @@ function extract_generic_text_field_matches(
     string $searchString,
     array $replacementMap,
     array $positionSettings = [],
-    array $lineGeometries = []
+    array $lineGeometries = [],
+    bool $preferCaptureGroupValue = true
 ): array {
     $resolvedAliases = normalize_extraction_field_search_terms($searchTerms);
     if ($resolvedAliases === []) {
@@ -10507,8 +10862,8 @@ function extract_generic_text_field_matches(
         $lines,
         $resolvedAliases,
         $replacementMap,
-        static function (string $text, int $offsetBase) use ($pattern): array {
-            return extraction_field_pattern_candidates_from_text($text, $pattern, true, $offsetBase);
+        static function (string $text, int $offsetBase) use ($pattern, $preferCaptureGroupValue): array {
+            return extraction_field_pattern_candidates_from_text($text, $pattern, true, $offsetBase, $preferCaptureGroupValue);
         },
         1,
         $positionSettings,
@@ -10516,7 +10871,7 @@ function extract_generic_text_field_matches(
     );
 }
 
-function extract_unlabeled_pattern_field_result(array $lines, string $pattern): array
+function extract_unlabeled_pattern_field_result(array $lines, string $pattern, bool $preferCaptureGroupValue = true): array
 {
     $resolvedPattern = trim($pattern);
     if ($resolvedPattern === '') {
@@ -10529,7 +10884,7 @@ function extract_unlabeled_pattern_field_result(array $lines, string $pattern): 
             continue;
         }
 
-        $candidates = extraction_field_pattern_candidates_from_text($resolvedLine, $resolvedPattern, true, 0);
+        $candidates = extraction_field_pattern_candidates_from_text($resolvedLine, $resolvedPattern, true, 0, $preferCaptureGroupValue);
         foreach ($candidates as $candidate) {
             if (!is_array($candidate)) {
                 continue;
@@ -10554,7 +10909,7 @@ function extract_unlabeled_pattern_field_result(array $lines, string $pattern): 
     return empty_extraction_field_result();
 }
 
-function extract_unlabeled_pattern_field_matches(array $lines, string $pattern): array
+function extract_unlabeled_pattern_field_matches(array $lines, string $pattern, bool $preferCaptureGroupValue = true): array
 {
     $resolvedPattern = trim($pattern);
     if ($resolvedPattern === '') {
@@ -10568,7 +10923,7 @@ function extract_unlabeled_pattern_field_matches(array $lines, string $pattern):
             continue;
         }
 
-        $candidates = extraction_field_pattern_candidates_from_text($resolvedLine, $resolvedPattern, true, 0);
+        $candidates = extraction_field_pattern_candidates_from_text($resolvedLine, $resolvedPattern, true, 0, $preferCaptureGroupValue);
         foreach ($candidates as $candidate) {
             if (!is_array($candidate)) {
                 continue;
@@ -10606,29 +10961,69 @@ function extract_configured_rule_set_field_matches(
     array $lineGeometries = []
 ): array
 {
-    $requiresSearchTerms = !array_key_exists('requiresSearchTerms', $ruleSet)
-        || $ruleSet['requiresSearchTerms'] === true
-        || $ruleSet['requiresSearchTerms'] === 1
-        || $ruleSet['requiresSearchTerms'] === '1';
+    $type = extraction_field_rule_set_type($ruleSet);
+    $runtimeRuleSet = extraction_field_runtime_rule_set($ruleSet);
+    $requiresSearchTerms = extraction_field_rule_set_uses_search_text($runtimeRuleSet);
+    $normalizationType = normalize_extraction_field_normalization_type($runtimeRuleSet['normalizationType'] ?? null);
     $searchTerms = normalize_extraction_field_search_terms(
-        $ruleSet['searchTerms'] ?? null,
-        normalize_extraction_field_is_regex($ruleSet['isRegex'] ?? false)
+        $runtimeRuleSet['searchTerms'] ?? null,
+        normalize_extraction_field_is_regex($runtimeRuleSet['isRegex'] ?? false)
     );
-    $valuePattern = is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '';
+    $valuePattern = is_string($runtimeRuleSet['valuePattern'] ?? null) ? trim((string) $runtimeRuleSet['valuePattern']) : '';
+
+    $preferCaptureGroupValue = $normalizationType !== 'replacements';
+    $candidateExtractor = match ($type) {
+        'amount' => 'amount_candidates_from_text',
+        default => static function (string $text, int $offsetBase) use ($valuePattern, $preferCaptureGroupValue): array {
+            return extraction_field_pattern_candidates_from_text($text, $valuePattern, true, $offsetBase, $preferCaptureGroupValue);
+        },
+    };
+
+    if (in_array($type, ['regex', 'date'], true) && $valuePattern === '') {
+        if (!$requiresSearchTerms || $searchTerms === []) {
+            return [];
+        }
+
+        return collect_labeled_candidate_matches(
+            $lines,
+            $searchTerms,
+            $replacementMap,
+            'generic_text_segment_candidates_from_text',
+            1,
+            $positionSettings,
+            $lineGeometries
+        );
+    }
 
     if (!$requiresSearchTerms) {
-        return extract_unlabeled_pattern_field_matches($lines, $valuePattern);
+        if (in_array($type, ['regex', 'date'], true)) {
+            return extract_unlabeled_pattern_field_matches($lines, $valuePattern, $preferCaptureGroupValue);
+        }
+        return collect_document_candidate_matches($lines, $candidateExtractor);
     }
 
     if ($searchTerms === []) {
         return [];
     }
 
-    return extract_generic_text_field_matches(
+    if (in_array($type, ['regex', 'date'], true)) {
+        return extract_generic_text_field_matches(
+            $lines,
+            $searchTerms,
+            $valuePattern,
+            $replacementMap,
+            $positionSettings,
+            $lineGeometries,
+            $preferCaptureGroupValue
+        );
+    }
+
+    return collect_labeled_candidate_matches(
         $lines,
         $searchTerms,
-        $valuePattern,
         $replacementMap,
+        $candidateExtractor,
+        1,
         $positionSettings,
         $lineGeometries
     );
@@ -10642,32 +11037,8 @@ function extract_configured_rule_set_field_result(
     array $lineGeometries = []
 ): array
 {
-    $requiresSearchTerms = !array_key_exists('requiresSearchTerms', $ruleSet)
-        || $ruleSet['requiresSearchTerms'] === true
-        || $ruleSet['requiresSearchTerms'] === 1
-        || $ruleSet['requiresSearchTerms'] === '1';
-    $searchTerms = normalize_extraction_field_search_terms(
-        $ruleSet['searchTerms'] ?? null,
-        normalize_extraction_field_is_regex($ruleSet['isRegex'] ?? false)
-    );
-    $valuePattern = is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '';
-
-    if (!$requiresSearchTerms) {
-        return extract_unlabeled_pattern_field_result($lines, $valuePattern);
-    }
-
-    if ($searchTerms === []) {
-        return empty_extraction_field_result();
-    }
-
-    return extract_generic_text_field_result(
-        $lines,
-        $searchTerms,
-        $valuePattern,
-        $replacementMap,
-        $positionSettings,
-        $lineGeometries
-    );
+    $matches = extract_configured_rule_set_field_matches($lines, $replacementMap, $ruleSet, $positionSettings, $lineGeometries);
+    return is_array($matches[0] ?? null) ? $matches[0] : empty_extraction_field_result();
 }
 
 function extract_configured_text_field_results(
@@ -10759,14 +11130,14 @@ function extract_configured_text_field_results(
             if ($matchRuleSetIndex !== null && is_array($ruleSets[$matchRuleSetIndex] ?? null)) {
                 $normalizationRuleSet = $ruleSets[$matchRuleSetIndex];
             }
+            $normalizationRuleSet = extraction_field_runtime_rule_set($normalizationRuleSet);
 
             $resolvedValue = $match['value'] ?? null;
-            if (is_string($resolvedValue)) {
-                $resolvedValue = apply_extraction_field_normalization(
-                    $resolvedValue,
-                    is_string($normalizationRuleSet['normalizationType'] ?? null) ? (string) $normalizationRuleSet['normalizationType'] : 'none',
-                    is_string($normalizationRuleSet['normalizationChars'] ?? null) ? (string) $normalizationRuleSet['normalizationChars'] : ''
-                );
+            $ruleSetType = extraction_field_rule_set_type($normalizationRuleSet, $field);
+            if ($ruleSetType === 'amount' && is_numeric($resolvedValue)) {
+                $resolvedValue = number_format((float) $resolvedValue, 2, '.', '');
+            } elseif (is_string($resolvedValue)) {
+                $resolvedValue = apply_extraction_field_normalization($resolvedValue, $normalizationRuleSet);
             }
 
             $resolvedValue = normalize_auto_archiving_field_value_item($resolvedValue);
@@ -11306,6 +11677,7 @@ function auto_archiving_sender_organization_name(?array $sender, array $allField
 function build_auto_archiving_filename_field_values(array $autoResult, array $senders, array $foldersById, array $rules): array
 {
     $values = [];
+    $fieldTypesByKey = [];
     $setValue = static function (array &$target, string $key, mixed $value): void {
         if ($value === null || $value === '') {
             return;
@@ -11323,6 +11695,23 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
     $systemFields = is_array($autoResult['systemFields'] ?? null) ? $autoResult['systemFields'] : [];
     $allFields = array_merge($fields, $systemFields);
 
+    foreach (['predefinedFields', 'fields', 'systemFields'] as $groupKey) {
+        foreach (is_array($rules[$groupKey] ?? null) ? $rules[$groupKey] : [] as $fieldDefinition) {
+            if (!is_array($fieldDefinition)) {
+                continue;
+            }
+            $fieldKey = is_string($fieldDefinition['key'] ?? null) ? trim((string) $fieldDefinition['key']) : '';
+            if ($fieldKey === '') {
+                continue;
+            }
+            $ruleSets = normalize_extraction_field_rule_sets($fieldDefinition['ruleSets'] ?? null, $fieldDefinition);
+            $fieldTypesByKey[$fieldKey] = extraction_field_rule_set_type(
+                is_array($ruleSets[0] ?? null) ? $ruleSets[0] : default_extraction_field_rule_set(),
+                $fieldDefinition
+            );
+        }
+    }
+
     $folder = $folderId !== '' ? ($foldersById[$folderId] ?? null) : null;
     $sender = $senderId > 0 ? find_sender_by_id($senders, $senderId) : null;
 
@@ -11337,7 +11726,7 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
     if (array_key_exists('amount', $allFields)) {
         $amount = first_auto_archiving_field_value($allFields['amount']);
         if (is_numeric($amount)) {
-            $setValue($values, 'amount', number_format((float) $amount, 2, ',', ' '));
+            $setValue($values, 'amount', number_format((float) $amount, 2, ',', ''));
         } else {
             $setValue($values, 'amount', $amount);
         }
@@ -11367,7 +11756,11 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
         if ($resolvedKey === '') {
             continue;
         }
-        $setValue($values, $resolvedKey, first_auto_archiving_field_value($fieldValue));
+        $resolvedValue = first_auto_archiving_field_value($fieldValue);
+        if (($fieldTypesByKey[$resolvedKey] ?? '') === 'amount' && is_numeric($resolvedValue)) {
+            $resolvedValue = number_format((float) $resolvedValue, 2, ',', '');
+        }
+        $setValue($values, $resolvedKey, $resolvedValue);
     }
 
     $labelNames = build_auto_archiving_filename_label_names($autoResult, $rules);

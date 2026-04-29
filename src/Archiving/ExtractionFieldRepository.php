@@ -81,6 +81,9 @@ final class ExtractionFieldRepository
                 'ruleSets' => $ruleSetsByFieldId[$fieldId] ?? [],
             ];
 
+            $fieldRuleSet = is_array($field['ruleSets'][0] ?? null) ? $field['ruleSets'][0] : [];
+            $field['type'] = is_string($fieldRuleSet['type'] ?? null) ? trim((string) $fieldRuleSet['type']) : 'regex';
+
             if ($fieldType === 'predefined') {
                 $field['predefinedFieldKey'] = $fieldKey;
                 $field['isPredefinedField'] = true;
@@ -147,14 +150,17 @@ final class ExtractionFieldRepository
                 :updated_at
             )'
         );
-        $insertRuleSet = $this->pdo->prepare(
+                $insertRuleSet = $this->pdo->prepare(
             'INSERT INTO archiving_data_field_rule_sets (
                 data_field_id,
                 requires_search_terms,
                 search_terms_json,
+                rule_type,
                 value_pattern,
                 normalization_type,
                 normalization_chars,
+                date_position,
+                amount_position,
                 sort_order,
                 created_at,
                 updated_at
@@ -162,9 +168,12 @@ final class ExtractionFieldRepository
                 :data_field_id,
                 :requires_search_terms,
                 :search_terms_json,
+                :rule_type,
                 :value_pattern,
                 :normalization_type,
                 :normalization_chars,
+                :date_position,
+                :amount_position,
                 :sort_order,
                 :created_at,
                 :updated_at
@@ -228,9 +237,18 @@ final class ExtractionFieldRepository
                         ':data_field_id' => $fieldId,
                         ':requires_search_terms' => ($ruleSet['requiresSearchTerms'] ?? true) ? 1 : 0,
                         ':search_terms_json' => $searchTermsJson,
+                        ':rule_type' => is_string($ruleSet['type'] ?? null) && in_array(trim(strtolower((string) $ruleSet['type'])), ['regex', 'date', 'amount'], true)
+                            ? trim(strtolower((string) $ruleSet['type']))
+                            : 'regex',
                         ':value_pattern' => is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '',
                         ':normalization_type' => is_string($ruleSet['normalizationType'] ?? null) ? trim((string) $ruleSet['normalizationType']) : 'none',
                         ':normalization_chars' => is_string($ruleSet['normalizationChars'] ?? null) ? (string) $ruleSet['normalizationChars'] : '',
+                        ':date_position' => is_string($ruleSet['datePosition'] ?? null) && in_array(trim(strtolower((string) $ruleSet['datePosition'])), ['first', 'second', 'last'], true)
+                            ? trim(strtolower((string) $ruleSet['datePosition']))
+                            : 'first',
+                        ':amount_position' => is_string($ruleSet['amountPosition'] ?? null) && in_array(trim(strtolower((string) $ruleSet['amountPosition'])), ['first', 'second', 'last'], true)
+                            ? trim(strtolower((string) $ruleSet['amountPosition']))
+                            : 'first',
                         ':sort_order' => $ruleOrder,
                         ':created_at' => $timestamp,
                         ':updated_at' => $timestamp,
@@ -260,15 +278,18 @@ final class ExtractionFieldRepository
         }
 
         $placeholders = implode(', ', array_fill(0, count($resolvedIds), '?'));
-        $statement = $this->pdo->prepare(
-            'SELECT
+            $statement = $this->pdo->prepare(
+                'SELECT
                 id,
                 data_field_id,
                 requires_search_terms,
                 search_terms_json,
+                rule_type,
                 value_pattern,
                 normalization_type,
                 normalization_chars,
+                date_position,
+                amount_position,
                 sort_order,
                 created_at,
                 updated_at
@@ -321,11 +342,14 @@ final class ExtractionFieldRepository
             }
 
             $byFieldId[$fieldId][] = [
+                'type' => is_string($row['rule_type'] ?? null) ? trim(strtolower((string) $row['rule_type'])) : 'regex',
                 'requiresSearchTerms' => ((int) ($row['requires_search_terms'] ?? 1)) === 1,
                 'searchTerms' => $resolvedSearchTerms,
                 'valuePattern' => is_string($row['value_pattern'] ?? null) ? trim((string) $row['value_pattern']) : '',
                 'normalizationType' => is_string($row['normalization_type'] ?? null) ? trim((string) $row['normalization_type']) : 'none',
                 'normalizationChars' => is_string($row['normalization_chars'] ?? null) ? (string) $row['normalization_chars'] : '',
+                'datePosition' => is_string($row['date_position'] ?? null) ? trim(strtolower((string) $row['date_position'])) : 'first',
+                'amountPosition' => is_string($row['amount_position'] ?? null) ? trim(strtolower((string) $row['amount_position'])) : 'first',
             ];
         }
 

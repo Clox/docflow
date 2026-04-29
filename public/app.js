@@ -6875,10 +6875,31 @@ function formatFilenameAmount(value) {
   if (!Number.isFinite(amount)) {
     return null;
   }
-  return amount.toLocaleString('sv-SE', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return amount.toFixed(2).replace('.', ',');
+}
+
+function extractionFieldTypeByKey(fieldKey) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  if (!normalizedKey) {
+    return '';
+  }
+
+  const allFieldDefinitions = [
+    ...sanitizeExtractionFields(predefinedExtractionFieldsDraft),
+    ...sanitizeExtractionFields(extractionFieldsDraft),
+    ...sanitizeExtractionFields(systemExtractionFieldsDraft),
+  ];
+
+  const match = allFieldDefinitions.find((field) => {
+    return field && typeof field === 'object' && String(field.key || '').trim() === normalizedKey;
+  }) || null;
+
+  if (!match) {
+    return '';
+  }
+
+  const firstRuleSet = Array.isArray(match.ruleSets) ? match.ruleSets[0] : null;
+  return sanitizeExtractionFieldType(firstRuleSet && typeof firstRuleSet === 'object' ? firstRuleSet.type : '', match);
 }
 
 function normalizeFilenameIdentifierDigits(value) {
@@ -7017,9 +7038,12 @@ function buildFilenameFieldValues(job) {
       ? entry.key.trim()
       : (typeof fieldKey === 'string' ? fieldKey.trim() : '');
     const rawValue = entry ? entry.value : firstFieldValue(field);
-    const value = typeof rawValue === 'string'
+    let value = typeof rawValue === 'string'
       ? rawValue.trim()
       : (rawValue === null || rawValue === undefined ? '' : String(rawValue).trim());
+    if (key && extractionFieldTypeByKey(key) === 'amount') {
+      value = formatFilenameAmount(value) || value;
+    }
     if (key && value) {
       setValue(key, value);
     }
@@ -12571,12 +12595,17 @@ function defaultExtractionField() {
 
 function defaultExtractionFieldRuleSet() {
   return {
+    type: 'regex',
+    useSearchText: true,
     requiresSearchTerms: true,
     searchTerms: [{ text: '', isRegex: false }],
     isRegex: false,
     valuePattern: '',
     normalizationType: 'none',
     normalizationChars: '',
+    normalizationReplacements: [],
+    datePosition: 'first',
+    amountPosition: 'first',
   };
 }
 
@@ -12610,7 +12639,67 @@ function sanitizeExtractionFieldAliasesInput(aliases, legacyFallback = '') {
 
 function sanitizeExtractionFieldNormalizationType(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  return normalized === 'whitelist' || normalized === 'blacklist' ? normalized : 'none';
+  return normalized === 'whitelist' || normalized === 'blacklist' || normalized === 'replacements' ? normalized : 'none';
+}
+
+function defaultExtractionFieldNormalizationReplacement() {
+  return {
+    find: '',
+    replace: '',
+    isRegex: false,
+  };
+}
+
+function sanitizeExtractionFieldNormalizationReplacement(row) {
+  const input = row && typeof row === 'object' ? row : {};
+  const find = typeof input.find === 'string'
+    ? input.find.trim()
+    : (typeof input.from === 'string' ? input.from.trim() : '');
+  if (!find) {
+    return null;
+  }
+  return {
+    find,
+    replace: typeof input.replace === 'string'
+      ? input.replace
+      : (typeof input.to === 'string' ? input.to : ''),
+    isRegex: input.isRegex === true,
+  };
+}
+
+function sanitizeExtractionFieldNormalizationReplacementsInput(replacements) {
+  const values = Array.isArray(replacements) ? replacements : [];
+  const normalized = [];
+  values.forEach((row) => {
+    const replacement = sanitizeExtractionFieldNormalizationReplacement(row);
+    if (replacement) {
+      normalized.push(replacement);
+    }
+  });
+  return normalized;
+}
+
+function sanitizeExtractionFieldType(value, legacyField = null) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'regex' || normalized === 'date' || normalized === 'amount') {
+    return normalized;
+  }
+
+  const legacy = legacyField && typeof legacyField === 'object' ? legacyField : {};
+  const legacyKey = String(legacy.predefinedFieldKey || legacy.systemFieldKey || legacy.key || '').trim();
+  const legacyExtractor = String(legacy.extractor || '').trim().toLowerCase();
+  if (legacyKey === 'amount' || legacyExtractor === 'amount') {
+    return 'amount';
+  }
+  if (legacyKey === 'due_date' || legacyKey === 'document_date' || legacyExtractor === 'due_date' || legacyExtractor === 'document_date') {
+    return 'date';
+  }
+  return 'regex';
+}
+
+function sanitizeExtractionFieldPosition(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'second' || normalized === 'last' ? normalized : 'first';
 }
 
 function sanitizeExtractionFieldSearchTerm(term, legacyIsRegex = false) {
@@ -12683,36 +12772,52 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
     hasExplicitRuleSet ? '' : legacyAliasesFallback,
     legacyIsRegex
   );
-  let valuePattern = typeof input.valuePattern === 'string'
-    ? input.valuePattern
-    : (typeof input.searchString === 'string' ? input.searchString : '');
-  if (!hasExplicitRuleSet) {
-    valuePattern = typeof legacySearchString === 'string' ? legacySearchString : '';
-    if (legacyAliasesFallback) {
-      valuePattern = '';
-    }
-  }
+  const type = sanitizeExtractionFieldType(hasExplicitRuleSet ? input.type : legacy.type, legacy);
+  const useSearchText = hasExplicitRuleSet
+    ? input.useSearchText !== false && input.requiresSearchTerms !== false
+    : searchTerms.length > 0;
+  const isDateType = type === 'date';
+  const valuePattern = isDateType
+    ? undefined
+    : (
+      typeof input.valuePattern === 'string'
+        ? input.valuePattern
+        : (typeof input.searchString === 'string' ? input.searchString : '')
+    );
+  const normalizationType = isDateType
+    ? undefined
+    : sanitizeExtractionFieldNormalizationType(
+      hasExplicitRuleSet ? input.normalizationType : legacy.normalizationType
+    );
+  const normalizationReplacements = isDateType
+    ? undefined
+    : sanitizeExtractionFieldNormalizationReplacementsInput(
+      hasExplicitRuleSet ? input.normalizationReplacements : legacy.normalizationReplacements
+    );
 
   return {
-    requiresSearchTerms: hasExplicitRuleSet
-      ? input.requiresSearchTerms !== false
-      : searchTerms.length > 0,
+    type,
+    useSearchText,
+    requiresSearchTerms: useSearchText,
     searchTerms,
     isRegex: false,
     valuePattern,
-    normalizationType: sanitizeExtractionFieldNormalizationType(
-      hasExplicitRuleSet ? input.normalizationType : legacy.normalizationType
-    ),
-    normalizationChars: typeof (hasExplicitRuleSet ? input.normalizationChars : legacy.normalizationChars) === 'string'
-      ? (hasExplicitRuleSet ? input.normalizationChars : legacy.normalizationChars)
-      : '',
+    normalizationType,
+    normalizationChars: isDateType
+      ? undefined
+      : (typeof (hasExplicitRuleSet ? input.normalizationChars : legacy.normalizationChars) === 'string'
+        ? (hasExplicitRuleSet ? input.normalizationChars : legacy.normalizationChars)
+        : ''),
+    normalizationReplacements,
+    datePosition: sanitizeExtractionFieldPosition(hasExplicitRuleSet ? input.datePosition : legacy.datePosition),
+    amountPosition: isDateType ? undefined : sanitizeExtractionFieldPosition(hasExplicitRuleSet ? input.amountPosition : legacy.amountPosition),
   };
 }
 
 function sanitizeExtractionFieldRuleSets(ruleSets, legacyField = null) {
   const normalized = Array.isArray(ruleSets)
     ? ruleSets
-      .map((ruleSet) => sanitizeExtractionFieldRuleSet(ruleSet))
+      .map((ruleSet) => sanitizeExtractionFieldRuleSet(ruleSet, legacyField))
       .filter((ruleSet) => ruleSet && typeof ruleSet === 'object')
     : [];
   if (normalized.length > 0) {
@@ -12780,6 +12885,14 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
   return {
     key: normalizedKey,
     name,
+    type: sanitizeExtractionFieldType(
+      typeof input.type === 'string'
+        ? input.type
+        : (Array.isArray(input.ruleSets) && input.ruleSets[0] && typeof input.ruleSets[0].type === 'string'
+          ? input.ruleSets[0].type
+          : ''),
+      input
+    ),
     ruleSets: sanitizeExtractionFieldRuleSets(input.ruleSets, input),
     extractor,
     predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
@@ -14641,14 +14754,30 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
       const ruleFields = document.createElement('div');
       ruleFields.className = 'extraction-field-rule-set-fields';
+      let removeRuleSetButton = null;
+
+      const typeSelect = document.createElement('select');
+      typeSelect.className = 'extraction-field-type-select';
+      [
+        ['regex', 'Regex'],
+        ['date', 'Datum'],
+        ['amount', 'Belopp'],
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        typeSelect.appendChild(option);
+      });
+      typeSelect.value = sanitizeExtractionFieldType(ruleSet.type, collection[index]);
+      ruleFields.appendChild(createFloatingField('Typ', typeSelect));
 
       const requiresSearchTermsLabel = document.createElement('label');
       requiresSearchTermsLabel.className = 'extraction-field-rule-set-toggle';
       const requiresSearchTermsCheckbox = document.createElement('input');
       requiresSearchTermsCheckbox.type = 'checkbox';
-      requiresSearchTermsCheckbox.checked = ruleSet.requiresSearchTerms !== false;
+      requiresSearchTermsCheckbox.checked = ruleSet.useSearchText !== false && ruleSet.requiresSearchTerms !== false;
       const requiresSearchTermsText = document.createElement('span');
-      requiresSearchTermsText.textContent = 'Kräver sökord';
+      requiresSearchTermsText.textContent = 'Använd söktext';
       requiresSearchTermsLabel.appendChild(requiresSearchTermsCheckbox);
       requiresSearchTermsLabel.appendChild(requiresSearchTermsText);
 
@@ -14661,7 +14790,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       searchTermsField.className = 'floating-input-group extraction-field-aliases-field';
       const searchTermsLabel = document.createElement('label');
       searchTermsLabel.className = 'floating-input-label';
-      searchTermsLabel.textContent = 'Sökord';
+      searchTermsLabel.textContent = 'Söktext';
       const searchTermsList = document.createElement('div');
       searchTermsList.className = 'extraction-field-aliases';
       const searchTermValues = extractionFieldSearchTermsForEditor(ruleSet);
@@ -14674,11 +14803,13 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const renderSearchTermRows = (focusIndex = null, selectionStart = null, selectionEnd = null) => {
         searchTermsList.innerHTML = '';
         const nonEmptyCount = searchTermValues.filter((value) => String(value && value.text ? value.text : '').trim() !== '').length;
+        const currentType = sanitizeExtractionFieldType(typeSelect.value, collection[index]);
 
         searchTermValues.forEach((searchTermValue, searchTermIndex) => {
           const searchTermRow = document.createElement('div');
           searchTermRow.className = 'extraction-field-alias-row';
-          const accessoryCount = searchTermIndex > 0 ? 2 : 1;
+          const supportsRegexSearchText = currentType === 'regex';
+          const accessoryCount = searchTermIndex > 0 ? (supportsRegexSearchText ? 2 : 1) : (supportsRegexSearchText ? 1 : 0);
 
           const searchTermInput = document.createElement('input');
           searchTermInput.type = 'text';
@@ -14704,32 +14835,34 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
             }
           });
 
-          const regexButton = createRegexToggleButton({
-            getActive: () => {
-              const current = searchTermValues[searchTermIndex];
-              return !!(current && typeof current === 'object' && current.isRegex === true);
-            },
-            setActive: (next) => {
-              const current = searchTermValues[searchTermIndex] && typeof searchTermValues[searchTermIndex] === 'object'
-                ? searchTermValues[searchTermIndex]
-                : { text: '', isRegex: false };
-              current.isRegex = next === true;
-              searchTermValues[searchTermIndex] = current;
-              syncSearchTermsToDraft();
-              updateSettingsActionButtons();
-              const nextSelectionStart = searchTermInput.selectionStart;
-              const nextSelectionEnd = searchTermInput.selectionEnd;
-              renderSearchTermRows(searchTermIndex, nextSelectionStart, nextSelectionEnd);
-            },
-          });
-
-          const accessories = [regexButton];
+          const accessories = [];
+          if (supportsRegexSearchText) {
+            const regexButton = createRegexToggleButton({
+              getActive: () => {
+                const current = searchTermValues[searchTermIndex];
+                return !!(current && typeof current === 'object' && current.isRegex === true);
+              },
+              setActive: (next) => {
+                const current = searchTermValues[searchTermIndex] && typeof searchTermValues[searchTermIndex] === 'object'
+                  ? searchTermValues[searchTermIndex]
+                  : { text: '', isRegex: false };
+                current.isRegex = next === true;
+                searchTermValues[searchTermIndex] = current;
+                syncSearchTermsToDraft();
+                updateSettingsActionButtons();
+                const nextSelectionStart = searchTermInput.selectionStart;
+                const nextSelectionEnd = searchTermInput.selectionEnd;
+                renderSearchTermRows(searchTermIndex, nextSelectionStart, nextSelectionEnd);
+              },
+            });
+            accessories.push(regexButton);
+          }
           if (searchTermIndex > 0) {
             const removeSearchTermButton = document.createElement('button');
             removeSearchTermButton.type = 'button';
             removeSearchTermButton.className = 'extraction-field-alias-remove';
-            removeSearchTermButton.setAttribute('aria-label', 'Ta bort sökord');
-            removeSearchTermButton.title = 'Ta bort sökord';
+            removeSearchTermButton.setAttribute('aria-label', 'Ta bort söktext');
+            removeSearchTermButton.title = 'Ta bort söktext';
             removeSearchTermButton.textContent = '×';
             const removingLastSearchTerm = nonEmptyCount <= 1 && searchTermInput.value.trim() !== '';
             removeSearchTermButton.disabled = removingLastSearchTerm;
@@ -14778,7 +14911,38 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         collection[index].ruleSets[ruleSetIndex].valuePattern = valuePatternInput.value;
         updateSettingsActionButtons();
       });
-      ruleFields.appendChild(createFloatingField('Värdemönster (regex)', valuePatternInput));
+      const valuePatternField = createFloatingField('Värdemönster (regex)', valuePatternInput);
+      ruleFields.appendChild(valuePatternField);
+
+      const datePositionSelect = document.createElement('select');
+      [
+        ['first', 'Första datumet'],
+        ['second', 'Andra datumet'],
+        ['last', 'Sista datumet'],
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        datePositionSelect.appendChild(option);
+      });
+      datePositionSelect.value = sanitizeExtractionFieldPosition(ruleSet.datePosition);
+      const datePositionField = createFloatingField('Datumposition', datePositionSelect);
+      ruleFields.appendChild(datePositionField);
+
+      const amountPositionSelect = document.createElement('select');
+      [
+        ['first', 'Första beloppet'],
+        ['second', 'Andra beloppet'],
+        ['last', 'Sista beloppet'],
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        amountPositionSelect.appendChild(option);
+      });
+      amountPositionSelect.value = sanitizeExtractionFieldPosition(ruleSet.amountPosition);
+      const amountPositionField = createFloatingField('Beloppsposition', amountPositionSelect);
+      ruleFields.appendChild(amountPositionField);
 
       const normalizationTypeSelect = document.createElement('select');
       normalizationTypeSelect.className = 'extraction-field-normalization-select';
@@ -14786,6 +14950,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         ['none', 'Ingen'],
         ['whitelist', 'Whitelist'],
         ['blacklist', 'Blacklist'],
+        ['replacements', 'Ersättningar'],
       ].forEach(([value, label]) => {
         const option = document.createElement('option');
         option.value = value;
@@ -14802,28 +14967,175 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const normalizationCharsField = createFloatingField('Normaliseringstecken', normalizationCharsInput);
       normalizationCharsField.classList.add('extraction-field-normalization-field');
 
+      let normalizationReplacementsValues = sanitizeExtractionFieldNormalizationReplacementsInput(ruleSet.normalizationReplacements);
+      const normalizationReplacementsList = document.createElement('div');
+      normalizationReplacementsList.className = 'extraction-field-normalization-replacements-list';
+      const normalizationReplacementsAddButton = document.createElement('button');
+      normalizationReplacementsAddButton.type = 'button';
+      normalizationReplacementsAddButton.className = 'extraction-field-normalization-replacements-add';
+      normalizationReplacementsAddButton.textContent = 'Lägg till ersättning';
+      const normalizationReplacementsField = document.createElement('div');
+      normalizationReplacementsField.className = 'extraction-field-normalization-replacements-field';
+      normalizationReplacementsField.appendChild(normalizationReplacementsList);
+      normalizationReplacementsField.appendChild(normalizationReplacementsAddButton);
+
+      const syncNormalizationReplacementsToDraft = () => {
+        collection[index].ruleSets[ruleSetIndex].normalizationReplacements = normalizationReplacementsValues.map((replacement) => ({
+          find: typeof replacement.find === 'string' ? replacement.find : '',
+          replace: typeof replacement.replace === 'string' ? replacement.replace : '',
+          isRegex: replacement.isRegex === true,
+        }));
+      };
+
+      const renderNormalizationReplacementRows = (focusIndex = null) => {
+        normalizationReplacementsList.innerHTML = '';
+        if (normalizationReplacementsValues.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'categories-empty extraction-field-normalization-replacements-empty';
+          empty.textContent = 'Inga ersättningar ännu.';
+          normalizationReplacementsList.appendChild(empty);
+          return;
+        }
+
+        normalizationReplacementsValues.forEach((replacementValue, replacementIndex) => {
+          const row = document.createElement('div');
+          row.className = 'extraction-field-normalization-replacement-row';
+
+          const findInput = document.createElement('input');
+          findInput.type = 'text';
+          findInput.placeholder = 'Ex: ^(\\d{4})\\s*[-./ ]\\s*(\\d{2})\\s*[-./ ]\\s*(\\d{2})$';
+          findInput.value = typeof replacementValue.find === 'string' ? replacementValue.find : '';
+          findInput.addEventListener('input', () => {
+            normalizationReplacementsValues[replacementIndex].find = findInput.value;
+            syncNormalizationReplacementsToDraft();
+            updateSettingsActionButtons();
+          });
+
+          const replaceInput = document.createElement('input');
+          replaceInput.type = 'text';
+          replaceInput.placeholder = 'Ex: $1-$2-$3';
+          replaceInput.value = typeof replacementValue.replace === 'string' ? replacementValue.replace : '';
+          replaceInput.addEventListener('input', () => {
+            normalizationReplacementsValues[replacementIndex].replace = replaceInput.value;
+            syncNormalizationReplacementsToDraft();
+            updateSettingsActionButtons();
+          });
+
+          const regexToggleButton = createRegexToggleButton({
+            getActive: () => replacementValue.isRegex === true,
+            setActive: (next) => {
+              normalizationReplacementsValues[replacementIndex].isRegex = next === true;
+              syncNormalizationReplacementsToDraft();
+              updateSettingsActionButtons();
+            },
+          });
+          regexToggleButton.title = 'Regex';
+          regexToggleButton.setAttribute('aria-label', 'Regex');
+
+          const removeReplacementButton = document.createElement('button');
+          removeReplacementButton.type = 'button';
+          removeReplacementButton.className = 'category-remove extraction-field-normalization-replacement-remove';
+          removeReplacementButton.textContent = '';
+          removeReplacementButton.setAttribute('aria-label', 'Ta bort ersättning');
+          removeReplacementButton.title = 'Ta bort ersättning';
+          removeReplacementButton.addEventListener('click', () => {
+            normalizationReplacementsValues.splice(replacementIndex, 1);
+            syncNormalizationReplacementsToDraft();
+            renderNormalizationReplacementRows();
+            updateSettingsActionButtons();
+          });
+
+          const findInputWrap = createInlineInputWithAccessories(findInput, [regexToggleButton], 'extraction-field-alias-input-wrap');
+          row.appendChild(createFloatingField('Hitta', findInputWrap));
+          row.appendChild(createFloatingField('Ersätt med', replaceInput));
+          row.appendChild(removeReplacementButton);
+          normalizationReplacementsList.appendChild(row);
+
+          if (focusIndex === replacementIndex) {
+            findInput.focus();
+          }
+        });
+      };
+
+      normalizationReplacementsAddButton.addEventListener('click', () => {
+        normalizationReplacementsValues.push(defaultExtractionFieldNormalizationReplacement());
+        syncNormalizationReplacementsToDraft();
+        renderNormalizationReplacementRows(normalizationReplacementsValues.length - 1);
+        updateSettingsActionButtons();
+      });
+
       const normalizationGroup = document.createElement('div');
       normalizationGroup.className = 'extraction-field-normalization-group';
       normalizationGroup.appendChild(createFloatingField('Normalisering', normalizationTypeSelect));
       normalizationGroup.appendChild(normalizationCharsField);
-      ruleFields.appendChild(normalizationGroup);
 
       const syncRuleSetUi = () => {
+        const type = sanitizeExtractionFieldType(typeSelect.value, collection[index]);
         const normalizationType = sanitizeExtractionFieldNormalizationType(normalizationTypeSelect.value);
+        collection[index].ruleSets[ruleSetIndex].type = type;
+        collection[index].type = type;
+        collection[index].ruleSets[ruleSetIndex].useSearchText = requiresSearchTermsCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].requiresSearchTerms = requiresSearchTermsCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].normalizationType = normalizationType;
         collection[index].ruleSets[ruleSetIndex].normalizationChars = normalizationCharsInput.value;
+        collection[index].ruleSets[ruleSetIndex].normalizationReplacements = normalizationReplacementsValues.map((replacement) => ({
+          find: typeof replacement.find === 'string' ? replacement.find : '',
+          replace: typeof replacement.replace === 'string' ? replacement.replace : '',
+          isRegex: replacement.isRegex === true,
+        }));
+        collection[index].ruleSets[ruleSetIndex].datePosition = sanitizeExtractionFieldPosition(datePositionSelect.value);
+        collection[index].ruleSets[ruleSetIndex].amountPosition = sanitizeExtractionFieldPosition(amountPositionSelect.value);
         searchTermsField.hidden = !requiresSearchTermsCheckbox.checked;
-        normalizationCharsField.hidden = normalizationType === 'none';
+        valuePatternField.hidden = type !== 'regex';
+        datePositionField.hidden = type !== 'date';
+        amountPositionField.hidden = type !== 'amount';
+        if (type === 'date') {
+          if (normalizationGroup.parentNode) {
+            normalizationGroup.remove();
+          }
+        } else {
+          if (!normalizationGroup.parentNode) {
+            if (removeRuleSetButton && removeRuleSetButton.parentNode === ruleFields) {
+              ruleFields.insertBefore(normalizationGroup, removeRuleSetButton);
+            } else {
+              ruleFields.appendChild(normalizationGroup);
+            }
+          }
+          normalizationCharsField.hidden = normalizationType !== 'whitelist' && normalizationType !== 'blacklist';
+          if (normalizationType === 'replacements') {
+            if (!normalizationReplacementsField.parentNode) {
+              normalizationGroup.appendChild(normalizationReplacementsField);
+            }
+          } else if (normalizationReplacementsField.parentNode) {
+            normalizationReplacementsField.remove();
+          }
+          if (normalizationType === 'replacements' && normalizationReplacementsValues.length === 0) {
+            normalizationReplacementsValues.push(defaultExtractionFieldNormalizationReplacement());
+            syncNormalizationReplacementsToDraft();
+            renderNormalizationReplacementRows(normalizationReplacementsValues.length - 1);
+          } else {
+            syncNormalizationReplacementsToDraft();
+          }
+          if (normalizationType === 'replacements') {
+            renderNormalizationReplacementRows();
+          }
+        }
+        if (type === 'date') {
+          syncNormalizationReplacementsToDraft();
+        }
+        renderSearchTermRows();
         updateSettingsActionButtons();
       };
 
+      typeSelect.addEventListener('change', syncRuleSetUi);
       requiresSearchTermsCheckbox.addEventListener('change', syncRuleSetUi);
       normalizationTypeSelect.addEventListener('change', syncRuleSetUi);
       normalizationCharsInput.addEventListener('input', syncRuleSetUi);
+      datePositionSelect.addEventListener('change', syncRuleSetUi);
+      amountPositionSelect.addEventListener('change', syncRuleSetUi);
 
       if (ruleSetIndex > 0) {
-        const removeRuleSetButton = document.createElement('button');
+        removeRuleSetButton = document.createElement('button');
         removeRuleSetButton.type = 'button';
         removeRuleSetButton.className = 'rule-remove';
         removeRuleSetButton.textContent = 'Ta bort regeluppsättning';
@@ -14852,7 +15164,15 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
     addRuleSetButton.textContent = 'Lägg till regeluppsättning';
     addRuleSetButton.addEventListener('click', () => {
       const nextRuleSets = sanitizeExtractionFieldRuleSets(collection[index]?.ruleSets, collection[index]);
-      nextRuleSets.push(defaultExtractionFieldRuleSet());
+      const baseRuleSet = sanitizeExtractionFieldRuleSet(nextRuleSets[0] || null, collection[index]);
+      nextRuleSets.push({
+        ...defaultExtractionFieldRuleSet(),
+        type: baseRuleSet.type,
+        useSearchText: baseRuleSet.useSearchText,
+        requiresSearchTerms: baseRuleSet.requiresSearchTerms,
+        datePosition: baseRuleSet.datePosition,
+        amountPosition: baseRuleSet.amountPosition,
+      });
       collection[index].ruleSets = nextRuleSets;
       renderExtractionFieldsEditor();
       updateSettingsActionButtons();
