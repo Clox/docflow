@@ -6295,6 +6295,53 @@ function normalize_client_match_haystack(string $text): string
     return normalize_inline_whitespace(lowercase_text($text));
 }
 
+function client_name_match_variants(array $client): array
+{
+    $firstName = is_string($client['firstName'] ?? null) ? trim((string) $client['firstName']) : '';
+    $lastName = is_string($client['lastName'] ?? null) ? trim((string) $client['lastName']) : '';
+    if ($firstName === '' || $lastName === '') {
+        return [];
+    }
+
+    $variants = [];
+    $appendVariant = static function (string $value) use (&$variants): void {
+        $normalized = normalize_client_match_haystack($value);
+        if ($normalized === '' || isset($variants[$normalized])) {
+            return;
+        }
+        $variants[$normalized] = $value;
+    };
+
+    $firstNameVariants = [$firstName];
+    $preferredFirstName = client_preferred_first_name($client);
+    if (is_string($preferredFirstName) && trim($preferredFirstName) !== '') {
+        $firstNameVariants[] = trim($preferredFirstName);
+    }
+
+    foreach (array_values(array_unique(array_filter(
+        $firstNameVariants,
+        static fn ($value): bool => is_string($value) && trim($value) !== ''
+    ))) as $firstNameVariant) {
+        $appendVariant(trim($firstNameVariant . ' ' . $lastName));
+        $appendVariant(trim($lastName . ' ' . $firstNameVariant));
+        $appendVariant(trim($lastName . ', ' . $firstNameVariant));
+    }
+
+    uasort(
+        $variants,
+        static function (string $left, string $right): int {
+            $leftLength = strlen(normalize_client_match_haystack($left));
+            $rightLength = strlen(normalize_client_match_haystack($right));
+            if ($leftLength !== $rightLength) {
+                return $rightLength <=> $leftLength;
+            }
+            return strcmp($left, $right);
+        }
+    );
+
+    return array_values($variants);
+}
+
 function find_client_matches(string $ocrText, array $clients): array
 {
     $normalizedText = preg_replace('/\D+/', '', $ocrText);
@@ -6312,7 +6359,6 @@ function find_client_matches(string $ocrText, array $clients): array
         $dirName = is_string($client['dirName'] ?? null) ? trim((string) $client['dirName']) : '';
         $pin = is_string($client['personalIdentityNumber'] ?? null) ? trim((string) $client['personalIdentityNumber']) : '';
         $lastName = is_string($client['lastName'] ?? null) ? trim((string) $client['lastName']) : '';
-        $preferredFirstName = client_preferred_first_name($client);
         if ($dirName === '' || $pin === '') {
             continue;
         }
@@ -6344,19 +6390,21 @@ function find_client_matches(string $ocrText, array $clients): array
             $score += 2;
         }
 
-        if ($preferredFirstName !== null && $lastName !== '') {
-            $formattedName = trim($lastName . ', ' . $preferredFirstName);
+        $nameVariants = client_name_match_variants($client);
+        foreach ($nameVariants as $formattedName) {
             $normalizedNeedle = normalize_client_match_haystack($formattedName);
             $namePosition = $normalizedNeedle !== '' ? strpos($normalizedHaystack, $normalizedNeedle) : false;
-            if ($namePosition !== false) {
-                $matchedSignals[] = [
-                    'type' => 'name',
-                    'label' => 'Namn',
-                    'value' => $formattedName,
-                ];
-                $bestPosition = min($bestPosition, (int) $namePosition);
-                $score += 1;
+            if ($namePosition === false) {
+                continue;
             }
+            $matchedSignals[] = [
+                'type' => 'name',
+                'label' => 'Namn',
+                'value' => $formattedName,
+            ];
+            $bestPosition = min($bestPosition, (int) $namePosition);
+            $score += 1;
+            break;
         }
 
         if ($matchedSignals === []) {
