@@ -1511,14 +1511,28 @@ async function persistSelectedJobLabelIds(nextLabelIds) {
     return;
   }
 
+  const previousCurrentFolder = effectiveFolderId(job);
+  const previousCurrentFilename = String(displayedFilenameForJob(job) || '').trim();
+  const previousProposed = proposedArchivingResultForJob(job);
   const normalizedNext = normalizeSelectedLabelIds(nextLabelIds);
   const hadLocalValue = selectedLabelIdsByJobId.has(job.id);
   const previousLocalValue = hadLocalValue ? normalizeSelectedLabelIds(selectedLabelIdsByJobId.get(job.id)) : null;
 
   selectedLabelIdsByJobId.set(job.id, normalizedNext);
   updateArchivedReviewDraftFromSidebar(job);
+  const currentJobAfterLabelChange = findJobById(selectedJobId);
+  const nextProposed = proposedArchivingResultForJob(currentJobAfterLabelChange);
+  syncCurrentActionValuesFromProposalChange(
+    job.id,
+    previousCurrentFolder,
+    previousCurrentFilename,
+    previousProposed,
+    nextProposed,
+    { syncFolder: true }
+  );
   setLabelsForJob(findJobById(selectedJobId));
   const currentJob = findJobById(selectedJobId);
+  setFolderForJob(currentJob);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
   updateSelectedJobResetActions(currentJob);
@@ -6122,7 +6136,143 @@ function proposedArchivingResultForJob(job) {
   if (reviewPayload && reviewPayload.currentAutoResult && typeof reviewPayload.currentAutoResult === 'object') {
     return reviewPayload.currentAutoResult;
   }
-  return autoArchivingResultForJob(job);
+  const autoResult = autoArchivingResultForJob(job);
+  if (!autoResult) {
+    return null;
+  }
+  const currentLabelIds = normalizeSelectedLabelIds(effectiveSelectedLabelIds(job));
+  const proposedFolder = selectArchiveFolderByLabelIds(currentLabelIds);
+  const proposedFolderId = proposedFolder && typeof proposedFolder.id === 'string' ? proposedFolder.id.trim() : '';
+  const proposedTemplate = proposedFolder
+    ? selectArchiveFolderFilenameTemplateByLabelIds(proposedFolder, currentLabelIds)
+    : null;
+  const proposedTemplateId = proposedTemplate && proposedTemplate.template && typeof proposedTemplate.template.id === 'string'
+    ? proposedTemplate.template.id.trim()
+    : '';
+  return {
+    ...autoResult,
+    folderId: proposedFolderId !== '' ? proposedFolderId : null,
+    filenameTemplateId: proposedTemplateId !== '' ? proposedTemplateId : null,
+    filename: generateFilenameForJob(job, {
+      folderId: proposedFolderId,
+      labelIds: currentLabelIds,
+      filenameTemplateId: proposedTemplateId,
+    }),
+  };
+}
+
+function selectArchiveFolderByLabelIds(labelIds) {
+  const normalizedLabelIds = normalizeSelectedLabelIds(labelIds);
+  const folders = Array.isArray(state.archiveFolders) ? state.archiveFolders : [];
+  const candidates = [];
+
+  folders.forEach((folder, folderIndex) => {
+    if (!folder || typeof folder !== 'object') {
+      return;
+    }
+    const folderId = typeof folder.id === 'string' ? folder.id.trim() : '';
+    if (!folderId) {
+      return;
+    }
+
+    let bestMatchedCount = 0;
+    let bestConditionCount = 0;
+    const templates = Array.isArray(folder.filenameTemplates) ? folder.filenameTemplates : [];
+    templates.forEach((template) => {
+      if (!template || typeof template !== 'object') {
+        return;
+      }
+      const templateLabelIds = normalizeLabelIdList(template.labelIds);
+      if (templateLabelIds.length === 0) {
+        return;
+      }
+      const matchedCount = templateLabelIds.filter((labelId) => normalizedLabelIds.includes(labelId)).length;
+      if (matchedCount < templateLabelIds.length) {
+        return;
+      }
+      if (matchedCount > bestMatchedCount || (matchedCount === bestMatchedCount && templateLabelIds.length > bestConditionCount)) {
+        bestMatchedCount = matchedCount;
+        bestConditionCount = templateLabelIds.length;
+      }
+    });
+
+    if (bestMatchedCount < 1) {
+      return;
+    }
+
+    candidates.push({
+      folder,
+      folderIndex,
+      matchedCount: bestMatchedCount,
+      conditionCount: bestConditionCount,
+    });
+  });
+
+  if (candidates.length < 1) {
+    return null;
+  }
+
+  candidates.sort((left, right) => {
+    const matchedCompare = right.matchedCount - left.matchedCount;
+    if (matchedCompare !== 0) {
+      return matchedCompare;
+    }
+    const conditionCompare = right.conditionCount - left.conditionCount;
+    if (conditionCompare !== 0) {
+      return conditionCompare;
+    }
+    return left.folderIndex - right.folderIndex;
+  });
+
+  return candidates[0] ? candidates[0].folder : null;
+}
+
+function selectArchiveFolderFilenameTemplateByLabelIds(folder, labelIds) {
+  if (!folder || typeof folder !== 'object') {
+    return null;
+  }
+  const templates = Array.isArray(folder.filenameTemplates) ? folder.filenameTemplates : [];
+  if (templates.length < 1) {
+    return null;
+  }
+
+  const normalizedLabelIds = normalizeSelectedLabelIds(labelIds);
+  const candidates = [];
+  templates.forEach((template, templateIndex) => {
+    if (!template || typeof template !== 'object') {
+      return;
+    }
+    const templateLabelIds = normalizeLabelIdList(template.labelIds);
+    const matchedCount = templateLabelIds.filter((labelId) => normalizedLabelIds.includes(labelId)).length;
+    if (templateLabelIds.length > 0 && matchedCount < templateLabelIds.length) {
+      return;
+    }
+    candidates.push({
+      template,
+      templateIndex,
+      matchedCount,
+      conditionCount: templateLabelIds.length,
+    });
+  });
+
+  if (candidates.length < 1) {
+    const firstTemplate = templates[0] || null;
+    return firstTemplate && typeof firstTemplate === 'object' ? firstTemplate : null;
+  }
+
+  candidates.sort((left, right) => {
+    const matchedCompare = right.matchedCount - left.matchedCount;
+    if (matchedCompare !== 0) {
+      return matchedCompare;
+    }
+    const conditionCompare = right.conditionCount - left.conditionCount;
+    if (conditionCompare !== 0) {
+      return conditionCompare;
+    }
+    return left.templateIndex - right.templateIndex;
+  });
+
+  return candidates[0] ? candidates[0].template : null;
 }
 
 function normalizeAutoArchivingResultScalarValue(value) {
@@ -6140,9 +6290,9 @@ function syncUnarchivedJobAutoProposalChange(currentJob, nextJob) {
     return;
   }
 
-  const currentAuto = autoArchivingResultForJob(currentJob);
-  const nextAuto = autoArchivingResultForJob(nextJob);
-  if (!currentAuto || !nextAuto) {
+  const previousProposed = proposedArchivingResultForJob(currentJob);
+  const nextProposed = proposedArchivingResultForJob(nextJob);
+  if (!previousProposed || !nextProposed) {
     return;
   }
 
@@ -6152,8 +6302,8 @@ function syncUnarchivedJobAutoProposalChange(currentJob, nextJob) {
   }
 
   const currentClientId = effectiveClientDirName(currentJob);
-  const previousClientId = normalizeAutoArchivingResultScalarValue(currentAuto.clientId);
-  const nextClientId = normalizeAutoArchivingResultScalarValue(nextAuto.clientId);
+  const previousClientId = normalizeAutoArchivingResultScalarValue(previousProposed.clientId);
+  const nextClientId = normalizeAutoArchivingResultScalarValue(nextProposed.clientId);
   if (currentClientId === previousClientId) {
     if (selectedClientByJobId.has(jobId)) {
       if (nextClientId !== '') {
@@ -6167,8 +6317,8 @@ function syncUnarchivedJobAutoProposalChange(currentJob, nextJob) {
   }
 
   const currentSenderId = effectiveSenderId(currentJob);
-  const previousSenderId = normalizeAutoArchivingResultScalarValue(currentAuto.senderId);
-  const nextSenderId = normalizeAutoArchivingResultScalarValue(nextAuto.senderId);
+  const previousSenderId = normalizeAutoArchivingResultScalarValue(previousProposed.senderId);
+  const nextSenderId = normalizeAutoArchivingResultScalarValue(nextProposed.senderId);
   if (currentSenderId === previousSenderId) {
     if (selectedSenderByJobId.has(jobId)) {
       if (nextSenderId !== '') {
@@ -6182,8 +6332,8 @@ function syncUnarchivedJobAutoProposalChange(currentJob, nextJob) {
   }
 
   const currentFolderId = effectiveFolderId(currentJob);
-  const previousFolderId = normalizeAutoArchivingResultScalarValue(currentAuto.folderId);
-  const nextFolderId = normalizeAutoArchivingResultScalarValue(nextAuto.folderId);
+  const previousFolderId = normalizeAutoArchivingResultScalarValue(previousProposed.folderId);
+  const nextFolderId = normalizeAutoArchivingResultScalarValue(nextProposed.folderId);
   if (currentFolderId === previousFolderId) {
     if (selectedFolderByJobId.has(jobId)) {
       if (nextFolderId !== '') {
@@ -6197,8 +6347,8 @@ function syncUnarchivedJobAutoProposalChange(currentJob, nextJob) {
   }
 
   const currentFilename = String(displayedFilenameForJob(currentJob) || '').trim();
-  const previousFilename = normalizeAutoArchivingResultScalarValue(currentAuto.filename);
-  const nextFilename = normalizeAutoArchivingResultScalarValue(nextAuto.filename);
+  const previousFilename = normalizeAutoArchivingResultScalarValue(previousProposed.filename);
+  const nextFilename = normalizeAutoArchivingResultScalarValue(nextProposed.filename);
   if (currentFilename === previousFilename) {
     if (filenameByJobId.has(jobId)) {
       if (nextFilename !== '') {
@@ -6212,8 +6362,8 @@ function syncUnarchivedJobAutoProposalChange(currentJob, nextJob) {
   }
 
   const currentLabelIds = normalizeComparableLabelIds(effectiveSelectedLabelIds(currentJob));
-  const previousLabelIds = normalizeComparableLabelIds(currentAuto.labels);
-  const nextLabelIds = normalizeComparableLabelIds(nextAuto.labels);
+  const previousLabelIds = normalizeComparableLabelIds(previousProposed.labels);
+  const nextLabelIds = normalizeComparableLabelIds(nextProposed.labels);
   if (arrayValuesEqual(currentLabelIds, previousLabelIds)) {
     if (selectedLabelIdsByJobId.has(jobId)) {
       if (nextLabelIds.length > 0) {
@@ -6420,6 +6570,9 @@ function applySelectedClientValue(value) {
   }
 
   const selectedJob = findJobById(selectedJobId);
+  const previousCurrentFolder = effectiveFolderId(selectedJob);
+  const previousCurrentFilename = String(displayedFilenameForJob(selectedJob) || '').trim();
+  const previousProposed = proposedArchivingResultForJob(selectedJob);
   if (!value) {
     selectedClientByJobId.delete(selectedJobId);
   } else {
@@ -6432,6 +6585,15 @@ function applySelectedClientValue(value) {
 
   const currentJob = findJobById(selectedJobId);
   updateArchivedReviewDraftFromSidebar(currentJob);
+  const nextProposed = proposedArchivingResultForJob(currentJob);
+  syncCurrentActionValuesFromProposalChange(
+    selectedJobId,
+    previousCurrentFolder,
+    previousCurrentFilename,
+    previousProposed,
+    nextProposed,
+    { syncFolder: false }
+  );
   renderSelectedJobClientSection(currentJob);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
@@ -6452,6 +6614,9 @@ function applySelectedSenderValue(value) {
   }
 
   const selectedJob = findJobById(selectedJobId);
+  const previousCurrentFolder = effectiveFolderId(selectedJob);
+  const previousCurrentFilename = String(displayedFilenameForJob(selectedJob) || '').trim();
+  const previousProposed = proposedArchivingResultForJob(selectedJob);
   if (!value) {
     selectedSenderByJobId.delete(selectedJobId);
   } else {
@@ -6464,6 +6629,15 @@ function applySelectedSenderValue(value) {
 
   const currentJob = findJobById(selectedJobId);
   updateArchivedReviewDraftFromSidebar(currentJob);
+  const nextProposed = proposedArchivingResultForJob(currentJob);
+  syncCurrentActionValuesFromProposalChange(
+    selectedJobId,
+    previousCurrentFolder,
+    previousCurrentFilename,
+    previousProposed,
+    nextProposed,
+    { syncFolder: false }
+  );
   renderSelectedJobSenderSection(currentJob);
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
@@ -6484,6 +6658,9 @@ function applySelectedFolderValue(value) {
   }
 
   const selectedJob = findJobById(selectedJobId);
+  const previousCurrentFolder = effectiveFolderId(selectedJob);
+  const previousCurrentFilename = String(displayedFilenameForJob(selectedJob) || '').trim();
+  const previousProposed = proposedArchivingResultForJob(selectedJob);
   if (!value) {
     selectedFolderByJobId.delete(selectedJobId);
   } else {
@@ -6496,6 +6673,15 @@ function applySelectedFolderValue(value) {
 
   const currentJob = findJobById(selectedJobId);
   updateArchivedReviewDraftFromSidebar(currentJob);
+  const nextProposed = proposedArchivingResultForJob(currentJob);
+  syncCurrentActionValuesFromProposalChange(
+    selectedJobId,
+    previousCurrentFolder,
+    previousCurrentFilename,
+    previousProposed,
+    nextProposed,
+    { syncFolder: false }
+  );
   syncFilenameField(currentJob);
   updateArchiveAction(currentJob);
   updateSelectedJobResetActions(currentJob);
@@ -7081,17 +7267,20 @@ function senderOrganizationNameForFilenameValues(sender, extractionFields) {
   return match && typeof match.organizationName === 'string' ? match.organizationName.trim() : '';
 }
 
-function buildFilenameFieldValues(job) {
+function buildFilenameFieldValues(job, options = {}) {
   if (!job) {
     return new Map();
   }
 
+  const overrideFolderId = typeof options.folderId === 'string' ? options.folderId.trim() : '';
+  const overrideLabelIds = Array.isArray(options.labelIds) ? normalizeSelectedLabelIds(options.labelIds) : null;
   const extractionFields = job.analysis && typeof job.analysis === 'object' && job.analysis.extractionFields && typeof job.analysis.extractionFields === 'object'
     ? job.analysis.extractionFields
     : {};
   const clientDirName = effectiveClientDirName(job);
   const sender = findSenderById(effectiveSenderId(job));
-  const folder = findArchiveFolderById(effectiveFolderId(job));
+  const folder = findArchiveFolderById(overrideFolderId || effectiveFolderId(job));
+  const labelIds = overrideLabelIds || effectiveSelectedLabelIds(job);
 
   const values = new Map();
   const setValue = (key, value) => {
@@ -7159,7 +7348,6 @@ function buildFilenameFieldValues(job) {
     }
   });
 
-  const labelIds = effectiveSelectedLabelIds(job);
   const labelNames = labelIds
     .map((labelId) => filenameTemplateLabelNameById(labelId))
     .filter((name) => typeof name === 'string' && name.trim() !== '');
@@ -7269,16 +7457,32 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
   return result;
 }
 
-function generateFilenameForJob(job) {
+function generateFilenameForJob(job, options = {}) {
   if (!job) {
     return '';
   }
 
-  const filenameTemplate = findFilenameTemplateById(effectiveFilenameTemplateId(job));
+  const overrideFolderId = typeof options.folderId === 'string' ? options.folderId.trim() : '';
+  const overrideLabelIds = Array.isArray(options.labelIds) ? normalizeSelectedLabelIds(options.labelIds) : null;
+  const overrideTemplateId = typeof options.filenameTemplateId === 'string' ? options.filenameTemplateId.trim() : '';
+  const folder = findArchiveFolderById(overrideFolderId || effectiveFolderId(job));
+  let filenameTemplate = null;
+  if (overrideTemplateId !== '') {
+    filenameTemplate = findFilenameTemplateById(overrideTemplateId);
+  }
+  if (!filenameTemplate && folder) {
+    filenameTemplate = selectArchiveFolderFilenameTemplateByLabelIds(folder, overrideLabelIds || effectiveSelectedLabelIds(job));
+  }
+  if (!filenameTemplate) {
+    filenameTemplate = findFilenameTemplateById(effectiveFilenameTemplateId(job));
+  }
   const template = filenameTemplate && filenameTemplate.template && typeof filenameTemplate.template === 'object'
     ? sanitizeFilenameTemplate(filenameTemplate.template)
     : { parts: [] };
-  const fieldValues = buildFilenameFieldValues(job);
+  const fieldValues = buildFilenameFieldValues(job, {
+    folderId: overrideFolderId,
+    labelIds: overrideLabelIds,
+  });
   const rendered = evaluateFilenameTemplateParts(template.parts || [], fieldValues)
     .replace(/\s+/g, ' ')
     .trim();
@@ -7349,7 +7553,44 @@ function proposedFilenameForJob(job, proposed = proposedArchivingResultForJob(jo
     return '';
   }
   const directValue = typeof proposed.filename === 'string' ? proposed.filename.trim() : '';
-  return directValue !== '' ? directValue : generateFilenameForJob(job);
+  if (directValue !== '') {
+    return directValue;
+  }
+  return generateFilenameForJob(job, {
+    folderId: typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '',
+    labelIds: effectiveSelectedLabelIds(job),
+    filenameTemplateId: typeof proposed.filenameTemplateId === 'string' ? proposed.filenameTemplateId.trim() : '',
+  });
+}
+
+function syncCurrentActionValuesFromProposalChange(jobId, previousCurrentFolder, previousCurrentFilename, previousProposed, nextProposed, options = {}) {
+  if (typeof jobId !== 'string' || jobId === '') {
+    return;
+  }
+  if (!previousProposed || typeof previousProposed !== 'object' || !nextProposed || typeof nextProposed !== 'object') {
+    return;
+  }
+
+  const syncFolder = options.syncFolder === true;
+  const previousProposedFolder = typeof previousProposed.folderId === 'string' ? previousProposed.folderId.trim() : '';
+  const nextProposedFolder = typeof nextProposed.folderId === 'string' ? nextProposed.folderId.trim() : '';
+  if (syncFolder && previousCurrentFolder === previousProposedFolder) {
+    if (nextProposedFolder !== '') {
+      selectedFolderByJobId.set(jobId, nextProposedFolder);
+    } else {
+      selectedFolderByJobId.delete(jobId);
+    }
+  }
+
+  const previousProposedFilename = typeof previousProposed.filename === 'string' ? previousProposed.filename.trim() : '';
+  const nextProposedFilename = typeof nextProposed.filename === 'string' ? nextProposed.filename.trim() : '';
+  if (previousCurrentFilename === previousProposedFilename) {
+    if (nextProposedFilename !== '') {
+      filenameByJobId.set(jobId, nextProposedFilename);
+    } else {
+      filenameByJobId.delete(jobId);
+    }
+  }
 }
 
 function renderArchiveFolderPathForJob(job) {
