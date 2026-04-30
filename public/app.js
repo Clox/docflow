@@ -6120,6 +6120,108 @@ function proposedArchivingResultForJob(job) {
   return autoArchivingResultForJob(job);
 }
 
+function normalizeAutoArchivingResultScalarValue(value) {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value).trim();
+  }
+  return '';
+}
+
+function syncUnarchivedJobAutoProposalChange(currentJob, nextJob) {
+  if (!currentJob || !nextJob || currentJob.archived === true || nextJob.archived === true) {
+    return;
+  }
+
+  const currentAuto = autoArchivingResultForJob(currentJob);
+  const nextAuto = autoArchivingResultForJob(nextJob);
+  if (!currentAuto || !nextAuto) {
+    return;
+  }
+
+  const jobId = typeof currentJob.id === 'string' ? currentJob.id : '';
+  if (!jobId) {
+    return;
+  }
+
+  const currentClientId = effectiveClientDirName(currentJob);
+  const previousClientId = normalizeAutoArchivingResultScalarValue(currentAuto.clientId);
+  const nextClientId = normalizeAutoArchivingResultScalarValue(nextAuto.clientId);
+  if (currentClientId === previousClientId) {
+    if (selectedClientByJobId.has(jobId)) {
+      if (nextClientId !== '') {
+        selectedClientByJobId.set(jobId, nextClientId);
+      } else {
+        selectedClientByJobId.delete(jobId);
+      }
+    } else {
+      nextJob.selectedClientDirName = nextClientId !== '' ? nextClientId : null;
+    }
+  }
+
+  const currentSenderId = effectiveSenderId(currentJob);
+  const previousSenderId = normalizeAutoArchivingResultScalarValue(currentAuto.senderId);
+  const nextSenderId = normalizeAutoArchivingResultScalarValue(nextAuto.senderId);
+  if (currentSenderId === previousSenderId) {
+    if (selectedSenderByJobId.has(jobId)) {
+      if (nextSenderId !== '') {
+        selectedSenderByJobId.set(jobId, nextSenderId);
+      } else {
+        selectedSenderByJobId.delete(jobId);
+      }
+    } else {
+      nextJob.selectedSenderId = nextSenderId !== '' ? Number.parseInt(nextSenderId, 10) || null : null;
+    }
+  }
+
+  const currentFolderId = effectiveFolderId(currentJob);
+  const previousFolderId = normalizeAutoArchivingResultScalarValue(currentAuto.folderId);
+  const nextFolderId = normalizeAutoArchivingResultScalarValue(nextAuto.folderId);
+  if (currentFolderId === previousFolderId) {
+    if (selectedFolderByJobId.has(jobId)) {
+      if (nextFolderId !== '') {
+        selectedFolderByJobId.set(jobId, nextFolderId);
+      } else {
+        selectedFolderByJobId.delete(jobId);
+      }
+    } else {
+      nextJob.selectedFolderId = nextFolderId !== '' ? nextFolderId : null;
+    }
+  }
+
+  const currentFilename = String(displayedFilenameForJob(currentJob) || '').trim();
+  const previousFilename = normalizeAutoArchivingResultScalarValue(currentAuto.filename);
+  const nextFilename = normalizeAutoArchivingResultScalarValue(nextAuto.filename);
+  if (currentFilename === previousFilename) {
+    if (filenameByJobId.has(jobId)) {
+      if (nextFilename !== '') {
+        filenameByJobId.set(jobId, nextFilename);
+      } else {
+        filenameByJobId.delete(jobId);
+      }
+    } else {
+      nextJob.filename = nextFilename !== '' ? nextFilename : null;
+    }
+  }
+
+  const currentLabelIds = normalizeComparableLabelIds(effectiveSelectedLabelIds(currentJob));
+  const previousLabelIds = normalizeComparableLabelIds(currentAuto.labels);
+  const nextLabelIds = normalizeComparableLabelIds(nextAuto.labels);
+  if (arrayValuesEqual(currentLabelIds, previousLabelIds)) {
+    if (selectedLabelIdsByJobId.has(jobId)) {
+      if (nextLabelIds.length > 0) {
+        selectedLabelIdsByJobId.set(jobId, [...nextLabelIds]);
+      } else {
+        selectedLabelIdsByJobId.delete(jobId);
+      }
+    } else {
+      nextJob.selectedLabelIds = nextLabelIds.length > 0 ? [...nextLabelIds] : null;
+    }
+  }
+}
+
 function resetActionsModeActive() {
   return currentJobListMode === 'ready' || currentJobListMode === 'archived-review';
 }
@@ -9658,6 +9760,7 @@ function applyJobEvents(events) {
       }
     }
 
+    syncUnarchivedJobAutoProposalChange(findJobById(jobId), job);
     removeJobFromAllLists(nextState, jobId);
     if (listKey === 'readyJobs') {
       const preferredIndex = (() => {

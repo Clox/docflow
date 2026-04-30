@@ -11982,6 +11982,25 @@ function job_live_auto_archiving_result(array $job): array
     return $autoResult;
 }
 
+function normalize_auto_archiving_result_scalar_value(mixed $value): string
+{
+    if (is_string($value)) {
+        return trim($value);
+    }
+
+    if (is_int($value) || is_float($value)) {
+        return trim((string) $value);
+    }
+
+    return '';
+}
+
+function normalize_auto_archiving_result_sender_value(mixed $value): ?int
+{
+    $senderId = is_int($value) ? $value : (is_numeric($value) ? (int) $value : 0);
+    return $senderId > 0 ? $senderId : null;
+}
+
 function job_analysis_payload(array $job): array
 {
     $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
@@ -15531,12 +15550,64 @@ function build_job_state_entry(
         ? trim((string) $job['filename'])
         : null;
     $isArchived = ($job['archived'] ?? false) === true;
+    $storedAutoResult = $isArchived ? [] : job_auto_archiving_result($job);
+    $liveAutoResult = is_array($analysis['autoArchivingResult'] ?? null)
+        ? $analysis['autoArchivingResult']
+        : [];
+
+    if (!$isArchived && $storedAutoResult !== [] && $liveAutoResult !== []) {
+        $storedClientId = normalize_auto_archiving_result_scalar_value($storedAutoResult['clientId'] ?? null);
+        $liveClientId = normalize_auto_archiving_result_scalar_value($liveAutoResult['clientId'] ?? null);
+        if ($selectedClientDirName !== null && $selectedClientDirName === $storedClientId) {
+            $selectedClientDirName = $liveClientId !== '' ? $liveClientId : null;
+        }
+
+        $storedSenderId = normalize_auto_archiving_result_sender_value($storedAutoResult['senderId'] ?? null);
+        $liveSenderId = normalize_auto_archiving_result_sender_value($liveAutoResult['senderId'] ?? null);
+        if ($selectedSenderId !== null && $selectedSenderId === $storedSenderId) {
+            $selectedSenderId = $liveSenderId;
+        }
+
+        $storedFolderId = normalize_auto_archiving_result_scalar_value($storedAutoResult['folderId'] ?? null);
+        $liveFolderId = normalize_auto_archiving_result_scalar_value($liveAutoResult['folderId'] ?? null);
+        if ($selectedFolderId !== null && $selectedFolderId === $storedFolderId) {
+            $selectedFolderId = $liveFolderId !== '' ? $liveFolderId : null;
+        }
+
+        $storedLabelIds = normalize_stored_job_label_ids($storedAutoResult['labels'] ?? null);
+        $liveLabelIds = normalize_stored_job_label_ids($liveAutoResult['labels'] ?? null);
+        sort($storedLabelIds, SORT_NATURAL);
+        sort($liveLabelIds, SORT_NATURAL);
+        if (is_array($selectedLabelIds)) {
+            $currentLabelIds = normalize_stored_job_label_ids($selectedLabelIds);
+            sort($currentLabelIds, SORT_NATURAL);
+            if ($currentLabelIds === $storedLabelIds) {
+                $selectedLabelIds = $liveLabelIds !== [] ? $liveLabelIds : null;
+            }
+        }
+
+        $storedFilename = normalize_auto_archiving_result_scalar_value($storedAutoResult['filename'] ?? null);
+        $liveFilename = normalize_auto_archiving_result_scalar_value($liveAutoResult['filename'] ?? null);
+        if ($filename !== null && $filename === $storedFilename) {
+            $filename = $liveFilename !== '' ? $liveFilename : null;
+        }
+    }
     $archivedAt = is_string($job['archivedAt'] ?? null) ? trim((string) $job['archivedAt']) : null;
     $archivedPdfPath = is_string($job['archivedPdfPath'] ?? null) ? trim((string) $job['archivedPdfPath']) : null;
     $archivedVersion = job_archived_version($job);
     $dismissedAnalysisVersion = job_dismissed_analysis_version($job);
     $extracted = load_json_file($jobDir . '/extracted.json');
     $senderSummary = build_job_sender_summary($extracted, $jobDir, null, $selectedSenderId);
+    if (!$isArchived && $selectedSenderId === null && is_array($senderSummary)) {
+        $senderSelection = single_preselected_sender_from_summary($senderSummary);
+        $senderSelectionId = isset($senderSelection['matchedSenderId']) ? (int) $senderSelection['matchedSenderId'] : 0;
+        $storedSenderId = normalize_auto_archiving_result_sender_value($storedAutoResult['senderId'] ?? null);
+        $liveSenderId = normalize_auto_archiving_result_sender_value($liveAutoResult['senderId'] ?? null);
+        if ($senderSelectionId > 0 && $senderSelectionId === $storedSenderId) {
+            $selectedSenderId = $liveSenderId;
+            $senderSummary = build_job_sender_summary($extracted, $jobDir, null, $selectedSenderId);
+        }
+    }
     $analysisOutdated = ($job['analysisOutdated'] ?? false) === true;
     $analysisAutoReprocessQueued = ($job['analysisAutoReprocessQueued'] ?? false) === true;
 
