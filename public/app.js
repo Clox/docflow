@@ -1311,8 +1311,13 @@ function renderSelectedJobLabelsChips(job = findJobById(selectedJobId)) {
     removeButton.className = 'job-labels-selected-chip-remove';
     removeButton.setAttribute('aria-label', `Ta bort etiketten ${label.name}`);
     removeButton.textContent = '✕';
+    removeButton.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
     removeButton.addEventListener('click', async (event) => {
       event.preventDefault();
+      event.stopPropagation();
       try {
         await removeLabelFromSelectedJob(label.id);
       } catch (error) {
@@ -13282,8 +13287,13 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
       removeButton.className = 'job-labels-selected-chip-remove';
       removeButton.setAttribute('aria-label', `Ta bort etiketten ${filenameTemplateLabelNameById(labelId)}`);
       removeButton.textContent = '✕';
+      removeButton.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
       removeButton.addEventListener('click', (event) => {
         event.preventDefault();
+        event.stopPropagation();
         state.selectedIds = state.selectedIds.filter((candidate) => candidate !== labelId);
         if (typeof onChange === 'function') {
           onChange(state.selectedIds);
