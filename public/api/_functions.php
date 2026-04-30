@@ -11969,12 +11969,25 @@ function job_auto_archiving_result(array $job): array
     return $normalized;
 }
 
+function job_live_auto_archiving_result(array $job): array
+{
+    $autoResult = job_auto_archiving_result($job);
+    if (($job['archived'] ?? false) === true) {
+        return $autoResult;
+    }
+
+    $rules = load_active_archiving_rules();
+    $senders = load_senders();
+    $autoResult['filename'] = generate_auto_archiving_filename($job, $autoResult, $rules, $senders);
+    return $autoResult;
+}
+
 function job_analysis_payload(array $job): array
 {
     $analysis = is_array($job['analysis'] ?? null) ? $job['analysis'] : [];
     $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
     $stored = $jobId !== '' ? job_analysis_snapshot($jobId) : null;
-    $autoResult = job_auto_archiving_result($job);
+    $autoResult = job_live_auto_archiving_result($job);
 
     if (
         $autoResult['clientId'] !== null
