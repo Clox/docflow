@@ -2044,12 +2044,12 @@ body.is-resizing-sidebar {
   left: 0;
   bottom: 0;
   z-index: 60;
-  min-width: max(100%, 360px);
+  min-width: max(100%, 520px);
   width: min(
-    max(100%, var(--job-labels-expanded-row-width, 360px)),
-    var(--job-labels-expanded-max-width, calc(100vw - 40px))
+    max(100%, var(--job-labels-expanded-row-width, 520px)),
+    min(var(--job-labels-expanded-max-width, calc(100vw - 40px)), calc(100vw - 40px))
   );
-  max-height: min(60vh, 360px);
+  max-height: min(68vh, 640px);
   padding: 12px;
   border: 1px solid #d7dee8;
   border-radius: 10px;
@@ -2147,6 +2147,215 @@ body.is-resizing-sidebar {
   overflow: auto;
   padding: 2px;
   outline: none;
+}
+
+.job-extraction-fields-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+  display: grid;
+  gap: 10px;
+}
+
+.job-extraction-fields-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.job-extraction-fields-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.job-extraction-fields-section-note {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.job-extraction-fields-list {
+  display: grid;
+  gap: 10px;
+  max-height: 32vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.job-extraction-field-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 11px 11px;
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.job-extraction-field-card-header {
+  display: grid;
+  gap: 4px;
+}
+
+.job-extraction-field-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.job-extraction-field-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.job-extraction-field-card-badge,
+.job-extraction-field-value-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.job-extraction-field-card-badge.is-required {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.job-extraction-field-card-primary {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.job-extraction-field-values {
+  display: grid;
+  gap: 6px;
+}
+
+.job-extraction-field-value-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 7px 8px;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.job-extraction-field-value-row.is-primary {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.job-extraction-field-value-row.is-missing {
+  grid-template-columns: minmax(0, 1fr) auto;
+  color: #94a3b8;
+}
+
+.job-extraction-field-value-row input[type="radio"] {
+  margin-top: 2px;
+}
+
+.job-extraction-field-value-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.job-extraction-field-value-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.job-extraction-field-value-row.is-missing .job-extraction-field-value-text {
+  color: #94a3b8;
+}
+
+.job-extraction-field-value-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.job-extraction-field-value-remove,
+.job-extraction-field-value-add,
+.job-extraction-field-add-button {
+  align-self: start;
+  font: inherit;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+}
+
+.job-extraction-field-value-remove {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.job-extraction-field-value-remove.category-remove {
+  color: #a11;
+}
+
+.job-extraction-field-value-remove.category-remove::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  display: block;
+  background-color: currentColor;
+  -webkit-mask: url('/assets/icons/trash.svg') center / contain no-repeat;
+  mask: url('/assets/icons/trash.svg') center / contain no-repeat;
+}
+
+.job-extraction-field-value-add,
+.job-extraction-field-add-button {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.job-extraction-field-value-remove:hover,
+.job-extraction-field-value-add:hover,
+.job-extraction-field-add-button:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.job-extraction-field-manual-input {
+  min-width: 0;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.job-extraction-field-manual-input:focus {
+  outline: none;
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
+}
+
+.job-extraction-field-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
 }
 
 .job-labels-selected:focus {
@@ -2737,6 +2946,23 @@ body.is-resizing-sidebar {
 
 .matches-field-name-cell {
   white-space: nowrap;
+}
+
+.matches-field-primary-cell {
+  width: 54px;
+  text-align: center;
+}
+
+.matches-field-primary-cell input[type="radio"] {
+  margin: 2px 0 0;
+}
+
+.matches-table tbody tr.is-primary td {
+  background: #eff6ff;
+}
+
+.matches-table tbody tr.is-clickable {
+  cursor: pointer;
 }
 
 .matches-table .is-numeric {

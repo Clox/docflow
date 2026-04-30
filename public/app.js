@@ -60,6 +60,7 @@ const jobLabelsOverlayEl = document.getElementById('job-labels-overlay');
 const jobLabelsComboboxEl = document.getElementById('job-labels-combobox');
 const jobLabelsComboboxListEl = document.getElementById('job-labels-combobox-list');
 const jobLabelsSelectedEl = document.getElementById('job-labels-selected');
+const jobExtractionFieldsSectionEl = document.getElementById('job-extraction-fields-section');
 const jobLabelsFieldGroupEl = jobLabelsFieldEl ? jobLabelsFieldEl.closest('.field-group-job-labels') : null;
 const resetLabelsActionEl = document.getElementById('reset-labels-action');
 const filenameInputEl = document.getElementById('filename-input');
@@ -338,6 +339,7 @@ let selectedJobId = '';
 let loadedOcrJobId = '';
 let loadedOcrSource = '';
 let loadedMatchesJobId = '';
+let loadedMatchesPayload = null;
 let loadedMetaJobId = '';
 let pdfFrameJobIds = pdfFrameEls.map(() => '');
 let pollInFlight = false;
@@ -431,6 +433,7 @@ const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
 const selectedFolderByJobId = new Map();
 const selectedLabelIdsByJobId = new Map();
+const selectedExtractionFieldValuesByJobId = new Map();
 const archivedReviewDraftByJobId = new Map();
 const archivedReviewPayloadByJobId = new Map();
 const filenameByJobId = new Map();
@@ -1040,8 +1043,316 @@ function effectiveSelectedLabelIds(job) {
   return [];
 }
 
+function normalizeSelectedExtractionFieldValueList(input) {
+  const resolved = [];
+  const seen = new Set();
+  (Array.isArray(input) ? input : []).forEach((value) => {
+    const resolvedValue = typeof value === 'string' ? value.trim() : '';
+    if (resolvedValue === '' || seen.has(resolvedValue)) {
+      return;
+    }
+    seen.add(resolvedValue);
+    resolved.push(resolvedValue);
+  });
+  return resolved;
+}
+
+function normalizeSelectedExtractionFieldSelection(input) {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+
+  const manualValues = normalizeSelectedExtractionFieldValueList(input.manualValues);
+  const excludedValues = normalizeSelectedExtractionFieldValueList(input.excludedValues);
+  const primaryValue = typeof input.primaryValue === 'string'
+    ? input.primaryValue.trim()
+    : '';
+  if (manualValues.length < 1 && excludedValues.length < 1 && primaryValue === '') {
+    return null;
+  }
+
+  return {
+    manualValues,
+    excludedValues,
+    primaryValue: primaryValue !== '' ? primaryValue : null,
+  };
+}
+
+function normalizeSelectedExtractionFieldValues(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return {};
+  }
+  const resolved = {};
+  Object.entries(input).forEach(([fieldKey, selection]) => {
+    const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+    if (normalizedKey === '') {
+      return;
+    }
+    const normalizedSelection = normalizeSelectedExtractionFieldSelection(selection);
+    if (!normalizedSelection) {
+      return;
+    }
+    resolved[normalizedKey] = normalizedSelection;
+  });
+  return resolved;
+}
+
 function selectedJobLabelsEditable(job) {
   return selectedJobArchivingEditable(job);
+}
+
+function effectiveSelectedExtractionFieldValues(job) {
+  if (!job) {
+    return {};
+  }
+  if (selectedExtractionFieldValuesByJobId.has(job.id)) {
+    return normalizeSelectedExtractionFieldValues(selectedExtractionFieldValuesByJobId.get(job.id));
+  }
+  if (job.selectedExtractionFieldValues && typeof job.selectedExtractionFieldValues === 'object') {
+    return normalizeSelectedExtractionFieldValues(job.selectedExtractionFieldValues);
+  }
+  return {};
+}
+
+function effectiveSelectedExtractionFieldSelection(job, fieldKey) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  if (!job || normalizedKey === '') {
+    return null;
+  }
+  const selections = effectiveSelectedExtractionFieldValues(job);
+  return normalizeSelectedExtractionFieldSelection(selections[normalizedKey]);
+}
+
+function extractionFieldAnalysisForJob(job, fieldKey) {
+  if (!job || !job.analysis || typeof job.analysis !== 'object') {
+    return null;
+  }
+  const meta = job.analysis.extractionFieldMeta;
+  if (!meta || typeof meta !== 'object') {
+    return null;
+  }
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  if (normalizedKey === '') {
+    return null;
+  }
+  return meta[normalizedKey] && typeof meta[normalizedKey] === 'object' ? meta[normalizedKey] : null;
+}
+
+function extractionFieldAcceptedRowsForJob(job, fieldKey) {
+  const meta = extractionFieldAnalysisForJob(job, fieldKey);
+  if (!meta) {
+    return [];
+  }
+  const threshold = Number.isFinite(Number(matchingDataFieldAcceptanceThresholdDraft))
+    ? Number(matchingDataFieldAcceptanceThresholdDraft)
+    : 0.5;
+  const rows = Array.isArray(meta.matches) ? meta.matches : [];
+  return rows
+    .map((match) => {
+      if (!match || typeof match !== 'object') {
+        return null;
+      }
+      const value = typeof match.value === 'string' ? match.value.trim() : '';
+      if (value === '') {
+        return null;
+      }
+      const finalConfidence = Number.isFinite(Number(match.finalConfidence)) ? Number(match.finalConfidence) : null;
+      const confidence = Number.isFinite(Number(match.confidence)) ? Number(match.confidence) : null;
+      const resolvedConfidence = finalConfidence ?? confidence ?? 0;
+      return {
+        value,
+        confidence: resolvedConfidence,
+        finalConfidence,
+        manual: false,
+      };
+    })
+    .filter((row) => row && row.value !== '' && row.finalConfidence !== null && row.finalConfidence >= threshold);
+}
+
+function primaryExtractionFieldValueForJob(job, fieldKey) {
+  const meta = extractionFieldAnalysisForJob(job, fieldKey);
+  const selection = effectiveSelectedExtractionFieldSelection(job, fieldKey);
+  const acceptedRows = extractionFieldAcceptedRowsForJob(job, fieldKey);
+  const autoValues = Array.isArray(meta && meta.values) ? meta.values : [];
+  const candidateValues = acceptedRows.map((row) => row.value).filter((value) => value !== '');
+  const manualValues = selection && Array.isArray(selection.manualValues) ? selection.manualValues : [];
+
+  if (selection && typeof selection.primaryValue === 'string' && selection.primaryValue.trim() !== '') {
+    const primary = selection.primaryValue.trim();
+    if (candidateValues.includes(primary) || manualValues.includes(primary)) {
+      return primary;
+    }
+  }
+
+  if (manualValues.length > 0) {
+    return manualValues[0];
+  }
+
+  if (candidateValues.length > 0) {
+    return candidateValues[0];
+  }
+
+  if (autoValues.length > 0) {
+    const firstAuto = typeof autoValues[0] === 'string' ? autoValues[0].trim() : '';
+    if (firstAuto !== '') {
+      return firstAuto;
+    }
+  }
+
+  return '';
+}
+
+function extractionFieldDisplayNameByKey(fieldKey) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  if (!normalizedKey) {
+    return '';
+  }
+
+  const knownFields = [...predefinedExtractionFieldsDraft, ...extractionFieldsDraft, ...systemExtractionFieldsDraft];
+  const match = knownFields
+    .map((field, index) => sanitizeExtractionField(field, index))
+    .find((field) => field && typeof field.key === 'string' && field.key.trim() === normalizedKey);
+  return match && typeof match.name === 'string' && match.name.trim() !== ''
+    ? match.name.trim()
+    : normalizedKey;
+}
+
+function collectFilenameTemplateFieldKeysFromParts(parts, keys = new Set()) {
+  (Array.isArray(parts) ? parts : []).forEach((part) => {
+    if (!part || typeof part !== 'object') {
+      return;
+    }
+
+    if (part.type === 'dataField') {
+      const key = typeof part.key === 'string' ? part.key.trim() : '';
+      if (key !== '') {
+        keys.add(key);
+      }
+    }
+
+    collectFilenameTemplateFieldKeysFromParts(part.prefixParts || [], keys);
+    collectFilenameTemplateFieldKeysFromParts(part.suffixParts || [], keys);
+
+    if (part.type === 'firstAvailable') {
+      collectFilenameTemplateFieldKeysFromParts(part.parts || [], keys);
+      return;
+    }
+
+    if (part.type === 'ifLabels') {
+      collectFilenameTemplateFieldKeysFromParts(part.thenParts || [], keys);
+      collectFilenameTemplateFieldKeysFromParts(part.elseParts || [], keys);
+    }
+  });
+
+  return keys;
+}
+
+function requiredExtractionFieldKeysForJob(job) {
+  const keys = new Set();
+  if (!job) {
+    return keys;
+  }
+
+  const folder = findArchiveFolderById(effectiveFolderId(job));
+  if (folder && folder.pathTemplate && typeof folder.pathTemplate === 'object') {
+    collectFilenameTemplateFieldKeysFromParts(
+      sanitizeFilenameTemplate(folder.pathTemplate).parts || [],
+      keys
+    );
+  }
+
+  if (folder) {
+    const template = selectArchiveFolderFilenameTemplateByLabelIds(folder, effectiveSelectedLabelIds(job));
+    if (template && template.template && typeof template.template === 'object') {
+      collectFilenameTemplateFieldKeysFromParts(
+        sanitizeFilenameTemplate(template.template).parts || [],
+        keys
+      );
+    }
+  }
+
+  return keys;
+}
+
+function extractionFieldVisibleRowsForJob(job, fieldKey) {
+  const meta = extractionFieldAnalysisForJob(job, fieldKey);
+  if (!meta) {
+    return [];
+  }
+
+  const selection = effectiveSelectedExtractionFieldSelection(job, fieldKey);
+  const manualValues = normalizeSelectedExtractionFieldValueList(selection && selection.manualValues);
+  const excludedValues = new Set(normalizeSelectedExtractionFieldValueList(selection && selection.excludedValues));
+  const primaryValue = primaryExtractionFieldValueForJob(job, fieldKey);
+  const acceptedRows = extractionFieldAcceptedRowsForJob(job, fieldKey)
+    .filter((row) => row && row.value && !excludedValues.has(row.value));
+  const manualRows = manualValues
+    .filter((value) => value !== '' && !excludedValues.has(value))
+    .map((value) => ({
+      value,
+      confidence: null,
+      finalConfidence: null,
+      manual: true,
+    }));
+
+  const rowsByValue = new Map();
+  const addRow = (row, source) => {
+    if (!row || typeof row.value !== 'string' || row.value.trim() === '') {
+      return;
+    }
+    const value = row.value.trim();
+    const existing = rowsByValue.get(value) || null;
+    const next = {
+      ...row,
+      value,
+      manual: source === 'manual' || row.manual === true || (existing && existing.manual === true),
+      accepted: source === 'accepted' || row.accepted === true || (existing && existing.accepted === true),
+      primary: value === primaryValue,
+    };
+    rowsByValue.set(value, next);
+  };
+
+  acceptedRows.forEach((row) => addRow(row, 'accepted'));
+  manualRows.forEach((row) => addRow(row, 'manual'));
+
+  if (primaryValue !== '' && !rowsByValue.has(primaryValue) && !excludedValues.has(primaryValue)) {
+    addRow({
+      value: primaryValue,
+      confidence: null,
+      finalConfidence: null,
+      manual: true,
+      synthetic: true,
+    }, 'manual');
+  }
+
+  const rows = Array.from(rowsByValue.values());
+  rows.sort((left, right) => {
+    const leftPrimary = left.primary === true ? 1 : 0;
+    const rightPrimary = right.primary === true ? 1 : 0;
+    if (leftPrimary !== rightPrimary) {
+      return rightPrimary - leftPrimary;
+    }
+
+    const leftManual = left.manual === true ? 1 : 0;
+    const rightManual = right.manual === true ? 1 : 0;
+    if (leftManual !== rightManual) {
+      return rightManual - leftManual;
+    }
+
+    const leftConfidence = typeof left.finalConfidence === 'number'
+      ? left.finalConfidence
+      : (typeof left.confidence === 'number' ? left.confidence : -1);
+    const rightConfidence = typeof right.finalConfidence === 'number'
+      ? right.finalConfidence
+      : (typeof right.confidence === 'number' ? right.confidence : -1);
+    if (leftConfidence !== rightConfidence) {
+      return rightConfidence - leftConfidence;
+    }
+
+    return left.value.localeCompare(right.value, 'sv');
+  });
+
+  return rows;
 }
 
 function currentSelectedJobLabelOptions() {
@@ -1330,6 +1641,302 @@ function renderSelectedJobLabelsChips(job = findJobById(selectedJobId)) {
   });
 }
 
+function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobId)) {
+  if (!(jobExtractionFieldsSectionEl instanceof HTMLElement)) {
+    return;
+  }
+
+  jobExtractionFieldsSectionEl.replaceChildren();
+
+  if (!job) {
+    return;
+  }
+
+  const requiredKeys = requiredExtractionFieldKeysForJob(job);
+  const meta = job.analysis && typeof job.analysis === 'object' && job.analysis.extractionFieldMeta && typeof job.analysis.extractionFieldMeta === 'object'
+    ? job.analysis.extractionFieldMeta
+    : {};
+  const selectionKeys = Object.keys(effectiveSelectedExtractionFieldValues(job));
+  const dataFieldOptions = filenameTemplateDataFieldOptions();
+  const knownDataFieldKeys = new Set(dataFieldOptions.map((option) => option.key));
+  const restrictToKnownDataFields = knownDataFieldKeys.size > 0;
+  const fieldKeys = Array.from(new Set([
+    ...requiredKeys,
+    ...Object.keys(meta || {}),
+    ...selectionKeys,
+  ])).filter((fieldKey) => {
+    if (typeof fieldKey !== 'string' || fieldKey.trim() === '') {
+      return false;
+    }
+    return !restrictToKnownDataFields || knownDataFieldKeys.has(fieldKey.trim());
+  });
+
+  const cards = fieldKeys
+    .map((fieldKey) => {
+      const key = fieldKey.trim();
+      const name = extractionFieldDisplayNameByKey(key);
+      const rows = extractionFieldVisibleRowsForJob(job, key);
+      const required = requiredKeys.has(key);
+      const primaryValue = primaryExtractionFieldValueForJob(job, key);
+      if (rows.length < 1 && !required) {
+        return null;
+      }
+      return {
+        key,
+        name,
+        rows,
+        required,
+        primaryValue,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.name.localeCompare(right.name, 'sv'));
+
+  const header = document.createElement('div');
+  header.className = 'job-extraction-fields-section-header';
+  const headerTitle = document.createElement('div');
+  headerTitle.className = 'job-extraction-fields-section-title';
+  headerTitle.textContent = 'Datafält';
+  const headerNote = document.createElement('div');
+  headerNote.className = 'job-extraction-fields-section-note';
+  const thresholdPercent = Number.isFinite(Number(matchingDataFieldAcceptanceThresholdDraft))
+    ? Number(matchingDataFieldAcceptanceThresholdDraft)
+    : 0.5;
+  headerNote.textContent = `Visar värden över ${Math.round(thresholdPercent * 100)}% samt manuella värden.`;
+  header.append(headerTitle, headerNote);
+  jobExtractionFieldsSectionEl.appendChild(header);
+
+  if (cards.length < 1) {
+    const empty = document.createElement('div');
+    empty.className = 'job-extraction-fields-empty';
+    empty.textContent = 'Inga datafält att redigera.';
+    jobExtractionFieldsSectionEl.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'job-extraction-fields-list';
+
+  cards.forEach((card) => {
+    const cardEl = document.createElement('section');
+    cardEl.className = 'job-extraction-field-card';
+    cardEl.dataset.fieldKey = card.key;
+
+    const cardHeader = document.createElement('div');
+    cardHeader.className = 'job-extraction-field-card-header';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'job-extraction-field-card-title-row';
+
+    const title = document.createElement('div');
+    title.className = 'job-extraction-field-card-title';
+    title.textContent = card.name;
+    titleRow.appendChild(title);
+
+    if (card.required) {
+      const requiredBadge = document.createElement('span');
+      requiredBadge.className = 'job-extraction-field-card-badge is-required';
+      requiredBadge.textContent = 'Obligatoriskt';
+      titleRow.appendChild(requiredBadge);
+    }
+
+    cardHeader.appendChild(titleRow);
+
+    if (card.primaryValue) {
+      const primaryInfo = document.createElement('div');
+      primaryInfo.className = 'job-extraction-field-card-primary';
+      primaryInfo.textContent = `Primärt värde: ${card.primaryValue}`;
+      cardHeader.appendChild(primaryInfo);
+    }
+
+    cardEl.appendChild(cardHeader);
+
+    const rowsWrap = document.createElement('div');
+    rowsWrap.className = 'job-extraction-field-values';
+    let addInput = null;
+
+    if (card.rows.length < 1) {
+      const missingRow = document.createElement('div');
+      missingRow.className = 'job-extraction-field-value-row is-missing';
+      const missingText = document.createElement('div');
+      missingText.className = 'job-extraction-field-value-text';
+      missingText.textContent = '(saknas)';
+      const addButton = document.createElement('button');
+      addButton.type = 'button';
+      addButton.className = 'job-extraction-field-value-add';
+      addButton.textContent = 'Lägg till';
+      addButton.addEventListener('click', () => {
+        if (addInput instanceof HTMLInputElement) {
+          addInput.focus({ preventScroll: true });
+        }
+      });
+      missingRow.append(missingText, addButton);
+      rowsWrap.appendChild(missingRow);
+    } else {
+      card.rows.forEach((row) => {
+        const rowEl = document.createElement('label');
+        rowEl.className = 'job-extraction-field-value-row';
+        rowEl.classList.toggle('is-primary', row.primary === true);
+        rowEl.classList.toggle('is-manual', row.manual === true);
+        rowEl.classList.toggle('is-accepted', row.accepted === true);
+        rowEl.classList.toggle('is-synthetic', row.synthetic === true);
+
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = `job-extraction-field-primary-${card.key}`;
+        radio.checked = row.primary === true;
+        radio.disabled = false;
+        radio.addEventListener('change', async () => {
+          try {
+            const jobForUpdate = findJobById(selectedJobId);
+            if (!jobForUpdate) {
+              return;
+            }
+            const nextSelection = setSelectedExtractionFieldPrimaryValue(
+              jobForUpdate,
+              card.key,
+              row.value,
+              { addToManual: row.accepted !== true }
+            );
+            if (!nextSelection) {
+              return;
+            }
+            const selections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
+            selections[card.key] = nextSelection;
+            await persistSelectedJobExtractionFieldValues(selections);
+          } catch (error) {
+            alert(error.message || 'Kunde inte uppdatera datafält.');
+          }
+        });
+
+        const valueWrap = document.createElement('div');
+        valueWrap.className = 'job-extraction-field-value-body';
+
+        const valueText = document.createElement('div');
+        valueText.className = 'job-extraction-field-value-text';
+        valueText.textContent = row.value;
+        valueWrap.appendChild(valueText);
+
+        const metaRow = document.createElement('div');
+        metaRow.className = 'job-extraction-field-value-meta';
+        if (row.manual === true) {
+          const badge = document.createElement('span');
+          badge.className = 'job-extraction-field-value-badge';
+          badge.textContent = 'Manuellt';
+          metaRow.appendChild(badge);
+        }
+        if (typeof row.finalConfidence === 'number' && Number.isFinite(row.finalConfidence)) {
+          const badge = document.createElement('span');
+          badge.className = 'job-extraction-field-value-badge';
+          badge.textContent = `${Math.round(row.finalConfidence * 100)}%`;
+          metaRow.appendChild(badge);
+        } else if (row.synthetic === true) {
+          const badge = document.createElement('span');
+          badge.className = 'job-extraction-field-value-badge';
+          badge.textContent = 'Saknas';
+          metaRow.appendChild(badge);
+        }
+        if (metaRow.childNodes.length > 0) {
+          valueWrap.appendChild(metaRow);
+        }
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'job-extraction-field-value-remove category-remove';
+        removeButton.setAttribute('aria-label', `Ta bort värdet ${row.value}`);
+        removeButton.title = `Ta bort värdet ${row.value}`;
+        removeButton.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        });
+        removeButton.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          try {
+            const jobForUpdate = findJobById(selectedJobId);
+            if (!jobForUpdate) {
+              return;
+            }
+            const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
+            const currentSelection = currentSelections[card.key] || null;
+            const nextSelection = removeSelectedExtractionFieldValue(jobForUpdate, card.key, row.value);
+            if (!nextSelection) {
+              delete currentSelections[card.key];
+            } else {
+              currentSelections[card.key] = nextSelection;
+            }
+            await persistSelectedJobExtractionFieldValues(currentSelections);
+          } catch (error) {
+            alert(error.message || 'Kunde inte ta bort värdet.');
+          }
+        });
+
+        rowEl.append(radio, valueWrap, removeButton);
+        rowsWrap.appendChild(rowEl);
+      });
+    }
+
+    const addRow = document.createElement('div');
+    addRow.className = 'job-extraction-field-add-row';
+
+    addInput = document.createElement('input');
+    addInput.type = 'text';
+    addInput.className = 'job-extraction-field-manual-input';
+    addInput.placeholder = 'Lägg till värde…';
+    addInput.spellcheck = false;
+    addInput.autocomplete = 'off';
+
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.className = 'job-extraction-field-add-button';
+    addButton.textContent = 'Lägg till';
+    const submitManualValue = async () => {
+      const manualValue = addInput.value.trim();
+      if (manualValue === '') {
+        return;
+      }
+      try {
+        const jobForUpdate = findJobById(selectedJobId);
+        if (!jobForUpdate) {
+          return;
+        }
+        const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
+        const currentSelection = selectedExtractionFieldSelectionForJob(jobForUpdate, card.key) || {
+          manualValues: [],
+          excludedValues: [],
+          primaryValue: null,
+        };
+        const nextSelection = {
+          manualValues: normalizeSelectedExtractionFieldValueList(currentSelection.manualValues),
+          excludedValues: normalizeSelectedExtractionFieldValueList(currentSelection.excludedValues).filter((value) => value !== manualValue),
+          primaryValue: manualValue,
+        };
+        nextSelection.manualValues = [manualValue, ...nextSelection.manualValues.filter((value) => value !== manualValue)];
+        currentSelections[card.key] = normalizeSelectedExtractionFieldSelection(nextSelection);
+        await persistSelectedJobExtractionFieldValues(currentSelections);
+        addInput.value = '';
+      } catch (error) {
+        alert(error.message || 'Kunde inte lägga till värdet.');
+      }
+    };
+
+    addButton.addEventListener('click', submitManualValue);
+    addInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        submitManualValue();
+      }
+    });
+
+    addRow.append(addInput, addButton);
+
+    cardEl.append(rowsWrap, addRow);
+    list.appendChild(cardEl);
+  });
+
+  jobExtractionFieldsSectionEl.appendChild(list);
+}
+
 function renderJobLabelsComboboxOptions(job = findJobById(selectedJobId)) {
   if (!(jobLabelsComboboxListEl instanceof HTMLElement)) {
     return;
@@ -1443,6 +2050,7 @@ function renderJobLabelsOverlay(job = findJobById(selectedJobId)) {
   if (overlayInteractive) {
     renderJobLabelsComboboxOptions(job);
     renderSelectedJobLabelsChips(job);
+    renderSelectedJobExtractionFieldsSection(job);
   } else {
     jobLabelsDropdownOpen = false;
     jobLabelsRenderedOptions = [];
@@ -1454,6 +2062,9 @@ function renderJobLabelsOverlay(job = findJobById(selectedJobId)) {
     if (jobLabelsComboboxEl instanceof HTMLInputElement) {
       jobLabelsComboboxEl.removeAttribute('aria-activedescendant');
       jobLabelsComboboxEl.value = '';
+    }
+    if (jobExtractionFieldsSectionEl instanceof HTMLElement) {
+      jobExtractionFieldsSectionEl.replaceChildren();
     }
   }
 
@@ -1565,6 +2176,157 @@ async function persistSelectedJobLabelIds(nextLabelIds) {
     syncFilenameField(rollbackJob);
     updateArchiveAction(rollbackJob);
     updateSelectedJobResetActions(rollbackJob);
+    throw error;
+  }
+}
+
+function selectedExtractionFieldSelectionForJob(job, fieldKey) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  if (!job || normalizedKey === '') {
+    return null;
+  }
+  const selections = effectiveSelectedExtractionFieldValues(job);
+  return normalizeSelectedExtractionFieldSelection(selections[normalizedKey]);
+}
+
+function setSelectedExtractionFieldPrimaryValue(job, fieldKey, nextValue, options = {}) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  if (!job || normalizedKey === '') {
+    return null;
+  }
+
+  const currentSelection = selectedExtractionFieldSelectionForJob(job, normalizedKey) || {
+    manualValues: [],
+    excludedValues: [],
+    primaryValue: null,
+  };
+  const normalizedValue = typeof nextValue === 'string' ? nextValue.trim() : '';
+  if (normalizedValue === '') {
+    return currentSelection;
+  }
+
+  const nextSelection = {
+    manualValues: Array.isArray(currentSelection.manualValues) ? [...currentSelection.manualValues] : [],
+    excludedValues: Array.isArray(currentSelection.excludedValues) ? [...currentSelection.excludedValues] : [],
+    primaryValue: normalizedValue,
+  };
+
+  const acceptedRows = extractionFieldAcceptedRowsForJob(job, normalizedKey);
+  const acceptedValues = acceptedRows.map((row) => row.value).filter((value) => value !== '');
+  const manualIndex = nextSelection.manualValues.indexOf(normalizedValue);
+  if (manualIndex >= 0) {
+    nextSelection.manualValues.splice(manualIndex, 1);
+    nextSelection.manualValues.unshift(normalizedValue);
+  } else if (!acceptedValues.includes(normalizedValue)) {
+    nextSelection.manualValues.unshift(normalizedValue);
+  }
+
+  nextSelection.excludedValues = nextSelection.excludedValues.filter((value) => value !== normalizedValue);
+
+  if (options.addToManual === true && !nextSelection.manualValues.includes(normalizedValue)) {
+    nextSelection.manualValues.unshift(normalizedValue);
+  }
+
+  return normalizeSelectedExtractionFieldSelection(nextSelection);
+}
+
+function removeSelectedExtractionFieldValue(job, fieldKey, value) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  const normalizedValue = typeof value === 'string' ? value.trim() : '';
+  if (!job || normalizedKey === '' || normalizedValue === '') {
+    return null;
+  }
+
+  const currentSelection = selectedExtractionFieldSelectionForJob(job, normalizedKey) || {
+    manualValues: [],
+    excludedValues: [],
+    primaryValue: null,
+  };
+  const acceptedRows = extractionFieldAcceptedRowsForJob(job, normalizedKey);
+  const acceptedValues = acceptedRows.map((row) => row.value).filter((item) => item !== '');
+  const nextSelection = {
+    manualValues: Array.isArray(currentSelection.manualValues)
+      ? currentSelection.manualValues.filter((candidate) => candidate !== normalizedValue)
+      : [],
+    excludedValues: Array.isArray(currentSelection.excludedValues)
+      ? [...currentSelection.excludedValues]
+      : [],
+    primaryValue: currentSelection.primaryValue,
+  };
+
+  if (acceptedValues.includes(normalizedValue)) {
+    if (!nextSelection.excludedValues.includes(normalizedValue)) {
+      nextSelection.excludedValues.push(normalizedValue);
+    }
+  }
+
+  if (nextSelection.primaryValue === normalizedValue) {
+    nextSelection.primaryValue = null;
+  }
+
+  return normalizeSelectedExtractionFieldSelection(nextSelection);
+}
+
+async function persistSelectedJobExtractionFieldValues(nextSelections) {
+  const job = findJobById(selectedJobId);
+  if (!selectedJobLabelsEditable(job)) {
+    return;
+  }
+
+  const previousCurrentFilename = String(displayedFilenameForJob(job) || '').trim();
+  const previousProposed = proposedArchivingResultForJob(job);
+  const normalizedNext = normalizeSelectedExtractionFieldValues(nextSelections);
+  const hadLocalValue = selectedExtractionFieldValuesByJobId.has(job.id);
+  const previousLocalValue = hadLocalValue ? normalizeSelectedExtractionFieldValues(selectedExtractionFieldValuesByJobId.get(job.id)) : null;
+
+  selectedExtractionFieldValuesByJobId.set(job.id, normalizedNext);
+  updateArchivedReviewDraftFromSidebar(job);
+  const currentJobAfterFieldChange = findJobById(selectedJobId);
+  const nextProposed = proposedArchivingResultForJob(currentJobAfterFieldChange);
+  syncCurrentActionValuesFromProposalChange(
+    job.id,
+    effectiveFolderId(job),
+    previousCurrentFilename,
+    previousProposed,
+    nextProposed
+  );
+  const currentJob = findJobById(selectedJobId);
+  setLabelsForJob(currentJob);
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+  updateSelectedJobResetActions(currentJob);
+  refreshLoadedMatchesView();
+
+  try {
+    if (archivedReviewModeActiveForJob(job)) {
+      return;
+    }
+    saveSelectedJobFields(job.id, { selectedExtractionFieldValues: normalizedNext }).catch((error) => {
+      if (hadLocalValue) {
+        selectedExtractionFieldValuesByJobId.set(job.id, previousLocalValue);
+      } else {
+        selectedExtractionFieldValuesByJobId.delete(job.id);
+      }
+      const rollbackJob = findJobById(selectedJobId);
+      setLabelsForJob(rollbackJob);
+      syncFilenameField(rollbackJob);
+      updateArchiveAction(rollbackJob);
+      updateSelectedJobResetActions(rollbackJob);
+      refreshLoadedMatchesView();
+      alert(error.message || 'Kunde inte spara datafält.');
+    });
+  } catch (error) {
+    if (hadLocalValue) {
+      selectedExtractionFieldValuesByJobId.set(job.id, previousLocalValue);
+    } else {
+      selectedExtractionFieldValuesByJobId.delete(job.id);
+    }
+    const rollbackJob = findJobById(selectedJobId);
+    setLabelsForJob(rollbackJob);
+    syncFilenameField(rollbackJob);
+    updateArchiveAction(rollbackJob);
+    updateSelectedJobResetActions(rollbackJob);
+    refreshLoadedMatchesView();
     throw error;
   }
 }
@@ -1864,6 +2626,7 @@ function clearArchivedReviewEditorState(jobId) {
   selectedSenderByJobId.delete(jobId);
   selectedFolderByJobId.delete(jobId);
   selectedLabelIdsByJobId.delete(jobId);
+  selectedExtractionFieldValuesByJobId.delete(jobId);
   filenameByJobId.delete(jobId);
 }
 
@@ -2385,16 +3148,26 @@ function appendRuleMatchesSection(container, title, entities, emptyText, entityL
   container.appendChild(tableWrap);
 }
 
-function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
+function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, options = {}) {
   const header = document.createElement('h3');
   header.className = 'matches-header';
   header.textContent = title;
   container.appendChild(header);
+  const currentJob = options && typeof options === 'object' && options.job && typeof options.job === 'object'
+    ? options.job
+    : findJobById(loadedMatchesJobId || selectedJobId);
+  const acceptanceThreshold = Number.isFinite(Number(matchingDataFieldAcceptanceThresholdDraft))
+    ? Number(matchingDataFieldAcceptanceThresholdDraft)
+    : 0.5;
 
   const fieldGroups = fieldsByKey && typeof fieldsByKey === 'object'
     ? Object.entries(fieldsByKey)
       .map(([fieldKey, field]) => {
         if (!field || typeof field !== 'object') {
+          return null;
+        }
+        const normalizedFieldKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+        if (normalizedFieldKey === '') {
           return null;
         }
         const matches = Array.isArray(field.matches)
@@ -2446,6 +3219,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
                 lineIndex: Number.isInteger(match.lineIndex) ? match.lineIndex : Number.MAX_SAFE_INTEGER,
                 labelLineIndex: Number.isInteger(match.labelLineIndex) ? match.labelLineIndex : null,
                 start: Number.isInteger(match.start) ? match.start : Number.MAX_SAFE_INTEGER,
+                accepted: Number.isFinite(Number(match.finalConfidence)) ? Number(match.finalConfidence) >= acceptanceThreshold : false,
               };
             })
             .filter(Boolean)
@@ -2494,13 +3268,17 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
               lineIndex: Number.MAX_SAFE_INTEGER,
               labelLineIndex: Number.isInteger(field.labelLineIndex) ? field.labelLineIndex : null,
               start: Number.MAX_SAFE_INTEGER,
+              accepted: Number.isFinite(Number(field.finalConfidence)) ? Number(field.finalConfidence) >= acceptanceThreshold : false,
             }]);
         if (rows.length === 0) {
           return null;
         }
+        const selection = currentJob ? selectedExtractionFieldSelectionForJob(currentJob, fieldKey) : null;
         return {
-          key: typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : fieldKey,
-          name: typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : fieldKey,
+          key: typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : normalizedFieldKey,
+          name: typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : normalizedFieldKey,
+          selection,
+          primaryValue: currentJob ? primaryExtractionFieldValueForJob(currentJob, normalizedFieldKey) : '',
           rows: rows
             .slice()
             .sort((left, right) => {
@@ -2534,7 +3312,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Datafält', 'Värde', 'Träff', 'Straff', 'Säkerhet'].forEach((label) => {
+  ['Datafält', 'Primär', 'Värde', 'Träff', 'Straff', 'Säkerhet'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Säkerhet') {
@@ -2931,7 +3709,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
         const separatorRow = document.createElement('tr');
         separatorRow.className = 'matches-group-separator';
         const separatorCell = document.createElement('td');
-      separatorCell.colSpan = 5;
+        separatorCell.colSpan = 6;
         separatorCell.textContent = '';
         separatorRow.appendChild(separatorCell);
         tbody.appendChild(separatorRow);
@@ -2939,6 +3717,10 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
 
     fieldGroup.rows.forEach((row, rowIndex) => {
       const tr = document.createElement('tr');
+      tr.classList.toggle('is-primary', row.primary === true);
+      if (currentJob && selectedJobLabelsEditable(currentJob)) {
+        tr.classList.add('is-clickable');
+      }
       if (rowIndex === 0) {
         tr.classList.add('matches-group-start');
       }
@@ -2957,9 +3739,57 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
         tr.appendChild(nameCell);
       }
 
+      const primaryCell = document.createElement('td');
+      primaryCell.className = 'matches-field-primary-cell';
+      const primaryRadio = document.createElement('input');
+      primaryRadio.type = 'radio';
+      primaryRadio.name = `matches-field-primary-${fieldGroup.key}`;
+      primaryRadio.checked = row.primary === true;
+      primaryRadio.disabled = !currentJob || !selectedJobLabelsEditable(currentJob);
+      primaryRadio.setAttribute('aria-label', `Välj ${String(row.value)} som primärt värde`);
+      primaryRadio.title = row.primary === true ? 'Primärt värde' : 'Välj som primärt värde';
+      primaryRadio.addEventListener('change', async () => {
+        if (!currentJob || !selectedJobLabelsEditable(currentJob)) {
+          return;
+        }
+        try {
+          const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(currentJob));
+          const nextSelection = setSelectedExtractionFieldPrimaryValue(
+            currentJob,
+            fieldGroup.key,
+            row.value,
+            { addToManual: row.accepted !== true }
+          );
+          if (!nextSelection) {
+            return;
+          }
+          currentSelections[fieldGroup.key] = nextSelection;
+          await persistSelectedJobExtractionFieldValues(currentSelections);
+        } catch (error) {
+          alert(error.message || 'Kunde inte uppdatera datafält.');
+        }
+      });
+      primaryCell.appendChild(primaryRadio);
+      tr.appendChild(primaryCell);
+
       const valueCell = document.createElement('td');
       valueCell.className = 'matches-group-detail-start';
-      valueCell.textContent = String(row.value);
+      const valueText = document.createElement('span');
+      valueText.textContent = String(row.value);
+      valueCell.appendChild(valueText);
+      if (row.primary === true) {
+        const primaryBadge = document.createElement('span');
+        primaryBadge.className = 'matches-hit-row-badge';
+        primaryBadge.textContent = 'Primärt';
+        valueCell.appendChild(document.createTextNode(' '));
+        valueCell.appendChild(primaryBadge);
+      } else if (row.manual === true) {
+        const manualBadge = document.createElement('span');
+        manualBadge.className = 'matches-hit-row-badge';
+        manualBadge.textContent = 'Manuellt';
+        valueCell.appendChild(document.createTextNode(' '));
+        valueCell.appendChild(manualBadge);
+      }
       tr.appendChild(valueCell);
 
       const hitCell = document.createElement('td');
@@ -2975,6 +3805,15 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText) {
       confidenceCell.className = 'is-numeric';
       confidenceCell.textContent = formatMatchConfidence(row);
       tr.appendChild(confidenceCell);
+
+      const selectRow = () => {
+        if (!primaryRadio.disabled && !primaryRadio.checked) {
+          primaryRadio.click();
+        }
+      };
+      [valueCell, hitCell, penaltiesCell, confidenceCell].forEach((cell) => {
+        cell.addEventListener('click', selectRow);
+      });
 
       tbody.appendChild(tr);
     });
@@ -3091,10 +3930,18 @@ function renderMatchesContent(payload) {
   const labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
   const fields = payload && typeof payload.fields === 'object' && payload.fields !== null ? payload.fields : {};
   const clients = payload && Array.isArray(payload.clients) ? payload.clients : [];
+  const job = findJobById(loadedMatchesJobId || selectedJobId);
 
   appendRuleMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
-  appendFieldMatchesSection(matchesViewEl, 'Datafält', fields, 'Inga datafältsmatchningar hittades.');
+  appendFieldMatchesSection(matchesViewEl, 'Datafält', fields, 'Inga datafältsmatchningar hittades.', { job });
   appendClientMatchesSection(matchesViewEl, 'Huvudman', clients, 'Inga huvudmansmatchningar hittades.');
+}
+
+function refreshLoadedMatchesView() {
+  if (!loadedMatchesPayload || matchesViewEl.classList.contains('hidden')) {
+    return;
+  }
+  renderMatchesContent(loadedMatchesPayload);
 }
 
 async function setViewerMatches(jobId) {
@@ -3112,6 +3959,7 @@ async function setViewerMatches(jobId) {
 
   if (!jobId) {
     loadedMatchesJobId = '';
+    loadedMatchesPayload = null;
     matchesViewEl.innerHTML = '';
     return;
   }
@@ -3119,6 +3967,7 @@ async function setViewerMatches(jobId) {
   const job = findJobById(jobId);
   if (job && job.status === 'processing') {
     loadedMatchesJobId = '';
+    loadedMatchesPayload = null;
     matchesViewEl.innerHTML = '';
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
@@ -3132,6 +3981,7 @@ async function setViewerMatches(jobId) {
   }
 
   loadedMatchesJobId = jobId;
+  loadedMatchesPayload = null;
   const requestSeq = ++matchesRequestSeq;
   matchesViewEl.innerHTML = '';
   const loading = document.createElement('div');
@@ -3142,6 +3992,7 @@ async function setViewerMatches(jobId) {
   try {
     const response = await fetch('/api/get-job-matches.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
     if (response.status === 404) {
+      loadedMatchesPayload = null;
       matchesViewEl.innerHTML = '';
       const empty = document.createElement('div');
       empty.className = 'matches-empty';
@@ -3158,6 +4009,7 @@ async function setViewerMatches(jobId) {
       return;
     }
 
+    loadedMatchesPayload = payload;
     renderMatchesContent(payload);
   } catch (error) {
     if (requestSeq !== matchesRequestSeq) {
@@ -7274,13 +8126,20 @@ function buildFilenameFieldValues(job, options = {}) {
 
   const overrideFolderId = typeof options.folderId === 'string' ? options.folderId.trim() : '';
   const overrideLabelIds = Array.isArray(options.labelIds) ? normalizeSelectedLabelIds(options.labelIds) : null;
+  const overrideSelection = options && typeof options.selectedExtractionFieldValues === 'object' && !Array.isArray(options.selectedExtractionFieldValues)
+    ? normalizeSelectedExtractionFieldValues(options.selectedExtractionFieldValues)
+    : null;
   const extractionFields = job.analysis && typeof job.analysis === 'object' && job.analysis.extractionFields && typeof job.analysis.extractionFields === 'object'
     ? job.analysis.extractionFields
+    : {};
+  const extractionFieldMeta = job.analysis && typeof job.analysis === 'object' && job.analysis.extractionFieldMeta && typeof job.analysis.extractionFieldMeta === 'object'
+    ? job.analysis.extractionFieldMeta
     : {};
   const clientDirName = effectiveClientDirName(job);
   const sender = findSenderById(effectiveSenderId(job));
   const folder = findArchiveFolderById(overrideFolderId || effectiveFolderId(job));
   const labelIds = overrideLabelIds || effectiveSelectedLabelIds(job);
+  const selectedFieldValues = overrideSelection || effectiveSelectedExtractionFieldValues(job);
 
   const values = new Map();
   const setValue = (key, value) => {
@@ -7309,12 +8168,30 @@ function buildFilenameFieldValues(job, options = {}) {
   };
 
   const extractionFieldValue = (key) => {
-    const field = extractionFields && typeof extractionFields === 'object' ? extractionFields[key] : null;
+    const normalizedKey = typeof key === 'string' ? key.trim() : '';
+    if (normalizedKey === '') {
+      return '';
+    }
+    const primarySelectionValue = primaryExtractionFieldValueForJob(job, normalizedKey);
+    if (primarySelectionValue !== '') {
+      return primarySelectionValue;
+    }
+
+    const field = extractionFields && typeof extractionFields === 'object' ? extractionFields[normalizedKey] : null;
     if (Array.isArray(field)) {
       return firstFieldValue(field);
     }
     if (field && typeof field === 'object' && Object.prototype.hasOwnProperty.call(field, 'value')) {
       return field.value;
+    }
+    const meta = extractionFieldMeta && typeof extractionFieldMeta === 'object' ? extractionFieldMeta[normalizedKey] : null;
+    if (meta && typeof meta === 'object') {
+      if (Array.isArray(meta.values) && meta.values.length > 0) {
+        return meta.values[0];
+      }
+      if (typeof meta.value === 'string' && meta.value.trim() !== '') {
+        return meta.value.trim();
+      }
     }
     return field;
   };
@@ -7344,6 +8221,17 @@ function buildFilenameFieldValues(job, options = {}) {
       value = formatFilenameAmount(value) || value;
     }
     if (key && value) {
+      setValue(key, value);
+    }
+  });
+
+  Object.entries(selectedFieldValues).forEach(([fieldKey]) => {
+    const key = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+    if (key === '') {
+      return;
+    }
+    const value = extractionFieldValue(key);
+    if (key && value && !values.has(key)) {
       setValue(key, value);
     }
   });
@@ -7841,6 +8729,14 @@ function updateArchiveAction(job) {
   if (!String(filenameInputEl ? filenameInputEl.value : displayedFilenameForJob(job)).trim()) {
     missingFields.push('Filnamn');
   }
+  Array.from(requiredExtractionFieldKeysForJob(job)).forEach((fieldKey) => {
+    if (primaryExtractionFieldValueForJob(job, fieldKey) === '') {
+      const fieldName = extractionFieldDisplayNameByKey(fieldKey);
+      if (fieldName && !missingFields.includes(`${fieldName}`)) {
+        missingFields.push(`${fieldName}`);
+      }
+    }
+  });
 
   archiveActionEl.disabled = job.status !== 'ready' || missingFields.length > 0;
   archiveActionEl.title = archiveActionEl.disabled
@@ -9772,6 +10668,11 @@ function applyState(nextState) {
   Array.from(selectedLabelIdsByJobId.keys()).forEach((jobId) => {
     if (!validJobIds.has(jobId)) {
       selectedLabelIdsByJobId.delete(jobId);
+    }
+  });
+  Array.from(selectedExtractionFieldValuesByJobId.keys()).forEach((jobId) => {
+    if (!validJobIds.has(jobId)) {
+      selectedExtractionFieldValuesByJobId.delete(jobId);
     }
   });
   Array.from(filenameByJobId.keys()).forEach((jobId) => {

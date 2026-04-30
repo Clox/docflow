@@ -2377,6 +2377,131 @@ function normalize_selected_job_label_ids_payload(mixed $value, array $knownLabe
     return $resolved;
 }
 
+function known_job_extraction_field_keys(): array
+{
+    $known = [];
+    $rules = load_active_archiving_rules();
+    foreach (array_merge(
+        is_array($rules['predefinedFields'] ?? null) ? $rules['predefinedFields'] : [],
+        is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [],
+        is_array($rules['fields'] ?? null) ? $rules['fields'] : []
+    ) as $field) {
+        if (!is_array($field)) {
+            continue;
+        }
+        $fieldKey = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+        if ($fieldKey !== '') {
+            $known[$fieldKey] = true;
+        }
+    }
+
+    return $known;
+}
+
+function normalize_job_extraction_field_value_list(mixed $value): array
+{
+    $items = [];
+    if (is_array($value)) {
+        if (array_key_exists('values', $value) && is_array($value['values'])) {
+            $items = array_values($value['values']);
+        } elseif (array_key_exists('manualValues', $value) && is_array($value['manualValues'])) {
+            $items = array_values($value['manualValues']);
+        } elseif (array_key_exists('value', $value)) {
+            $items = [$value['value']];
+        } else {
+            $items = array_values($value);
+        }
+    } else {
+        $items = [$value];
+    }
+
+    $resolved = [];
+    $seen = [];
+    foreach ($items as $item) {
+        $text = is_scalar($item) ? trim((string) $item) : '';
+        if ($text === '' || isset($seen[$text])) {
+            continue;
+        }
+        $seen[$text] = true;
+        $resolved[] = $text;
+    }
+
+    return $resolved;
+}
+
+function normalize_job_extraction_field_selection(mixed $value): ?array
+{
+    if (!is_array($value)) {
+        return null;
+    }
+
+    $manualValues = normalize_job_extraction_field_value_list($value['manualValues'] ?? []);
+    $excludedValues = normalize_job_extraction_field_value_list($value['excludedValues'] ?? []);
+    $primaryValue = is_string($value['primaryValue'] ?? null)
+        ? trim((string) $value['primaryValue'])
+        : (is_scalar($value['primaryValue'] ?? null) ? trim((string) $value['primaryValue']) : '');
+
+    if ($manualValues === [] && $excludedValues === [] && $primaryValue === '') {
+        return null;
+    }
+
+    return [
+        'manualValues' => $manualValues,
+        'excludedValues' => $excludedValues,
+        'primaryValue' => $primaryValue !== '' ? $primaryValue : null,
+    ];
+}
+
+function normalize_selected_job_extraction_field_values_payload(mixed $value, array $knownFieldKeys): array
+{
+    if (!is_array($value)) {
+        throw new RuntimeException('Ogiltiga datafält');
+    }
+
+    $resolved = [];
+    foreach ($value as $fieldKey => $entry) {
+        $normalizedFieldKey = is_string($fieldKey) ? trim((string) $fieldKey) : '';
+        if ($normalizedFieldKey === '' || !isset($knownFieldKeys[$normalizedFieldKey])) {
+            continue;
+        }
+        $selection = normalize_job_extraction_field_selection($entry);
+        if ($selection === null) {
+            continue;
+        }
+        $resolved[$normalizedFieldKey] = $selection;
+    }
+
+    ksort($resolved, SORT_NATURAL);
+    return $resolved;
+}
+
+function normalize_stored_job_extraction_field_values(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $knownFieldKeys = known_job_extraction_field_keys();
+    $resolved = [];
+    foreach ($value as $fieldKey => $entry) {
+        $normalizedFieldKey = is_string($fieldKey) ? trim((string) $fieldKey) : '';
+        if ($normalizedFieldKey === '') {
+            continue;
+        }
+        $selection = normalize_job_extraction_field_selection($entry);
+        if ($selection === null) {
+            continue;
+        }
+        if ($knownFieldKeys !== [] && !isset($knownFieldKeys[$normalizedFieldKey])) {
+            continue;
+        }
+        $resolved[$normalizedFieldKey] = $selection;
+    }
+
+    ksort($resolved, SORT_NATURAL);
+    return $resolved;
+}
+
 function normalize_archive_structure_data(mixed $input): array
 {
     $decoded = is_array($input) ? $input : [];
@@ -3506,6 +3631,18 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
         }
     }
 
+    if (array_key_exists('selectedExtractionFieldValues', $payload)) {
+        $value = $payload['selectedExtractionFieldValues'];
+        if ($value === null) {
+            unset($job['selectedExtractionFieldValues']);
+        } else {
+            $job['selectedExtractionFieldValues'] = normalize_selected_job_extraction_field_values_payload(
+                $value,
+                known_job_extraction_field_keys()
+            );
+        }
+    }
+
     if (array_key_exists('filename', $payload)) {
         $value = $payload['filename'];
         if ($value === null || trim((string) $value) === '') {
@@ -3522,6 +3659,7 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
         || array_key_exists('selectedSenderId', $payload)
         || array_key_exists('selectedFolderId', $payload)
         || array_key_exists('selectedLabelIds', $payload)
+        || array_key_exists('selectedExtractionFieldValues', $payload)
         || array_key_exists('filename', $payload)
     )) {
         invalidate_archiving_review_job($config, $jobId, true);
@@ -15527,9 +15665,6 @@ function build_job_state_entry(
     $hasReviewPdf = job_review_pdf_path($config, $id, $job) !== null;
     $hasSourcePdf = is_file($jobDir . '/source.pdf');
     $analysis = job_analysis_payload($job);
-    if (is_array($analysis) && array_key_exists('extractionFieldMeta', $analysis)) {
-        unset($analysis['extractionFieldMeta']);
-    }
     if (is_array($analysis) && array_key_exists('senderLookup', $analysis)) {
         unset($analysis['senderLookup']);
     }
@@ -15545,6 +15680,9 @@ function build_job_state_entry(
         : null;
     $selectedLabelIds = array_key_exists('selectedLabelIds', $job)
         ? normalize_stored_job_label_ids($job['selectedLabelIds'])
+        : null;
+    $selectedExtractionFieldValues = array_key_exists('selectedExtractionFieldValues', $job)
+        ? normalize_stored_job_extraction_field_values($job['selectedExtractionFieldValues'])
         : null;
     $filename = is_string($job['filename'] ?? null)
         ? trim((string) $job['filename'])
@@ -15630,6 +15768,7 @@ function build_job_state_entry(
                 'selectedSenderId' => $selectedSenderId,
                 'selectedFolderId' => $selectedFolderId,
                 'selectedLabelIds' => $selectedLabelIds,
+                'selectedExtractionFieldValues' => $selectedExtractionFieldValues,
                 'filename' => $filename,
                 'senderSummary' => $senderSummary,
                 'analysisOutdated' => $analysisOutdated,
@@ -15662,6 +15801,7 @@ function build_job_state_entry(
                 'selectedSenderId' => $selectedSenderId,
                 'selectedFolderId' => $selectedFolderId,
                 'selectedLabelIds' => $selectedLabelIds,
+                'selectedExtractionFieldValues' => $selectedExtractionFieldValues,
                 'filename' => $filename,
                 'senderSummary' => $senderSummary,
                 'analysisOutdated' => $analysisOutdated,
@@ -15723,6 +15863,7 @@ function build_job_state_entry(
         'selectedSenderId' => $selectedSenderId,
         'selectedFolderId' => $selectedFolderId,
         'selectedLabelIds' => $selectedLabelIds,
+        'selectedExtractionFieldValues' => $selectedExtractionFieldValues,
         'filename' => $filename,
         'senderSummary' => $senderSummary,
         'analysisOutdated' => $analysisOutdated,

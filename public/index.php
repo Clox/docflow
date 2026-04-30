@@ -152,7 +152,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
               </div>
             </div>
             <div class="field-group field-group-job-labels">
-              <label class="floating-label" for="job-labels-field">Etiketter</label>
+              <label class="floating-label" for="job-labels-field">Etiketter &amp; Datafält</label>
               <div class="field-group-control-row">
                 <button
                   id="job-labels-field"
@@ -167,7 +167,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                 </button>
                 <button id="reset-labels-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ etiketter">↺</button>
               </div>
-              <div id="job-labels-focus-hint" class="job-labels-field-hint" aria-hidden="true">Tryck Enter för att visa/redigera etiketter</div>
+              <div id="job-labels-focus-hint" class="job-labels-field-hint" aria-hidden="true">Tryck Enter för att visa/redigera etiketter och datafält</div>
               <div id="job-labels-overlay" class="job-labels-overlay" aria-hidden="true">
                 <div class="job-labels-combobox">
                   <input
@@ -185,6 +185,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                   <div id="job-labels-combobox-list" class="job-labels-combobox-list" role="listbox"></div>
                 </div>
                 <div id="job-labels-selected" class="job-labels-selected" tabindex="0"></div>
+                <div id="job-extraction-fields-section" class="job-extraction-fields-section"></div>
               </div>
             </div>
             <div class="field-group field-group-filename">
