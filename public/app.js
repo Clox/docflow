@@ -516,6 +516,7 @@ let jobLabelsRenderedOptions = [];
 let jobLabelsOverlayPointerDownInside = false;
 let jobLabelsOverlayMutating = false;
 let jobLabelsSummaryRenderFrame = null;
+let jobExtractionFieldInlineEditState = null;
 let appNoticesOverflowOpen = false;
 let topbarExpandedMetricsFrame = null;
 const APP_NOTICES_COLLAPSED_MAX_HEIGHT = 76;
@@ -1769,7 +1770,6 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
       const name = extractionFieldDisplayNameByKey(key);
       const rows = extractionFieldVisibleRowsForJob(job, key);
       const required = requiredKeys.has(key);
-      const primaryValue = primaryExtractionFieldValueForJob(job, key);
       if (rows.length < 1 && !required) {
         return null;
       }
@@ -1778,208 +1778,305 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
         name,
         rows,
         required,
-        primaryValue,
       };
     })
     .filter(Boolean)
     .sort((left, right) => left.name.localeCompare(right.name, 'sv'));
-
-  let addFieldSelect = null;
-  let addValueInput = null;
 
   const header = document.createElement('div');
   header.className = 'job-extraction-fields-section-header';
   const headerTitle = document.createElement('div');
   headerTitle.className = 'job-extraction-fields-section-title';
   headerTitle.textContent = 'Datafält';
-  const headerNote = document.createElement('div');
-  headerNote.className = 'job-extraction-fields-section-note';
-  const thresholdPercent = Number.isFinite(Number(matchingDataFieldAcceptanceThresholdDraft))
-    ? Number(matchingDataFieldAcceptanceThresholdDraft)
-    : 0.5;
-  headerNote.textContent = `Visar värden över ${Math.round(thresholdPercent * 100)}% samt manuella värden.`;
-  header.append(headerTitle, headerNote);
+  header.appendChild(headerTitle);
   jobExtractionFieldsSectionEl.appendChild(header);
 
-  if (cards.length < 1) {
-    const empty = document.createElement('div');
-    empty.className = 'job-extraction-fields-empty';
-    empty.textContent = 'Inga datafält att redigera.';
-    jobExtractionFieldsSectionEl.appendChild(empty);
-  }
+  const inlineEditState = jobExtractionFieldInlineEditState
+    && jobExtractionFieldInlineEditState.jobId === job.id
+    ? jobExtractionFieldInlineEditState
+    : null;
+  let addFieldSelect = null;
+  let addValueInput = null;
+  let inlineEditInputToFocus = null;
 
   const list = document.createElement('div');
   list.className = 'job-extraction-fields-list';
 
+  const openAddSectionForField = (fieldKey) => {
+    if (!(addFieldSelect instanceof HTMLSelectElement) || !(addValueInput instanceof HTMLInputElement)) {
+      return;
+    }
+    if (Array.from(addFieldSelect.options).some((option) => option.value === fieldKey)) {
+      addFieldSelect.value = fieldKey;
+    }
+    addValueInput.focus({ preventScroll: true });
+    addValueInput.select();
+  };
+
+  const beginInlineEdit = (fieldKey, value) => {
+    beginJobExtractionFieldInlineEdit(job, fieldKey, value);
+  };
+
+  const commitInlineEdit = async (fieldKey, previousValue, inputEl) => {
+    const nextValue = typeof inputEl.value === 'string' ? inputEl.value.trim() : '';
+    if (nextValue === '') {
+      clearJobExtractionFieldInlineEditState();
+      renderSelectedJobExtractionFieldsSection(findJobById(selectedJobId));
+      return;
+    }
+    try {
+      const currentJob = findJobById(selectedJobId);
+      if (!currentJob) {
+        return;
+      }
+      const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(currentJob));
+      currentSelections[fieldKey] = replaceSelectedExtractionFieldValue(currentJob, fieldKey, previousValue, nextValue);
+      await persistSelectedJobExtractionFieldValues(currentSelections);
+      clearJobExtractionFieldInlineEditState();
+      renderSelectedJobExtractionFieldsSection(findJobById(selectedJobId));
+    } catch (error) {
+      alert(error.message || 'Kunde inte uppdatera värdet.');
+    }
+  };
+
+  const createValueLine = (card, row, options = {}) => {
+    const line = document.createElement('div');
+    line.className = 'job-extraction-field-line';
+    line.classList.toggle('is-primary', row.primary === true);
+    line.classList.toggle('is-manual', row.manual === true);
+
+    if (options.showRadio === true) {
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.className = 'job-extraction-field-line-radio';
+      radio.name = `job-extraction-field-primary-${card.key}`;
+      radio.checked = row.primary === true;
+      radio.disabled = false;
+      radio.addEventListener('change', async () => {
+        try {
+          const jobForUpdate = findJobById(selectedJobId);
+          if (!jobForUpdate) {
+            return;
+          }
+          const nextSelection = setSelectedExtractionFieldPrimaryValue(
+            jobForUpdate,
+            card.key,
+            row.value,
+            { addToManual: row.accepted !== true }
+          );
+          if (!nextSelection) {
+            return;
+          }
+          const selections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
+          selections[card.key] = nextSelection;
+          await persistSelectedJobExtractionFieldValues(selections);
+        } catch (error) {
+          alert(error.message || 'Kunde inte uppdatera datafält.');
+        }
+      });
+      line.appendChild(radio);
+    }
+
+    if (options.prefixText) {
+      const prefix = document.createElement('span');
+      prefix.className = 'job-extraction-field-line-prefix';
+      prefix.textContent = `${options.prefixText}:`;
+      line.appendChild(prefix);
+    }
+
+    const valueIsEditing = inlineEditState
+      && inlineEditState.fieldKey === card.key
+      && inlineEditState.value === row.value;
+
+    if (valueIsEditing) {
+      let inlineEditCancelled = false;
+      let inlineEditCommitInProgress = false;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'job-extraction-field-inline-input';
+      input.value = typeof inlineEditState.draftValue === 'string' ? inlineEditState.draftValue : row.value;
+      input.spellcheck = false;
+      input.autocomplete = 'off';
+      input.setAttribute('aria-label', `Redigera värdet ${row.value}`);
+      input.addEventListener('input', () => {
+        if (jobExtractionFieldInlineEditState
+          && jobExtractionFieldInlineEditState.jobId === job.id
+          && jobExtractionFieldInlineEditState.fieldKey === card.key
+          && jobExtractionFieldInlineEditState.value === row.value) {
+          jobExtractionFieldInlineEditState.draftValue = input.value;
+        }
+      });
+      input.addEventListener('blur', () => {
+        window.requestAnimationFrame(() => {
+          if (inlineEditCancelled || inlineEditCommitInProgress || document.activeElement === input) {
+            return;
+          }
+          inlineEditCommitInProgress = true;
+          commitInlineEdit(card.key, row.value, input).finally(() => {
+            inlineEditCommitInProgress = false;
+          });
+        });
+      });
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          clearJobExtractionFieldInlineEditState();
+          inlineEditCancelled = true;
+          renderSelectedJobExtractionFieldsSection(findJobById(selectedJobId));
+          return;
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          if (inlineEditCommitInProgress) {
+            return;
+          }
+          inlineEditCommitInProgress = true;
+          commitInlineEdit(card.key, row.value, input).finally(() => {
+            inlineEditCommitInProgress = false;
+          });
+        }
+      });
+      line.appendChild(input);
+      inlineEditInputToFocus = input;
+    } else {
+      const valueButton = document.createElement('button');
+      valueButton.type = 'button';
+      valueButton.className = 'job-extraction-field-line-value';
+      valueButton.textContent = row.value;
+      valueButton.setAttribute('aria-label', `Redigera värdet ${row.value}`);
+      valueButton.addEventListener('click', () => {
+        beginInlineEdit(card.key, row.value);
+      });
+      line.appendChild(valueButton);
+    }
+
+    if (row.manual === true) {
+      const badge = document.createElement('span');
+      badge.className = 'job-extraction-field-line-badge';
+      badge.textContent = 'manuell';
+      line.appendChild(badge);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'job-extraction-field-line-actions';
+
+    if (!valueIsEditing) {
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'job-extraction-field-inline-button is-edit';
+      editButton.textContent = '✎';
+      editButton.title = 'Redigera värdet';
+      editButton.setAttribute('aria-label', `Redigera värdet ${row.value}`);
+      editButton.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      editButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        beginInlineEdit(card.key, row.value);
+      });
+      actions.appendChild(editButton);
+    }
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'job-extraction-field-inline-button is-remove';
+    removeButton.textContent = '×';
+    removeButton.title = 'Ta bort värdet';
+    removeButton.setAttribute('aria-label', `Ta bort värdet ${row.value}`);
+    removeButton.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    removeButton.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        const jobForUpdate = findJobById(selectedJobId);
+        if (!jobForUpdate) {
+          return;
+        }
+        const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
+        const nextSelection = removeSelectedExtractionFieldValue(jobForUpdate, card.key, row.value);
+        if (!nextSelection) {
+          delete currentSelections[card.key];
+        } else {
+          currentSelections[card.key] = nextSelection;
+        }
+        await persistSelectedJobExtractionFieldValues(currentSelections);
+      } catch (error) {
+        alert(error.message || 'Kunde inte ta bort värdet.');
+      }
+    });
+    actions.appendChild(removeButton);
+
+    line.appendChild(actions);
+    return line;
+  };
+
   cards.forEach((card) => {
-    const cardEl = document.createElement('section');
-    cardEl.className = 'job-extraction-field-card';
-    cardEl.dataset.fieldKey = card.key;
+    const item = document.createElement('div');
+    item.className = 'job-extraction-field-item';
+    item.dataset.fieldKey = card.key;
 
-    const cardHeader = document.createElement('div');
-    cardHeader.className = 'job-extraction-field-card-header';
-
-    const titleRow = document.createElement('div');
-    titleRow.className = 'job-extraction-field-card-title-row';
-
-    const title = document.createElement('div');
-    title.className = 'job-extraction-field-card-title';
-    title.textContent = card.name;
-    titleRow.appendChild(title);
-
-    if (card.required) {
-      const requiredBadge = document.createElement('span');
-      requiredBadge.className = 'job-extraction-field-card-badge is-required';
-      requiredBadge.textContent = 'Obligatoriskt';
-      titleRow.appendChild(requiredBadge);
+    if (card.rows.length > 1) {
+      const title = document.createElement('div');
+      title.className = 'job-extraction-field-item-title';
+      title.textContent = card.name;
+      item.appendChild(title);
     }
 
-    cardHeader.appendChild(titleRow);
-
-    if (card.primaryValue) {
-      const primaryInfo = document.createElement('div');
-      primaryInfo.className = 'job-extraction-field-card-primary';
-      primaryInfo.textContent = `Primärt värde: ${card.primaryValue}`;
-      cardHeader.appendChild(primaryInfo);
-    }
-
-    cardEl.appendChild(cardHeader);
-
-    const rowsWrap = document.createElement('div');
-    rowsWrap.className = 'job-extraction-field-values';
+    const valuesWrap = document.createElement('div');
+    valuesWrap.className = 'job-extraction-field-item-values';
 
     if (card.rows.length < 1) {
       const missingRow = document.createElement('div');
-      missingRow.className = 'job-extraction-field-value-row is-missing';
-      const missingText = document.createElement('div');
-      missingText.className = 'job-extraction-field-value-text';
-      missingText.textContent = '(saknas)';
+      missingRow.className = 'job-extraction-field-line is-missing';
+
+      const prefix = document.createElement('span');
+      prefix.className = 'job-extraction-field-line-prefix';
+      prefix.textContent = `${card.name}:`;
+      missingRow.appendChild(prefix);
+
+      const missingText = document.createElement('span');
+      missingText.className = 'job-extraction-field-line-value is-missing';
+      missingText.textContent = 'saknas';
+      missingRow.appendChild(missingText);
+
       const addButton = document.createElement('button');
       addButton.type = 'button';
-      addButton.className = 'job-extraction-field-value-add';
+      addButton.className = 'job-extraction-field-inline-button is-add';
       addButton.textContent = 'Lägg till';
+      addButton.title = 'Lägg till värde';
+      addButton.setAttribute('aria-label', `Lägg till värde för ${card.name}`);
       addButton.addEventListener('click', () => {
-        if (addFieldSelect instanceof HTMLSelectElement && addValueInput instanceof HTMLInputElement) {
-          if (Array.from(addFieldSelect.options).some((option) => option.value === card.key)) {
-            addFieldSelect.value = card.key;
-          }
-          addValueInput.focus({ preventScroll: true });
-          return;
-        }
-        cardEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        openAddSectionForField(card.key);
       });
-      missingRow.append(missingText, addButton);
-      rowsWrap.appendChild(missingRow);
+      missingRow.appendChild(addButton);
+
+      valuesWrap.appendChild(missingRow);
+    } else if (card.rows.length === 1) {
+      valuesWrap.appendChild(createValueLine(card, card.rows[0], { prefixText: card.name, showRadio: false }));
     } else {
       card.rows.forEach((row) => {
-        const rowEl = document.createElement('label');
-        rowEl.className = 'job-extraction-field-value-row';
-        rowEl.classList.toggle('is-primary', row.primary === true);
-        rowEl.classList.toggle('is-manual', row.manual === true);
-        rowEl.classList.toggle('is-accepted', row.accepted === true);
-        rowEl.classList.toggle('is-synthetic', row.synthetic === true);
-
-        const radio = document.createElement('input');
-        radio.type = 'radio';
-        radio.name = `job-extraction-field-primary-${card.key}`;
-        radio.checked = row.primary === true;
-        radio.disabled = false;
-        radio.addEventListener('change', async () => {
-          try {
-            const jobForUpdate = findJobById(selectedJobId);
-            if (!jobForUpdate) {
-              return;
-            }
-            const nextSelection = setSelectedExtractionFieldPrimaryValue(
-              jobForUpdate,
-              card.key,
-              row.value,
-              { addToManual: row.accepted !== true }
-            );
-            if (!nextSelection) {
-              return;
-            }
-            const selections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
-            selections[card.key] = nextSelection;
-            await persistSelectedJobExtractionFieldValues(selections);
-          } catch (error) {
-            alert(error.message || 'Kunde inte uppdatera datafält.');
-          }
-        });
-
-        const valueWrap = document.createElement('div');
-        valueWrap.className = 'job-extraction-field-value-body';
-
-        const valueText = document.createElement('div');
-        valueText.className = 'job-extraction-field-value-text';
-        valueText.textContent = row.value;
-        valueWrap.appendChild(valueText);
-
-        const metaRow = document.createElement('div');
-        metaRow.className = 'job-extraction-field-value-meta';
-        if (row.manual === true) {
-          const badge = document.createElement('span');
-          badge.className = 'job-extraction-field-value-badge';
-          badge.textContent = 'Manuellt';
-          metaRow.appendChild(badge);
-        }
-        if (typeof row.finalConfidence === 'number' && Number.isFinite(row.finalConfidence)) {
-          const badge = document.createElement('span');
-          badge.className = 'job-extraction-field-value-badge';
-          badge.textContent = `${Math.round(row.finalConfidence * 100)}%`;
-          metaRow.appendChild(badge);
-        } else if (row.synthetic === true) {
-          const badge = document.createElement('span');
-          badge.className = 'job-extraction-field-value-badge';
-          badge.textContent = 'Saknas';
-          metaRow.appendChild(badge);
-        }
-        if (metaRow.childNodes.length > 0) {
-          valueWrap.appendChild(metaRow);
-        }
-
-        const removeButton = document.createElement('button');
-        removeButton.type = 'button';
-        removeButton.className = 'job-extraction-field-value-remove category-remove';
-        removeButton.setAttribute('aria-label', `Ta bort värdet ${row.value}`);
-        removeButton.title = `Ta bort värdet ${row.value}`;
-        removeButton.addEventListener('mousedown', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-        });
-        removeButton.addEventListener('click', async (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          try {
-            const jobForUpdate = findJobById(selectedJobId);
-            if (!jobForUpdate) {
-              return;
-            }
-            const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
-            const currentSelection = currentSelections[card.key] || null;
-            const nextSelection = removeSelectedExtractionFieldValue(jobForUpdate, card.key, row.value);
-            if (!nextSelection) {
-              delete currentSelections[card.key];
-            } else {
-              currentSelections[card.key] = nextSelection;
-            }
-            await persistSelectedJobExtractionFieldValues(currentSelections);
-          } catch (error) {
-            alert(error.message || 'Kunde inte ta bort värdet.');
-          }
-        });
-
-        rowEl.append(radio, valueWrap, removeButton);
-        rowsWrap.appendChild(rowEl);
+        valuesWrap.appendChild(createValueLine(card, row, { showRadio: true }));
       });
     }
 
-    cardEl.append(rowsWrap);
-    list.appendChild(cardEl);
+    item.appendChild(valuesWrap);
+    list.appendChild(item);
   });
 
   if (cards.length > 0) {
     jobExtractionFieldsSectionEl.appendChild(list);
+  } else {
+    const empty = document.createElement('div');
+    empty.className = 'job-extraction-fields-empty';
+    empty.textContent = 'Inga datafält att redigera.';
+    jobExtractionFieldsSectionEl.appendChild(empty);
   }
 
   const addSection = document.createElement('div');
@@ -2066,7 +2163,6 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
           nextAddValueInput.focus({ preventScroll: true });
           nextAddValueInput.select();
         }
-        jobLabelsOverlayMutating = false;
       });
     } catch (error) {
       jobLabelsOverlayMutating = false;
@@ -2091,6 +2187,18 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
   addRow.append(addFieldSelect, addValueInput, addButton);
   addSection.append(addSectionTitle, addRow);
   jobExtractionFieldsSectionEl.appendChild(addSection);
+
+  if (inlineEditInputToFocus instanceof HTMLInputElement) {
+    window.requestAnimationFrame(() => {
+      if (!jobExtractionFieldInlineEditState
+        || jobExtractionFieldInlineEditState.jobId !== job.id
+        || jobExtractionFieldInlineEditState.fieldKey !== inlineEditInputToFocus.closest('.job-extraction-field-item')?.dataset.fieldKey) {
+        return;
+      }
+      inlineEditInputToFocus.focus({ preventScroll: true });
+      inlineEditInputToFocus.select();
+    });
+  }
 }
 
 function renderJobLabelsComboboxOptions(job = findJobById(selectedJobId)) {
@@ -2239,6 +2347,7 @@ function closeJobLabelsOverlay(options = {}) {
   jobLabelsActiveOptionIndex = -1;
   jobLabelsOverlayPointerDownInside = false;
   jobLabelsOverlayMutating = false;
+  clearJobExtractionFieldInlineEditState();
   renderJobLabelsOverlay(findJobById(selectedJobId));
   if (options.restoreFocus === true && jobLabelsFieldEl instanceof HTMLButtonElement && !jobLabelsFieldEl.disabled) {
     jobLabelsFieldEl.focus({ preventScroll: true });
@@ -2355,6 +2464,59 @@ function selectedExtractionFieldSelectionForJob(job, fieldKey) {
   }
   const selections = effectiveSelectedExtractionFieldValues(job);
   return normalizeSelectedExtractionFieldSelection(selections[normalizedKey]);
+}
+
+function clearJobExtractionFieldInlineEditState() {
+  jobExtractionFieldInlineEditState = null;
+}
+
+function beginJobExtractionFieldInlineEdit(job, fieldKey, value) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  const normalizedValue = typeof value === 'string' ? value.trim() : '';
+  if (!job || normalizedKey === '' || normalizedValue === '') {
+    return;
+  }
+  jobExtractionFieldInlineEditState = {
+    jobId: job.id,
+    fieldKey: normalizedKey,
+    value: normalizedValue,
+    draftValue: normalizedValue,
+  };
+  renderSelectedJobExtractionFieldsSection(findJobById(selectedJobId));
+}
+
+function replaceSelectedExtractionFieldValue(job, fieldKey, previousValue, nextValue) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  const normalizedPrevious = typeof previousValue === 'string' ? previousValue.trim() : '';
+  const normalizedNext = typeof nextValue === 'string' ? nextValue.trim() : '';
+  if (!job || normalizedKey === '' || normalizedNext === '') {
+    return null;
+  }
+
+  const currentSelection = selectedExtractionFieldSelectionForJob(job, normalizedKey) || {
+    manualValues: [],
+    excludedValues: [],
+    primaryValue: null,
+  };
+  const acceptedRows = extractionFieldAcceptedRowsForJob(job, normalizedKey);
+  const acceptedValues = acceptedRows.map((row) => row.value).filter((item) => item !== '');
+  const nextSelection = {
+    manualValues: Array.isArray(currentSelection.manualValues)
+      ? currentSelection.manualValues.filter((candidate) => candidate !== normalizedPrevious && candidate !== normalizedNext)
+      : [],
+    excludedValues: Array.isArray(currentSelection.excludedValues)
+      ? currentSelection.excludedValues.filter((candidate) => candidate !== normalizedPrevious && candidate !== normalizedNext)
+      : [],
+    primaryValue: normalizedNext,
+  };
+
+  if (acceptedValues.includes(normalizedPrevious) && normalizedPrevious !== normalizedNext) {
+    nextSelection.excludedValues.push(normalizedPrevious);
+  }
+
+  nextSelection.manualValues.unshift(normalizedNext);
+
+  return normalizeSelectedExtractionFieldSelection(nextSelection);
 }
 
 function setSelectedExtractionFieldPrimaryValue(job, fieldKey, nextValue, options = {}) {
@@ -2789,6 +2951,9 @@ function selectedJobArchivingEditable(job) {
 function clearArchivedReviewEditorState(jobId) {
   if (typeof jobId !== 'string' || jobId === '') {
     return;
+  }
+  if (jobExtractionFieldInlineEditState && jobExtractionFieldInlineEditState.jobId === jobId) {
+    clearJobExtractionFieldInlineEditState();
   }
   selectedClientByJobId.delete(jobId);
   selectedSenderByJobId.delete(jobId);
@@ -20571,6 +20736,11 @@ if (jobLabelsOverlayEl instanceof HTMLElement) {
       jobLabelsOverlayPointerDownInside = false;
     });
   });
+  jobLabelsOverlayEl.addEventListener('focusin', () => {
+    if (jobLabelsOverlayMutating) {
+      jobLabelsOverlayMutating = false;
+    }
+  });
 }
 
 if (jobLabelsOverlayCloseEl instanceof HTMLButtonElement) {
@@ -20613,6 +20783,15 @@ if (jobLabelsFieldGroupEl instanceof HTMLElement) {
       }
       const activeElement = document.activeElement;
       if (activeElement instanceof Node && jobLabelsFieldGroupEl.contains(activeElement)) {
+        return;
+      }
+      if (
+        activeElement === document.body
+        || activeElement === document.documentElement
+      ) {
+        if (jobLabelsOverlayEl instanceof HTMLElement) {
+          jobLabelsOverlayEl.focus({ preventScroll: true });
+        }
         return;
       }
       closeJobLabelsOverlay();
