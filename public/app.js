@@ -926,28 +926,39 @@ function handleSidebarSplitPointerMove(event) {
   updateSidebarSplitFromPointer(event.clientY);
 }
 
-function selectedJobStatusText(job) {
-  if (!job) {
-    return '';
+function selectedJobStatusInfo(job) {
+  if (!job || job.status !== 'processing') {
+    return null;
   }
-  if (job.status === 'processing') {
-    if (job.reprocessMode === 'full' && job.forceOcr === true) {
-      return 'Status: Tvingad helomkörning';
-    }
-    if (job.reprocessMode === 'full') {
-      return 'Status: Helomkörning';
-    }
-    return 'Status: Bearbetas';
+
+  const isReprocess = typeof job.reprocessMode === 'string' && job.reprocessMode.trim() !== '';
+  const isAutoReprocess = job.analysisAutoReprocessQueued === true;
+
+  return {
+    text: isReprocess && !isAutoReprocess ? 'Analyseras på nytt...' : 'Analyseras...',
+  };
+}
+
+function renderSelectedJobStatus(job) {
+  if (!(selectedJobStatusEl instanceof HTMLElement)) {
+    return;
   }
-  if (job.status === 'failed') {
-    return 'Status: Misslyckat';
+
+  const statusInfo = selectedJobStatusInfo(job);
+  if (!statusInfo) {
+    selectedJobStatusEl.hidden = true;
+    selectedJobStatusEl.replaceChildren();
+    return;
   }
-  if (job.archived === true) {
-    return archivedReviewModeActiveForJob(job)
-      ? 'Status: Arkiverat att granska'
-      : 'Status: Arkiverat';
-  }
-  return 'Status: Klar';
+
+  selectedJobStatusEl.hidden = false;
+  selectedJobStatusEl.replaceChildren();
+
+  const spinnerEl = document.createElement('span');
+  spinnerEl.className = 'spinner selected-job-status-spinner';
+  spinnerEl.setAttribute('aria-hidden', 'true');
+  selectedJobStatusEl.appendChild(spinnerEl);
+  selectedJobStatusEl.appendChild(document.createTextNode(statusInfo.text));
 }
 
 function setClientForJob(job) {
@@ -9548,9 +9559,7 @@ function renderSelectedJobPanel() {
     syncReviewViewModeAvailability(null, { allowFallback: false });
     selectedJobPanelEl.classList.add('is-empty');
     selectedJobNameEl.textContent = 'Inget jobb markerat';
-    if (selectedJobStatusEl) {
-      selectedJobStatusEl.textContent = '';
-    }
+    renderSelectedJobStatus(null);
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
     renderSelectedJobClientSection(null);
     renderSelectedJobSenderSection(null);
@@ -9571,9 +9580,7 @@ function renderSelectedJobPanel() {
   syncReviewViewModeAvailability(selectedJob, { allowFallback: false });
   selectedJobPanelEl.classList.remove('is-empty');
   selectedJobNameEl.textContent = selectedJob.originalFilename || selectedJob.id;
-  if (selectedJobStatusEl) {
-    selectedJobStatusEl.textContent = selectedJobStatusText(selectedJob);
-  }
+  renderSelectedJobStatus(selectedJob);
 
   const metaLines = [];
   const appendLine = (text, extraClass = '') => {
