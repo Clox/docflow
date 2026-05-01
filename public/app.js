@@ -8839,16 +8839,20 @@ function displayedFilenameForJob(job) {
     const originalFilename = typeof job.originalFilename === 'string'
       ? job.originalFilename.trim()
       : '';
+    if (autoFilename !== '') {
+      if (
+        !savedFilename
+        || savedFilename === autoFilename
+        || savedFilename === generatedFromTemplate
+        || (originalFilename && savedFilename === originalFilename)
+      ) {
+        return autoFilename;
+      }
+    }
     if (!savedFilename) {
       return generatedFromTemplate;
     }
     if (savedFilename === generatedFromTemplate) {
-      return generatedFromTemplate;
-    }
-    if (
-      (autoFilename && savedFilename === autoFilename)
-      || (originalFilename && savedFilename === originalFilename)
-    ) {
       return generatedFromTemplate;
     }
     return savedFilename;
@@ -14610,6 +14614,9 @@ function filenameTemplateSystemFieldTitle(fieldKey, fieldName) {
   if (key === 'document_date') {
     return 'Dokumentdatum är systemets bästa gissning på dokumentets huvuddatum när inget tydligt datumfält finns.';
   }
+  if (key === 'sender') {
+    return 'Lägger till avsändarens namn i filnamnet.';
+  }
   return name
     ? `Lägger till värdet för systemdatafältet "${name}" i filnamnet.`
     : 'Lägger till värdet för valt systemdatafält i filnamnet.';
@@ -14637,22 +14644,10 @@ function filenameTemplateSystemFieldOptions() {
 
   [
     {
-      key: 'bankgiro_name',
-      label: 'Bankgiro-namn',
+      key: 'sender',
+      label: 'Avsändar-namn',
       tone: 'system',
-      title: 'Lägger till namnet som är kopplat till dokumentets bankgiro.',
-    },
-    {
-      key: 'plusgiro_name',
-      label: 'Plusgiro-namn',
-      tone: 'system',
-      title: 'Lägger till namnet som är kopplat till dokumentets plusgiro.',
-    },
-    {
-      key: 'organization_number_name',
-      label: 'Org.nr.-namn',
-      tone: 'system',
-      title: 'Lägger till namnet som är kopplat till dokumentets organisationsnummer.',
+      title: 'Lägger till avsändarens namn i filnamnet.',
     },
   ].forEach((option) => {
     if (seenKeys.has(option.key)) {
