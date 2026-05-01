@@ -2374,6 +2374,11 @@ body.is-resizing-sidebar {
   opacity: 0.7;
 }
 
+.job-extraction-field-line:hover > .job-extraction-field-line-actions > .icon-delete-button--row,
+.job-extraction-field-line:hover > .job-extraction-field-line-actions > .tree-remove-button--row {
+  opacity: 1;
+}
+
 .job-extraction-field-add-section {
   display: grid;
   gap: 8px;
@@ -2436,10 +2441,6 @@ body.is-resizing-sidebar {
   background: #f8fafc;
   border-color: #94a3b8;
   color: #0f172a;
-}
-
-.job-extraction-field-inline-button.is-remove {
-  color: #a11;
 }
 
 .job-extraction-field-inline-button.is-add {

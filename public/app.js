@@ -2042,35 +2042,28 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
     const actions = document.createElement('div');
     actions.className = 'job-extraction-field-line-actions';
 
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'job-extraction-field-inline-button is-remove';
-    removeButton.textContent = '×';
-    removeButton.title = 'Ta bort värdet';
-    removeButton.setAttribute('aria-label', `Ta bort värdet ${row.value}`);
-    removeButton.addEventListener('mousedown', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-    removeButton.addEventListener('click', async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      try {
-        const jobForUpdate = findJobById(selectedJobId);
-        if (!jobForUpdate) {
-          return;
+    const removeButton = createTrashButton({
+      variant: 'row',
+      className: 'job-extraction-field-line-remove',
+      title: 'Ta bort värdet',
+      onClick: async () => {
+        try {
+          const jobForUpdate = findJobById(selectedJobId);
+          if (!jobForUpdate) {
+            return;
+          }
+          const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
+          const nextSelection = removeSelectedExtractionFieldValue(jobForUpdate, card.key, row.value);
+          if (!nextSelection) {
+            delete currentSelections[card.key];
+          } else {
+            currentSelections[card.key] = nextSelection;
+          }
+          await persistSelectedJobExtractionFieldValues(currentSelections);
+        } catch (error) {
+          alert(error.message || 'Kunde inte ta bort värdet.');
         }
-        const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
-        const nextSelection = removeSelectedExtractionFieldValue(jobForUpdate, card.key, row.value);
-        if (!nextSelection) {
-          delete currentSelections[card.key];
-        } else {
-          currentSelections[card.key] = nextSelection;
-        }
-        await persistSelectedJobExtractionFieldValues(currentSelections);
-      } catch (error) {
-        alert(error.message || 'Kunde inte ta bort värdet.');
-      }
+      },
     });
     actions.appendChild(removeButton);
 
