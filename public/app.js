@@ -509,6 +509,7 @@ let chromeExtensionPingInFlight = false;
 let chromeExtensionOrganizationLookupInFlight = false;
 let chromeExtensionPayeeLookupInFlight = false;
 let chromeExtensionPresenceTimer = null;
+let senderLookupQueueRefreshTimer = null;
 let jobLabelsOverlayOpen = false;
 let jobLabelsDropdownOpen = false;
 let jobLabelsFilterText = '';
@@ -625,6 +626,21 @@ function scheduleReprocessWatchRefresh(delayMs = 1500) {
       if (reprocessWatchJobIds.size > 0) {
         scheduleReprocessWatchRefresh(2500);
       }
+    }
+  }, delayMs);
+}
+
+function scheduleSenderLookupQueueRefresh(delayMs = 300) {
+  if (senderLookupQueueRefreshTimer !== null) {
+    window.clearTimeout(senderLookupQueueRefreshTimer);
+  }
+
+  senderLookupQueueRefreshTimer = window.setTimeout(async () => {
+    senderLookupQueueRefreshTimer = null;
+    try {
+      await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+    } catch (error) {
+      console.error('[Docflow] Sender lookup queue refresh failed', error);
     }
   }, delayMs);
 }
@@ -11372,6 +11388,7 @@ function applyJobEvents(events) {
 
   if (mutated) {
     applyState(nextState);
+    scheduleSenderLookupQueueRefresh();
     return;
   }
 
