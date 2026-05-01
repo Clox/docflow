@@ -15157,12 +15157,80 @@ function createTreeRow(options = {}) {
   return row;
 }
 
+function syncTreeChildrenConnector(children) {
+  if (!(children instanceof HTMLElement)) {
+    return;
+  }
+
+  const childrenRect = children.getBoundingClientRect();
+  const childNodes = Array.from(children.children).filter((child) => (
+    child instanceof HTMLElement
+    && child.classList.contains('tree-node')
+    && child.classList.contains('has-parent')
+  ));
+  const childHeading = Array.from(children.children).find((child) => (
+    child instanceof HTMLElement
+    && child.classList.contains('archive-level-label')
+  )) || null;
+  const siblingHeading = children.previousElementSibling instanceof HTMLElement
+    && children.previousElementSibling.classList.contains('archive-level-label')
+    ? children.previousElementSibling
+    : null;
+  const heading = childHeading || siblingHeading;
+  const lastNode = childNodes[childNodes.length - 1] || null;
+  const lastRow = lastNode
+    ? Array.from(lastNode.children).find((child) => child instanceof HTMLElement && child.classList.contains('tree-row')) || null
+    : null;
+  if (
+    !(heading instanceof HTMLElement)
+    || !(lastNode instanceof HTMLElement)
+    || !(lastRow instanceof HTMLElement)
+  ) {
+    children.style.setProperty('--tree-connector-top', '0px');
+    children.style.setProperty('--tree-connector-height', '0px');
+    return;
+  }
+
+  const headingRect = heading.getBoundingClientRect();
+  const lastRowRect = lastRow.getBoundingClientRect();
+  const headingConnectorY = headingRect.bottom - childrenRect.top;
+  const lastConnectorY = lastRowRect.top - childrenRect.top + 17;
+  children.style.setProperty('--tree-connector-top', `${Math.round(headingConnectorY)}px`);
+  children.style.setProperty('--tree-connector-height', `${Math.max(0, Math.round(lastConnectorY - headingConnectorY))}px`);
+}
+
+function scheduleTreeChildrenConnectorSync(children) {
+  if (!(children instanceof HTMLElement)) {
+    return;
+  }
+  if (Number.isInteger(children._treeConnectorFrame)) {
+    window.cancelAnimationFrame(children._treeConnectorFrame);
+  }
+  children._treeConnectorFrame = window.requestAnimationFrame(() => {
+    children._treeConnectorFrame = null;
+    syncTreeChildrenConnector(children);
+  });
+}
+
 function createTreeChildren(options = {}) {
   const children = document.createElement('div');
   children.className = 'tree-children';
   if (options.markerless) {
     children.classList.add('tree-children-markerless');
   }
+  const observer = new MutationObserver(() => {
+    scheduleTreeChildrenConnectorSync(children);
+  });
+  observer.observe(children, { childList: true, subtree: true });
+  children._treeConnectorObserver = observer;
+  if (typeof ResizeObserver === 'function') {
+    const resizeObserver = new ResizeObserver(() => {
+      scheduleTreeChildrenConnectorSync(children);
+    });
+    resizeObserver.observe(children);
+    children._treeConnectorResizeObserver = resizeObserver;
+  }
+  scheduleTreeChildrenConnectorSync(children);
   return children;
 }
 

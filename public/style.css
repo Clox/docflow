@@ -4487,9 +4487,9 @@ body.is-resizing-sidebar {
 .tree-node.has-parent > .tree-row::before {
   content: '';
   position: absolute;
-  left: -15px;
+  left: -14px;
   top: 17px;
-  width: 15px;
+  width: 14px;
   border-top: 1px solid #d0d0d0;
 }
 
@@ -4567,11 +4567,11 @@ body.is-resizing-sidebar {
 }
 
 .tree-children {
-  --tree-connector-span: 16px;
+  --tree-connector-height: 0px;
+  --tree-connector-top: 0px;
   position: relative;
   margin-left: 14px;
   padding-left: 14px;
-  border-left: 1px solid #d0d0d0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -4581,23 +4581,14 @@ body.is-resizing-sidebar {
 .tree-children::before {
   content: '';
   position: absolute;
-  left: calc(-1 * var(--tree-connector-span));
-  top: 0;
-  width: var(--tree-connector-span);
-  border-top: 1px solid #d0d0d0;
+  left: 0;
+  top: var(--tree-connector-top);
+  height: var(--tree-connector-height);
+  border-left: 1px solid #d0d0d0;
 }
 
-.tree-children::after {
-  content: '';
-  position: absolute;
-  left: calc(-1 * var(--tree-connector-span));
-  bottom: 0;
-  width: var(--tree-connector-span);
-  border-top: 1px solid #d0d0d0;
-}
-
-.tree-children.tree-children-markerless {
-  --tree-connector-span: 25px;
+.tree-children > .archive-level-label {
+  margin-left: -14px;
 }
 
 .archive-structure-toolbar {
