@@ -35,6 +35,18 @@ stop_server_pid() {
   kill -9 "${pid}" >/dev/null 2>&1 || true
 }
 
+start_detached() {
+  local log_file="$1"
+  shift
+
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" > "${log_file}" 2>&1 < /dev/null &
+  else
+    nohup "$@" > "${log_file}" 2>&1 < /dev/null &
+  fi
+  echo "$!"
+}
+
 if [[ -f "${PID_FILE}" ]]; then
   EXISTING_PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
   stop_server_pid "${EXISTING_PID}"
@@ -60,12 +72,10 @@ done < <(pgrep -f "${DISPATCHER_SCRIPT}" || true)
 ./scripts/migrate.php
 php ./scripts/generate_chrome_extension_manifest.php "${URL}"
 
-PHP_CLI_SERVER_WORKERS="${WORKERS}" php -S "${HOST}:${PORT}" -t "${DOCROOT}" > "${LOG_FILE}" 2>&1 &
-SERVER_PID=$!
+SERVER_PID="$(start_detached "${LOG_FILE}" env PHP_CLI_SERVER_WORKERS="${WORKERS}" php -S "${HOST}:${PORT}" -t "${DOCROOT}")"
 echo "${SERVER_PID}" > "${PID_FILE}"
 
-php "${DISPATCHER_SCRIPT}" > "${DISPATCHER_LOG_FILE}" 2>&1 &
-DISPATCHER_PID=$!
+DISPATCHER_PID="$(start_detached "${DISPATCHER_LOG_FILE}" php "${DISPATCHER_SCRIPT}")"
 echo "${DISPATCHER_PID}" > "${DISPATCHER_PID_FILE}"
 
 if [[ "${OPEN_BROWSER}" != "0" ]]; then
