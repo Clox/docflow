@@ -503,7 +503,14 @@ function job_analysis_snapshot(string $jobId): ?array
     return is_array($row) ? $row : null;
 }
 
-function sync_job_analysis_snapshot(string $jobId, array $autoResult, ?string $analyzedAt = null): void
+function sync_job_analysis_snapshot(
+    string $jobId,
+    array $autoResult,
+    ?string $analyzedAt = null,
+    ?array $previousAutoResultOverride = null,
+    ?array $currentLabelIdsOverride = null,
+    ?array $currentDataValuesOverride = null
+): void
 {
     $normalizedId = trim($jobId);
     if ($normalizedId === '') {
@@ -515,7 +522,9 @@ function sync_job_analysis_snapshot(string $jobId, array $autoResult, ?string $a
         return;
     }
 
-    $previousAutoResult = job_analysis_snapshot($normalizedId);
+    $previousAutoResult = $previousAutoResultOverride !== null
+        ? normalize_auto_archiving_result($previousAutoResultOverride)
+        : job_analysis_snapshot($normalizedId);
     try {
         $repository->upsertAnalysisSnapshot(
             $normalizedId,
@@ -529,7 +538,9 @@ function sync_job_analysis_snapshot(string $jobId, array $autoResult, ?string $a
     sync_document_metadata_from_auto_transition(
         $normalizedId,
         is_array($previousAutoResult) ? normalize_auto_archiving_result($previousAutoResult) : null,
-        normalize_auto_archiving_result($autoResult)
+        normalize_auto_archiving_result($autoResult),
+        $currentLabelIdsOverride,
+        $currentDataValuesOverride
     );
 }
 
@@ -756,16 +767,62 @@ function document_actual_data_values_equal(array $left, array $right): bool
     return normalize_document_actual_data_values($left) === normalize_document_actual_data_values($right);
 }
 
-function sync_document_metadata_from_auto_transition(string $jobId, ?array $previousAutoResult, array $nextAutoResult): void
+function job_document_label_ids_for_metadata_sync(string $jobId, array $job): ?array
 {
-    $currentLabelIds = document_metadata_label_ids($jobId);
+    $stored = document_metadata_label_ids($jobId);
+    if (is_array($stored)) {
+        return normalize_stored_job_label_ids($stored);
+    }
+    if (array_key_exists('selectedLabelIds', $job)) {
+        return normalize_stored_job_label_ids($job['selectedLabelIds']);
+    }
+    return null;
+}
+
+function job_document_data_values_for_metadata_sync(string $jobId, array $job): ?array
+{
+    $stored = document_metadata_actual_data_values($jobId);
+    if (is_array($stored)) {
+        return normalize_document_actual_data_values($stored);
+    }
+    if (array_key_exists('selectedExtractionFieldValues', $job)) {
+        return document_actual_data_values_from_selected(
+            $job,
+            normalize_stored_job_extraction_field_values($job['selectedExtractionFieldValues'])
+        );
+    }
+    return null;
+}
+
+function sync_document_metadata_from_auto_transition(
+    string $jobId,
+    ?array $previousAutoResult,
+    array $nextAutoResult,
+    ?array $currentLabelIdsOverride = null,
+    ?array $currentDataValuesOverride = null
+): void
+{
+    $currentLabelIds = $currentLabelIdsOverride !== null
+        ? normalize_stored_job_label_ids($currentLabelIdsOverride)
+        : document_metadata_label_ids($jobId);
     $previousLabelIds = $previousAutoResult !== null ? normalize_stored_job_label_ids($previousAutoResult['labels'] ?? []) : null;
     $nextLabelIds = normalize_stored_job_label_ids($nextAutoResult['labels'] ?? []);
-    if ($currentLabelIds === null || ($previousLabelIds !== null && normalize_stored_job_label_ids($currentLabelIds) === $previousLabelIds)) {
+    $normalizedCurrentLabelIds = $currentLabelIds !== null ? normalize_stored_job_label_ids($currentLabelIds) : null;
+    if (is_array($normalizedCurrentLabelIds)) {
+        sort($normalizedCurrentLabelIds, SORT_NATURAL);
+    }
+    if (is_array($previousLabelIds)) {
+        sort($previousLabelIds, SORT_NATURAL);
+    }
+    if ($currentLabelIds === null || ($previousLabelIds !== null && $normalizedCurrentLabelIds === $previousLabelIds)) {
         persist_document_metadata_label_ids($jobId, $nextLabelIds);
+    } elseif ($currentLabelIdsOverride !== null) {
+        persist_document_metadata_label_ids($jobId, normalize_stored_job_label_ids($currentLabelIds));
     }
 
-    $currentDataValues = document_metadata_actual_data_values($jobId);
+    $currentDataValues = $currentDataValuesOverride !== null
+        ? normalize_document_actual_data_values($currentDataValuesOverride)
+        : document_metadata_actual_data_values($jobId);
     $previousDataValues = $previousAutoResult !== null ? document_actual_data_values_from_auto_result($previousAutoResult) : null;
     $nextDataValues = document_actual_data_values_from_auto_result($nextAutoResult);
     if (
@@ -773,6 +830,8 @@ function sync_document_metadata_from_auto_transition(string $jobId, ?array $prev
         || ($previousDataValues !== null && document_actual_data_values_equal($currentDataValues, $previousDataValues))
     ) {
         persist_document_metadata_data_values($jobId, $nextDataValues);
+    } elseif ($currentDataValuesOverride !== null) {
+        persist_document_metadata_data_values($jobId, $currentDataValues);
     }
 }
 
@@ -3100,7 +3159,7 @@ function persist_active_archiving_rules_change(
         'reprocessedCount' => 0,
     ];
     if ($reviewRelevantChanged) {
-        $reprocessedJobs = reprocess_unarchived_jobs_for_active_archiving_rules($config);
+        $reprocessedJobs = reprocess_unarchived_jobs_for_active_archiving_rules($config, $previousActiveRules, $normalizedNextRules);
         restart_archiving_update_session(
             $config,
             $previousActiveRules,
@@ -14097,10 +14156,47 @@ function advance_archiving_review_sessions_background(array $config, int $chunkS
     maybe_queue_archiving_rules_update_event($config);
 }
 
+function sync_unarchived_job_document_metadata_for_rule_change(
+    array $config,
+    string $jobId,
+    array $job,
+    array $previousRules,
+    array $nextRules
+): void
+{
+    if (!is_valid_job_id($jobId) || ($job['archived'] ?? false) === true || ($job['status'] ?? '') === 'processing') {
+        return;
+    }
+
+    try {
+        $currentLabelIds = job_document_label_ids_for_metadata_sync($jobId, $job);
+        $currentDataValues = job_document_data_values_for_metadata_sync($jobId, $job);
+        $previousAnalysis = calculate_auto_archiving_result_for_job($config, $jobId, $previousRules, $job);
+        $previousAutoResult = normalize_auto_archiving_result(
+            is_array($previousAnalysis['autoArchivingResult'] ?? null) ? $previousAnalysis['autoArchivingResult'] : []
+        );
+        $analysis = calculate_auto_archiving_result_for_job($config, $jobId, $nextRules, $job);
+        $nextAutoResult = normalize_auto_archiving_result(
+            is_array($analysis['autoArchivingResult'] ?? null) ? $analysis['autoArchivingResult'] : []
+        );
+        sync_document_metadata_from_auto_transition(
+            $jobId,
+            $previousAutoResult,
+            $nextAutoResult,
+            $currentLabelIds,
+            $currentDataValues
+        );
+    } catch (Throwable $e) {
+        // The queued reprocess remains the fallback if direct metadata refresh fails.
+    }
+}
+
 function reprocess_unarchived_jobs_for_analysis_change(
     array $config,
     string $mode = 'post-ocr',
-    bool $forceOcr = false
+    bool $forceOcr = false,
+    ?array $previousRules = null,
+    ?array $nextRules = null
 ): array
 {
     $normalizedMode = trim($mode);
@@ -14131,6 +14227,9 @@ function reprocess_unarchived_jobs_for_analysis_change(
         if (!is_array($job) || ($job['archived'] ?? false) === true || ($job['status'] ?? '') === 'processing') {
             continue;
         }
+        if (is_array($previousRules) && is_array($nextRules)) {
+            sync_unarchived_job_document_metadata_for_rule_change($config, $entry, $job, $previousRules, $nextRules);
+        }
         reprocess_job_by_id($config, $entry, $normalizedMode, $forceOcr);
         $jobIds[] = $entry;
     }
@@ -14142,9 +14241,13 @@ function reprocess_unarchived_jobs_for_analysis_change(
     ];
 }
 
-function reprocess_unarchived_jobs_for_active_archiving_rules(array $config): array
+function reprocess_unarchived_jobs_for_active_archiving_rules(
+    array $config,
+    ?array $previousRules = null,
+    ?array $nextRules = null
+): array
 {
-    return reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false);
+    return reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false, $previousRules, $nextRules);
 }
 
 function normalize_review_labels(array $labels, array $allowedIds): array
@@ -14681,7 +14784,23 @@ function process_claimed_job(
     $analyzedAt = now_iso();
     $jobId = basename($jobDir);
     if (is_string($jobId) && $jobId !== '') {
-        sync_job_analysis_snapshot($jobId, $analysisPayload['autoArchivingResult'], $analyzedAt);
+        $previousAutoResultForMetadataSync = is_array($jobContext['metadataSyncPreviousAutoArchivingResult'] ?? null)
+            ? normalize_auto_archiving_result($jobContext['metadataSyncPreviousAutoArchivingResult'])
+            : null;
+        $currentLabelIdsForMetadataSync = is_array($jobContext['metadataSyncPreviousDocumentLabelIds'] ?? null)
+            ? normalize_stored_job_label_ids($jobContext['metadataSyncPreviousDocumentLabelIds'])
+            : null;
+        $currentDataValuesForMetadataSync = is_array($jobContext['metadataSyncPreviousDocumentDataValues'] ?? null)
+            ? normalize_document_actual_data_values($jobContext['metadataSyncPreviousDocumentDataValues'])
+            : null;
+        sync_job_analysis_snapshot(
+            $jobId,
+            $analysisPayload['autoArchivingResult'],
+            $analyzedAt,
+            $previousAutoResultForMetadataSync,
+            $currentLabelIdsForMetadataSync,
+            $currentDataValuesForMetadataSync
+        );
     }
 
     return [
@@ -14924,7 +15043,14 @@ function process_job_by_id(
         $jobData['status'] = 'ready';
         $jobData['updatedAt'] = now_iso();
         unset($jobData['analysisOutdated'], $jobData['analysisAutoReprocessQueued']);
-        unset($jobData['error'], $jobData['reprocessMode'], $jobData['forceOcr']);
+        unset(
+            $jobData['error'],
+            $jobData['reprocessMode'],
+            $jobData['forceOcr'],
+            $jobData['metadataSyncPreviousAutoArchivingResult'],
+            $jobData['metadataSyncPreviousDocumentLabelIds'],
+            $jobData['metadataSyncPreviousDocumentDataValues']
+        );
         write_json_file($jobJsonPath, $jobData);
         queue_job_upsert_event($config, $jobId);
     } catch (Throwable $e) {
@@ -14935,7 +15061,13 @@ function process_job_by_id(
         $jobData['updatedAt'] = now_iso();
         $jobData['error'] = $e->getMessage();
         unset($jobData['analysisOutdated'], $jobData['analysisAutoReprocessQueued']);
-        unset($jobData['reprocessMode'], $jobData['forceOcr']);
+        unset(
+            $jobData['reprocessMode'],
+            $jobData['forceOcr'],
+            $jobData['metadataSyncPreviousAutoArchivingResult'],
+            $jobData['metadataSyncPreviousDocumentLabelIds'],
+            $jobData['metadataSyncPreviousDocumentDataValues']
+        );
         write_json_file($jobJsonPath, $jobData);
         queue_job_upsert_event($config, $jobId);
     }
@@ -17193,6 +17325,20 @@ function reprocess_job_by_id(array $config, string $jobId, string $mode = 'post-
         foreach (glob($jobDir . '/merged_objects_page_*.txt') ?: [] as $path) {
             @unlink($path);
         }
+    }
+
+    $job['metadataSyncPreviousAutoArchivingResult'] = job_auto_archiving_result($job);
+    $currentLabelIdsForMetadataSync = job_document_label_ids_for_metadata_sync($jobId, $job);
+    if ($currentLabelIdsForMetadataSync !== null) {
+        $job['metadataSyncPreviousDocumentLabelIds'] = $currentLabelIdsForMetadataSync;
+    } else {
+        unset($job['metadataSyncPreviousDocumentLabelIds']);
+    }
+    $currentDataValuesForMetadataSync = job_document_data_values_for_metadata_sync($jobId, $job);
+    if ($currentDataValuesForMetadataSync !== null) {
+        $job['metadataSyncPreviousDocumentDataValues'] = $currentDataValuesForMetadataSync;
+    } else {
+        unset($job['metadataSyncPreviousDocumentDataValues']);
     }
 
     sync_job_sender_snapshot_ids($jobId, null, null);
