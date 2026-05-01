@@ -6540,7 +6540,7 @@ function renderArchivingRuleReview(force = false) {
     templateChanges.forEach((change) => {
       const item = document.createElement('div');
       item.className = 'archiving-review-template-change';
-      const templateName = change.filenameTemplateName || change.archiveFolderName || change.archiveFolderId || 'okänd filnamnsregel';
+      const templateName = change.filenameTemplateName || change.archiveFolderName || change.archiveFolderId || 'okänd filnamnsmall';
       const title = document.createElement('div');
       title.className = 'archiving-review-template-change-title';
       title.textContent = `${templateName} har ändrats.`;
@@ -14737,6 +14737,9 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
   const placeholder = typeof options.placeholder === 'string' && options.placeholder.trim() !== ''
     ? options.placeholder.trim()
     : 'Lägg till etikett...';
+  const emptyText = typeof options.emptyText === 'string' && options.emptyText.trim() !== ''
+    ? options.emptyText.trim()
+    : 'Inga etiketter – gäller alla dokument';
 
   const wrapper = document.createElement('div');
   wrapper.className = 'filename-template-label-picker';
@@ -14859,36 +14862,43 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
 
     selected.replaceChildren();
     selected.classList.toggle('is-empty', state.selectedIds.length < 1);
-    state.selectedIds.forEach((labelId) => {
-      const chipEl = document.createElement('span');
-      chipEl.className = 'job-labels-selected-chip';
+    if (state.selectedIds.length < 1) {
+      const emptyEl = document.createElement('span');
+      emptyEl.className = 'filename-template-label-picker-empty';
+      emptyEl.textContent = emptyText;
+      selected.appendChild(emptyEl);
+    } else {
+      state.selectedIds.forEach((labelId) => {
+        const chipEl = document.createElement('span');
+        chipEl.className = 'job-labels-selected-chip';
 
-      const textEl = document.createElement('span');
-      textEl.className = 'job-labels-selected-chip-text';
-      textEl.textContent = filenameTemplateLabelNameById(labelId);
+        const textEl = document.createElement('span');
+        textEl.className = 'job-labels-selected-chip-text';
+        textEl.textContent = filenameTemplateLabelNameById(labelId);
 
-      const removeButton = document.createElement('button');
-      removeButton.type = 'button';
-      removeButton.className = 'job-labels-selected-chip-remove';
-      removeButton.setAttribute('aria-label', `Ta bort etiketten ${filenameTemplateLabelNameById(labelId)}`);
-      removeButton.textContent = '✕';
-      removeButton.addEventListener('mousedown', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'job-labels-selected-chip-remove';
+        removeButton.setAttribute('aria-label', `Ta bort etiketten ${filenameTemplateLabelNameById(labelId)}`);
+        removeButton.textContent = '✕';
+        removeButton.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        });
+        removeButton.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          state.selectedIds = state.selectedIds.filter((candidate) => candidate !== labelId);
+          if (typeof onChange === 'function') {
+            onChange(state.selectedIds);
+          }
+          render();
+        });
+
+        chipEl.append(textEl, removeButton);
+        selected.appendChild(chipEl);
       });
-      removeButton.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        state.selectedIds = state.selectedIds.filter((candidate) => candidate !== labelId);
-        if (typeof onChange === 'function') {
-          onChange(state.selectedIds);
-        }
-        render();
-      });
-
-      chipEl.append(textEl, removeButton);
-      selected.appendChild(chipEl);
-    });
+    }
 
     list.replaceChildren();
     list.classList.toggle('is-open', state.dropdownOpen);
@@ -19577,7 +19587,7 @@ function renderArchiveStructureEditor() {
 
       const removeTemplateButton = createTrashButton({
         variant: 'node',
-        title: 'Ta bort filnamnsregel',
+        title: 'Ta bort filnamnsmall',
         onClick: () => {
           archiveFoldersDraft[folderIndex].filenameTemplates.splice(templateIndex, 1);
           renderArchiveStructureEditor();
@@ -19592,6 +19602,12 @@ function renderArchiveStructureEditor() {
       templateConditionsLabel.className = 'archive-level-label';
       templateConditionsLabel.textContent = 'Matchande etiketter';
       templateBody.appendChild(templateConditionsLabel);
+      const templateConditionsHelp = document.createElement('div');
+      templateConditionsHelp.className = 'archive-level-help';
+      templateConditionsHelp.textContent = templateDraft.labelIds.length > 0
+        ? 'Alla måste matcha'
+        : 'Inga etiketter – gäller alla dokument';
+      templateBody.appendChild(templateConditionsHelp);
       templateBody.appendChild(
         createFilenameTemplateLabelPicker(
         templateDraft.labelIds,
@@ -19601,6 +19617,7 @@ function renderArchiveStructureEditor() {
         },
         {
           placeholder: 'Lägg till etikett...',
+          emptyText: 'Inga etiketter – gäller alla dokument',
         }
       ));
 
@@ -19628,7 +19645,7 @@ function renderArchiveStructureEditor() {
     const addTemplateButton = document.createElement('button');
     addTemplateButton.type = 'button';
     addTemplateButton.className = 'archive-add-button';
-    addTemplateButton.textContent = 'Lägg till filnamnsregel';
+    addTemplateButton.textContent = 'Lägg till filnamnsmall';
     addTemplateButton.addEventListener('click', () => {
       archiveFoldersDraft[folderIndex].filenameTemplates.push(defaultFilenameTemplateDraft());
       renderArchiveStructureEditor();
