@@ -4443,11 +4443,13 @@ body.is-resizing-sidebar {
   position: relative;
 }
 
-.categories-list > .tree-folder {
+.categories-list > .tree-folder,
+.categories-list > .tree-category {
   margin-bottom: 12px;
 }
 
-.categories-list > .tree-folder:last-child {
+.categories-list > .tree-folder:last-child,
+.categories-list > .tree-category:last-child {
   margin-bottom: 0;
 }
 
