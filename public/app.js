@@ -5675,7 +5675,7 @@ function collectAppNoticeDescriptors() {
       kind: 'error',
       text: chromeExtensionRuntime.profileSelectionRequired === true
         ? 'Swedbank kräver att du väljer profil för att hämta namn för betalnummer.'
-        : 'Swedbank är inte tillgängligt just nu. Logga in för att hämta namn för betalnummer.',
+        : 'Logga in på Swedbank för att hämta namn för betalnummer.',
       action: {
         label: chromeExtensionRuntime.profileSelectionRequired === true ? 'Välj profil' : 'Logga in',
         onClick: () => {
