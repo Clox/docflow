@@ -2001,10 +2001,21 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
       });
       valueWrap.appendChild(valueButton);
 
-      const editHint = document.createElement('span');
+      const editHint = document.createElement('button');
+      editHint.type = 'button';
       editHint.className = 'job-extraction-field-inline-hint';
       editHint.textContent = '✎';
-      editHint.setAttribute('aria-hidden', 'true');
+      editHint.title = 'Redigera värdet';
+      editHint.setAttribute('aria-label', `Redigera värdet ${row.value}`);
+      editHint.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      editHint.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        beginInlineEdit(card.key, row.value);
+      });
       valueWrap.appendChild(editHint);
 
       line.appendChild(valueWrap);
