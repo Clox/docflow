@@ -4282,7 +4282,8 @@ body.is-resizing-sidebar {
 }
 
 .icon-delete-button,
-.tree-remove-button {
+.tree-remove-button,
+.extraction-field-copy-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4297,8 +4298,8 @@ body.is-resizing-sidebar {
   -webkit-appearance: none;
   cursor: pointer;
   flex: 0 0 auto;
-  opacity: 0.42;
-  transition: opacity 0.15s ease, color 0.15s ease;
+  opacity: 0.24;
+  transition: opacity 0.12s ease, color 0.12s ease, background-color 0.12s ease;
 }
 
 .icon-delete-button::before,
@@ -4312,20 +4313,25 @@ body.is-resizing-sidebar {
   mask: url('/assets/icons/trash.svg') center / contain no-repeat;
 }
 
+.tree-node.is-hover-active > .tree-row > .tree-body > .tree-node-actions > .icon-delete-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .tree-node-actions > .tree-remove-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .tree-node-actions > .extraction-field-copy-button,
+.tree-node.is-hover-active > .tree-row > .tree-body > .extraction-field-editor-actions > .icon-delete-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .extraction-field-editor-actions > .tree-remove-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .extraction-field-editor-actions > .extraction-field-copy-button,
+.tree-node.is-hover-active > .tree-row > .tree-body > .sender-header > .icon-delete-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .sender-header > .tree-remove-button--node {
+  opacity: 1;
+}
+
 .icon-delete-button:hover,
 .icon-delete-button:focus-visible,
 .tree-remove-button:hover,
 .tree-remove-button:focus-visible {
   opacity: 1;
-}
-
-.tree-node.is-hover-active > .tree-row > .tree-body > .tree-node-actions > .icon-delete-button--node,
-.tree-node.is-hover-active > .tree-row > .tree-body > .tree-node-actions > .tree-remove-button--node,
-.tree-node.is-hover-active > .tree-row > .tree-body > .extraction-field-editor-actions > .icon-delete-button--node,
-.tree-node.is-hover-active > .tree-row > .tree-body > .extraction-field-editor-actions > .tree-remove-button--node,
-.tree-node.is-hover-active > .tree-row > .tree-body > .sender-header > .icon-delete-button--node,
-.tree-node.is-hover-active > .tree-row > .tree-body > .sender-header > .tree-remove-button--node {
-  opacity: 1;
+  background: rgba(185, 28, 28, 0.08);
+  color: #b91c1c;
+  border-radius: 999px;
 }
 
 .tree-row:hover > .icon-delete-button--row,
@@ -4629,31 +4635,39 @@ body.is-resizing-sidebar {
   width: 24px;
   height: 24px;
   padding: 0;
-  border: 1px solid #b9d6cf;
-  border-radius: 4px;
-  background: #fff;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: #2f5b4f;
+  appearance: none;
+  -webkit-appearance: none;
   font: inherit;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
+  flex: 0 0 auto;
+  opacity: 0.24;
+  transition: opacity 0.12s ease, color 0.12s ease, background-color 0.12s ease;
 }
 
-.extraction-field-copy-button:hover {
-  background: #eef8f4;
-  border-color: #9fc6bc;
+.extraction-field-copy-button:hover,
+.extraction-field-copy-button:focus-visible {
+  opacity: 1;
+  color: #0f172a;
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
 }
 
 .extraction-field-copy-button.is-copied {
-  background: #e5f8ee;
-  border-color: #7fb694;
   color: #1f6c45;
 }
 
 .extraction-field-copy-button.is-copy-failed {
-  background: #fff1f1;
-  border-color: #d68e8e;
   color: #a11;
+}
+
+.tree-node.is-hover-active > .tree-row > .tree-body > .extraction-field-editor-actions > .extraction-field-copy-button {
+  opacity: 1;
 }
 
 .rule-body {
