@@ -1124,7 +1124,53 @@ function effectiveSelectedExtractionFieldSelection(job, fieldKey) {
     return null;
   }
   const selections = effectiveSelectedExtractionFieldValues(job);
-  return normalizeSelectedExtractionFieldSelection(selections[normalizedKey]);
+  return sanitizeSelectedExtractionFieldSelectionForJob(job, normalizedKey, selections[normalizedKey]);
+}
+
+function sanitizeSelectedExtractionFieldSelectionForJob(job, fieldKey, input) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  const normalizedSelection = normalizeSelectedExtractionFieldSelection(input);
+  if (!job || normalizedKey === '' || !normalizedSelection) {
+    return normalizedSelection;
+  }
+
+  const acceptedValues = new Set(
+    extractionFieldAcceptedRowsForJob(job, normalizedKey)
+      .map((row) => (row && typeof row.value === 'string' ? row.value.trim() : ''))
+      .filter((value) => value !== '')
+  );
+  const manualValues = normalizeSelectedExtractionFieldValueList(normalizedSelection.manualValues)
+    .filter((value) => value !== '' && !acceptedValues.has(value));
+  const excludedValues = normalizeSelectedExtractionFieldValueList(normalizedSelection.excludedValues);
+  const primaryValue = typeof normalizedSelection.primaryValue === 'string'
+    ? normalizedSelection.primaryValue.trim()
+    : '';
+
+  if (manualValues.length < 1 && excludedValues.length < 1 && primaryValue === '') {
+    return null;
+  }
+
+  return {
+    manualValues,
+    excludedValues,
+    primaryValue: primaryValue !== '' ? primaryValue : null,
+  };
+}
+
+function sanitizeSelectedExtractionFieldValuesForJob(job, input) {
+  const normalized = normalizeSelectedExtractionFieldValues(input);
+  if (!job) {
+    return normalized;
+  }
+
+  const resolved = {};
+  Object.entries(normalized).forEach(([fieldKey, selection]) => {
+    const sanitizedSelection = sanitizeSelectedExtractionFieldSelectionForJob(job, fieldKey, selection);
+    if (sanitizedSelection) {
+      resolved[fieldKey] = sanitizedSelection;
+    }
+  });
+  return resolved;
 }
 
 function extractionFieldComparisonKeysForJob(job) {
@@ -1379,8 +1425,9 @@ function extractionFieldVisibleRowsForJob(job, fieldKey) {
   const primaryValue = primaryExtractionFieldValueForJob(job, fieldKey);
   const acceptedRows = extractionFieldAcceptedRowsForJob(job, fieldKey)
     .filter((row) => row && row.value && !excludedValues.has(row.value));
+  const acceptedValues = new Set(acceptedRows.map((row) => row.value));
   const manualRows = manualValues
-    .filter((value) => value !== '' && !excludedValues.has(value))
+    .filter((value) => value !== '' && !excludedValues.has(value) && !acceptedValues.has(value))
     .map((value) => ({
       value,
       confidence: null,
@@ -2133,17 +2180,7 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
       }
       jobLabelsOverlayMutating = true;
       const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(jobForUpdate));
-      const currentSelection = selectedExtractionFieldSelectionForJob(jobForUpdate, fieldKey) || {
-        manualValues: [],
-        excludedValues: [],
-        primaryValue: null,
-      };
-      const nextSelection = {
-        manualValues: [manualValue, ...normalizeSelectedExtractionFieldValueList(currentSelection.manualValues).filter((value) => value !== manualValue)],
-        excludedValues: normalizeSelectedExtractionFieldValueList(currentSelection.excludedValues).filter((value) => value !== manualValue),
-        primaryValue: manualValue,
-      };
-      currentSelections[fieldKey] = normalizeSelectedExtractionFieldSelection(nextSelection);
+      currentSelections[fieldKey] = replaceSelectedExtractionFieldValue(jobForUpdate, fieldKey, '', manualValue);
       await persistSelectedJobExtractionFieldValues(currentSelections);
       window.requestAnimationFrame(() => {
         if (!jobLabelsOverlayOpen || !(jobLabelsOverlayEl instanceof HTMLElement)) {
@@ -2455,7 +2492,7 @@ function selectedExtractionFieldSelectionForJob(job, fieldKey) {
     return null;
   }
   const selections = effectiveSelectedExtractionFieldValues(job);
-  return normalizeSelectedExtractionFieldSelection(selections[normalizedKey]);
+  return sanitizeSelectedExtractionFieldSelectionForJob(job, normalizedKey, selections[normalizedKey]);
 }
 
 function clearJobExtractionFieldInlineEditState() {
@@ -2492,6 +2529,8 @@ function replaceSelectedExtractionFieldValue(job, fieldKey, previousValue, nextV
   };
   const acceptedRows = extractionFieldAcceptedRowsForJob(job, normalizedKey);
   const acceptedValues = acceptedRows.map((row) => row.value).filter((item) => item !== '');
+  const nextIsAccepted = acceptedValues.includes(normalizedNext);
+  const previousIsAccepted = acceptedValues.includes(normalizedPrevious);
   const nextSelection = {
     manualValues: Array.isArray(currentSelection.manualValues)
       ? currentSelection.manualValues.filter((candidate) => candidate !== normalizedPrevious && candidate !== normalizedNext)
@@ -2502,13 +2541,17 @@ function replaceSelectedExtractionFieldValue(job, fieldKey, previousValue, nextV
     primaryValue: normalizedNext,
   };
 
-  if (acceptedValues.includes(normalizedPrevious) && normalizedPrevious !== normalizedNext) {
+  if (previousIsAccepted && normalizedPrevious !== normalizedNext) {
     nextSelection.excludedValues.push(normalizedPrevious);
   }
 
-  nextSelection.manualValues.unshift(normalizedNext);
+  if (!nextIsAccepted) {
+    nextSelection.manualValues.unshift(normalizedNext);
+  } else {
+    nextSelection.excludedValues = nextSelection.excludedValues.filter((value) => value !== normalizedNext);
+  }
 
-  return normalizeSelectedExtractionFieldSelection(nextSelection);
+  return sanitizeSelectedExtractionFieldSelectionForJob(job, normalizedKey, nextSelection);
 }
 
 function setSelectedExtractionFieldPrimaryValue(job, fieldKey, nextValue, options = {}) {
@@ -2549,7 +2592,7 @@ function setSelectedExtractionFieldPrimaryValue(job, fieldKey, nextValue, option
     nextSelection.manualValues.unshift(normalizedValue);
   }
 
-  return normalizeSelectedExtractionFieldSelection(nextSelection);
+  return sanitizeSelectedExtractionFieldSelectionForJob(job, normalizedKey, nextSelection);
 }
 
 function removeSelectedExtractionFieldValue(job, fieldKey, value) {
@@ -2586,7 +2629,7 @@ function removeSelectedExtractionFieldValue(job, fieldKey, value) {
     nextSelection.primaryValue = null;
   }
 
-  return normalizeSelectedExtractionFieldSelection(nextSelection);
+  return sanitizeSelectedExtractionFieldSelectionForJob(job, normalizedKey, nextSelection);
 }
 
 async function persistSelectedJobExtractionFieldValues(nextSelections) {
@@ -2597,7 +2640,7 @@ async function persistSelectedJobExtractionFieldValues(nextSelections) {
 
   const previousCurrentFilename = String(displayedFilenameForJob(job) || '').trim();
   const previousProposed = proposedArchivingResultForJob(job);
-  const normalizedNext = normalizeSelectedExtractionFieldValues(nextSelections);
+  const normalizedNext = sanitizeSelectedExtractionFieldValuesForJob(job, nextSelections);
   const hadLocalValue = selectedExtractionFieldValuesByJobId.has(job.id);
   const previousLocalValue = hadLocalValue ? normalizeSelectedExtractionFieldValues(selectedExtractionFieldValuesByJobId.get(job.id)) : null;
 

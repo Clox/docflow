@@ -2078,7 +2078,7 @@ body.is-resizing-sidebar {
 
 .job-labels-overlay-close {
   position: absolute;
-  top: 10px;
+  top: 5px;
   right: 10px;
   width: 26px;
   height: 26px;
