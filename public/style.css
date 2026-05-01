@@ -4444,12 +4444,14 @@ body.is-resizing-sidebar {
 }
 
 .categories-list > .tree-folder,
-.categories-list > .tree-category {
+.categories-list > .tree-category,
+.labels-editor-group-content > .tree-category {
   margin-bottom: 12px;
 }
 
 .categories-list > .tree-folder:last-child,
-.categories-list > .tree-category:last-child {
+.categories-list > .tree-category:last-child,
+.labels-editor-group-content > .tree-category:last-child {
   margin-bottom: 0;
 }
 
