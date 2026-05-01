@@ -2249,6 +2249,10 @@ body.is-resizing-sidebar {
   min-width: 0;
 }
 
+.job-extraction-field-line:hover {
+  cursor: pointer;
+}
+
 .job-extraction-field-line.is-missing {
   color: #94a3b8;
 }
@@ -2264,14 +2268,24 @@ body.is-resizing-sidebar {
   color: #334155;
 }
 
+.job-extraction-field-line-value-wrap {
+  min-width: 0;
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
 .job-extraction-field-line-value {
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   padding: 0;
   border: 0;
   background: transparent;
   color: #0f172a;
   font: inherit;
+  line-height: 1.2;
   text-align: left;
   cursor: pointer;
 }
@@ -2284,6 +2298,16 @@ body.is-resizing-sidebar {
   color: #94a3b8;
   cursor: default;
   text-decoration: none;
+}
+
+.job-extraction-field-inline-hint {
+  flex: 0 0 auto;
+  font-size: 22px;
+  line-height: 1;
+  color: #64748b;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 }
 
 .job-extraction-field-inline-input {
@@ -2321,6 +2345,11 @@ body.is-resizing-sidebar {
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
+}
+
+.job-extraction-field-line:hover .job-extraction-field-inline-hint,
+.job-extraction-field-line:focus-within .job-extraction-field-inline-hint {
+  opacity: 0.7;
 }
 
 .job-extraction-field-add-section {

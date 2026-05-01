@@ -1941,6 +1941,9 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
       line.appendChild(input);
       inlineEditInputToFocus = input;
     } else {
+      const valueWrap = document.createElement('div');
+      valueWrap.className = 'job-extraction-field-line-value-wrap';
+
       const valueButton = document.createElement('button');
       valueButton.type = 'button';
       valueButton.className = 'job-extraction-field-line-value';
@@ -1949,7 +1952,15 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
       valueButton.addEventListener('click', () => {
         beginInlineEdit(card.key, row.value);
       });
-      line.appendChild(valueButton);
+      valueWrap.appendChild(valueButton);
+
+      const editHint = document.createElement('span');
+      editHint.className = 'job-extraction-field-inline-hint';
+      editHint.textContent = '✎';
+      editHint.setAttribute('aria-hidden', 'true');
+      valueWrap.appendChild(editHint);
+
+      line.appendChild(valueWrap);
     }
 
     if (row.manual === true) {
@@ -1961,25 +1972,6 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
 
     const actions = document.createElement('div');
     actions.className = 'job-extraction-field-line-actions';
-
-    if (!valueIsEditing) {
-      const editButton = document.createElement('button');
-      editButton.type = 'button';
-      editButton.className = 'job-extraction-field-inline-button is-edit';
-      editButton.textContent = '✎';
-      editButton.title = 'Redigera värdet';
-      editButton.setAttribute('aria-label', `Redigera värdet ${row.value}`);
-      editButton.addEventListener('mousedown', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      });
-      editButton.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        beginInlineEdit(card.key, row.value);
-      });
-      actions.appendChild(editButton);
-    }
 
     const removeButton = document.createElement('button');
     removeButton.type = 'button';
