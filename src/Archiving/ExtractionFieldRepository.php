@@ -125,12 +125,9 @@ final class ExtractionFieldRepository
     private function replaceScopeInTransaction(string $scope, array $customFields, array $predefinedFields): void
     {
         $resolvedScope = $this->normalizeScope($scope);
-        $deleteStatement = $this->pdo->prepare(
-            'DELETE FROM archiving_data_fields WHERE rules_scope = :rules_scope'
-        );
-        $deleteStatement->execute([':rules_scope' => $resolvedScope]);
-
         $timestamp = date(DATE_ATOM);
+        $existingFields = $this->existingFieldIdsByTypeAndKey($resolvedScope);
+        $seenFieldKeys = [];
         $insertField = $this->pdo->prepare(
             'INSERT INTO archiving_data_fields (
                 rules_scope,
@@ -150,7 +147,17 @@ final class ExtractionFieldRepository
                 :updated_at
             )'
         );
-                $insertRuleSet = $this->pdo->prepare(
+        $updateField = $this->pdo->prepare(
+            'UPDATE archiving_data_fields
+            SET name = :name,
+                sort_order = :sort_order,
+                updated_at = :updated_at
+            WHERE id = :id'
+        );
+        $deleteRuleSets = $this->pdo->prepare(
+            'DELETE FROM archiving_data_field_rule_sets WHERE data_field_id = :data_field_id'
+        );
+        $insertRuleSet = $this->pdo->prepare(
             'INSERT INTO archiving_data_field_rule_sets (
                 data_field_id,
                 requires_search_terms,
@@ -180,7 +187,16 @@ final class ExtractionFieldRepository
             )'
         );
 
-        $persistFields = function (array $fields, string $fieldType) use ($resolvedScope, $timestamp, $insertField, $insertRuleSet): void {
+        $persistFields = function (array $fields, string $fieldType) use (
+            $resolvedScope,
+            $timestamp,
+            $existingFields,
+            &$seenFieldKeys,
+            $insertField,
+            $updateField,
+            $deleteRuleSets,
+            $insertRuleSet
+        ): void {
             $fieldOrder = 0;
             foreach ($fields as $field) {
                 if (!is_array($field)) {
@@ -195,20 +211,33 @@ final class ExtractionFieldRepository
                 if ($fieldKey === '' || $name === '') {
                     continue;
                 }
+                $lookupKey = $fieldType . ':' . $fieldKey;
+                $seenFieldKeys[$lookupKey] = true;
 
-                $insertField->execute([
-                    ':rules_scope' => $resolvedScope,
-                    ':field_type' => $fieldType,
-                    ':field_key' => $fieldKey,
-                    ':name' => $name,
-                    ':sort_order' => $fieldOrder,
-                    ':created_at' => $timestamp,
-                    ':updated_at' => $timestamp,
-                ]);
-                $fieldId = (int) $this->pdo->lastInsertId();
+                $fieldId = isset($existingFields[$lookupKey]) ? (int) $existingFields[$lookupKey] : 0;
+                if ($fieldId > 0) {
+                    $updateField->execute([
+                        ':id' => $fieldId,
+                        ':name' => $name,
+                        ':sort_order' => $fieldOrder,
+                        ':updated_at' => $timestamp,
+                    ]);
+                } else {
+                    $insertField->execute([
+                        ':rules_scope' => $resolvedScope,
+                        ':field_type' => $fieldType,
+                        ':field_key' => $fieldKey,
+                        ':name' => $name,
+                        ':sort_order' => $fieldOrder,
+                        ':created_at' => $timestamp,
+                        ':updated_at' => $timestamp,
+                    ]);
+                    $fieldId = (int) $this->pdo->lastInsertId();
+                }
                 if ($fieldId < 1) {
                     throw new RuntimeException('Could not persist extraction field.');
                 }
+                $deleteRuleSets->execute([':data_field_id' => $fieldId]);
 
                 $ruleSets = is_array($field['ruleSets'] ?? null) ? $field['ruleSets'] : [];
                 if ($ruleSets === []) {
@@ -262,6 +291,40 @@ final class ExtractionFieldRepository
 
         $persistFields($customFields, 'custom');
         $persistFields($predefinedFields, 'predefined');
+
+        $deleteRemovedField = $this->pdo->prepare(
+            'DELETE FROM archiving_data_fields WHERE id = :id'
+        );
+        foreach ($existingFields as $lookupKey => $fieldId) {
+            if (!isset($seenFieldKeys[$lookupKey])) {
+                $deleteRemovedField->execute([':id' => (int) $fieldId]);
+            }
+        }
+    }
+
+    private function existingFieldIdsByTypeAndKey(string $scope): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT id, field_type, field_key
+            FROM archiving_data_fields
+            WHERE rules_scope = :rules_scope'
+        );
+        $statement->execute([':rules_scope' => $scope]);
+        $rows = $statement->fetchAll();
+        $ids = [];
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $id = isset($row['id']) ? (int) $row['id'] : 0;
+            $fieldType = is_string($row['field_type'] ?? null) ? trim((string) $row['field_type']) : '';
+            $fieldKey = is_string($row['field_key'] ?? null) ? trim((string) $row['field_key']) : '';
+            if ($id > 0 && $fieldType !== '' && $fieldKey !== '') {
+                $ids[$fieldType . ':' . $fieldKey] = $id;
+            }
+        }
+
+        return $ids;
     }
 
     private function loadRuleSetsForFieldIds(array $fieldIds): array

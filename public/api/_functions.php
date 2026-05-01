@@ -388,6 +388,46 @@ function extraction_field_repository_instance(): ?\Docflow\Archiving\ExtractionF
     return $repository;
 }
 
+function label_repository_instance(): ?\Docflow\Archiving\LabelRepository
+{
+    static $initialized = false;
+    static $repository = null;
+
+    if ($initialized) {
+        return $repository;
+    }
+
+    $initialized = true;
+    try {
+        $pdo = \Docflow\Database\Connection::make();
+        $repository = new \Docflow\Archiving\LabelRepository($pdo);
+    } catch (Throwable $e) {
+        $repository = null;
+    }
+
+    return $repository;
+}
+
+function document_metadata_repository_instance(): ?\Docflow\Jobs\DocumentMetadataRepository
+{
+    static $initialized = false;
+    static $repository = null;
+
+    if ($initialized) {
+        return $repository;
+    }
+
+    $initialized = true;
+    try {
+        $pdo = \Docflow\Database\Connection::make();
+        $repository = new \Docflow\Jobs\DocumentMetadataRepository($pdo);
+    } catch (Throwable $e) {
+        $repository = null;
+    }
+
+    return $repository;
+}
+
 function job_sender_snapshot_ids(string $jobId): ?array
 {
     $normalizedId = trim($jobId);
@@ -475,6 +515,7 @@ function sync_job_analysis_snapshot(string $jobId, array $autoResult, ?string $a
         return;
     }
 
+    $previousAutoResult = job_analysis_snapshot($normalizedId);
     try {
         $repository->upsertAnalysisSnapshot(
             $normalizedId,
@@ -483,6 +524,255 @@ function sync_job_analysis_snapshot(string $jobId, array $autoResult, ?string $a
         );
     } catch (Throwable $e) {
         // Best effort for now. job.json remains the fallback while this migration lands.
+    }
+
+    sync_document_metadata_from_auto_transition(
+        $normalizedId,
+        is_array($previousAutoResult) ? normalize_auto_archiving_result($previousAutoResult) : null,
+        normalize_auto_archiving_result($autoResult)
+    );
+}
+
+function document_metadata_label_ids(string $jobId): ?array
+{
+    $repository = document_metadata_repository_instance();
+    if ($repository === null) {
+        return null;
+    }
+
+    try {
+        $labelIds = $repository->findLabelIds($jobId);
+    } catch (Throwable $e) {
+        return null;
+    }
+
+    return is_array($labelIds) ? normalize_stored_job_label_ids($labelIds) : null;
+}
+
+function persist_document_metadata_label_ids(string $jobId, array $labelIds): void
+{
+    $repository = document_metadata_repository_instance();
+    if ($repository === null) {
+        return;
+    }
+
+    try {
+        $repository->replaceLabels($jobId, normalize_stored_job_label_ids($labelIds));
+    } catch (Throwable $e) {
+        // job.json remains the compatibility fallback.
+    }
+}
+
+function document_metadata_actual_data_values(string $jobId): ?array
+{
+    $repository = document_metadata_repository_instance();
+    if ($repository === null) {
+        return null;
+    }
+
+    try {
+        $selections = $repository->findDataSelections($jobId);
+    } catch (Throwable $e) {
+        return null;
+    }
+
+    return is_array($selections) ? $selections : null;
+}
+
+function normalize_document_actual_data_values(mixed $input): array
+{
+    if (!is_array($input)) {
+        return [];
+    }
+
+    $resolved = [];
+    foreach ($input as $fieldKey => $selection) {
+        $normalizedKey = is_string($fieldKey) ? trim($fieldKey) : '';
+        if ($normalizedKey === '' || !is_array($selection)) {
+            continue;
+        }
+        $values = normalize_auto_archiving_field_value_list($selection['values'] ?? []);
+        $primaryValue = is_scalar($selection['primaryValue'] ?? null) ? trim((string) $selection['primaryValue']) : '';
+        if ($primaryValue !== '' && !in_array($primaryValue, $values, true)) {
+            $values[] = $primaryValue;
+        }
+        if ($values === []) {
+            continue;
+        }
+        $resolved[$normalizedKey] = [
+            'values' => array_values(array_unique($values)),
+            'primaryValue' => $primaryValue !== '' ? $primaryValue : $values[0],
+        ];
+    }
+
+    ksort($resolved, SORT_NATURAL);
+    return $resolved;
+}
+
+function selected_extraction_field_values_from_document_actual(array $actualValues, array $autoResult): array
+{
+    $autoFields = is_array($autoResult['fields'] ?? null) ? $autoResult['fields'] : [];
+    $fieldKeys = array_values(array_unique(array_merge(array_keys($actualValues), array_keys($autoFields))));
+    sort($fieldKeys, SORT_NATURAL);
+
+    $selected = [];
+    foreach ($fieldKeys as $fieldKey) {
+        $normalizedKey = is_string($fieldKey) ? trim($fieldKey) : '';
+        if ($normalizedKey === '') {
+            continue;
+        }
+        $actual = normalize_auto_archiving_field_value_list($actualValues[$normalizedKey]['values'] ?? []);
+        $auto = normalize_auto_archiving_field_value_list($autoFields[$normalizedKey] ?? []);
+        $manual = array_values(array_filter($actual, static fn(string $value): bool => !in_array($value, $auto, true)));
+        $excluded = array_values(array_filter($auto, static fn(string $value): bool => !in_array($value, $actual, true)));
+        $primaryValue = is_scalar($actualValues[$normalizedKey]['primaryValue'] ?? null) ? trim((string) $actualValues[$normalizedKey]['primaryValue']) : '';
+        if ($primaryValue === '' && $actual !== []) {
+            $primaryValue = $actual[0];
+        }
+        $autoPrimary = $auto[0] ?? '';
+        $primaryIsOverride = $primaryValue !== '' && $primaryValue !== $autoPrimary;
+        if ($manual === [] && $excluded === [] && !$primaryIsOverride) {
+            continue;
+        }
+        $selected[$normalizedKey] = [
+            'manualValues' => $manual,
+            'excludedValues' => $excluded,
+            'primaryValue' => $primaryValue !== '' ? $primaryValue : null,
+        ];
+    }
+
+    return normalize_stored_job_extraction_field_values($selected);
+}
+
+function document_actual_data_values_from_selected(array $job, ?array $selectedValues): array
+{
+    $autoResult = job_auto_archiving_result($job);
+    $autoFields = is_array($autoResult['fields'] ?? null) ? $autoResult['fields'] : [];
+    if ($selectedValues === null) {
+        $selectedValues = [];
+    }
+
+    $fieldKeys = array_values(array_unique(array_merge(array_keys($autoFields), array_keys($selectedValues))));
+    sort($fieldKeys, SORT_NATURAL);
+    $actual = [];
+    foreach ($fieldKeys as $fieldKey) {
+        $normalizedKey = is_string($fieldKey) ? trim($fieldKey) : '';
+        if ($normalizedKey === '') {
+            continue;
+        }
+        $auto = normalize_auto_archiving_field_value_list($autoFields[$normalizedKey] ?? []);
+        $selection = is_array($selectedValues[$normalizedKey] ?? null) ? $selectedValues[$normalizedKey] : [];
+        $excluded = normalize_auto_archiving_field_value_list($selection['excludedValues'] ?? []);
+        $manual = normalize_auto_archiving_field_value_list($selection['manualValues'] ?? []);
+        $values = array_values(array_filter($auto, static fn(string $value): bool => !in_array($value, $excluded, true)));
+        foreach ($manual as $value) {
+            if (!in_array($value, $values, true)) {
+                $values[] = $value;
+            }
+        }
+        $primaryValue = is_scalar($selection['primaryValue'] ?? null) ? trim((string) $selection['primaryValue']) : '';
+        if ($primaryValue !== '' && !in_array($primaryValue, $values, true)) {
+            $values[] = $primaryValue;
+        }
+        if ($values === []) {
+            continue;
+        }
+        $actual[$normalizedKey] = [
+            'values' => $values,
+            'primaryValue' => $primaryValue !== '' && in_array($primaryValue, $values, true) ? $primaryValue : $values[0],
+        ];
+    }
+
+    return $actual;
+}
+
+function persist_document_metadata_data_values(string $jobId, array $actualValues): void
+{
+    $repository = document_metadata_repository_instance();
+    if ($repository === null) {
+        return;
+    }
+
+    try {
+        $repository->replaceDataSelections($jobId, normalize_document_actual_data_values($actualValues));
+    } catch (Throwable $e) {
+        // job.json remains the compatibility fallback.
+    }
+}
+
+function document_actual_data_values_from_auto_result(array $autoResult): array
+{
+    $actual = [];
+    foreach (is_array($autoResult['fields'] ?? null) ? $autoResult['fields'] : [] as $fieldKey => $values) {
+        $normalizedKey = is_string($fieldKey) ? trim($fieldKey) : '';
+        $normalizedValues = normalize_auto_archiving_field_value_list($values);
+        if ($normalizedKey === '' || $normalizedValues === []) {
+            continue;
+        }
+        $actual[$normalizedKey] = [
+            'values' => $normalizedValues,
+            'primaryValue' => $normalizedValues[0],
+        ];
+    }
+
+    return $actual;
+}
+
+function auto_archiving_fields_from_document_actual_data_values(array $actualValues): array
+{
+    $fields = [];
+    foreach (normalize_document_actual_data_values($actualValues) as $fieldKey => $selection) {
+        $values = normalize_auto_archiving_field_value_list($selection['values'] ?? []);
+        if ($values === []) {
+            continue;
+        }
+        $primaryValue = is_scalar($selection['primaryValue'] ?? null) ? trim((string) $selection['primaryValue']) : '';
+        if ($primaryValue !== '' && in_array($primaryValue, $values, true)) {
+            $values = array_values(array_merge(
+                [$primaryValue],
+                array_filter($values, static fn(string $value): bool => $value !== $primaryValue)
+            ));
+        }
+        $fields[$fieldKey] = $values;
+    }
+
+    return $fields;
+}
+
+function auto_archiving_result_with_document_actual_data_values(array $autoResult, array $actualValues): array
+{
+    $fields = auto_archiving_fields_from_document_actual_data_values($actualValues);
+    if ($fields === []) {
+        return normalize_auto_archiving_result($autoResult);
+    }
+
+    $next = $autoResult;
+    $next['fields'] = $fields;
+    return normalize_auto_archiving_result($next);
+}
+
+function document_actual_data_values_equal(array $left, array $right): bool
+{
+    return normalize_document_actual_data_values($left) === normalize_document_actual_data_values($right);
+}
+
+function sync_document_metadata_from_auto_transition(string $jobId, ?array $previousAutoResult, array $nextAutoResult): void
+{
+    $currentLabelIds = document_metadata_label_ids($jobId);
+    $previousLabelIds = $previousAutoResult !== null ? normalize_stored_job_label_ids($previousAutoResult['labels'] ?? []) : null;
+    $nextLabelIds = normalize_stored_job_label_ids($nextAutoResult['labels'] ?? []);
+    if ($currentLabelIds === null || ($previousLabelIds !== null && normalize_stored_job_label_ids($currentLabelIds) === $previousLabelIds)) {
+        persist_document_metadata_label_ids($jobId, $nextLabelIds);
+    }
+
+    $currentDataValues = document_metadata_actual_data_values($jobId);
+    $previousDataValues = $previousAutoResult !== null ? document_actual_data_values_from_auto_result($previousAutoResult) : null;
+    $nextDataValues = document_actual_data_values_from_auto_result($nextAutoResult);
+    if (
+        $currentDataValues === null
+        || ($previousDataValues !== null && document_actual_data_values_equal($currentDataValues, $previousDataValues))
+    ) {
+        persist_document_metadata_data_values($jobId, $nextDataValues);
     }
 }
 
@@ -2620,6 +2910,49 @@ function hydrate_archiving_rules_state_from_field_repository(
     return $state;
 }
 
+function hydrate_archiving_rules_state_from_label_repository(
+    array $state,
+    \Docflow\Archiving\LabelRepository $repository
+): array {
+    $activeRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
+
+    if (!$repository->hasAnyRows()) {
+        $repository->replaceAll(
+            is_array($activeRules['labels'] ?? null) ? $activeRules['labels'] : [],
+            is_array($activeRules['systemLabels'] ?? null) ? $activeRules['systemLabels'] : system_labels_template()
+        );
+    }
+
+    $labelsPayload = $repository->loadAll();
+    $activeRules['labels'] = normalize_labels($labelsPayload['labels'] ?? []);
+    $activeRules['systemLabels'] = normalize_system_labels($labelsPayload['systemLabels'] ?? []);
+
+    $state['activeArchivingRules'] = normalize_archiving_rules_set($activeRules);
+    $state['draftArchivingRules'] = $state['activeArchivingRules'];
+
+    return $state;
+}
+
+function archiving_rules_state_without_normalized_tables(array $state, bool $stripLabels, bool $stripFields): array
+{
+    $normalized = normalize_archiving_rules_state($state);
+    foreach (['activeArchivingRules', 'draftArchivingRules'] as $rulesKey) {
+        if (!is_array($normalized[$rulesKey] ?? null)) {
+            continue;
+        }
+        if ($stripLabels) {
+            $normalized[$rulesKey]['labels'] = [];
+            $normalized[$rulesKey]['systemLabels'] = [];
+        }
+        if ($stripFields) {
+            $normalized[$rulesKey]['fields'] = [];
+            $normalized[$rulesKey]['predefinedFields'] = [];
+        }
+    }
+
+    return $normalized;
+}
+
 function load_archiving_rules_state(): array
 {
     $repository = archiving_rules_state_repository_instance();
@@ -2641,6 +2974,14 @@ function load_archiving_rules_state(): array
     ];
 
     $normalized = normalize_archiving_rules_state($decoded);
+    $labelRepository = label_repository_instance();
+    if ($labelRepository !== null) {
+        try {
+            $normalized = hydrate_archiving_rules_state_from_label_repository($normalized, $labelRepository);
+        } catch (Throwable $e) {
+            // Fall back to the inline JSON state if the dedicated label table is unavailable.
+        }
+    }
     $fieldRepository = extraction_field_repository_instance();
     if ($fieldRepository !== null) {
         try {
@@ -2661,7 +3002,22 @@ function load_archiving_rules_state(): array
 function save_archiving_rules_state(array $state): array
 {
     $normalized = normalize_archiving_rules_state($state);
+    $labelRepository = label_repository_instance();
+    $labelsPersistedInRepository = false;
+    if ($labelRepository !== null) {
+        try {
+            $labelRepository->replaceAll(
+                is_array($normalized['activeArchivingRules']['labels'] ?? null) ? $normalized['activeArchivingRules']['labels'] : [],
+                is_array($normalized['activeArchivingRules']['systemLabels'] ?? null) ? $normalized['activeArchivingRules']['systemLabels'] : system_labels_template()
+            );
+            $normalized = hydrate_archiving_rules_state_from_label_repository($normalized, $labelRepository);
+            $labelsPersistedInRepository = true;
+        } catch (Throwable $e) {
+            // Keep inline JSON persistence working even if the dedicated label table is temporarily unavailable.
+        }
+    }
     $fieldRepository = extraction_field_repository_instance();
+    $fieldsPersistedInRepository = false;
     if ($fieldRepository !== null) {
         try {
             $fieldRepository->replaceScopes(
@@ -2669,6 +3025,7 @@ function save_archiving_rules_state(array $state): array
                 is_array($normalized['activeArchivingRules'] ?? null) ? $normalized['activeArchivingRules'] : []
             );
             $normalized = hydrate_archiving_rules_state_from_field_repository($normalized, $fieldRepository);
+            $fieldsPersistedInRepository = true;
         } catch (Throwable $e) {
             // Keep inline JSON persistence working even if the dedicated field tables are temporarily unavailable.
         }
@@ -2678,10 +3035,11 @@ function save_archiving_rules_state(array $state): array
         throw new RuntimeException('Archiving rules state repository is unavailable.');
     }
 
+    $storedState = archiving_rules_state_without_normalized_tables($normalized, $labelsPersistedInRepository, $fieldsPersistedInRepository);
     $repository->replaceState(
-        (int) ($normalized['activeArchivingRulesVersion'] ?? 1),
-        is_array($normalized['activeArchivingRules'] ?? null) ? $normalized['activeArchivingRules'] : [],
-        is_array($normalized['activeArchivingRules'] ?? null) ? $normalized['activeArchivingRules'] : []
+        (int) ($storedState['activeArchivingRulesVersion'] ?? 1),
+        is_array($storedState['activeArchivingRules'] ?? null) ? $storedState['activeArchivingRules'] : [],
+        is_array($storedState['activeArchivingRules'] ?? null) ? $storedState['activeArchivingRules'] : []
     );
     return $normalized;
 }
@@ -3626,8 +3984,11 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
         $value = $payload['selectedLabelIds'];
         if ($value === null) {
             unset($job['selectedLabelIds']);
+            persist_document_metadata_label_ids($jobId, normalize_stored_job_label_ids(job_auto_archiving_result($job)['labels'] ?? []));
         } else {
-            $job['selectedLabelIds'] = normalize_selected_job_label_ids_payload($value, $knownLabelIds);
+            $normalizedLabelIds = normalize_selected_job_label_ids_payload($value, $knownLabelIds);
+            $job['selectedLabelIds'] = $normalizedLabelIds;
+            persist_document_metadata_label_ids($jobId, $normalizedLabelIds);
         }
     }
 
@@ -3635,10 +3996,19 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
         $value = $payload['selectedExtractionFieldValues'];
         if ($value === null) {
             unset($job['selectedExtractionFieldValues']);
+            persist_document_metadata_data_values(
+                $jobId,
+                document_actual_data_values_from_selected($job, null)
+            );
         } else {
-            $job['selectedExtractionFieldValues'] = normalize_selected_job_extraction_field_values_payload(
+            $normalizedFieldValues = normalize_selected_job_extraction_field_values_payload(
                 $value,
                 known_job_extraction_field_keys()
+            );
+            $job['selectedExtractionFieldValues'] = $normalizedFieldValues;
+            persist_document_metadata_data_values(
+                $jobId,
+                document_actual_data_values_from_selected($job, $normalizedFieldValues)
             );
         }
     }
@@ -12426,13 +12796,26 @@ function current_approved_archiving_for_job(array $job): array
     }
 
     $normalized = job_auto_archiving_result($job);
+    $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+    $storedDocumentLabelIds = $jobId !== '' ? document_metadata_label_ids($jobId) : null;
+    $storedDocumentDataValues = $jobId !== '' ? document_metadata_actual_data_values($jobId) : null;
+    if (is_array($storedDocumentDataValues)) {
+        $normalized = auto_archiving_result_with_document_actual_data_values($normalized, $storedDocumentDataValues);
+    } elseif (array_key_exists('selectedExtractionFieldValues', $job)) {
+        $normalized = auto_archiving_result_with_document_actual_data_values(
+            $normalized,
+            document_actual_data_values_from_selected($job, normalize_stored_job_extraction_field_values($job['selectedExtractionFieldValues']))
+        );
+    }
 
     $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null) ? trim((string) $job['selectedClientDirName']) : '';
     $selectedSenderId = resolve_active_sender_id(isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
     $selectedFolderId = is_string($job['selectedFolderId'] ?? null) ? trim((string) $job['selectedFolderId']) : '';
-    $selectedLabelIds = array_key_exists('selectedLabelIds', $job)
+    $selectedLabelIds = is_array($storedDocumentLabelIds)
+        ? $storedDocumentLabelIds
+        : (array_key_exists('selectedLabelIds', $job)
         ? normalize_stored_job_label_ids($job['selectedLabelIds'])
-        : null;
+        : null);
     $filename = is_string($job['filename'] ?? null) ? trim((string) $job['filename']) : '';
 
     if ($selectedClientDirName !== '') {
@@ -12467,6 +12850,16 @@ function current_approved_archiving_for_job(array $job): array
 function approved_archiving_from_archive_request(array $job, array $autoResult, array $payload, array $archiveFolders): array
 {
     $approved = normalize_auto_archiving_result($autoResult);
+    $jobId = is_string($job['id'] ?? null) ? trim((string) $job['id']) : '';
+    $storedDocumentDataValues = $jobId !== '' ? document_metadata_actual_data_values($jobId) : null;
+    if (is_array($storedDocumentDataValues)) {
+        $approved = auto_archiving_result_with_document_actual_data_values($approved, $storedDocumentDataValues);
+    } elseif (array_key_exists('selectedExtractionFieldValues', $job)) {
+        $approved = auto_archiving_result_with_document_actual_data_values(
+            $approved,
+            document_actual_data_values_from_selected($job, normalize_stored_job_extraction_field_values($job['selectedExtractionFieldValues']))
+        );
+    }
     $selectedClientDirName = array_key_exists('selectedClientDirName', $payload)
         ? (is_string($payload['selectedClientDirName'] ?? null) ? trim((string) $payload['selectedClientDirName']) : '')
         : (is_string($job['selectedClientDirName'] ?? null) ? trim((string) $job['selectedClientDirName']) : '');
@@ -15678,17 +16071,24 @@ function build_job_state_entry(
     $selectedFolderId = is_string($job['selectedFolderId'] ?? null)
         ? trim((string) $job['selectedFolderId'])
         : null;
-    $selectedLabelIds = array_key_exists('selectedLabelIds', $job)
+    $isArchived = ($job['archived'] ?? false) === true;
+    $baseAutoResult = job_auto_archiving_result($job);
+    $storedDocumentLabelIds = document_metadata_label_ids($id);
+    $selectedLabelIds = is_array($storedDocumentLabelIds)
+        ? $storedDocumentLabelIds
+        : (array_key_exists('selectedLabelIds', $job)
         ? normalize_stored_job_label_ids($job['selectedLabelIds'])
-        : null;
-    $selectedExtractionFieldValues = array_key_exists('selectedExtractionFieldValues', $job)
+        : null);
+    $storedDocumentDataValues = document_metadata_actual_data_values($id);
+    $selectedExtractionFieldValues = is_array($storedDocumentDataValues)
+        ? selected_extraction_field_values_from_document_actual($storedDocumentDataValues, $baseAutoResult)
+        : (array_key_exists('selectedExtractionFieldValues', $job)
         ? normalize_stored_job_extraction_field_values($job['selectedExtractionFieldValues'])
-        : null;
+        : null);
     $filename = is_string($job['filename'] ?? null)
         ? trim((string) $job['filename'])
         : null;
-    $isArchived = ($job['archived'] ?? false) === true;
-    $storedAutoResult = $isArchived ? [] : job_auto_archiving_result($job);
+    $storedAutoResult = $isArchived ? [] : $baseAutoResult;
     $liveAutoResult = is_array($analysis['autoArchivingResult'] ?? null)
         ? $analysis['autoArchivingResult']
         : [];
