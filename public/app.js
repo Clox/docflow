@@ -3652,12 +3652,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
         if (rows.length === 0) {
           return null;
         }
-        const selection = currentJob ? selectedExtractionFieldSelectionForJob(currentJob, fieldKey) : null;
         return {
           key: typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : normalizedFieldKey,
           name: typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : normalizedFieldKey,
-          selection,
-          primaryValue: currentJob ? primaryExtractionFieldValueForJob(currentJob, normalizedFieldKey) : '',
           rows: rows
             .slice()
             .sort((left, right) => {
@@ -3691,7 +3688,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Datafält', 'Primär', 'Värde', 'Träff', 'Straff', 'Säkerhet'].forEach((label) => {
+  ['Datafält', 'Värde', 'Träff', 'Straff', 'Säkerhet'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Säkerhet') {
@@ -4088,7 +4085,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
         const separatorRow = document.createElement('tr');
         separatorRow.className = 'matches-group-separator';
         const separatorCell = document.createElement('td');
-        separatorCell.colSpan = 6;
+        separatorCell.colSpan = 5;
         separatorCell.textContent = '';
         separatorRow.appendChild(separatorCell);
         tbody.appendChild(separatorRow);
@@ -4096,10 +4093,6 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
 
     fieldGroup.rows.forEach((row, rowIndex) => {
       const tr = document.createElement('tr');
-      tr.classList.toggle('is-primary', row.primary === true);
-      if (currentJob && selectedJobLabelsEditable(currentJob)) {
-        tr.classList.add('is-clickable');
-      }
       if (rowIndex === 0) {
         tr.classList.add('matches-group-start');
       }
@@ -4118,57 +4111,23 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
         tr.appendChild(nameCell);
       }
 
-      const primaryCell = document.createElement('td');
-      primaryCell.className = 'matches-field-primary-cell';
-      const primaryRadio = document.createElement('input');
-      primaryRadio.type = 'radio';
-      primaryRadio.name = `matches-field-primary-${fieldGroup.key}`;
-      primaryRadio.checked = row.primary === true;
-      primaryRadio.disabled = !currentJob || !selectedJobLabelsEditable(currentJob);
-      primaryRadio.setAttribute('aria-label', `Välj ${String(row.value)} som primärt värde`);
-      primaryRadio.title = row.primary === true ? 'Primärt värde' : 'Välj som primärt värde';
-      primaryRadio.addEventListener('change', async () => {
-        if (!currentJob || !selectedJobLabelsEditable(currentJob)) {
-          return;
-        }
-        try {
-          const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(currentJob));
-          const nextSelection = setSelectedExtractionFieldPrimaryValue(
-            currentJob,
-            fieldGroup.key,
-            row.value,
-            { addToManual: row.accepted !== true }
-          );
-          if (!nextSelection) {
-            return;
-          }
-          currentSelections[fieldGroup.key] = nextSelection;
-          await persistSelectedJobExtractionFieldValues(currentSelections);
-        } catch (error) {
-          alert(error.message || 'Kunde inte uppdatera datafält.');
-        }
-      });
-      primaryCell.appendChild(primaryRadio);
-      tr.appendChild(primaryCell);
-
       const valueCell = document.createElement('td');
       valueCell.className = 'matches-group-detail-start';
+      if (currentJob && selectedJobLabelsEditable(currentJob)) {
+        valueCell.classList.add('is-clickable');
+        valueCell.addEventListener('click', async () => {
+          try {
+            const currentSelections = normalizeSelectedExtractionFieldValues(effectiveSelectedExtractionFieldValues(currentJob));
+            currentSelections[fieldGroup.key] = replaceSelectedExtractionFieldValue(currentJob, fieldGroup.key, '', row.value);
+            await persistSelectedJobExtractionFieldValues(currentSelections);
+          } catch (error) {
+            alert(error.message || 'Kunde inte uppdatera datafält.');
+          }
+        });
+      }
       const valueText = document.createElement('span');
       valueText.textContent = String(row.value);
       valueCell.appendChild(valueText);
-      if (row.primary === true) {
-        const primaryBadge = document.createElement('span');
-        primaryBadge.className = 'matches-hit-row-badge';
-        primaryBadge.textContent = 'Primärt';
-        valueCell.appendChild(document.createTextNode(' '));
-        valueCell.appendChild(primaryBadge);
-      } else if (row.manual === true) {
-        const manualBadge = document.createElement('span');
-        manualBadge.className = 'matches-hit-row-badge';
-        manualBadge.textContent = 'Manuellt';
-        valueCell.appendChild(document.createTextNode(' '));
-        valueCell.appendChild(manualBadge);
-      }
       tr.appendChild(valueCell);
 
       const hitCell = document.createElement('td');
@@ -4184,15 +4143,6 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       confidenceCell.className = 'is-numeric';
       confidenceCell.textContent = formatMatchConfidence(row);
       tr.appendChild(confidenceCell);
-
-      const selectRow = () => {
-        if (!primaryRadio.disabled && !primaryRadio.checked) {
-          primaryRadio.click();
-        }
-      };
-      [valueCell, hitCell, penaltiesCell, confidenceCell].forEach((cell) => {
-        cell.addEventListener('click', selectRow);
-      });
 
       tbody.appendChild(tr);
     });
