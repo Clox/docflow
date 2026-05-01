@@ -24,7 +24,7 @@ final class LabelRepository
     public function loadAll(): array
     {
         $statement = $this->pdo->query(
-            'SELECT id, name, description, min_score, is_system, rules_json
+            'SELECT id, name, description, min_score, is_system, system_label_key, rules_json
             FROM archiving_labels
             ORDER BY is_system DESC, name ASC, id ASC'
         );
@@ -41,7 +41,8 @@ final class LabelRepository
                 continue;
             }
             if ((int) ($row['is_system'] ?? 0) === 1) {
-                $systemLabels[$label['id']] = $label;
+                $systemLabelKey = is_string($label['systemLabelKey'] ?? null) ? trim((string) $label['systemLabelKey']) : '';
+                $systemLabels[$systemLabelKey !== '' ? $systemLabelKey : $label['id']] = $label;
             } else {
                 $labels[] = $label;
             }
@@ -64,6 +65,7 @@ final class LabelRepository
                     description,
                     min_score,
                     is_system,
+                    system_label_key,
                     rules_json,
                     created_at,
                     updated_at
@@ -73,6 +75,7 @@ final class LabelRepository
                     :description,
                     :min_score,
                     :is_system,
+                    :system_label_key,
                     :rules_json,
                     :created_at,
                     :updated_at
@@ -82,6 +85,7 @@ final class LabelRepository
                     description = excluded.description,
                     min_score = excluded.min_score,
                     is_system = excluded.is_system,
+                    system_label_key = excluded.system_label_key,
                     rules_json = excluded.rules_json,
                     updated_at = excluded.updated_at'
             );
@@ -140,6 +144,7 @@ final class LabelRepository
             'name' => $name,
             'description' => is_string($row['description'] ?? null) ? (string) $row['description'] : '',
             'minScore' => max(1, (int) ($row['min_score'] ?? 1)),
+            'systemLabelKey' => is_string($row['system_label_key'] ?? null) ? trim((string) $row['system_label_key']) : '',
             'rules' => $rules,
         ];
     }
@@ -158,6 +163,9 @@ final class LabelRepository
         if (!is_string($rulesJson)) {
             throw new RuntimeException('Could not encode label rules.');
         }
+        $systemLabelKey = $isSystem && is_string($label['systemLabelKey'] ?? null)
+            ? trim((string) $label['systemLabelKey'])
+            : '';
 
         $insert->execute([
             ':id' => $id,
@@ -165,6 +173,7 @@ final class LabelRepository
             ':description' => is_string($label['description'] ?? null) ? (string) $label['description'] : '',
             ':min_score' => max(1, (int) ($label['minScore'] ?? 1)),
             ':is_system' => $isSystem ? 1 : 0,
+            ':system_label_key' => $systemLabelKey,
             ':rules_json' => $rulesJson,
             ':created_at' => $timestamp,
             ':updated_at' => $timestamp,

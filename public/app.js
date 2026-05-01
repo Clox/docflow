@@ -443,6 +443,7 @@ const lastKnownJobDisplayById = new Map();
 const pinnedProcessingJobIds = new Set();
 const pinnedProcessingOrderById = new Map();
 const reprocessWatchJobIds = new Set();
+let reprocessWatchRefreshTimer = null;
 const ocrPageImageCache = new Map();
 const jobListNodeByKey = new Map();
 const seenFailedJobKeys = new Set();
@@ -599,6 +600,33 @@ function pruneReprocessWatchJobs() {
       reprocessWatchJobIds.delete(jobId);
     }
   });
+}
+
+function scheduleReprocessWatchRefresh(delayMs = 1500) {
+  if (reprocessWatchRefreshTimer !== null) {
+    return;
+  }
+  if (reprocessWatchJobIds.size === 0) {
+    return;
+  }
+
+  reprocessWatchRefreshTimer = window.setTimeout(async () => {
+    reprocessWatchRefreshTimer = null;
+    if (reprocessWatchJobIds.size === 0) {
+      return;
+    }
+
+    try {
+      await fetchState({ force: true });
+    } catch (error) {
+      console.error('[Docflow] Reprocess watchdog refresh failed', error);
+    } finally {
+      pruneReprocessWatchJobs();
+      if (reprocessWatchJobIds.size > 0) {
+        scheduleReprocessWatchRefresh(2500);
+      }
+    }
+  }, delayMs);
 }
 
 function syncSelectOptions(selectEl, placeholderText, options, lastSignature) {
@@ -6674,6 +6702,7 @@ function watchReprocessedJobIdsFromPayload(payload) {
     applyOptimisticReprocess(jobId, mode, { forceOcr });
     reprocessWatchJobIds.add(jobId);
   });
+  scheduleReprocessWatchRefresh(1200);
   requestStateRefresh(0);
 }
 
@@ -11115,6 +11144,12 @@ function applyState(nextState) {
     }
   });
   pruneReprocessWatchJobs();
+  if (reprocessWatchJobIds.size === 0 && reprocessWatchRefreshTimer !== null) {
+    window.clearTimeout(reprocessWatchRefreshTimer);
+    reprocessWatchRefreshTimer = null;
+  } else if (reprocessWatchJobIds.size > 0) {
+    scheduleReprocessWatchRefresh(1200);
+  }
   updateBulkResetWatchFromState();
   syncChromeExtensionOrganizationQueueRuntimeFromState();
   syncChromeExtensionPayeeQueueRuntimeFromState();
@@ -17566,7 +17601,25 @@ function renderSingleLabelEditor(container, options = {}) {
       if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
         return;
       }
-      draft.rules[ruleIndex].score = sanitizeInt(scoreInput.value, 1);
+      const rawValue = String(scoreInput.value || '').trim();
+      if (rawValue === '' || rawValue === '-' || rawValue === '+') {
+        return;
+      }
+      const parsedScore = Number.parseInt(rawValue, 10);
+      if (!Number.isFinite(parsedScore)) {
+        return;
+      }
+      draft.rules[ruleIndex].score = parsedScore;
+      updateSettingsActionButtons();
+    });
+    scoreInput.addEventListener('blur', () => {
+      const draft = currentLabelDraftForEditor(options);
+      if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
+        return;
+      }
+      const parsedScore = sanitizeInt(scoreInput.value, 1);
+      draft.rules[ruleIndex].score = parsedScore;
+      scoreInput.value = String(parsedScore);
       updateSettingsActionButtons();
     });
 
@@ -20614,6 +20667,7 @@ async function reprocessSingleJob(jobId, mode, options = {}) {
     }
 
     reprocessWatchJobIds.add(jobId);
+    scheduleReprocessWatchRefresh(1200);
     requestStateRefresh(0);
   } catch (error) {
     reprocessWatchJobIds.delete(jobId);
