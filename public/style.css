@@ -3812,11 +3812,6 @@ body.is-resizing-sidebar {
   min-width: 0;
 }
 
-.client-fields .category-remove {
-  grid-column: 1 / -1;
-  justify-self: end;
-}
-
 .client-fields input,
 .client-fields select {
   width: 100%;
@@ -4152,7 +4147,7 @@ body.is-resizing-sidebar {
 
 .sender-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
 }
 
@@ -4273,6 +4268,101 @@ body.is-resizing-sidebar {
 
 .rule-body {
   position: relative;
+}
+
+.tree-node-actions {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px auto;
+  min-height: 24px;
+}
+
+.icon-delete-button,
+.tree-remove-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #a11;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+  opacity: 0.42;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.icon-delete-button::before,
+.tree-remove-button::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  display: block;
+  background-color: currentColor;
+  -webkit-mask: url('/assets/icons/trash.svg') center / contain no-repeat;
+  mask: url('/assets/icons/trash.svg') center / contain no-repeat;
+}
+
+.icon-delete-button:hover,
+.icon-delete-button:focus-visible,
+.tree-remove-button:hover,
+.tree-remove-button:focus-visible {
+  opacity: 1;
+}
+
+.tree-node.is-hover-active > .tree-row > .tree-body > .tree-node-actions > .icon-delete-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .tree-node-actions > .tree-remove-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .extraction-field-editor-actions > .icon-delete-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .extraction-field-editor-actions > .tree-remove-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .sender-header > .icon-delete-button--node,
+.tree-node.is-hover-active > .tree-row > .tree-body > .sender-header > .tree-remove-button--node {
+  opacity: 1;
+}
+
+.tree-row:hover > .icon-delete-button--row,
+.matching-row:hover > .icon-delete-button--row,
+.extraction-field-normalization-replacement-row:hover > .icon-delete-button--row,
+.tree-row:hover > .tree-body > .rule-fields > .icon-delete-button--row,
+.tree-row:hover > .tree-body > .extraction-field-rule-set-fields > .icon-delete-button--row,
+.tree-row:hover > .tree-body > .sender-organization-fields > .icon-delete-button--row,
+.tree-row:hover > .tree-body > .sender-payment-fields > .icon-delete-button--row,
+.tree-row:hover > .tree-remove-button--row,
+.matching-row:hover > .tree-remove-button--row,
+.extraction-field-normalization-replacement-row:hover > .tree-remove-button--row,
+.tree-row:hover > .tree-body > .rule-fields > .tree-remove-button--row,
+.tree-row:hover > .tree-body > .extraction-field-rule-set-fields > .tree-remove-button--row,
+.tree-row:hover > .tree-body > .sender-organization-fields > .tree-remove-button--row,
+.tree-row:hover > .tree-body > .sender-payment-fields > .tree-remove-button--row,
+.icon-delete-button--row:hover,
+.icon-delete-button--row:focus-visible,
+.tree-remove-button--row:hover,
+.tree-remove-button--row:focus-visible {
+  opacity: 1;
+}
+
+.icon-delete-button--node,
+.tree-remove-button--node {
+  align-self: flex-start;
+  justify-self: end;
+}
+
+.icon-delete-button--row,
+.tree-remove-button--row {
+  justify-self: end;
+}
+
+.icon-delete-button:disabled,
+.tree-remove-button:disabled {
+  opacity: 0.22;
+  cursor: default;
 }
 
 .tree-body-icon {
@@ -4523,10 +4613,12 @@ body.is-resizing-sidebar {
 }
 
 .extraction-field-editor-actions {
+  width: 100%;
   display: flex;
   justify-content: flex-end;
   align-items: center;
   min-height: 18px;
+  margin: 0 0 8px;
 }
 
 .extraction-field-copy-button {
@@ -4631,22 +4723,6 @@ body.is-resizing-sidebar {
   padding: 6px 8px;
   border: 1px solid #ccc;
   border-radius: 4px;
-}
-
-.category-remove,
-.rule-remove {
-  font: inherit;
-  padding: 4px 8px;
-  border: 1px solid #c44;
-  border-radius: 4px;
-  color: #a11;
-  background: #fff;
-  cursor: pointer;
-}
-
-.category-remove:hover,
-.rule-remove:hover {
-  background: #fff1f1;
 }
 
 .category-fields {
@@ -4992,7 +5068,8 @@ body.is-resizing-sidebar {
 }
 
 .rule-remove-placeholder {
-  width: 66px;
+  width: 24px;
+  min-width: 24px;
 }
 
 .archive-icon-button {

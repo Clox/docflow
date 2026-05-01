@@ -15157,6 +15157,43 @@ function createTreeRow(options = {}) {
   return row;
 }
 
+let treeNodeHoverStateInstalled = false;
+
+function installTreeNodeHoverState() {
+  if (treeNodeHoverStateInstalled || !(document instanceof Document)) {
+    return;
+  }
+  treeNodeHoverStateInstalled = true;
+
+  document.addEventListener('pointerover', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const hoveredNode = target ? target.closest('.tree-node') : null;
+    if (hoveredNode instanceof HTMLElement) {
+      hoveredNode.classList.add('is-hover-active');
+    }
+  });
+
+  document.addEventListener('pointerout', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const hoveredNode = target ? target.closest('.tree-node') : null;
+    if (!(hoveredNode instanceof HTMLElement)) {
+      return;
+    }
+
+    const relatedTarget = event.relatedTarget instanceof Element ? event.relatedTarget : null;
+    if (relatedTarget instanceof Element && hoveredNode.contains(relatedTarget)) {
+      const relatedNode = relatedTarget.closest('.tree-node');
+      if (relatedNode === hoveredNode) {
+        return;
+      }
+    }
+
+    hoveredNode.classList.remove('is-hover-active');
+  });
+}
+
+installTreeNodeHoverState();
+
 function syncTreeChildrenConnector(children) {
   if (!(children instanceof HTMLElement)) {
     return;
@@ -15242,6 +15279,33 @@ function appendTreeBodyIcon(bodyEl, className) {
   return icon;
 }
 
+function createTrashButton(options = {}) {
+  const title = typeof options.title === 'string' && options.title.trim() !== ''
+    ? options.title.trim()
+    : 'Ta bort';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = [
+    'icon-delete-button',
+    'tree-remove-button',
+    options.variant === 'node' ? 'icon-delete-button--node tree-remove-button--node' : 'icon-delete-button--row tree-remove-button--row',
+    typeof options.className === 'string' ? options.className.trim() : '',
+  ].filter((part) => part !== '').join(' ');
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.addEventListener('mousedown', (event) => {
+    event.stopPropagation();
+  });
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof options.onClick === 'function') {
+      options.onClick(event);
+    }
+  });
+  return button;
+}
+
 function appendTreeBodyLock(bodyEl, title = 'Låst etikett') {
   const lock = document.createElement('span');
   lock.className = 'tree-body-icon-lock';
@@ -15277,6 +15341,9 @@ function renderClientsEditor() {
     const clientBody = document.createElement('div');
     clientBody.className = 'tree-body folder-body';
     appendTreeBodyIcon(clientBody, 'tree-body-icon client-card-icon');
+
+    const clientActions = document.createElement('div');
+    clientActions.className = 'tree-node-actions';
 
     const fields = document.createElement('div');
     fields.className = 'client-fields';
@@ -15361,14 +15428,14 @@ function renderClientsEditor() {
       updateSettingsActionButtons();
     });
 
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'category-remove';
-    removeButton.textContent = 'Ta bort huvudman';
-    removeButton.addEventListener('click', () => {
-      clientsDraft.splice(rowIndex, 1);
-      renderClientsEditor();
-      updateSettingsActionButtons();
+    const removeButton = createTrashButton({
+      variant: 'node',
+      title: 'Ta bort huvudman',
+      onClick: () => {
+        clientsDraft.splice(rowIndex, 1);
+        renderClientsEditor();
+        updateSettingsActionButtons();
+      },
     });
 
     fields.appendChild(createFloatingField('Visningsnamn/Mappnamn', folderInput));
@@ -15376,8 +15443,9 @@ function renderClientsEditor() {
     fields.appendChild(createFloatingField('Tilltalsnamn', preferredFirstNameSelect));
     fields.appendChild(createFloatingField('Efternamn', lastNameInput));
     fields.appendChild(createFloatingField('Personnummer', pinInput));
-    fields.appendChild(removeButton);
 
+    clientActions.appendChild(removeButton);
+    clientBody.appendChild(clientActions);
     clientBody.appendChild(fields);
     clientRow.appendChild(clientBody);
     clientNode.appendChild(clientRow);
@@ -15457,17 +15525,17 @@ function renderMatchingEditor() {
     rowEl.appendChild(createFloatingField('Till', toInput, 'matching-char-field'));
 
     if (rowIndex > 0) {
-      const removeButton = document.createElement('button');
-      removeButton.type = 'button';
-      removeButton.className = 'rule-remove';
-      removeButton.textContent = 'Ta bort';
-      removeButton.addEventListener('click', () => {
-        matchingDraft.splice(rowIndex, 1);
-        if (matchingDraft.length === 0) {
-          matchingDraft.push(defaultReplacement());
-        }
-        renderMatchingEditor();
-        updateSettingsActionButtons();
+      const removeButton = createTrashButton({
+        variant: 'row',
+        title: 'Ta bort ersättning',
+        onClick: () => {
+          matchingDraft.splice(rowIndex, 1);
+          if (matchingDraft.length === 0) {
+            matchingDraft.push(defaultReplacement());
+          }
+          renderMatchingEditor();
+          updateSettingsActionButtons();
+        },
       });
       rowEl.appendChild(removeButton);
     } else {
@@ -15542,18 +15610,6 @@ function buildSenderEditorNode(row, rowIndex) {
     updateSettingsActionButtons();
   });
 
-  const removeButton = document.createElement('button');
-  removeButton.type = 'button';
-  removeButton.className = 'category-remove';
-  removeButton.textContent = 'Ta bort avsändare';
-  removeButton.addEventListener('click', () => {
-    selectedSenderUiKeys.delete(currentSenderUiKey);
-    collapsedSenderUiKeys.delete(currentSenderUiKey);
-    sendersDraft.splice(rowIndex, 1);
-    renderSendersEditor();
-    updateSettingsActionButtons();
-  });
-
   const senderHeader = document.createElement('div');
   senderHeader.className = 'sender-header';
 
@@ -15591,7 +15647,19 @@ function buildSenderEditorNode(row, rowIndex) {
   senderSummaryFields.className = 'sender-summary-fields';
   senderSummaryFields.appendChild(senderSelectCheckbox);
   senderSummaryFields.appendChild(createFloatingField('Namn', nameInput));
+  const removeButton = createTrashButton({
+    variant: 'node',
+    title: 'Ta bort avsändare',
+    onClick: () => {
+      selectedSenderUiKeys.delete(currentSenderUiKey);
+      collapsedSenderUiKeys.delete(currentSenderUiKey);
+      sendersDraft.splice(rowIndex, 1);
+      renderSendersEditor();
+      updateSettingsActionButtons();
+    },
+  });
   senderHeader.appendChild(senderSummaryFields);
+  senderHeader.appendChild(removeButton);
   senderBody.appendChild(senderHeader);
 
   const senderDetails = document.createElement('div');
@@ -15601,7 +15669,6 @@ function buildSenderEditorNode(row, rowIndex) {
   const senderFields = document.createElement('div');
   senderFields.className = 'sender-fields';
   senderFields.appendChild(createFloatingField('Domän', domainInput));
-  senderFields.appendChild(removeButton);
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   senderDetails.appendChild(senderFields);
 
@@ -15643,14 +15710,14 @@ function buildSenderEditorNode(row, rowIndex) {
       updateSettingsActionButtons();
     });
 
-    const removeOrganizationButton = document.createElement('button');
-    removeOrganizationButton.type = 'button';
-    removeOrganizationButton.className = 'category-remove';
-    removeOrganizationButton.textContent = 'Ta bort';
-    removeOrganizationButton.addEventListener('click', () => {
-      sendersDraft[rowIndex].organizationNumbers.splice(organizationIndex, 1);
-      renderSendersEditor();
-      updateSettingsActionButtons();
+    const removeOrganizationButton = createTrashButton({
+      variant: 'row',
+      title: 'Ta bort organisationsnummer',
+      onClick: () => {
+        sendersDraft[rowIndex].organizationNumbers.splice(organizationIndex, 1);
+        renderSendersEditor();
+        updateSettingsActionButtons();
+      },
     });
 
     organizationFields.appendChild(createFloatingField('Org.nr', organizationNumberInput));
@@ -15719,14 +15786,14 @@ function buildSenderEditorNode(row, rowIndex) {
       updateSettingsActionButtons();
     });
 
-    const removePaymentButton = document.createElement('button');
-    removePaymentButton.type = 'button';
-    removePaymentButton.className = 'category-remove';
-    removePaymentButton.textContent = 'Ta bort';
-    removePaymentButton.addEventListener('click', () => {
-      sendersDraft[rowIndex].paymentNumbers.splice(paymentIndex, 1);
-      renderSendersEditor();
-      updateSettingsActionButtons();
+    const removePaymentButton = createTrashButton({
+      variant: 'row',
+      title: 'Ta bort betalnummer',
+      onClick: () => {
+        sendersDraft[rowIndex].paymentNumbers.splice(paymentIndex, 1);
+        renderSendersEditor();
+        updateSettingsActionButtons();
+      },
     });
 
     paymentFields.appendChild(createFloatingField('Typ', typeSelect));
@@ -16073,13 +16140,13 @@ function renderSenderMergeEditor() {
       senderMergeState.draft.organizationNumbers[organizationIndex].organizationName = organizationNameInput.value;
     });
 
-    const removeOrganizationButton = document.createElement('button');
-    removeOrganizationButton.type = 'button';
-    removeOrganizationButton.className = 'category-remove';
-    removeOrganizationButton.textContent = 'Ta bort';
-    removeOrganizationButton.addEventListener('click', () => {
-      senderMergeState.draft.organizationNumbers.splice(organizationIndex, 1);
-      renderSenderMergeEditor();
+    const removeOrganizationButton = createTrashButton({
+      variant: 'row',
+      title: 'Ta bort organisationsnummer',
+      onClick: () => {
+        senderMergeState.draft.organizationNumbers.splice(organizationIndex, 1);
+        renderSenderMergeEditor();
+      },
     });
 
     organizationFields.appendChild(createFloatingField('Org.nr', organizationNumberInput));
@@ -16145,13 +16212,13 @@ function renderSenderMergeEditor() {
       senderMergeState.draft.paymentNumbers[paymentIndex].number = formatted;
     });
 
-    const removePaymentButton = document.createElement('button');
-    removePaymentButton.type = 'button';
-    removePaymentButton.className = 'category-remove';
-    removePaymentButton.textContent = 'Ta bort';
-    removePaymentButton.addEventListener('click', () => {
-      senderMergeState.draft.paymentNumbers.splice(paymentIndex, 1);
-      renderSenderMergeEditor();
+    const removePaymentButton = createTrashButton({
+      variant: 'row',
+      title: 'Ta bort betalnummer',
+      onClick: () => {
+        senderMergeState.draft.paymentNumbers.splice(paymentIndex, 1);
+        renderSenderMergeEditor();
+      },
     });
 
     paymentFields.appendChild(createFloatingField('Typ', typeSelect));
@@ -16327,18 +16394,18 @@ function renderOcrPdfSubstitutionsEditor() {
     rowEl.appendChild(createFloatingField('Till', toInput, 'matching-char-field'));
 
     if (rowIndex > 0) {
-      const removeButton = document.createElement('button');
-      removeButton.type = 'button';
-      removeButton.className = 'rule-remove';
-      removeButton.textContent = 'Ta bort';
-      removeButton.addEventListener('click', () => {
-        ocrPdfSubstitutionsDraft.splice(rowIndex, 1);
-        if (ocrPdfSubstitutionsDraft.length === 0) {
-          ocrPdfSubstitutionsDraft.push(defaultReplacement());
-        }
-        renderOcrPdfSubstitutionsEditor();
-        renderOcrProcessingCommand();
-        updateSettingsActionButtons();
+      const removeButton = createTrashButton({
+        variant: 'row',
+        title: 'Ta bort ersättning',
+        onClick: () => {
+          ocrPdfSubstitutionsDraft.splice(rowIndex, 1);
+          if (ocrPdfSubstitutionsDraft.length === 0) {
+            ocrPdfSubstitutionsDraft.push(defaultReplacement());
+          }
+          renderOcrPdfSubstitutionsEditor();
+          renderOcrProcessingCommand();
+          updateSettingsActionButtons();
+        },
       });
       rowEl.appendChild(removeButton);
     } else {
@@ -16416,7 +16483,6 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
     }
   });
   fieldActions.appendChild(copyButton);
-  fieldBody.appendChild(fieldActions);
 
   const fields = document.createElement('div');
   fields.className = 'extraction-field-header-fields';
@@ -16440,43 +16506,44 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   fields.appendChild(createFloatingField('Namn', nameInput));
 
   if (allowRemove) {
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'category-remove';
-    removeButton.textContent = 'Ta bort datafält';
-    removeButton.addEventListener('click', async () => {
-      const fieldDraft = sanitizeExtractionField(collection[index], index);
-      const fieldKey = typeof fieldDraft.key === 'string' ? fieldDraft.key.trim() : '';
-      if (fieldKey !== '') {
-        try {
-          const response = await fetch('/api/check-extraction-field-removal.php', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              fieldKey,
-            })
-          });
-          const payload = await response.json().catch(() => null);
-          if (!response.ok || !payload || payload.ok !== true) {
-            throw new Error(payload && typeof payload.error === 'string'
-              ? payload.error
-              : 'Kunde inte kontrollera om datafältet kan tas bort.');
+    const removeButton = createTrashButton({
+      variant: 'node',
+      title: 'Ta bort datafält',
+      onClick: async () => {
+        const fieldDraft = sanitizeExtractionField(collection[index], index);
+        const fieldKey = typeof fieldDraft.key === 'string' ? fieldDraft.key.trim() : '';
+        if (fieldKey !== '') {
+          try {
+            const response = await fetch('/api/check-extraction-field-removal.php', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                fieldKey,
+              })
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok || !payload || payload.ok !== true) {
+              throw new Error(payload && typeof payload.error === 'string'
+                ? payload.error
+                : 'Kunde inte kontrollera om datafältet kan tas bort.');
+            }
+          } catch (error) {
+            alert(error.message || 'Kunde inte ta bort datafältet.');
+            return;
           }
-        } catch (error) {
-          alert(error.message || 'Kunde inte ta bort datafältet.');
-          return;
         }
-      }
-      collection.splice(index, 1);
-      renderExtractionFieldsEditor();
-      renderSystemExtractionFieldsEditor();
-      updateSettingsActionButtons();
+        collection.splice(index, 1);
+        renderExtractionFieldsEditor();
+        renderSystemExtractionFieldsEditor();
+        updateSettingsActionButtons();
+      },
     });
-    fields.appendChild(removeButton);
+    fieldActions.appendChild(removeButton);
   }
 
+  fieldBody.appendChild(fieldActions);
   fieldBody.appendChild(fields);
 
   if (!readOnly) {
@@ -16501,6 +16568,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const ruleFields = document.createElement('div');
       ruleFields.className = 'extraction-field-rule-set-fields';
       let removeRuleSetButton = null;
+      const ruleSetActions = document.createElement('div');
+      ruleSetActions.className = 'tree-node-actions';
 
       const typeSelect = document.createElement('select');
       typeSelect.className = 'extraction-field-type-select';
@@ -16778,17 +16847,16 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
           regexToggleButton.title = 'Regex';
           regexToggleButton.setAttribute('aria-label', 'Regex');
 
-          const removeReplacementButton = document.createElement('button');
-          removeReplacementButton.type = 'button';
-          removeReplacementButton.className = 'category-remove extraction-field-normalization-replacement-remove';
-          removeReplacementButton.textContent = '';
-          removeReplacementButton.setAttribute('aria-label', 'Ta bort ersättning');
-          removeReplacementButton.title = 'Ta bort ersättning';
-          removeReplacementButton.addEventListener('click', () => {
-            normalizationReplacementsValues.splice(replacementIndex, 1);
-            syncNormalizationReplacementsToDraft();
-            renderNormalizationReplacementRows();
-            updateSettingsActionButtons();
+          const removeReplacementButton = createTrashButton({
+            variant: 'row',
+            className: 'extraction-field-normalization-replacement-remove',
+            title: 'Ta bort ersättning',
+            onClick: () => {
+              normalizationReplacementsValues.splice(replacementIndex, 1);
+              syncNormalizationReplacementsToDraft();
+              renderNormalizationReplacementRows();
+              updateSettingsActionButtons();
+            },
           });
 
           const findInputWrap = createInlineInputWithAccessories(findInput, [regexToggleButton], 'extraction-field-alias-input-wrap');
@@ -16881,22 +16949,25 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       amountPositionSelect.addEventListener('change', syncRuleSetUi);
 
       if (ruleSetIndex > 0) {
-        removeRuleSetButton = document.createElement('button');
-        removeRuleSetButton.type = 'button';
-        removeRuleSetButton.className = 'rule-remove';
-        removeRuleSetButton.textContent = 'Ta bort regeluppsättning';
-        removeRuleSetButton.addEventListener('click', () => {
-          collection[index].ruleSets.splice(ruleSetIndex, 1);
-          if (collection[index].ruleSets.length === 0) {
-            collection[index].ruleSets.push(defaultExtractionFieldRuleSet());
-          }
-          renderExtractionFieldsEditor();
-          updateSettingsActionButtons();
+        removeRuleSetButton = createTrashButton({
+          variant: 'node',
+          title: 'Ta bort regeluppsättning',
+          onClick: () => {
+            collection[index].ruleSets.splice(ruleSetIndex, 1);
+            if (collection[index].ruleSets.length === 0) {
+              collection[index].ruleSets.push(defaultExtractionFieldRuleSet());
+            }
+            renderExtractionFieldsEditor();
+            updateSettingsActionButtons();
+          },
         });
-        ruleFields.appendChild(removeRuleSetButton);
+        ruleSetActions.appendChild(removeRuleSetButton);
       }
 
       syncRuleSetUi();
+      if (ruleSetActions.childElementCount > 0) {
+        ruleBody.appendChild(ruleSetActions);
+      }
       ruleBody.appendChild(ruleFields);
       ruleRow.appendChild(ruleBody);
       ruleNode.appendChild(ruleRow);
@@ -17251,6 +17322,32 @@ function renderSingleLabelEditor(container, options = {}) {
     }
   });
   labelActions.appendChild(copyButton);
+
+  const removeButton = !builtIn
+    ? createTrashButton({
+      variant: 'node',
+      title: 'Ta bort etikett',
+      onClick: async () => {
+        const labelIndex = Number.isInteger(options.labelIndex) ? options.labelIndex : -1;
+        if (labelIndex < 0) {
+          return;
+        }
+        const labelDraft = sanitizeLabel(labelsDraft[labelIndex]);
+        try {
+          await ensureLabelRemovalAllowed(labelDraft.id);
+        } catch (error) {
+          alert(error.message || 'Kunde inte ta bort etiketten.');
+          return;
+        }
+        labelsDraft.splice(labelIndex, 1);
+        renderLabelsEditor();
+        updateSettingsActionButtons();
+      },
+    })
+    : null;
+  if (removeButton) {
+    labelActions.appendChild(removeButton);
+  }
   labelBody.appendChild(labelActions);
 
   const fields = document.createElement('div');
@@ -17314,30 +17411,6 @@ function renderSingleLabelEditor(container, options = {}) {
     updateSettingsActionButtons();
   });
   fields.appendChild(createFloatingField('Beskrivning', descriptionInput, 'label-description-field'));
-
-  if (!builtIn) {
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'category-remove';
-    removeButton.textContent = 'Ta bort etikett';
-    removeButton.addEventListener('click', async () => {
-      const labelIndex = Number.isInteger(options.labelIndex) ? options.labelIndex : -1;
-      if (labelIndex < 0) {
-        return;
-      }
-      const labelDraft = sanitizeLabel(labelsDraft[labelIndex]);
-      try {
-        await ensureLabelRemovalAllowed(labelDraft.id);
-      } catch (error) {
-        alert(error.message || 'Kunde inte ta bort etiketten.');
-        return;
-      }
-      labelsDraft.splice(labelIndex, 1);
-      renderLabelsEditor();
-      updateSettingsActionButtons();
-    });
-    fields.appendChild(removeButton);
-  }
 
   labelBody.appendChild(fields);
 
@@ -17504,21 +17577,21 @@ function renderSingleLabelEditor(container, options = {}) {
       updateSettingsActionButtons();
     });
 
-    const removeRuleButton = document.createElement('button');
-    removeRuleButton.type = 'button';
-    removeRuleButton.className = 'rule-remove';
-    removeRuleButton.textContent = 'Ta bort';
-    removeRuleButton.addEventListener('click', () => {
-      const draft = currentLabelDraftForEditor(options);
-      if (!draft || !Array.isArray(draft.rules)) {
-        return;
-      }
-      draft.rules.splice(ruleIndex, 1);
-      if (draft.rules.length === 0) {
-        draft.rules.push(defaultRule());
-      }
-      renderLabelsEditor();
-      updateSettingsActionButtons();
+    const removeRuleButton = createTrashButton({
+      variant: 'row',
+      title: 'Ta bort regel',
+      onClick: () => {
+        const draft = currentLabelDraftForEditor(options);
+        if (!draft || !Array.isArray(draft.rules)) {
+          return;
+        }
+        draft.rules.splice(ruleIndex, 1);
+        if (draft.rules.length === 0) {
+          draft.rules.push(defaultRule());
+        }
+        renderLabelsEditor();
+        updateSettingsActionButtons();
+      },
     });
 
     ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
@@ -19343,6 +19416,9 @@ function renderArchiveStructureEditor() {
     body.className = 'tree-body folder-body';
     appendTreeBodyIcon(body, 'tree-body-icon tree-body-icon-folder');
 
+    const folderActions = document.createElement('div');
+    folderActions.className = 'tree-node-actions';
+
     const fields = document.createElement('div');
     fields.className = 'folder-fields';
 
@@ -19376,19 +19452,20 @@ function renderArchiveStructureEditor() {
       }
     });
 
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'archive-danger-button archive-compact-button';
-    removeButton.textContent = 'Ta bort mapp';
-    removeButton.addEventListener('click', () => {
-      archiveFoldersDraft.splice(folderIndex, 1);
-      renderArchiveStructureEditor();
-      updateSettingsActionButtons();
+    const removeButton = createTrashButton({
+      variant: 'node',
+      title: 'Ta bort mapp',
+      onClick: () => {
+        archiveFoldersDraft.splice(folderIndex, 1);
+        renderArchiveStructureEditor();
+        updateSettingsActionButtons();
+      },
     });
 
     fields.appendChild(createFloatingField('Namn', nameInput));
     fields.appendChild(createFloatingField('Prioritet', priorityInput));
-    fields.appendChild(removeButton);
+    folderActions.appendChild(removeButton);
+    body.appendChild(folderActions);
     body.appendChild(fields);
 
     const templateLabel = document.createElement('div');
@@ -19432,6 +19509,9 @@ function renderArchiveStructureEditor() {
       templateBody.className = 'tree-body category-body';
       appendTreeBodyIcon(templateBody, 'tree-body-icon tree-body-icon-category');
 
+      const templateActions = document.createElement('div');
+      templateActions.className = 'tree-node-actions';
+
       const templateFields = document.createElement('div');
       templateFields.className = 'category-fields category-fields--wide';
 
@@ -19454,16 +19534,17 @@ function renderArchiveStructureEditor() {
         updateSettingsActionButtons();
       }));
 
-      const removeTemplateButton = document.createElement('button');
-      removeTemplateButton.type = 'button';
-      removeTemplateButton.className = 'archive-danger-button archive-compact-button';
-      removeTemplateButton.textContent = 'Ta bort filnamnsregel';
-      removeTemplateButton.addEventListener('click', () => {
-        archiveFoldersDraft[folderIndex].filenameTemplates.splice(templateIndex, 1);
-        renderArchiveStructureEditor();
-        updateSettingsActionButtons();
+      const removeTemplateButton = createTrashButton({
+        variant: 'node',
+        title: 'Ta bort filnamnsregel',
+        onClick: () => {
+          archiveFoldersDraft[folderIndex].filenameTemplates.splice(templateIndex, 1);
+          renderArchiveStructureEditor();
+          updateSettingsActionButtons();
+        },
       });
-      templateFields.appendChild(removeTemplateButton);
+      templateActions.appendChild(removeTemplateButton);
+      templateBody.appendChild(templateActions);
       templateBody.appendChild(templateFields);
 
       const templateConditionsLabel = document.createElement('div');
