@@ -165,10 +165,18 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                 >
                   <span id="job-labels-summary" class="job-labels-summary"></span>
                 </button>
-                <button id="reset-labels-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ etiketter">↺</button>
+                <button id="reset-labels-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslagna etiketter och datafält" aria-label="Återställ etiketter och datafält">↺</button>
               </div>
               <div id="job-labels-focus-hint" class="job-labels-field-hint" aria-hidden="true">Tryck Enter för att visa/redigera etiketter och datafält</div>
               <div id="job-labels-overlay" class="job-labels-overlay" aria-hidden="true">
+                <button
+                  id="job-labels-overlay-close"
+                  class="job-labels-overlay-close"
+                  type="button"
+                  aria-label="Stäng etiketter och datafält"
+                  title="Stäng"
+                >×</button>
+                <div class="job-labels-section-title">Etiketter</div>
                 <div class="job-labels-combobox">
                   <input
                     id="job-labels-combobox"

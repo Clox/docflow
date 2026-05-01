@@ -2068,6 +2068,49 @@ body.is-resizing-sidebar {
   pointer-events: auto;
 }
 
+.job-labels-section-title {
+  padding-right: 32px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.job-labels-overlay-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.job-labels-overlay-close:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.job-labels-overlay-close:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+.job-labels-overlay:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 3px;
+}
+
 .job-labels-combobox {
   position: relative;
 }
@@ -2352,10 +2395,41 @@ body.is-resizing-sidebar {
   box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
 }
 
+.job-extraction-field-add-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px 11px 11px;
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.job-extraction-field-add-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
 .job-extraction-field-add-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(160px, 1fr) minmax(0, 1.4fr) auto;
   gap: 8px;
+}
+
+.job-extraction-field-add-select {
+  min-width: 0;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font: inherit;
+  background: #fff;
+}
+
+.job-extraction-field-add-select:focus {
+  outline: none;
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
 }
 
 .job-labels-selected:focus {
