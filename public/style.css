@@ -109,7 +109,7 @@ body.is-resizing-sidebar {
   align-items: flex-start;
   gap: 0;
   min-width: 0;
-  padding-top: 1px;
+  padding-top: 10px;
 }
 
 .sidebar-title-label,
