@@ -3147,6 +3147,24 @@ body.is-resizing-sidebar {
   color: #4b5563;
 }
 
+.label-import-source-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.label-import-file-button {
+  flex: 0 0 auto;
+}
+
+.label-import-file-name {
+  min-width: 0;
+  color: #64748b;
+  font-size: 13px;
+  word-break: break-word;
+}
+
 .label-import-dialog-body textarea {
   width: 100%;
   min-height: 260px;
@@ -3164,6 +3182,12 @@ body.is-resizing-sidebar {
   color: #b91c1c;
   font-size: 13px;
   min-height: 18px;
+}
+
+.settings-label-imported {
+  outline: 2px solid rgba(59, 130, 246, 0.35);
+  outline-offset: 2px;
+  border-radius: 10px;
 }
 
 .label-import-dialog .panel-actions {
@@ -5973,22 +5997,83 @@ body.is-resizing-sidebar {
 
 .settings-footer-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-end;
   gap: 12px;
   padding-top: 10px;
   border-top: 1px solid #eee;
 }
 
+.settings-panel-section-actions-host {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-footer-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .settings-panel-actions-host {
-  flex: 1;
   min-width: 0;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
 }
 
 .settings-panel-actions-host > .panel-actions {
   margin-top: 0;
+}
+
+.settings-footer-row .categories-actions,
+.settings-footer-row .senders-selected-count-row,
+.settings-footer-row .settings-section-actions {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.settings-footer-row .settings-section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-footer-row .settings-section-actions.backup-section-actions {
+  gap: 8px;
+}
+
+.settings-footer-row .senders-clear-selection {
+  font: inherit;
+  font-size: 13px;
+  color: #2563eb;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.settings-footer-row .senders-clear-selection:hover {
+  color: #1d4ed8;
+}
+
+.settings-footer-row .senders-clear-selection:disabled {
+  color: #9ca3af;
+  cursor: default;
+  text-decoration: none;
+  background: none;
+}
+
+.settings-section-actions-placeholder {
+  display: none;
 }
 
 .settings-panel-actions-placeholder {

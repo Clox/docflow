@@ -384,8 +384,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         <div id="settings-panel-backup" class="settings-panel hidden"></div>
 
         <div class="settings-footer-row">
-          <div id="settings-panel-actions-host" class="settings-panel-actions-host"></div>
-          <button id="settings-close" type="button">Stäng</button>
+          <div id="settings-panel-section-actions-host" class="settings-panel-section-actions-host"></div>
+          <div class="settings-footer-right">
+            <div id="settings-panel-actions-host" class="settings-panel-actions-host"></div>
+            <button id="settings-close" type="button">Stäng</button>
+          </div>
         </div>
       </section>
       <button id="settings-dialog-resize-handle" class="settings-dialog-resize-handle" type="button" aria-label="Ändra storlek på inställningsfönstret" title="Ändra storlek"></button>
@@ -396,7 +399,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <h3>Huvudmän</h3>
     <p>Redigera huvudmän som lagras i databasen.</p>
     <div id="clients-list" class="categories-list"></div>
-    <div class="categories-actions">
+    <div class="categories-actions settings-section-actions">
       <button id="clients-add-row" type="button">Lägg till huvudman</button>
     </div>
     <div class="panel-actions">
@@ -436,11 +439,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         </div>
       </div>
       <div id="senders-list" class="categories-list"></div>
-      <div class="senders-selected-count-row">
-        <span id="senders-selected-count" class="senders-selected-count">Antal markerade avsändare: 0</span>
-        <button id="senders-clear-selection" class="senders-clear-selection" type="button">(Avmarkera alla)</button>
-      </div>
-      <div class="categories-actions senders-footer-actions">
+      <div class="settings-section-actions senders-footer-actions">
+        <div class="senders-selected-count-row">
+          <span id="senders-selected-count" class="senders-selected-count">Antal markerade avsändare: 0</span>
+          <button id="senders-clear-selection" class="senders-clear-selection" type="button">(Avmarkera alla)</button>
+        </div>
         <button id="senders-add-row" type="button">Lägg till avsändare</button>
         <button id="senders-merge-selected" type="button" disabled>Slå ihop...</button>
       </div>
@@ -526,7 +529,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       <p>Definiera teckenersättningar för OCR-text före matchning.</p>
       <p>Exempel: mappa <code>é</code> till <code>ö</code> så att <code>Férfallodatum</code> kan matcha <code>Förfallodatum</code>.</p>
       <div id="matching-list" class="matching-list"></div>
-      <div class="categories-actions">
+      <div class="categories-actions settings-section-actions">
         <button id="matching-add-row" type="button">Lägg till ersättning</button>
       </div>
     </div>
@@ -632,7 +635,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       <p>Substitutions nedan ändrar OCR-texten innan den byggs in i PDF-filens textlager via Docflows OCRmyPDF-plugin.</p>
       <p>Exempel: mappa <code>0K:</code> till <code>OK:</code> eller korrigera återkommande felstavade ord redan i PDF-texten.</p>
       <div id="ocr-pdf-substitutions-list" class="matching-list"></div>
-      <div class="categories-actions">
+      <div class="categories-actions settings-section-actions">
         <button id="ocr-pdf-substitutions-add-row" type="button">Lägg till substitution</button>
       </div>
     </div>
@@ -656,7 +659,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </label>
     </div>
     <div id="archive-structure-list" class="categories-list"></div>
-    <div class="categories-actions">
+    <div class="categories-actions settings-section-actions">
       <button id="archive-structure-add-folder" type="button">Lägg till mapp</button>
     </div>
 
@@ -675,13 +678,13 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     </div>
     <div id="labels-view-custom" class="archive-view">
       <div id="labels-list" class="categories-list"></div>
-      <div class="categories-actions">
-        <button id="labels-add-row" type="button">Lägg till etikett</button>
-        <button id="labels-import-row" type="button">Importera etikett</button>
-      </div>
     </div>
     <div id="labels-view-system" class="archive-view hidden">
       <div id="system-label-editor" class="categories-list"></div>
+    </div>
+    <div class="settings-section-actions labels-section-actions">
+      <button id="labels-add-row" type="button">Lägg till etikett</button>
+      <button id="labels-import-row" type="button">Importera etikett</button>
     </div>
     <div class="panel-actions">
       <button id="labels-cancel" class="button-danger" type="button">Avbryt</button>
@@ -702,7 +705,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <div id="extraction-fields-view-system" class="archive-view hidden">
       <div id="system-extraction-fields-editor" class="categories-list"></div>
     </div>
-    <div class="categories-actions">
+    <div class="categories-actions settings-section-actions">
       <button id="extraction-fields-add-row" type="button">Lägg till datafält</button>
     </div>
     <div class="panel-actions">
@@ -806,7 +809,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <p>Exportera eller importera hela konfigurationen. Exporten innehåller huvudmän, avsändare, etiketter, datafält, arkivstruktur, textigenkänning och textmatchning. Sökvägar och jobb ingår inte.</p>
     <p>Varje export sparas också automatiskt lokalt. Vid import och återställning skapas alltid en backup av nuvarande konfiguration innan något skrivs över.</p>
     <input id="settings-backup-file" type="file" accept=".json,application/json" hidden>
-    <div class="panel-actions">
+    <div class="settings-section-actions backup-section-actions">
       <button id="settings-backup-export" type="button">Exportera konfiguration</button>
       <button id="settings-backup-import" type="button">Importera konfiguration</button>
     </div>

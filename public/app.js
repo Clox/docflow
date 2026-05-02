@@ -77,6 +77,7 @@ const settingsDialogEl = document.getElementById('settings-dialog');
 const settingsDialogResizeHandleEl = document.getElementById('settings-dialog-resize-handle');
 const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]'));
 const archivingReviewSettingsTabEl = document.querySelector('[data-settings-tab="archiving-review"]');
+const settingsPanelSectionActionsHostEl = document.getElementById('settings-panel-section-actions-host');
 const settingsPanelActionsHostEl = document.getElementById('settings-panel-actions-host');
 const settingsCloseEl = document.getElementById('settings-close');
 const selectedJobPanelEl = document.getElementById('selected-job-panel');
@@ -392,6 +393,7 @@ let ocrPdfSubstitutionsBaselineJson = JSON.stringify([]);
 let rapidocrInstallPollTimer = null;
 let activeSettingsTabId = 'clients';
 let activeSettingsFooterPanelId = '';
+let activeSettingsSectionFooterPanelId = '';
 let activeLabelsTabId = 'labels';
 let clientsDraft = [];
 let clientsBaselineJson = '[]';
@@ -9366,10 +9368,29 @@ function showLabelImportDialog() {
     body.className = 'label-import-dialog-body';
 
     const description = document.createElement('p');
-    description.textContent = 'Klistra in en etikett i samma JSON-format som kopiera-knappen exporterar.';
+    description.textContent = 'Klistra in en etikett i samma JSON-format som kopiera-knappen exporterar, eller välj en JSON-fil.';
+
+    const sourceRow = document.createElement('div');
+    sourceRow.className = 'label-import-source-row';
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.json,application/json';
+    fileInput.hidden = true;
+
+    const fileButton = document.createElement('button');
+    fileButton.type = 'button';
+    fileButton.className = 'label-import-file-button';
+    fileButton.textContent = 'Välj fil';
+
+    const fileName = document.createElement('div');
+    fileName.className = 'label-import-file-name';
+    fileName.textContent = 'Ingen fil vald';
+
+    sourceRow.append(fileButton, fileName, fileInput);
 
     const textarea = document.createElement('textarea');
-    textarea.placeholder = '{\n  "name": "Överförmyndarnämnd",\n  "description": "…",\n  "minScore": 3,\n  "rules": [ ... ]\n}';
+    textarea.placeholder = '{\n  "id": "forsakringsbrev",\n  "name": "Försäkringsbrev",\n  "minScore": 4,\n  "rules": [ ... ]\n}';
     textarea.spellcheck = false;
 
     const error = document.createElement('div');
@@ -9389,7 +9410,7 @@ function showLabelImportDialog() {
     importButton.textContent = 'Importera';
 
     actions.append(cancelButton, importButton);
-    body.append(description, textarea, error);
+    body.append(description, sourceRow, textarea, error);
     dialog.append(title, body, actions);
     overlay.appendChild(dialog);
 
@@ -9408,7 +9429,7 @@ function showLabelImportDialog() {
         textarea.focus();
         return;
       }
-      finish(result.label);
+      finish(result);
     };
 
     const onKeyDown = (event) => {
@@ -9434,6 +9455,22 @@ function showLabelImportDialog() {
     });
     cancelButton.addEventListener('click', () => finish(null));
     importButton.addEventListener('click', submit);
+    fileButton.addEventListener('click', () => {
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      if (!file) {
+        return;
+      }
+      try {
+        textarea.value = await openFileAsText(file);
+        fileName.textContent = file.name;
+        error.textContent = '';
+      } catch (fileError) {
+        error.textContent = fileError instanceof Error ? fileError.message : 'Kunde inte läsa filen.';
+      }
+    });
 
     document.addEventListener('keydown', onKeyDown, true);
     document.body.appendChild(overlay);
@@ -11863,6 +11900,77 @@ function restoreSettingsFooterActions(panelId) {
   panel._settingsFooterActionPlaceholder = null;
 }
 
+function restoreSettingsSectionFooterActions(panelId) {
+  if (!panelId) {
+    return;
+  }
+  const panel = settingsPanelEl(panelId);
+  if (!(panel instanceof HTMLElement)) {
+    return;
+  }
+  const actionRow = panel._settingsSectionFooterActionRow;
+  const placeholder = panel._settingsSectionFooterActionPlaceholder;
+  if (!(actionRow instanceof HTMLElement) || !(placeholder instanceof HTMLElement) || placeholder.parentNode !== panel) {
+    return;
+  }
+  placeholder.replaceWith(actionRow);
+  panel._settingsSectionFooterActionRow = null;
+  panel._settingsSectionFooterActionPlaceholder = null;
+}
+
+function moveSettingsPanelActionRowToHost(panel, hostEl, selectorClass, rowPropertyName, placeholderPropertyName) {
+  if (!(panel instanceof HTMLElement) || !(hostEl instanceof HTMLElement)) {
+    return false;
+  }
+  const actionRow = Array.from(panel.children).find((child) => child instanceof HTMLElement && child.classList.contains(selectorClass));
+  if (!(actionRow instanceof HTMLElement)) {
+    return false;
+  }
+  const placeholder = document.createElement('div');
+  placeholder.className = `${selectorClass}-placeholder`;
+  panel.replaceChild(placeholder, actionRow);
+  panel[rowPropertyName] = actionRow;
+  panel[placeholderPropertyName] = placeholder;
+  hostEl.appendChild(actionRow);
+  return true;
+}
+
+function syncSettingsSectionFooterActions(tabId) {
+  if (!(settingsPanelSectionActionsHostEl instanceof HTMLElement)) {
+    return;
+  }
+  if (activeSettingsSectionFooterPanelId === tabId) {
+    const activePanel = settingsPanelEl(tabId);
+    const activeRow = activePanel instanceof HTMLElement ? activePanel._settingsSectionFooterActionRow : null;
+    settingsPanelSectionActionsHostEl.replaceChildren();
+    if (activeRow instanceof HTMLElement) {
+      settingsPanelSectionActionsHostEl.appendChild(activeRow);
+      return;
+    }
+    activeSettingsSectionFooterPanelId = '';
+  }
+  if (activeSettingsSectionFooterPanelId && activeSettingsSectionFooterPanelId !== tabId) {
+    restoreSettingsSectionFooterActions(activeSettingsSectionFooterPanelId);
+  }
+  settingsPanelSectionActionsHostEl.replaceChildren();
+  activeSettingsSectionFooterPanelId = '';
+
+  const panel = settingsPanelEl(tabId);
+  if (!(panel instanceof HTMLElement)) {
+    return;
+  }
+  const moved = moveSettingsPanelActionRowToHost(
+    panel,
+    settingsPanelSectionActionsHostEl,
+    'settings-section-actions',
+    '_settingsSectionFooterActionRow',
+    '_settingsSectionFooterActionPlaceholder'
+  );
+  if (moved) {
+    activeSettingsSectionFooterPanelId = tabId;
+  }
+}
+
 function syncSettingsFooterActions(tabId) {
   if (!(settingsPanelActionsHostEl instanceof HTMLElement)) {
     return;
@@ -11873,6 +11981,7 @@ function syncSettingsFooterActions(tabId) {
     settingsPanelActionsHostEl.replaceChildren();
     if (activeRow instanceof HTMLElement) {
       settingsPanelActionsHostEl.appendChild(activeRow);
+      syncSettingsSectionFooterActions(tabId);
       return;
     }
     activeSettingsFooterPanelId = '';
@@ -11885,19 +11994,20 @@ function syncSettingsFooterActions(tabId) {
 
   const panel = settingsPanelEl(tabId);
   if (!(panel instanceof HTMLElement)) {
+    syncSettingsSectionFooterActions(tabId);
     return;
   }
-  const actionRow = Array.from(panel.children).find((child) => child instanceof HTMLElement && child.classList.contains('panel-actions'));
-  if (!(actionRow instanceof HTMLElement)) {
-    return;
+  const moved = moveSettingsPanelActionRowToHost(
+    panel,
+    settingsPanelActionsHostEl,
+    'panel-actions',
+    '_settingsFooterActionRow',
+    '_settingsFooterActionPlaceholder'
+  );
+  if (moved) {
+    activeSettingsFooterPanelId = tabId;
   }
-  const placeholder = document.createElement('div');
-  placeholder.className = 'settings-panel-actions-placeholder';
-  panel.replaceChild(placeholder, actionRow);
-  panel._settingsFooterActionRow = actionRow;
-  panel._settingsFooterActionPlaceholder = placeholder;
-  settingsPanelActionsHostEl.appendChild(actionRow);
-  activeSettingsFooterPanelId = tabId;
+  syncSettingsSectionFooterActions(tabId);
 }
 
 function mountSettingsPanel(tabId) {
@@ -12285,13 +12395,11 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     labelsImportRowEl.addEventListener('click', async () => {
-      const importedLabel = await showLabelImportDialog();
-      if (!importedLabel) {
-        return;
+      try {
+        await importSingleLabelFromJson();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Kunde inte importera etiketten.');
       }
-      labelsDraft.push(importedLabel);
-      renderLabelsEditor();
-      updateSettingsActionButtons();
     });
     labelsCancelEl.addEventListener('click', () => {
       let parsed = [];
@@ -12724,10 +12832,15 @@ function closeSettingsModal(force = false) {
 
   stopSettingsDialogInteractions();
   restoreSettingsFooterActions(activeSettingsFooterPanelId);
+  restoreSettingsSectionFooterActions(activeSettingsSectionFooterPanelId);
   if (settingsPanelActionsHostEl instanceof HTMLElement) {
     settingsPanelActionsHostEl.replaceChildren();
   }
+  if (settingsPanelSectionActionsHostEl instanceof HTMLElement) {
+    settingsPanelSectionActionsHostEl.replaceChildren();
+  }
   activeSettingsFooterPanelId = '';
+  activeSettingsSectionFooterPanelId = '';
   closeSenderMergeOverlay();
   stopRapidocrInstallPolling();
   settingsModalEl.classList.add('hidden');
@@ -14458,43 +14571,206 @@ function singleLabelValidationError(label, existingLabels = labelsDraft, systemL
 function parseImportedLabelJson(text) {
   const source = typeof text === 'string' ? text.trim() : '';
   if (source === '') {
-    return {
-      error: 'Klistra in en etikett i JSON-format först.'
-    };
+    return { error: 'Klistra in en etikett i JSON-format först.' };
   }
 
   let parsed = null;
   try {
     parsed = JSON.parse(source);
   } catch (error) {
-    return {
-      error: 'JSON kunde inte tolkas.'
-    };
+    return { error: 'JSON kunde inte tolkas.' };
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { error: 'Importerad etikett måste vara ett JSON-objekt.' };
+  }
+
+  const hasRequiredFields = typeof parsed.id === 'string'
+    && parsed.id.trim() !== ''
+    && typeof parsed.name === 'string'
+    && parsed.name.trim() !== ''
+    && Object.prototype.hasOwnProperty.call(parsed, 'minScore')
+    && Array.isArray(parsed.rules)
+    && parsed.rules.length > 0;
+  if (!hasRequiredFields) {
+    return { error: 'Importerad etikett måste innehålla id, name, minScore och rules.' };
+  }
+
+  const systemLabelKey = typeof parsed.systemLabelKey === 'string' ? parsed.systemLabelKey.trim() : '';
+  if (systemLabelKey !== '') {
+    if (!Object.prototype.hasOwnProperty.call(SYSTEM_LABELS, systemLabelKey)) {
+      return { error: `Okänd systemetikett: ${systemLabelKey}` };
+    }
     return {
-      error: 'Importerad etikett måste vara ett JSON-objekt.'
+      label: sanitizeSystemLabelByKey(systemLabelKey, parsed),
+      isSystemLabel: true,
+      systemLabelKey,
     };
   }
 
-  if (!Array.isArray(parsed.rules) || parsed.rules.length === 0) {
+  if (parsed.isSystemLabel === true) {
+    return { error: 'Importerad systemetikett saknar systemLabelKey.' };
+  }
+
+  return {
+    label: sanitizeLabel(parsed),
+    isSystemLabel: false,
+    systemLabelKey: '',
+  };
+}
+
+function openFileAsText(file) {
+  if (!(file instanceof File)) {
+    return Promise.resolve('');
+  }
+  return file.text();
+}
+
+function labelImportConflictDetails(imported) {
+  if (!imported || typeof imported !== 'object' || !imported.label) {
+    return { error: 'Importerad etikett saknas.' };
+  }
+
+  const label = imported.label;
+  const labelId = typeof label.id === 'string' ? label.id.trim() : '';
+  const systemLabelKey = typeof imported.systemLabelKey === 'string' ? imported.systemLabelKey.trim() : '';
+
+  if (systemLabelKey !== '') {
+    if (!Object.prototype.hasOwnProperty.call(systemLabelsDraft, systemLabelKey)) {
+      return { error: `Okänd systemetikett: ${systemLabelKey}` };
+    }
+    const conflictingCustomLabel = labelsDraft.find((row) => sanitizeLabel(row).id === labelId) || null;
+    if (conflictingCustomLabel) {
+      return { error: `Etikett-id "${labelId}" krockar med en befintlig etikett.` };
+    }
     return {
-      error: 'Importerad etikett måste innehålla minst en regel.'
+      kind: 'replace-system',
+      systemLabelKey,
+      labelId,
+      message: `Systemetiketten "${SYSTEM_LABELS[systemLabelKey].name}" finns redan. Ersätt den?`,
     };
   }
 
-  const importedLabel = sanitizeLabel(parsed);
-  const validationError = singleLabelValidationError(importedLabel, labelsDraft, systemLabelsDraft);
-  if (validationError) {
+  const conflictingSystemLabel = Object.values(sanitizeSystemLabels(systemLabelsDraft))
+    .find((row) => sanitizeLabel(row).id === labelId) || null;
+  if (conflictingSystemLabel) {
+    return { error: `Etikett-id "${labelId}" krockar med en systemetikett.` };
+  }
+
+  const existingIndex = labelsDraft.findIndex((row) => sanitizeLabel(row).id === labelId);
+  if (existingIndex >= 0) {
     return {
-      error: validationError
+      kind: 'replace-custom',
+      labelId,
+      existingIndex,
+      message: `Etikett-id "${labelId}" finns redan. Ersätt den befintliga etiketten?`,
     };
   }
 
   return {
-    label: importedLabel
+    kind: 'create-custom',
+    labelId,
   };
+}
+
+function escapeCssAttributeValue(value) {
+  if (window.CSS && typeof window.CSS.escape === 'function') {
+    return window.CSS.escape(value);
+  }
+  return String(value).replace(/["\\]/g, '\\$&');
+}
+
+function importedLabelSelector(imported) {
+  if (!imported || typeof imported !== 'object' || !imported.label) {
+    return '';
+  }
+  const labelId = typeof imported.label.id === 'string' ? imported.label.id.trim() : '';
+  const systemLabelKey = typeof imported.systemLabelKey === 'string' ? imported.systemLabelKey.trim() : '';
+  if (systemLabelKey !== '') {
+    return `[data-system-label-key="${escapeCssAttributeValue(systemLabelKey)}"]`;
+  }
+  if (labelId !== '') {
+    return `[data-label-id="${escapeCssAttributeValue(labelId)}"]`;
+  }
+  return '';
+}
+
+function revealImportedLabelInEditor(imported) {
+  if (!(labelsListEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const selector = importedLabelSelector(imported);
+  if (!selector) {
+    return;
+  }
+
+  const target = labelsListEl.querySelector(selector);
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  target.classList.add('settings-label-imported');
+  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  window.setTimeout(() => {
+    target.classList.remove('settings-label-imported');
+  }, 1800);
+}
+
+async function importSingleLabelFromJson() {
+  const imported = await showLabelImportDialog();
+  if (!imported || !imported.label) {
+    return;
+  }
+
+  const conflict = labelImportConflictDetails(imported);
+  if (typeof conflict.error === 'string' && conflict.error !== '') {
+    alert(conflict.error);
+    return;
+  }
+
+  if ((conflict.kind === 'replace-custom' || conflict.kind === 'replace-system') && conflict.message) {
+    const confirmed = window.confirm(conflict.message);
+    if (!confirmed) {
+      return;
+    }
+  }
+
+  const previousLabelsDraft = labelsDraft.map(sanitizeLabel);
+  const previousSystemLabelsDraft = sanitizeSystemLabels(systemLabelsDraft);
+  const previousBaselineJson = labelsBaselineJson;
+  const previousBuiltInCollapsed = labelsBuiltInCollapsed;
+  const previousCustomCollapsed = labelsCustomCollapsed;
+
+  try {
+    if (imported.isSystemLabel === true && typeof imported.systemLabelKey === 'string' && imported.systemLabelKey.trim() !== '') {
+      const systemLabelKey = imported.systemLabelKey.trim();
+      systemLabelsDraft[systemLabelKey] = imported.label;
+      labelsBuiltInCollapsed = false;
+    } else {
+      const existingIndex = labelsDraft.findIndex((row) => sanitizeLabel(row).id === imported.label.id);
+      if (existingIndex >= 0) {
+        labelsDraft.splice(existingIndex, 1, imported.label);
+      } else {
+        labelsDraft.push(imported.label);
+      }
+      labelsCustomCollapsed = false;
+    }
+
+    renderLabelsEditor();
+    updateSettingsActionButtons();
+    await saveLabels();
+    revealImportedLabelInEditor(imported);
+  } catch (error) {
+    labelsDraft = previousLabelsDraft.map(sanitizeLabel);
+    systemLabelsDraft = sanitizeSystemLabels(previousSystemLabelsDraft);
+    labelsBaselineJson = previousBaselineJson;
+    labelsBuiltInCollapsed = previousBuiltInCollapsed;
+    labelsCustomCollapsed = previousCustomCollapsed;
+    renderLabelsEditor();
+    updateSettingsActionButtons();
+    throw error;
+  }
 }
 
 function sanitizeFilenameTemplateParts(parts, depth = 0) {
@@ -17685,6 +17961,11 @@ function renderSingleLabelEditor(container, options = {}) {
   labelNode.className = 'tree-node tree-category';
   if (builtIn) {
     labelNode.dataset.systemLabel = 'true';
+    if (typeof options.labelKey === 'string' && options.labelKey.trim() !== '') {
+      labelNode.dataset.systemLabelKey = options.labelKey.trim();
+    }
+  } else if (typeof currentLabel.id === 'string' && currentLabel.id.trim() !== '') {
+    labelNode.dataset.labelId = currentLabel.id.trim();
   }
 
   const labelRow = createTreeRow({ markerless: true });
