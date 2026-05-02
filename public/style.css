@@ -1603,6 +1603,11 @@ body.is-resizing-sidebar {
   min-width: 0;
 }
 
+.ocr-toolbar {
+  --ocr-toolbar-control-height: 60px;
+  --ocr-toolbar-content-offset: 76px;
+}
+
 .ocr-search-bar {
   display: inline-flex;
   align-items: center;
@@ -1610,7 +1615,9 @@ body.is-resizing-sidebar {
   min-width: 0;
   max-width: 100%;
   margin-right: 10px;
-  padding: 6px 10px;
+  min-height: var(--ocr-toolbar-control-height);
+  box-sizing: border-box;
+  padding: 4px 10px;
   border: 1px solid #d8dee8;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.96);
@@ -1674,7 +1681,9 @@ body.is-resizing-sidebar {
   align-items: stretch;
   gap: 6px;
   max-width: 100%;
-  padding: 6px;
+  min-height: var(--ocr-toolbar-control-height);
+  box-sizing: border-box;
+  padding: 8px 6px;
   border: 1px solid #d8dee8;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
@@ -1714,12 +1723,12 @@ body.is-resizing-sidebar {
 
 .ocr-toolbar {
   position: absolute;
-  top: 12px;
+  top: 8px;
   left: 12px;
   right: 12px;
   z-index: 3;
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: 12px;
   min-width: 0;
 }
@@ -1728,7 +1737,9 @@ body.is-resizing-sidebar {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 10px;
+  min-height: var(--ocr-toolbar-control-height);
+  box-sizing: border-box;
+  padding: 10px 10px;
   border: 1px solid #d8dee8;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
@@ -1741,6 +1752,22 @@ body.is-resizing-sidebar {
 
 .ocr-search-bar {
   margin-left: 0;
+}
+
+.ocr-search-side {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ocr-search-nav-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .ocr-page-nav,
@@ -1878,6 +1905,7 @@ body.is-resizing-sidebar {
 
 .ocr-search-status {
   font-size: 12px;
+  line-height: 1.2;
   color: #555;
   white-space: nowrap;
 }
@@ -1886,7 +1914,12 @@ body.is-resizing-sidebar {
   display: none;
 }
 
+.ocr-search-status.is-muted {
+  opacity: 0.5;
+}
+
 .ocr-search-status.is-error {
+  opacity: 1;
   color: #a11;
 }
 
@@ -2689,7 +2722,7 @@ body.is-resizing-sidebar {
   position: absolute;
   inset: 0;
   margin: 0;
-  padding: 64px 14px 14px;
+  padding: var(--ocr-toolbar-content-offset, 76px) 14px 14px;
   overflow: auto;
   background: #fafafa;
 }
@@ -2843,7 +2876,7 @@ body.is-resizing-sidebar {
   color: #111;
   overflow: auto;
   scrollbar-width: none;
-  padding-top: 64px;
+  padding-top: var(--ocr-toolbar-content-offset, 76px);
 }
 
 .ocr-highlight-view::-webkit-scrollbar {
@@ -2872,7 +2905,7 @@ body.is-resizing-sidebar {
   white-space: pre;
   word-break: normal;
   font-size: 12px;
-  padding-top: 64px;
+  padding-top: var(--ocr-toolbar-content-offset, 76px);
   z-index: 2;
   background: transparent;
   color: transparent;

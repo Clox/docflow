@@ -11122,9 +11122,10 @@ function setOcrDocumentPages(pages, fallbackText = '', mode = 'text') {
   renderOcrPages();
 }
 
-function setOcrSearchStatus(text, isError = false) {
+function setOcrSearchStatus(text, isError = false, isMuted = false) {
   ocrSearchStatusEl.textContent = text;
   ocrSearchStatusEl.classList.toggle('is-error', isError);
+  ocrSearchStatusEl.classList.toggle('is-muted', !isError && isMuted);
 }
 
 function setOcrSearchButtonsEnabled(enabled) {
@@ -11202,7 +11203,7 @@ function refreshOcrSearch() {
     ocrSearchMatches = [];
     ocrSearchActiveIndex = -1;
     setOcrSearchButtonsEnabled(false);
-    setOcrSearchStatus('');
+    setOcrSearchStatus('0 träffar', false, true);
     renderOcrPages();
     return;
   }
@@ -15824,6 +15825,7 @@ function createRegexToggleInput(inputEl, options = {}, extraClass = '') {
 }
 
 if (ocrSearchBarEl instanceof HTMLElement && ocrSearchInputEl instanceof HTMLInputElement && ocrSearchRegexEl instanceof HTMLInputElement) {
+  const ocrSearchSideEl = ocrSearchBarEl.querySelector('.ocr-search-side');
   const { wrapper: ocrSearchInputWrap, button: ocrSearchRegexButton } = createRegexToggleInput(ocrSearchInputEl, {
     getActive: () => ocrSearchRegexEl.checked === true,
     setActive: (next) => {
@@ -15831,7 +15833,11 @@ if (ocrSearchBarEl instanceof HTMLElement && ocrSearchInputEl instanceof HTMLInp
       refreshOcrSearch();
     },
   }, 'ocr-search-input-wrap');
-  ocrSearchBarEl.insertBefore(ocrSearchInputWrap, ocrSearchPrevEl);
+  if (ocrSearchSideEl instanceof HTMLElement) {
+    ocrSearchBarEl.insertBefore(ocrSearchInputWrap, ocrSearchSideEl);
+  } else {
+    ocrSearchBarEl.insertBefore(ocrSearchInputWrap, ocrSearchPrevEl);
+  }
   ocrSearchRegexEl.addEventListener('change', () => {
     if (typeof ocrSearchRegexButton.syncState === 'function') {
       ocrSearchRegexButton.syncState();

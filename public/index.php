@@ -289,9 +289,13 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <div id="ocr-search-bar" class="ocr-search-bar hidden">
             <input id="ocr-search-input" type="text" placeholder="Sök i OCR">
             <input id="ocr-search-regex" type="checkbox" hidden>
-            <button id="ocr-search-prev" type="button" aria-label="Föregående träff">↑</button>
-            <button id="ocr-search-next" type="button" aria-label="Nästa träff">↓</button>
-            <span id="ocr-search-status" class="ocr-search-status"></span>
+            <div class="ocr-search-side">
+              <div class="ocr-search-nav-row">
+                <button id="ocr-search-prev" type="button" aria-label="Föregående träff">↑</button>
+                <button id="ocr-search-next" type="button" aria-label="Nästa träff">↓</button>
+              </div>
+              <span id="ocr-search-status" class="ocr-search-status"></span>
+            </div>
           </div>
           <div id="ocr-menu-wrap" class="ocr-toolbar-menu-wrap hidden">
             <button
