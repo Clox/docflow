@@ -366,6 +366,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <div class="settings-nav-group-title">System</div>
           <button class="settings-tab" data-settings-tab="system" type="button">System</button>
           <button class="settings-tab" data-settings-tab="extensions" type="button">Tillägg</button>
+          <button class="settings-tab" data-settings-tab="backup" type="button">Säkerhetskopiering</button>
         </div>
       </aside>
       <section class="settings-content">
@@ -380,6 +381,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         <div id="settings-panel-paths" class="settings-panel hidden"></div>
         <div id="settings-panel-system" class="settings-panel hidden"></div>
         <div id="settings-panel-extensions" class="settings-panel hidden"></div>
+        <div id="settings-panel-backup" class="settings-panel hidden"></div>
 
         <div class="settings-footer-row">
           <div id="settings-panel-actions-host" class="settings-panel-actions-host"></div>
@@ -797,6 +799,17 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </label>
       <div id="system-chrome-extension-debug" class="system-extension-debug"></div>
     </section>
+  </template>
+
+  <template id="settings-template-backup">
+    <h3>Säkerhetskopiering</h3>
+    <p>Exportera eller importera hela konfigurationen. Exporten innehåller huvudmän, avsändare, etiketter, datafält, arkivstruktur, textigenkänning och textmatchning. Sökvägar och jobb ingår inte.</p>
+    <p>Vid import skapas automatiskt en backup av nuvarande konfiguration innan något skrivs över.</p>
+    <input id="settings-backup-file" type="file" accept=".json,application/json" hidden>
+    <div class="panel-actions">
+      <button id="settings-backup-export" type="button">Exportera konfiguration</button>
+      <button id="settings-backup-import" type="button">Importera konfiguration</button>
+    </div>
   </template>
 
   <script src="/app.js?v=<?= htmlspecialchars((string) $appVersion, ENT_QUOTES, 'UTF-8') ?>"></script>

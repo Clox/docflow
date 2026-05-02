@@ -105,7 +105,8 @@ const settingsPanelTemplateIds = {
   'archiving-review': 'settings-template-archiving-review',
   paths: 'settings-template-paths',
   system: 'settings-template-system',
-  extensions: 'settings-template-extensions'
+  extensions: 'settings-template-extensions',
+  backup: 'settings-template-backup'
 };
 
 function developmentUiEnabled() {
@@ -254,6 +255,10 @@ let systemChromeExtensionPageEl = null;
 let systemChromeExtensionDirectoryEl = null;
 let systemChromeExtensionCopyPageEl = null;
 let systemChromeExtensionCopyDirectoryEl = null;
+let settingsBackupExportEl = null;
+let settingsBackupImportEl = null;
+let settingsBackupFileEl = null;
+let settingsBackupBusy = false;
 let inputInboxPathEl = null;
 let outputBasePathEl = null;
 let pathsCancelEl = null;
@@ -9907,6 +9912,74 @@ function triggerDownloadBlob(filename, blob) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function setBackupUiBusy(busy) {
+  settingsBackupBusy = busy === true;
+  if (settingsBackupExportEl instanceof HTMLButtonElement) {
+    settingsBackupExportEl.disabled = settingsBackupBusy;
+  }
+  if (settingsBackupImportEl instanceof HTMLButtonElement) {
+    settingsBackupImportEl.disabled = settingsBackupBusy;
+  }
+}
+
+async function exportConfigurationBackup() {
+  if (settingsBackupBusy) {
+    return;
+  }
+
+  setBackupUiBusy(true);
+  try {
+    const response = await fetch('/api/export-config.php', { cache: 'no-store' });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true || typeof payload.text !== 'string') {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte exportera konfigurationen.');
+    }
+
+    const filename = typeof payload.filename === 'string' && payload.filename.trim() !== ''
+      ? payload.filename.trim()
+      : 'docflow-config.json';
+    triggerDownloadBlob(filename, new Blob([payload.text], { type: 'application/json;charset=utf-8' }));
+  } finally {
+    setBackupUiBusy(false);
+  }
+}
+
+async function importConfigurationBackup(file) {
+  if (!(file instanceof File) || settingsBackupBusy) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    'Detta ersätter nuvarande konfiguration. En automatisk backup skapas innan importen. Fortsätta?'
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  setBackupUiBusy(true);
+  try {
+    const text = await file.text();
+    const response = await fetch('/api/import-config.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: text,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte importera konfigurationen.');
+    }
+
+    window.location.reload();
+  } finally {
+    if (settingsBackupFileEl instanceof HTMLInputElement) {
+      settingsBackupFileEl.value = '';
+    }
+    setBackupUiBusy(false);
+  }
+}
+
 async function downloadCurrentOcrRepresentation() {
   const job = findJobById(selectedJobId);
   if (!job || job.status === 'processing') {
@@ -12180,6 +12253,39 @@ function bindSettingsPanelRefs(tabId) {
       });
     }
     renderSystemChromeExtensionStatus();
+  } else if (tabId === 'backup') {
+    settingsBackupExportEl = document.getElementById('settings-backup-export');
+    settingsBackupImportEl = document.getElementById('settings-backup-import');
+    settingsBackupFileEl = document.getElementById('settings-backup-file');
+    if (settingsBackupExportEl instanceof HTMLButtonElement) {
+      settingsBackupExportEl.addEventListener('click', async () => {
+        try {
+          await exportConfigurationBackup();
+        } catch (error) {
+          alert(error instanceof Error ? error.message : 'Kunde inte exportera konfigurationen.');
+        }
+      });
+    }
+    if (settingsBackupImportEl instanceof HTMLButtonElement) {
+      settingsBackupImportEl.addEventListener('click', () => {
+        if (settingsBackupFileEl instanceof HTMLInputElement) {
+          settingsBackupFileEl.click();
+        }
+      });
+    }
+    if (settingsBackupFileEl instanceof HTMLInputElement) {
+      settingsBackupFileEl.addEventListener('change', async () => {
+        const file = settingsBackupFileEl.files && settingsBackupFileEl.files[0] ? settingsBackupFileEl.files[0] : null;
+        if (!file) {
+          return;
+        }
+        try {
+          await importConfigurationBackup(file);
+        } catch (error) {
+          alert(error instanceof Error ? error.message : 'Kunde inte importera konfigurationen.');
+        }
+      });
+    }
   }
 
   boundSettingsPanels.add(tabId);
@@ -12223,6 +12329,8 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
       // System-fliken använder lokalt state för transportval och reset-knapp.
     } else if (tabId === 'extensions') {
       await loadSystemSettings();
+    } else if (tabId === 'backup') {
+      // Backup-fliken använder bara export/import-knappar och behöver ingen datahämtning.
     }
 
     loadedSettingsPanels.add(tabId);
@@ -12385,7 +12493,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'archive-structure', 'labels', 'data-fields', 'archiving-review', 'paths', 'system', 'extensions'];
+  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'archive-structure', 'labels', 'data-fields', 'archiving-review', 'paths', 'system', 'extensions', 'backup'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {

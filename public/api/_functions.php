@@ -148,6 +148,37 @@ function load_config(): array
     ];
 }
 
+function sanitize_state_update_transport_value(mixed $value, string $fallback = 'polling'): string
+{
+    if (!is_string($value)) {
+        return $fallback === 'sse' ? 'sse' : 'polling';
+    }
+
+    $normalized = trim(strtolower($value));
+    if ($normalized === 'sse') {
+        return 'sse';
+    }
+
+    return 'polling';
+}
+
+function sanitize_ocr_text_extraction_method_value(mixed $value, string $fallback = 'layout'): string
+{
+    if (!is_string($value)) {
+        return $fallback === 'bbox' ? 'bbox' : 'layout';
+    }
+
+    $normalized = trim(strtolower($value));
+    if ($normalized === 'bbox') {
+        return 'bbox';
+    }
+    if ($normalized === 'layout') {
+        return 'layout';
+    }
+
+    return $fallback === 'bbox' ? 'bbox' : 'layout';
+}
+
 function sanitize_ocr_pdf_text_substitutions($rows): array
 {
     if (!is_array($rows)) {
@@ -226,6 +257,199 @@ function load_clients(): array
     }
 
     return $clients;
+}
+
+function load_client_export_rows(): array
+{
+    $repository = client_repository_instance();
+    if ($repository === null) {
+        return [];
+    }
+
+    try {
+        $rows = $repository->listAll();
+    } catch (Throwable $e) {
+        return [];
+    }
+
+    $clients = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $clients[] = [
+            'firstName' => is_string($row['first_name'] ?? null) ? (string) $row['first_name'] : '',
+            'lastName' => is_string($row['last_name'] ?? null) ? (string) $row['last_name'] : '',
+            'folderName' => is_string($row['folder_name'] ?? null) ? (string) $row['folder_name'] : '',
+            'personalIdentityNumber' => is_string($row['personal_identity_number'] ?? null)
+                ? (string) $row['personal_identity_number']
+                : '',
+            'preferredFirstNameIndex' => isset($row['preferred_first_name_index']) && is_numeric($row['preferred_first_name_index'])
+                ? (int) $row['preferred_first_name_index']
+                : null,
+        ];
+    }
+
+    return $clients;
+}
+
+function load_sender_export_rows(): array
+{
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        return [];
+    }
+
+    try {
+        $rows = $repository->listEditorRows();
+    } catch (Throwable $e) {
+        return [];
+    }
+
+    $senders = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $senderId = isset($row['id']) ? (int) $row['id'] : 0;
+        $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
+        if ($senderId < 1 || $name === '') {
+            continue;
+        }
+
+        $organizationNumbers = [];
+        foreach (is_array($row['organizationNumbers'] ?? null) ? $row['organizationNumbers'] : [] as $organization) {
+            if (!is_array($organization)) {
+                continue;
+            }
+            $organizationNumber = is_string($organization['organizationNumber'] ?? null)
+                ? trim((string) $organization['organizationNumber'])
+                : '';
+            if ($organizationNumber === '') {
+                continue;
+            }
+            $organizationNumbers[] = [
+                'id' => isset($organization['id']) && is_numeric($organization['id']) ? (int) $organization['id'] : null,
+                'organizationNumber' => $organizationNumber,
+                'organizationName' => is_string($organization['organizationName'] ?? null)
+                    ? trim((string) $organization['organizationName'])
+                    : '',
+            ];
+        }
+
+        $paymentNumbers = [];
+        foreach (is_array($row['paymentNumbers'] ?? null) ? $row['paymentNumbers'] : [] as $payment) {
+            if (!is_array($payment)) {
+                continue;
+            }
+            $type = is_string($payment['type'] ?? null) ? trim(strtolower((string) $payment['type'])) : '';
+            $number = is_string($payment['number'] ?? null) ? trim((string) $payment['number']) : '';
+            if ($number === '' || ($type !== 'bankgiro' && $type !== 'plusgiro')) {
+                continue;
+            }
+            $paymentNumbers[] = [
+                'id' => isset($payment['id']) && is_numeric($payment['id']) ? (int) $payment['id'] : null,
+                'type' => $type,
+                'number' => $number,
+            ];
+        }
+
+        $alternativeNames = [];
+        foreach (is_array($row['alternativeNames'] ?? null) ? $row['alternativeNames'] : [] as $alternativeName) {
+            $nameValue = is_string($alternativeName) ? trim($alternativeName) : '';
+            if ($nameValue !== '') {
+                $alternativeNames[] = $nameValue;
+            }
+        }
+
+        $senders[] = [
+            'id' => $senderId,
+            'name' => $name,
+            'domain' => is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '',
+            'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
+            'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
+            'organizationNumbers' => $organizationNumbers,
+            'paymentNumbers' => $paymentNumbers,
+            'alternativeNames' => $alternativeNames,
+        ];
+    }
+
+    return $senders;
+}
+
+function configuration_export_filename(?string $exportedAt = null): string
+{
+    $timestamp = $exportedAt !== null && trim($exportedAt) !== ''
+        ? strtotime($exportedAt)
+        : false;
+    $formatted = $timestamp !== false ? gmdate('Ymd_His', $timestamp) : gmdate('Ymd_His');
+    return 'docflow-config-' . $formatted . '.json';
+}
+
+function configuration_backup_filename(?string $backedUpAt = null): string
+{
+    $timestamp = $backedUpAt !== null && trim($backedUpAt) !== ''
+        ? strtotime($backedUpAt)
+        : false;
+    $formatted = $timestamp !== false ? gmdate('Ymd_His', $timestamp) : gmdate('Ymd_His');
+    return 'docflow-config-backup-' . $formatted . '.json';
+}
+
+function build_configuration_export_payload(): array
+{
+    $activeRules = load_active_archiving_rules();
+    $config = load_config();
+    $matching = load_matching_settings_payload();
+
+    return [
+        'format' => 'docflow_config',
+        'version' => 1,
+        'exportedAt' => now_iso(),
+        'clients' => load_client_export_rows(),
+        'senders' => load_sender_export_rows(),
+        'labels' => array_values(is_array($activeRules['labels'] ?? null) ? $activeRules['labels'] : []),
+        'systemLabels' => is_array($activeRules['systemLabels'] ?? null) ? $activeRules['systemLabels'] : system_labels_template(),
+        'archiveStructure' => [
+            'archiveFolders' => is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : [],
+        ],
+        'dataFields' => [
+            'fields' => is_array($activeRules['fields'] ?? null) ? $activeRules['fields'] : [],
+            'predefinedFields' => is_array($activeRules['predefinedFields'] ?? null) ? $activeRules['predefinedFields'] : [],
+            'systemFields' => is_array($activeRules['systemFields'] ?? null) ? $activeRules['systemFields'] : [],
+        ],
+        'matching' => [
+            'replacements' => is_array($matching['replacements'] ?? null) ? $matching['replacements'] : [],
+            'positionAdjustment' => normalize_matching_position_adjustment_settings(
+                is_array($matching['positionAdjustment'] ?? null) ? $matching['positionAdjustment'] : []
+            ),
+            'dataFieldAcceptanceThreshold' => isset($matching['dataFieldAcceptanceThreshold']) && is_numeric($matching['dataFieldAcceptanceThreshold'])
+                ? clamp_confidence((float) $matching['dataFieldAcceptanceThreshold'])
+                : 0.5,
+        ],
+        'ocr' => [
+            'ocrSkipExistingText' => (bool) ($config['ocrSkipExistingText'] ?? true),
+            'ocrOptimizeLevel' => (int) ($config['ocrOptimizeLevel'] ?? 1),
+            'ocrTextExtractionMethod' => (string) ($config['ocrTextExtractionMethod'] ?? 'layout'),
+            'ocrPdfTextSubstitutions' => is_array($config['ocrPdfTextSubstitutions'] ?? null)
+                ? sanitize_ocr_pdf_text_substitutions($config['ocrPdfTextSubstitutions'])
+                : [],
+        ],
+        'system' => [
+            'stateUpdateTransport' => (string) ($config['stateUpdateTransport'] ?? 'polling'),
+            'chromeExtensionSuppressMissingNotice' => (bool) ($config['chromeExtensionSuppressMissingNotice'] ?? false),
+        ],
+    ];
+}
+
+function write_configuration_backup(array $payload): string
+{
+    $backupDirectory = DATA_DIR . '/config-backups';
+    ensure_directory($backupDirectory);
+    $backupPath = $backupDirectory . DIRECTORY_SEPARATOR . configuration_backup_filename(is_string($payload['exportedAt'] ?? null) ? (string) $payload['exportedAt'] : null);
+    write_json_file($backupPath, $payload);
+    return $backupPath;
 }
 
 function split_client_first_names(string $firstName): array
@@ -14592,13 +14816,15 @@ function process_claimed_job(
             @unlink($jobDir . '/merged_objects.txt');
         }
         $sourceHadExtractableText = pdf_has_extractable_text($sourcePdfPath);
-        $ocrUsedExistingText = $ocrSkipExistingText && $sourceHadExtractableText;
+        // We need OCR output objects for analysis, so this job path always reruns OCR.
+        // Existing embedded text is still available later via the review PDF and extracted text pipeline.
+        $ocrUsedExistingText = false;
         $ocrProcessedPdf = run_ocrmypdf(
             $sourcePdfPath,
             $reviewPdfPath,
             $ocrmypdfSidecarPath,
             $jobDir,
-            $ocrSkipExistingText,
+            false,
             $ocrOptimizeLevel,
             $ocrPdfTextSubstitutions
         );

@@ -320,6 +320,338 @@ final class SenderRepository
         return array_values($sendersById);
     }
 
+    public function replaceAll(array $senders): array
+    {
+        $normalizedSenders = [];
+        $seenOrganizationNumbers = [];
+        $seenPaymentNumbers = [];
+
+        foreach (array_values($senders) as $senderIndex => $senderRow) {
+            if (!is_array($senderRow)) {
+                continue;
+            }
+
+            $id = isset($senderRow['id']) && is_numeric($senderRow['id']) ? (int) $senderRow['id'] : null;
+            if ($id !== null && $id < 1) {
+                $id = null;
+            }
+
+            $name = is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '';
+            $domain = is_string($senderRow['domain'] ?? null) ? trim((string) $senderRow['domain']) : '';
+            $kind = is_string($senderRow['kind'] ?? null) ? trim((string) $senderRow['kind']) : '';
+            $notes = is_string($senderRow['notes'] ?? null) ? trim((string) $senderRow['notes']) : '';
+            $organizationRows = array_values(array_filter(
+                is_array($senderRow['organizationNumbers'] ?? null) ? $senderRow['organizationNumbers'] : [],
+                static fn (mixed $organization): bool => is_array($organization)
+            ));
+            $paymentRows = array_values(array_filter(
+                is_array($senderRow['paymentNumbers'] ?? null) ? $senderRow['paymentNumbers'] : [],
+                static fn (mixed $payment): bool => is_array($payment)
+            ));
+            $alternativeNames = array_values(array_filter(
+                is_array($senderRow['alternativeNames'] ?? null) ? $senderRow['alternativeNames'] : [],
+                static fn (mixed $name): bool => is_string($name) && trim($name) !== ''
+            ));
+
+            $isEffectivelyEmpty = $name === ''
+                && $domain === ''
+                && $kind === ''
+                && $notes === ''
+                && $organizationRows === []
+                && $paymentRows === []
+                && $alternativeNames === [];
+            if ($isEffectivelyEmpty) {
+                continue;
+            }
+
+            if ($name === '') {
+                throw new RuntimeException('Each sender must have a name.');
+            }
+
+            $normalizedOrganizations = [];
+            foreach ($organizationRows as $organizationRow) {
+                $organizationId = isset($organizationRow['id']) && is_numeric($organizationRow['id'])
+                    ? (int) $organizationRow['id']
+                    : null;
+                if ($organizationId !== null && $organizationId < 1) {
+                    $organizationId = null;
+                }
+
+                $organizationNumberRaw = is_string($organizationRow['organizationNumber'] ?? null)
+                    ? trim((string) $organizationRow['organizationNumber'])
+                    : '';
+                if ($organizationNumberRaw === '') {
+                    continue;
+                }
+
+                $organizationNumber = IdentifierNormalizer::normalizeOrgNumber($organizationNumberRaw);
+                if ($organizationNumber === null) {
+                    throw new RuntimeException('Invalid organization number in sender import: ' . $name);
+                }
+
+                if (isset($seenOrganizationNumbers[$organizationNumber])) {
+                    throw new RuntimeException('Organization numbers must be unique.');
+                }
+                $seenOrganizationNumbers[$organizationNumber] = true;
+
+                $organizationName = is_string($organizationRow['organizationName'] ?? null)
+                    ? trim((string) $organizationRow['organizationName'])
+                    : '';
+
+                $normalizedOrganizations[] = [
+                    'id' => $organizationId,
+                    'organizationNumber' => $organizationNumber,
+                    'organizationName' => $organizationName,
+                ];
+            }
+
+            $normalizedPayments = [];
+            foreach ($paymentRows as $paymentRow) {
+                $paymentId = isset($paymentRow['id']) && is_numeric($paymentRow['id'])
+                    ? (int) $paymentRow['id']
+                    : null;
+                if ($paymentId !== null && $paymentId < 1) {
+                    $paymentId = null;
+                }
+
+                $type = is_string($paymentRow['type'] ?? null) ? trim(strtolower((string) $paymentRow['type'])) : '';
+                if ($type !== 'bankgiro' && $type !== 'plusgiro') {
+                    throw new RuntimeException('Payment number type must be bankgiro or plusgiro.');
+                }
+
+                $numberRaw = is_string($paymentRow['number'] ?? null) ? trim((string) $paymentRow['number']) : '';
+                if ($numberRaw === '') {
+                    continue;
+                }
+
+                $number = $type === 'plusgiro'
+                    ? IdentifierNormalizer::normalizePlusgiro($numberRaw)
+                    : IdentifierNormalizer::normalizeBankgiro($numberRaw);
+                if ($number === null) {
+                    throw new RuntimeException('Invalid payment number in sender import: ' . $name);
+                }
+
+                $paymentKey = $type . ':' . $number;
+                if (isset($seenPaymentNumbers[$paymentKey])) {
+                    throw new RuntimeException('Payment numbers must be unique.');
+                }
+                $seenPaymentNumbers[$paymentKey] = true;
+
+                $normalizedPayments[] = [
+                    'id' => $paymentId,
+                    'type' => $type,
+                    'number' => $number,
+                ];
+            }
+
+            $normalizedAlternativeNames = [];
+            $seenAlternativeNames = [];
+            foreach ($alternativeNames as $alternativeName) {
+                $trimmed = trim($alternativeName);
+                if ($trimmed === '') {
+                    continue;
+                }
+                $normalized = IdentifierNormalizer::normalizeName($trimmed);
+                if ($normalized === null || isset($seenAlternativeNames[$normalized])) {
+                    continue;
+                }
+                if (IdentifierNormalizer::normalizeName($name) === $normalized) {
+                    continue;
+                }
+                $seenAlternativeNames[$normalized] = true;
+                $normalizedAlternativeNames[] = $trimmed;
+            }
+
+            $normalizedSenders[] = [
+                'id' => $id,
+                'name' => $name,
+                'domain' => $domain !== '' ? strtolower($domain) : null,
+                'kind' => $kind !== '' ? $kind : null,
+                'notes' => $notes !== '' ? $notes : null,
+                'organizationNumbers' => $normalizedOrganizations,
+                'paymentNumbers' => $normalizedPayments,
+                'alternativeNames' => $normalizedAlternativeNames,
+            ];
+        }
+
+        $timestamp = date(DATE_ATOM);
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) {
+            $this->pdo->beginTransaction();
+        }
+
+        try {
+            $this->pdo->exec('DELETE FROM sender_alternative_names');
+            $this->pdo->exec('DELETE FROM sender_payment_numbers');
+            $this->pdo->exec('DELETE FROM sender_organization_numbers');
+            $this->pdo->exec('DELETE FROM senders');
+
+            $senderInsert = $this->pdo->prepare(
+                'INSERT INTO senders (
+                    id,
+                    name,
+                    domain,
+                    kind,
+                    notes,
+                    confidence,
+                    matching_updated_at,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    :id,
+                    :name,
+                    :domain,
+                    :kind,
+                    :notes,
+                    :confidence,
+                    :matching_updated_at,
+                    :created_at,
+                    :updated_at
+                )'
+            );
+            $organizationInsert = $this->pdo->prepare(
+                'INSERT INTO sender_organization_numbers (
+                    id,
+                    organization_number,
+                    organization_name,
+                    sender_id,
+                    source,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    :id,
+                    :organization_number,
+                    :organization_name,
+                    :sender_id,
+                    :source,
+                    :created_at,
+                    :updated_at
+                )'
+            );
+            $paymentInsert = $this->pdo->prepare(
+                'INSERT INTO sender_payment_numbers (
+                    id,
+                    sender_id,
+                    type,
+                    number,
+                    original_number,
+                    requires_ocr,
+                    source,
+                    confidence,
+                    created_at,
+                    updated_at,
+                    payee_name,
+                    payee_lookup_status
+                ) VALUES (
+                    :id,
+                    :sender_id,
+                    :type,
+                    :number,
+                    :original_number,
+                    :requires_ocr,
+                    :source,
+                    :confidence,
+                    :created_at,
+                    :updated_at,
+                    :payee_name,
+                    :payee_lookup_status
+                )'
+            );
+            $alternativeInsert = $this->pdo->prepare(
+                'INSERT INTO sender_alternative_names (
+                    id,
+                    sender_id,
+                    name,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    :id,
+                    :sender_id,
+                    :name,
+                    :created_at,
+                    :updated_at
+                )'
+            );
+
+            $resolvedSenderIds = [];
+            foreach ($normalizedSenders as $senderIndex => $sender) {
+                $senderInsert->execute([
+                    ':id' => $sender['id'],
+                    ':name' => $sender['name'],
+                    ':domain' => $sender['domain'],
+                    ':kind' => $sender['kind'],
+                    ':notes' => $sender['notes'],
+                    ':confidence' => 1.0,
+                    ':matching_updated_at' => $timestamp,
+                    ':created_at' => $timestamp,
+                    ':updated_at' => $timestamp,
+                ]);
+                $resolvedSenderIds[$senderIndex] = $sender['id'] !== null
+                    ? (int) $sender['id']
+                    : (int) $this->pdo->lastInsertId();
+            }
+
+            foreach ($normalizedSenders as $senderIndex => $sender) {
+                $senderId = isset($resolvedSenderIds[$senderIndex]) ? (int) $resolvedSenderIds[$senderIndex] : 0;
+                if ($senderId < 1) {
+                    continue;
+                }
+
+                foreach ($sender['organizationNumbers'] as $organizationRow) {
+                    $organizationInsert->execute([
+                        ':id' => $organizationRow['id'],
+                        ':organization_number' => $organizationRow['organizationNumber'],
+                        ':organization_name' => $organizationRow['organizationName'] !== ''
+                            ? $organizationRow['organizationName']
+                            : $sender['name'],
+                        ':sender_id' => $senderId,
+                        ':source' => null,
+                        ':created_at' => $timestamp,
+                        ':updated_at' => $timestamp,
+                    ]);
+                }
+
+                foreach ($sender['paymentNumbers'] as $paymentRow) {
+                    $paymentInsert->execute([
+                        ':id' => $paymentRow['id'],
+                        ':sender_id' => $senderId,
+                        ':type' => $paymentRow['type'],
+                        ':number' => $paymentRow['number'],
+                        ':original_number' => null,
+                        ':requires_ocr' => 0,
+                        ':source' => null,
+                        ':confidence' => 1.0,
+                        ':created_at' => $timestamp,
+                        ':updated_at' => $timestamp,
+                        ':payee_name' => null,
+                        ':payee_lookup_status' => null,
+                    ]);
+                }
+
+                foreach ($sender['alternativeNames'] as $alternativeName) {
+                    $alternativeInsert->execute([
+                        ':id' => null,
+                        ':sender_id' => $senderId,
+                        ':name' => $alternativeName,
+                        ':created_at' => $timestamp,
+                        ':updated_at' => $timestamp,
+                    ]);
+                }
+            }
+
+            if ($ownsTransaction) {
+                $this->pdo->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+
+        return $this->listEditorRows();
+    }
+
     public function listUnlinkedIdentifierRows(): array
     {
         $items = [];
