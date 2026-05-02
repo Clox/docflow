@@ -15027,7 +15027,7 @@ function filenameTemplateSystemFieldOptions() {
   [
     {
       key: 'sender',
-      label: 'Avsändar-namn',
+      label: 'Avsändarnamn',
       tone: 'system',
       title: 'Lägger till avsändarens namn i filnamnet.',
     },
