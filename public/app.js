@@ -15253,14 +15253,47 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
   };
 }
 
+function measureInlineInputTextWidth(input, sample) {
+  if (!(input instanceof HTMLInputElement) || typeof document === 'undefined' || !document.body) {
+    return 96;
+  }
+  const measurer = measureInlineInputTextWidth.el || document.createElement('span');
+  measureInlineInputTextWidth.el = measurer;
+  const computed = window.getComputedStyle(input);
+  measurer.style.position = 'absolute';
+  measurer.style.visibility = 'hidden';
+  measurer.style.whiteSpace = 'pre';
+  measurer.style.left = '-9999px';
+  measurer.style.top = '-9999px';
+  measurer.style.font = computed.font || '14px Arial, sans-serif';
+  measurer.textContent = sample || '';
+  if (!measurer.parentElement) {
+    document.body.appendChild(measurer);
+  }
+  return Math.ceil(measurer.getBoundingClientRect().width);
+}
+
 function syncExtractionFieldAliasInputSize(input, accessoryCount = 0) {
   if (!(input instanceof HTMLInputElement)) {
     return;
   }
+  input.classList.add('inline-input-control');
   const sample = String(input.value || input.placeholder || '');
-  const contentLength = Array.from(sample).length;
-  const accessoryChars = Math.max(0, Number(accessoryCount) || 0);
-  input.size = Math.max(12, Math.min(40, contentLength + 1 + accessoryChars));
+  const computed = window.getComputedStyle(input);
+  const paddingLeft = Number.parseFloat(computed.paddingLeft) || 0;
+  const paddingRight = Number.parseFloat(computed.paddingRight) || 0;
+  const horizontalPadding = paddingLeft + paddingRight;
+  const textWidth = measureInlineInputTextWidth(input, sample);
+  const minWidth = measureInlineInputTextWidth(input, '000000000000');
+  const maxWidth = measureInlineInputTextWidth(input, '0000000000000000000000000000000000000000');
+  const widthPx = Math.max(minWidth, Math.min(maxWidth, textWidth)) + horizontalPadding + 8;
+  input.removeAttribute('size');
+  input.style.width = '100%';
+  if (input.parentElement && input.parentElement.classList.contains('inline-input-wrap')) {
+    input.parentElement.style.setProperty('--inline-input-text-width', `${widthPx}px`);
+  } else {
+    input.style.setProperty('--inline-input-text-width', `${widthPx}px`);
+  }
 }
 
 function sanitizeExtractionFields(fields) {
@@ -15806,9 +15839,14 @@ function createInlineInputWithAccessories(inputEl, accessories = [], extraClass 
 
   const accessoryCount = accessoryWrap.childElementCount;
   const accessoriesWidth = accessoryCount > 0
-    ? 8 + (accessoryCount * 24) + ((accessoryCount - 1) * 4)
+    ? 2 + (accessoryCount * 24) + ((accessoryCount - 1) * 4)
     : 0;
   wrapper.style.setProperty('--inline-input-accessories-width', `${accessoriesWidth}px`);
+  const textWidth = inputEl.style.getPropertyValue('--inline-input-text-width');
+  if (textWidth) {
+    wrapper.style.setProperty('--inline-input-text-width', textWidth);
+    inputEl.style.removeProperty('--inline-input-text-width');
+  }
 
   wrapper.appendChild(inputEl);
   wrapper.appendChild(accessoryWrap);
