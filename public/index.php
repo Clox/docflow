@@ -804,11 +804,15 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
   <template id="settings-template-backup">
     <h3>Säkerhetskopiering</h3>
     <p>Exportera eller importera hela konfigurationen. Exporten innehåller huvudmän, avsändare, etiketter, datafält, arkivstruktur, textigenkänning och textmatchning. Sökvägar och jobb ingår inte.</p>
-    <p>Vid import skapas automatiskt en backup av nuvarande konfiguration innan något skrivs över.</p>
+    <p>Varje export sparas också automatiskt lokalt. Vid import och återställning skapas alltid en backup av nuvarande konfiguration innan något skrivs över.</p>
     <input id="settings-backup-file" type="file" accept=".json,application/json" hidden>
     <div class="panel-actions">
       <button id="settings-backup-export" type="button">Exportera konfiguration</button>
       <button id="settings-backup-import" type="button">Importera konfiguration</button>
+    </div>
+    <div class="settings-backup-history">
+      <div class="settings-backup-history-title">Tidigare säkerhetskopior</div>
+      <div id="settings-backup-list" class="settings-backup-list" aria-live="polite"></div>
     </div>
   </template>
 

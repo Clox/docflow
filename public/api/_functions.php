@@ -381,20 +381,155 @@ function load_sender_export_rows(): array
 
 function configuration_export_filename(?string $exportedAt = null): string
 {
-    $timestamp = $exportedAt !== null && trim($exportedAt) !== ''
-        ? strtotime($exportedAt)
-        : false;
-    $formatted = $timestamp !== false ? gmdate('Ymd_His', $timestamp) : gmdate('Ymd_His');
-    return 'docflow-config-' . $formatted . '.json';
+    return configuration_backup_filename($exportedAt, 'docflow-config');
 }
 
-function configuration_backup_filename(?string $backedUpAt = null): string
+function configuration_pre_import_filename(?string $backedUpAt = null): string
+{
+    return configuration_backup_filename($backedUpAt, 'pre-import');
+}
+
+function configuration_backup_filename(?string $backedUpAt = null, string $prefix = 'docflow-config'): string
 {
     $timestamp = $backedUpAt !== null && trim($backedUpAt) !== ''
         ? strtotime($backedUpAt)
         : false;
     $formatted = $timestamp !== false ? gmdate('Ymd_His', $timestamp) : gmdate('Ymd_His');
-    return 'docflow-config-backup-' . $formatted . '.json';
+    $normalizedPrefix = trim(preg_replace('/[^a-z0-9-]+/i', '-', $prefix) ?? '', '-');
+    if ($normalizedPrefix === '') {
+        $normalizedPrefix = 'docflow-config';
+    }
+    return $normalizedPrefix . '-' . $formatted . '.json';
+}
+
+function configuration_backup_directory(): string
+{
+    return PROJECT_ROOT . '/backups/config';
+}
+
+function ensure_configuration_backup_directory(): void
+{
+    ensure_directory(configuration_backup_directory());
+}
+
+function is_configuration_backup_filename(string $filename): bool
+{
+    return preg_match('/^(?:docflow-config|pre-import)-\d{8}_\d{6}\.json$/', $filename) === 1;
+}
+
+function normalize_configuration_backup_filename(string $filename): ?string
+{
+    $basename = basename(trim($filename));
+    return is_configuration_backup_filename($basename) ? $basename : null;
+}
+
+function configuration_backup_path(string $filename): ?string
+{
+    $normalized = normalize_configuration_backup_filename($filename);
+    if ($normalized === null) {
+        return null;
+    }
+
+    return configuration_backup_directory() . DIRECTORY_SEPARATOR . $normalized;
+}
+
+function configuration_backup_summary(array $payload): array
+{
+    return [
+        'clients' => is_array($payload['clients'] ?? null) ? count($payload['clients']) : 0,
+        'senders' => is_array($payload['senders'] ?? null) ? count($payload['senders']) : 0,
+        'labels' => is_array($payload['labels'] ?? null) ? count($payload['labels']) : 0,
+        'dataFields' => is_array($payload['dataFields']['fields'] ?? null) ? count($payload['dataFields']['fields']) : 0,
+        'archiveFolders' => is_array($payload['archiveStructure']['archiveFolders'] ?? null) ? count($payload['archiveStructure']['archiveFolders']) : 0,
+    ];
+}
+
+function configuration_backup_entry_from_path(string $path): ?array
+{
+    if (!is_file($path)) {
+        return null;
+    }
+
+    $payload = load_json_file($path);
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    if (($payload['format'] ?? null) !== 'docflow_config') {
+        return null;
+    }
+
+    $filename = basename($path);
+    $exportedAt = is_string($payload['exportedAt'] ?? null) ? trim((string) $payload['exportedAt']) : '';
+    $exportedAtTimestamp = $exportedAt !== '' ? strtotime($exportedAt) : false;
+    $modifiedAtTimestamp = filemtime($path);
+    $sortTimestamp = $exportedAtTimestamp !== false
+        ? $exportedAtTimestamp
+        : ($modifiedAtTimestamp !== false ? $modifiedAtTimestamp : 0);
+
+    return [
+        'filename' => $filename,
+        'kind' => str_starts_with($filename, 'pre-import-') ? 'pre-import' : 'export',
+        'exportedAt' => $exportedAt !== '' ? $exportedAt : null,
+        'version' => isset($payload['version']) && is_numeric($payload['version']) ? (int) $payload['version'] : 0,
+        'summary' => configuration_backup_summary($payload),
+        'sizeBytes' => filesize($path) ?: 0,
+        'modifiedAt' => $modifiedAtTimestamp !== false ? gmdate(DATE_ATOM, $modifiedAtTimestamp) : null,
+        'sortTimestamp' => $sortTimestamp,
+    ];
+}
+
+function list_configuration_backups(): array
+{
+    ensure_configuration_backup_directory();
+    $paths = glob(configuration_backup_directory() . DIRECTORY_SEPARATOR . '*.json');
+    if (!is_array($paths)) {
+        return [];
+    }
+
+    $entries = [];
+    foreach ($paths as $path) {
+        if (!is_string($path)) {
+            continue;
+        }
+        $entry = configuration_backup_entry_from_path($path);
+        if ($entry !== null) {
+            $entries[] = $entry;
+        }
+    }
+
+    usort(
+        $entries,
+        static function (array $left, array $right): int {
+            $rightSort = (int) ($right['sortTimestamp'] ?? 0);
+            $leftSort = (int) ($left['sortTimestamp'] ?? 0);
+            if ($rightSort === $leftSort) {
+                return strcmp((string) ($right['filename'] ?? ''), (string) ($left['filename'] ?? ''));
+            }
+            return $rightSort <=> $leftSort;
+        }
+    );
+
+    return $entries;
+}
+
+function prune_configuration_backups(int $maxBackups = 50): void
+{
+    if ($maxBackups < 1) {
+        return;
+    }
+
+    $entries = list_configuration_backups();
+    if (count($entries) <= $maxBackups) {
+        return;
+    }
+
+    foreach (array_slice($entries, $maxBackups) as $entry) {
+        $path = configuration_backup_path((string) ($entry['filename'] ?? ''));
+        if ($path !== null && is_file($path)) {
+            @unlink($path);
+        }
+    }
 }
 
 function build_configuration_export_payload(): array
@@ -445,11 +580,339 @@ function build_configuration_export_payload(): array
 
 function write_configuration_backup(array $payload): string
 {
-    $backupDirectory = DATA_DIR . '/config-backups';
-    ensure_directory($backupDirectory);
-    $backupPath = $backupDirectory . DIRECTORY_SEPARATOR . configuration_backup_filename(is_string($payload['exportedAt'] ?? null) ? (string) $payload['exportedAt'] : null);
+    return write_configuration_backup_to_prefix($payload, 'docflow-config');
+}
+
+function write_configuration_backup_to_prefix(array $payload, string $prefix): string
+{
+    ensure_configuration_backup_directory();
+    $backupPath = configuration_backup_directory() . DIRECTORY_SEPARATOR . configuration_backup_filename(
+        is_string($payload['exportedAt'] ?? null) ? (string) $payload['exportedAt'] : null,
+        $prefix
+    );
     write_json_file($backupPath, $payload);
+    prune_configuration_backups(50);
     return $backupPath;
+}
+
+function create_configuration_pre_import_backup(): string
+{
+    return write_configuration_backup_to_prefix(build_configuration_export_payload(), 'pre-import');
+}
+
+function normalize_export_client_rows(array $rows): array
+{
+    $clients = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $clients[] = [
+            'firstName' => is_string($row['firstName'] ?? null) ? trim((string) $row['firstName']) : '',
+            'lastName' => is_string($row['lastName'] ?? null) ? trim((string) $row['lastName']) : '',
+            'folderName' => is_string($row['folderName'] ?? null) ? trim((string) $row['folderName']) : '',
+            'personalIdentityNumber' => is_string($row['personalIdentityNumber'] ?? null)
+                ? trim((string) $row['personalIdentityNumber'])
+                : '',
+            'preferredFirstNameIndex' => isset($row['preferredFirstNameIndex']) && is_numeric($row['preferredFirstNameIndex'])
+                ? (int) $row['preferredFirstNameIndex']
+                : null,
+        ];
+    }
+
+    return $clients;
+}
+
+function normalize_export_sender_rows(array $rows): array
+{
+    $senders = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $organizationNumbers = [];
+        foreach (is_array($row['organizationNumbers'] ?? null) ? $row['organizationNumbers'] : [] as $organization) {
+            if (!is_array($organization)) {
+                continue;
+            }
+            $organizationNumbers[] = [
+                'id' => isset($organization['id']) && is_numeric($organization['id']) ? (int) $organization['id'] : null,
+                'organizationNumber' => is_string($organization['organizationNumber'] ?? null)
+                    ? trim((string) $organization['organizationNumber'])
+                    : '',
+                'organizationName' => is_string($organization['organizationName'] ?? null)
+                    ? trim((string) $organization['organizationName'])
+                    : '',
+            ];
+        }
+
+        $paymentNumbers = [];
+        foreach (is_array($row['paymentNumbers'] ?? null) ? $row['paymentNumbers'] : [] as $payment) {
+            if (!is_array($payment)) {
+                continue;
+            }
+            $type = is_string($payment['type'] ?? null) ? trim(strtolower((string) $payment['type'])) : '';
+            $number = is_string($payment['number'] ?? null) ? trim((string) $payment['number']) : '';
+            if ($number === '' || ($type !== 'bankgiro' && $type !== 'plusgiro')) {
+                continue;
+            }
+            $paymentNumbers[] = [
+                'id' => isset($payment['id']) && is_numeric($payment['id']) ? (int) $payment['id'] : null,
+                'type' => $type,
+                'number' => $number,
+            ];
+        }
+
+        $alternativeNames = [];
+        foreach (is_array($row['alternativeNames'] ?? null) ? $row['alternativeNames'] : [] as $alternativeName) {
+            $nameValue = is_string($alternativeName) ? trim($alternativeName) : '';
+            if ($nameValue !== '') {
+                $alternativeNames[] = $nameValue;
+            }
+        }
+
+        $senders[] = [
+            'id' => isset($row['id']) && is_numeric($row['id']) ? (int) $row['id'] : null,
+            'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
+            'domain' => is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '',
+            'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
+            'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
+            'organizationNumbers' => $organizationNumbers,
+            'paymentNumbers' => $paymentNumbers,
+            'alternativeNames' => $alternativeNames,
+        ];
+    }
+
+    return $senders;
+}
+
+function validate_configuration_import_payload(array $payload): void
+{
+    if (($payload['format'] ?? null) !== 'docflow_config' || (int) ($payload['version'] ?? 0) !== 1) {
+        throw new RuntimeException('Unsupported configuration format');
+    }
+
+    if (
+        !is_array($payload['clients'] ?? null)
+        || !is_array($payload['senders'] ?? null)
+        || !is_array($payload['labels'] ?? null)
+        || !is_array($payload['systemLabels'] ?? null)
+        || !is_array($payload['archiveStructure'] ?? null)
+        || !is_array($payload['dataFields'] ?? null)
+        || !is_array($payload['matching'] ?? null)
+        || !is_array($payload['ocr'] ?? null)
+        || !is_array($payload['system'] ?? null)
+    ) {
+        throw new RuntimeException('Configuration payload is missing required sections');
+    }
+}
+
+function apply_configuration_import_payload(array $payload): array
+{
+    validate_configuration_import_payload($payload);
+
+    $backupPath = create_configuration_pre_import_backup();
+
+    $currentConfig = load_config();
+    $currentMatching = load_matching_settings_payload();
+    $currentClients = load_client_export_rows();
+    $currentSenders = load_sender_export_rows();
+    $currentActiveRules = load_active_archiving_rules();
+
+    $importedClients = normalize_export_client_rows($payload['clients']);
+    $importedSenders = normalize_export_sender_rows($payload['senders']);
+
+    $nextActiveRules = normalize_archiving_rules_set([
+        'archiveFolders' => is_array($payload['archiveStructure']['archiveFolders'] ?? null)
+            ? $payload['archiveStructure']['archiveFolders']
+            : [],
+        'labels' => is_array($payload['labels'] ?? null) ? $payload['labels'] : [],
+        'systemLabels' => is_array($payload['systemLabels'] ?? null) ? $payload['systemLabels'] : [],
+        'fields' => is_array($payload['dataFields']['fields'] ?? null) ? $payload['dataFields']['fields'] : [],
+        'predefinedFields' => is_array($payload['dataFields']['predefinedFields'] ?? null) ? $payload['dataFields']['predefinedFields'] : [],
+        'systemFields' => is_array($payload['dataFields']['systemFields'] ?? null) ? $payload['dataFields']['systemFields'] : [],
+    ]);
+
+    $normalizedMatching = [
+        'replacements' => array_values(array_filter(
+            array_map(
+                static function (mixed $row): ?array {
+                    if (!is_array($row)) {
+                        return null;
+                    }
+                    $from = is_string($row['from'] ?? null) ? trim((string) $row['from']) : '';
+                    $to = is_string($row['to'] ?? null) ? trim((string) $row['to']) : '';
+                    if ($from === '' || $to === '') {
+                        return null;
+                    }
+                    return [
+                        'from' => $from,
+                        'to' => $to,
+                    ];
+                },
+                is_array($payload['matching']['replacements'] ?? null) ? $payload['matching']['replacements'] : []
+            ),
+            static fn (?array $row): bool => is_array($row)
+        )),
+        'positionAdjustment' => normalize_matching_position_adjustment_settings(
+            is_array($payload['matching']['positionAdjustment'] ?? null)
+                ? $payload['matching']['positionAdjustment']
+                : default_matching_position_adjustment_settings()
+        ),
+        'dataFieldAcceptanceThreshold' => isset($payload['matching']['dataFieldAcceptanceThreshold']) && is_numeric($payload['matching']['dataFieldAcceptanceThreshold'])
+            ? clamp_confidence((float) $payload['matching']['dataFieldAcceptanceThreshold'])
+            : 0.5,
+    ];
+
+    $nextConfig = load_raw_config();
+    if (array_key_exists('ocrSkipExistingText', $payload['ocr'])) {
+        $nextConfig['ocrSkipExistingText'] = (bool) $payload['ocr']['ocrSkipExistingText'];
+    }
+    if (array_key_exists('ocrOptimizeLevel', $payload['ocr'])) {
+        $nextConfig['ocrOptimizeLevel'] = max(0, min(3, (int) $payload['ocr']['ocrOptimizeLevel']));
+    }
+    if (array_key_exists('ocrTextExtractionMethod', $payload['ocr'])) {
+        $nextConfig['ocrTextExtractionMethod'] = sanitize_ocr_text_extraction_method_value($payload['ocr']['ocrTextExtractionMethod'], 'layout');
+    }
+    if (array_key_exists('ocrPdfTextSubstitutions', $payload['ocr'])) {
+        $nextConfig['ocrPdfTextSubstitutions'] = sanitize_ocr_pdf_text_substitutions($payload['ocr']['ocrPdfTextSubstitutions']);
+    }
+    if (array_key_exists('stateUpdateTransport', $payload['system'])) {
+        $nextConfig['stateUpdateTransport'] = sanitize_state_update_transport_value($payload['system']['stateUpdateTransport'], 'polling');
+    }
+    if (array_key_exists('chromeExtensionSuppressMissingNotice', $payload['system'])) {
+        $nextConfig['chromeExtensionSuppressMissingNotice'] = (bool) $payload['system']['chromeExtensionSuppressMissingNotice'];
+    }
+
+    $clientRepository = client_repository_instance();
+    if ($clientRepository === null) {
+        throw new RuntimeException('Client repository is unavailable.');
+    }
+    $storedClients = $clientRepository->replaceAll($importedClients);
+
+    $senderRepository = sender_repository_instance();
+    if ($senderRepository === null) {
+        throw new RuntimeException('Sender repository is unavailable.');
+    }
+    $storedSenders = $senderRepository->replaceAll($importedSenders);
+
+    $state = load_archiving_rules_state();
+    $previousActiveRules = normalize_archiving_rules_set($currentActiveRules);
+    $reviewRelevantChanged = archiving_rules_review_relevant_hash($previousActiveRules) !== archiving_rules_review_relevant_hash($nextActiveRules);
+    $changedSections = $reviewRelevantChanged
+        ? archiving_rules_changed_sections($previousActiveRules, $nextActiveRules)
+        : [];
+    $templateChanges = $reviewRelevantChanged
+        ? archiving_rules_filename_template_changes($previousActiveRules, $nextActiveRules)
+        : [];
+
+    $state['activeArchivingRulesVersion'] = max(
+        1,
+        (int) ($state['activeArchivingRulesVersion'] ?? 1) + ($reviewRelevantChanged ? 1 : 0)
+    );
+    $state['activeArchivingRules'] = $nextActiveRules;
+    $state['draftArchivingRules'] = $nextActiveRules;
+    $storedRulesState = save_archiving_rules_state($state);
+
+    if ($reviewRelevantChanged) {
+        restart_archiving_update_session(
+            $currentConfig,
+            $previousActiveRules,
+            $nextActiveRules,
+            (int) ($storedRulesState['activeArchivingRulesVersion'] ?? $state['activeArchivingRulesVersion']),
+            [
+                'reason' => 'import',
+                'changedSections' => $changedSections,
+                'templateChanges' => $templateChanges,
+            ]
+        );
+        maybe_queue_archiving_rules_update_event($currentConfig);
+    }
+
+    save_raw_config($nextConfig);
+    $savedConfig = load_config();
+
+    $currentMatchingJson = json_encode([
+        'replacements' => is_array($currentMatching['replacements'] ?? null) ? $currentMatching['replacements'] : [],
+        'positionAdjustment' => normalize_matching_position_adjustment_settings(
+            is_array($currentMatching['positionAdjustment'] ?? null) ? $currentMatching['positionAdjustment'] : []
+        ),
+        'dataFieldAcceptanceThreshold' => isset($currentMatching['dataFieldAcceptanceThreshold']) && is_numeric($currentMatching['dataFieldAcceptanceThreshold'])
+            ? clamp_confidence((float) $currentMatching['dataFieldAcceptanceThreshold'])
+            : 0.5,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $nextMatchingJson = json_encode($normalizedMatching, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($currentMatchingJson) || !is_string($nextMatchingJson)) {
+        throw new RuntimeException('Could not encode matching settings.');
+    }
+    if ($currentMatchingJson !== $nextMatchingJson) {
+        write_json_file(DATA_DIR . '/matching.json', $normalizedMatching);
+    }
+
+    $analysisRelevantConfigChanged = (
+        (bool) ($currentConfig['ocrSkipExistingText'] ?? true) !== (bool) ($savedConfig['ocrSkipExistingText'] ?? true)
+        || (int) ($currentConfig['ocrOptimizeLevel'] ?? 1) !== (int) ($savedConfig['ocrOptimizeLevel'] ?? 1)
+        || (string) ($currentConfig['ocrTextExtractionMethod'] ?? 'layout') !== (string) ($savedConfig['ocrTextExtractionMethod'] ?? 'layout')
+        || json_encode(
+            sanitize_ocr_pdf_text_substitutions($currentConfig['ocrPdfTextSubstitutions'] ?? []),
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        ) !== json_encode(
+            sanitize_ocr_pdf_text_substitutions($savedConfig['ocrPdfTextSubstitutions'] ?? []),
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        )
+    );
+    $clientConfigChanged = json_encode($currentClients, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        !== json_encode($importedClients, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $senderConfigChanged = json_encode($currentSenders, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        !== json_encode($importedSenders, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $matchingChanged = $currentMatchingJson !== $nextMatchingJson;
+    $shouldReprocess = $analysisRelevantConfigChanged
+        || $clientConfigChanged
+        || $senderConfigChanged
+        || $matchingChanged
+        || $reviewRelevantChanged;
+
+    $reprocessedJobs = [
+        'reprocessedJobIds' => [],
+        'reprocessedCount' => 0,
+        'mode' => 'full',
+    ];
+    if ($shouldReprocess) {
+        ensure_job_dispatcher_running($savedConfig);
+        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($savedConfig, 'full', false);
+    }
+
+    return [
+        'backupFile' => basename($backupPath),
+        'clients' => $importedClients,
+        'senders' => $importedSenders,
+        'labels' => array_values(is_array($nextActiveRules['labels'] ?? null) ? $nextActiveRules['labels'] : []),
+        'systemLabels' => is_array($nextActiveRules['systemLabels'] ?? null) ? $nextActiveRules['systemLabels'] : system_labels_template(),
+        'archiveStructure' => [
+            'archiveFolders' => is_array($nextActiveRules['archiveFolders'] ?? null) ? $nextActiveRules['archiveFolders'] : [],
+        ],
+        'dataFields' => [
+            'fields' => is_array($nextActiveRules['fields'] ?? null) ? $nextActiveRules['fields'] : [],
+            'predefinedFields' => is_array($nextActiveRules['predefinedFields'] ?? null) ? $nextActiveRules['predefinedFields'] : [],
+            'systemFields' => is_array($nextActiveRules['systemFields'] ?? null) ? $nextActiveRules['systemFields'] : [],
+        ],
+        'matching' => $normalizedMatching,
+        'ocr' => [
+            'ocrSkipExistingText' => (bool) ($savedConfig['ocrSkipExistingText'] ?? true),
+            'ocrOptimizeLevel' => (int) ($savedConfig['ocrOptimizeLevel'] ?? 1),
+            'ocrTextExtractionMethod' => (string) ($savedConfig['ocrTextExtractionMethod'] ?? 'layout'),
+            'ocrPdfTextSubstitutions' => is_array($savedConfig['ocrPdfTextSubstitutions'] ?? null)
+                ? sanitize_ocr_pdf_text_substitutions($savedConfig['ocrPdfTextSubstitutions'])
+                : [],
+        ],
+        'system' => [
+            'stateUpdateTransport' => (string) ($savedConfig['stateUpdateTransport'] ?? 'polling'),
+            'chromeExtensionSuppressMissingNotice' => (bool) ($savedConfig['chromeExtensionSuppressMissingNotice'] ?? false),
+        ],
+        'reprocessedJobs' => $reprocessedJobs,
+    ];
 }
 
 function split_client_first_names(string $firstName): array

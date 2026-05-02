@@ -3326,6 +3326,161 @@ body.is-resizing-sidebar {
   font-size: 14px;
 }
 
+.settings-backup-history {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.settings-backup-history-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.settings-backup-list {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-backup-empty {
+  padding: 14px 16px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+}
+
+.settings-backup-empty--error {
+  border-style: solid;
+  border-color: #f3b2b2;
+  background: #fff5f5;
+  color: #b91c1c;
+}
+
+.settings-backup-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid #d7dee8;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.settings-backup-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.settings-backup-row-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-backup-row-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.settings-backup-row-kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #edf2ff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-backup-row-meta,
+.settings-backup-row-filename {
+  font-size: 13px;
+  color: #475569;
+  word-break: break-word;
+}
+
+.settings-backup-row-filename {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  color: #334155;
+}
+
+.settings-backup-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.settings-backup-row-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-backup-row-button-primary {
+  padding-inline: 14px;
+  border-color: #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+}
+
+.settings-backup-row-button:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.settings-backup-row-icon-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+.settings-backup-row-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  background-color: currentColor;
+  pointer-events: none;
+}
+
+.settings-backup-row-icon-download {
+  -webkit-mask: url('/assets/icons/download.svg') center / contain no-repeat;
+  mask: url('/assets/icons/download.svg') center / contain no-repeat;
+}
+
+.settings-backup-row-icon-trash {
+  -webkit-mask: url('/assets/icons/trash.svg') center / contain no-repeat;
+  mask: url('/assets/icons/trash.svg') center / contain no-repeat;
+}
+
+.settings-backup-row-icon-button-danger {
+  color: #b91c1c;
+}
+
+.settings-backup-row-icon-button-danger:hover,
+.settings-backup-row-icon-button-danger:focus-visible {
+  background: #fff5f5;
+  color: #991b1b;
+}
+
 .settings-inline-notice {
   display: flex;
   align-items: flex-start;

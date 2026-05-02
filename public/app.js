@@ -258,6 +258,10 @@ let systemChromeExtensionCopyDirectoryEl = null;
 let settingsBackupExportEl = null;
 let settingsBackupImportEl = null;
 let settingsBackupFileEl = null;
+let settingsBackupListEl = null;
+let settingsBackupItems = [];
+let settingsBackupListLoading = false;
+let settingsBackupListError = '';
 let settingsBackupBusy = false;
 let inputInboxPathEl = null;
 let outputBasePathEl = null;
@@ -9912,6 +9916,157 @@ function triggerDownloadBlob(filename, blob) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function formatConfigurationBackupDateTime(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return 'Okänt datum';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString('sv-SE', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function renderConfigurationBackups(items = settingsBackupItems) {
+  if (!(settingsBackupListEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const normalizedItems = Array.isArray(items) ? items : [];
+  settingsBackupItems = normalizedItems;
+  settingsBackupListEl.replaceChildren();
+
+  if (settingsBackupListLoading) {
+    const loading = document.createElement('div');
+    loading.className = 'settings-backup-empty';
+    loading.textContent = 'Läser säkerhetskopior...';
+    settingsBackupListEl.appendChild(loading);
+    return;
+  }
+
+  if (settingsBackupListError !== '') {
+    const error = document.createElement('div');
+    error.className = 'settings-backup-empty settings-backup-empty--error';
+    error.textContent = settingsBackupListError;
+    settingsBackupListEl.appendChild(error);
+    return;
+  }
+
+  if (normalizedItems.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'settings-backup-empty';
+    empty.textContent = 'Inga säkerhetskopior ännu.';
+    settingsBackupListEl.appendChild(empty);
+    return;
+  }
+
+  normalizedItems.forEach((item) => {
+    if (!item || typeof item.filename !== 'string') {
+      return;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'settings-backup-row';
+
+    const main = document.createElement('div');
+    main.className = 'settings-backup-row-main';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'settings-backup-row-title-row';
+
+    const title = document.createElement('div');
+    title.className = 'settings-backup-row-title';
+    title.textContent = formatConfigurationBackupDateTime(item.exportedAt || item.modifiedAt || '');
+    titleRow.appendChild(title);
+
+    const kind = document.createElement('span');
+    kind.className = 'settings-backup-row-kind';
+    kind.textContent = item.kind === 'pre-import' ? 'Före import' : 'Export';
+    titleRow.appendChild(kind);
+
+    const meta = document.createElement('div');
+    meta.className = 'settings-backup-row-meta';
+    const version = Number.isFinite(Number(item.version)) && Number(item.version) > 0 ? `Version ${Number(item.version)}` : 'Okänd version';
+    const summary = item.summary && typeof item.summary === 'object'
+      ? [
+          `${Number(item.summary.clients || 0)} huvudmän`,
+          `${Number(item.summary.senders || 0)} avsändare`,
+          `${Number(item.summary.labels || 0)} etiketter`,
+        ].join(' · ')
+      : '';
+    meta.textContent = summary ? `${version} · ${summary}` : version;
+
+    const filename = document.createElement('div');
+    filename.className = 'settings-backup-row-filename';
+    filename.textContent = item.filename;
+
+    main.appendChild(titleRow);
+    main.appendChild(meta);
+    main.appendChild(filename);
+
+    const actions = document.createElement('div');
+    actions.className = 'settings-backup-row-actions';
+
+    const restoreButton = document.createElement('button');
+    restoreButton.type = 'button';
+    restoreButton.className = 'settings-backup-row-button settings-backup-row-button-primary';
+    restoreButton.textContent = 'Återställ';
+    restoreButton.disabled = settingsBackupBusy;
+    restoreButton.addEventListener('click', () => {
+      restoreConfigurationBackup(item.filename);
+    });
+    actions.appendChild(restoreButton);
+
+    const downloadButton = document.createElement('button');
+    downloadButton.type = 'button';
+    downloadButton.className = 'icon-button settings-backup-row-icon-button';
+    downloadButton.title = 'Ladda ner';
+    downloadButton.setAttribute('aria-label', 'Ladda ner');
+    downloadButton.disabled = settingsBackupBusy;
+    downloadButton.addEventListener('click', () => {
+      downloadConfigurationBackup(item.filename);
+    });
+    const downloadIcon = document.createElement('span');
+    downloadIcon.className = 'settings-backup-row-icon settings-backup-row-icon-download';
+    downloadIcon.setAttribute('aria-hidden', 'true');
+    downloadButton.appendChild(downloadIcon);
+    actions.appendChild(downloadButton);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'icon-button settings-backup-row-icon-button settings-backup-row-icon-button-danger';
+    deleteButton.title = 'Ta bort backup';
+    deleteButton.setAttribute('aria-label', 'Ta bort backup');
+    deleteButton.disabled = settingsBackupBusy;
+    deleteButton.addEventListener('click', () => {
+      deleteConfigurationBackup(item.filename);
+    });
+    const deleteIcon = document.createElement('span');
+    deleteIcon.className = 'settings-backup-row-icon settings-backup-row-icon-trash';
+    deleteIcon.setAttribute('aria-hidden', 'true');
+    deleteButton.appendChild(deleteIcon);
+    actions.appendChild(deleteButton);
+
+    row.appendChild(main);
+    row.appendChild(actions);
+    settingsBackupListEl.appendChild(row);
+  });
+}
+
+function setBackupListLoading(loading) {
+  settingsBackupListLoading = loading === true;
+  renderConfigurationBackups();
+}
+
 function setBackupUiBusy(busy) {
   settingsBackupBusy = busy === true;
   if (settingsBackupExportEl instanceof HTMLButtonElement) {
@@ -9919,6 +10074,25 @@ function setBackupUiBusy(busy) {
   }
   if (settingsBackupImportEl instanceof HTMLButtonElement) {
     settingsBackupImportEl.disabled = settingsBackupBusy;
+  }
+  renderConfigurationBackups();
+}
+
+async function loadConfigurationBackups() {
+  settingsBackupListError = '';
+  setBackupListLoading(true);
+  try {
+    const response = await fetch('/api/list-config-backups.php', { cache: 'no-store' });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.backups)) {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte läsa säkerhetskopior.');
+    }
+    renderConfigurationBackups(payload.backups);
+  } catch (error) {
+    settingsBackupListError = error instanceof Error ? error.message : 'Kunde inte läsa säkerhetskopior.';
+    renderConfigurationBackups([]);
+  } finally {
+    setBackupListLoading(false);
   }
 }
 
@@ -9935,10 +10109,8 @@ async function exportConfigurationBackup() {
       throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte exportera konfigurationen.');
     }
 
-    const filename = typeof payload.filename === 'string' && payload.filename.trim() !== ''
-      ? payload.filename.trim()
-      : 'docflow-config.json';
-    triggerDownloadBlob(filename, new Blob([payload.text], { type: 'application/json;charset=utf-8' }));
+    await loadConfigurationBackups();
+    window.alert('Konfiguration sparad.');
   } finally {
     setBackupUiBusy(false);
   }
@@ -9978,6 +10150,86 @@ async function importConfigurationBackup(file) {
     }
     setBackupUiBusy(false);
   }
+}
+
+async function restoreConfigurationBackup(filename) {
+  const normalizedFilename = typeof filename === 'string' ? filename.trim() : '';
+  if (normalizedFilename === '' || settingsBackupBusy) {
+    return;
+  }
+
+  const confirmed = window.confirm('Detta ersätter nuvarande konfiguration med vald säkerhetskopia. Fortsätta?');
+  if (!confirmed) {
+    return;
+  }
+
+  setBackupUiBusy(true);
+  try {
+    const response = await fetch('/api/restore-config-backup.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ filename: normalizedFilename }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte återställa säkerhetskopian.');
+    }
+
+    window.location.reload();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : 'Kunde inte återställa säkerhetskopian.');
+  } finally {
+    setBackupUiBusy(false);
+  }
+}
+
+async function deleteConfigurationBackup(filename) {
+  const normalizedFilename = typeof filename === 'string' ? filename.trim() : '';
+  if (normalizedFilename === '' || settingsBackupBusy) {
+    return;
+  }
+
+  const confirmed = window.confirm('Ta bort vald säkerhetskopia?');
+  if (!confirmed) {
+    return;
+  }
+
+  setBackupUiBusy(true);
+  try {
+    const response = await fetch('/api/delete-config-backup.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ filename: normalizedFilename }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte ta bort säkerhetskopian.');
+    }
+
+    await loadConfigurationBackups();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : 'Kunde inte ta bort säkerhetskopian.');
+  } finally {
+    setBackupUiBusy(false);
+  }
+}
+
+function downloadConfigurationBackup(filename) {
+  const normalizedFilename = typeof filename === 'string' ? filename.trim() : '';
+  if (normalizedFilename === '') {
+    return;
+  }
+
+  const link = document.createElement('a');
+  link.href = '/api/download-config-backup.php?filename=' + encodeURIComponent(normalizedFilename);
+  link.download = normalizedFilename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 async function downloadCurrentOcrRepresentation() {
@@ -12257,6 +12509,7 @@ function bindSettingsPanelRefs(tabId) {
     settingsBackupExportEl = document.getElementById('settings-backup-export');
     settingsBackupImportEl = document.getElementById('settings-backup-import');
     settingsBackupFileEl = document.getElementById('settings-backup-file');
+    settingsBackupListEl = document.getElementById('settings-backup-list');
     if (settingsBackupExportEl instanceof HTMLButtonElement) {
       settingsBackupExportEl.addEventListener('click', async () => {
         try {
@@ -12298,6 +12551,10 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
   }
 
   const reload = options.reload === true;
+  if (tabId === 'backup' && loadedSettingsPanels.has(tabId) && !reload) {
+    await loadConfigurationBackups();
+    return true;
+  }
   if (loadedSettingsPanels.has(tabId) && !reload) {
     return true;
   }
@@ -12330,7 +12587,7 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
     } else if (tabId === 'extensions') {
       await loadSystemSettings();
     } else if (tabId === 'backup') {
-      // Backup-fliken använder bara export/import-knappar och behöver ingen datahämtning.
+      await loadConfigurationBackups();
     }
 
     loadedSettingsPanels.add(tabId);

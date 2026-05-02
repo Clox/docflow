@@ -20,10 +20,24 @@ if (!is_array($payload)) {
     exit;
 }
 
+$filename = is_string($payload['filename'] ?? null) ? trim((string) $payload['filename']) : '';
+$path = $filename !== '' ? configuration_backup_path($filename) : null;
+if ($path === null || !is_file($path)) {
+    json_response(['error' => 'Backup file not found'], 404);
+    exit;
+}
+
+$backupPayload = load_json_file($path);
+if (!is_array($backupPayload)) {
+    json_response(['error' => 'Backup file is invalid'], 400);
+    exit;
+}
+
 try {
-    $result = apply_configuration_import_payload($payload);
+    $result = apply_configuration_import_payload($backupPayload);
     json_response([
         'ok' => true,
+        'restoredFrom' => basename($path),
         'backupFile' => is_string($result['backupFile'] ?? null) ? $result['backupFile'] : null,
         'clients' => is_array($result['clients'] ?? null) ? $result['clients'] : [],
         'senders' => is_array($result['senders'] ?? null) ? $result['senders'] : [],
