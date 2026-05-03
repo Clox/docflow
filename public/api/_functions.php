@@ -10610,6 +10610,8 @@ function score_document_date_candidate(array $candidate, array $lines): array
     $result['excluded'] = false;
     $result['excludedReason'] = null;
     $result['score'] = 0;
+    $result['rawScore'] = 0;
+    $result['confidence'] = 0.0;
 
     if ($lineIndex < 0 || $line === '' || $raw === '' || $start < 0) {
         return $result;
@@ -10782,6 +10784,8 @@ function score_document_date_candidate(array $candidate, array $lines): array
     }
 
     $result['score'] = $score;
+    $result['rawScore'] = $score;
+    $result['confidence'] = clamp_confidence($score / 180);
     $result['signals'] = $signals;
     return $result;
 }
@@ -10826,9 +10830,6 @@ function extract_document_date_field_result(array $lines): array
         if (($candidate['excluded'] ?? false) === true) {
             continue;
         }
-        if ((int) ($candidate['score'] ?? 0) <= 0) {
-            continue;
-        }
         $selected = $candidate;
         break;
     }
@@ -10846,10 +10847,9 @@ function extract_document_date_field_result(array $lines): array
         ];
     }
 
-    $score = (int) ($selected['score'] ?? 0);
     return [
         'value' => is_string($selected['value'] ?? null) ? (string) $selected['value'] : null,
-        'confidence' => clamp_confidence($score / 180),
+        'confidence' => isset($selected['confidence']) ? clamp_confidence((float) $selected['confidence']) : 0.0,
         'lineIndex' => is_int($selected['lineIndex'] ?? null) ? (int) $selected['lineIndex'] : null,
         'source' => 'document_date_heuristic',
         'raw' => is_string($selected['raw'] ?? null) ? (string) $selected['raw'] : null,
@@ -12264,6 +12264,9 @@ function document_date_result_matches(array $result): array
             continue;
         }
 
+        $confidence = isset($candidate['confidence'])
+            ? clamp_confidence((float) $candidate['confidence'])
+            : clamp_confidence(((int) ($candidate['score'] ?? 0)) / 180);
         add_extraction_field_match(
             $matchesByKey,
             $lineIndex,
@@ -12272,16 +12275,39 @@ function document_date_result_matches(array $result): array
             $raw,
             $raw,
             'document_date_heuristic',
-            clamp_confidence(((int) ($candidate['score'] ?? 0)) / 180),
+            $confidence,
             'document_date_heuristic',
             null,
-            (float) ((int) ($candidate['score'] ?? 0))
+            is_numeric($candidate['rawScore'] ?? null)
+                ? (float) $candidate['rawScore']
+                : (float) ((int) ($candidate['score'] ?? 0)),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            $confidence,
+            $confidence
         );
     }
 
     if ($matchesByKey === [] && ($result['value'] ?? null) !== null) {
         $lineIndex = is_int($result['lineIndex'] ?? null) ? (int) $result['lineIndex'] : -1;
         if ($lineIndex >= 0) {
+            $confidence = isset($result['confidence']) ? clamp_confidence((float) $result['confidence']) : 0.0;
+            $rawScore = is_numeric($result['selectedCandidate']['rawScore'] ?? null)
+                ? (float) $result['selectedCandidate']['rawScore']
+                : (is_numeric($result['selectedCandidate']['score'] ?? null)
+                    ? (float) $result['selectedCandidate']['score']
+                    : null);
             add_extraction_field_match(
                 $matchesByKey,
                 $lineIndex,
@@ -12290,12 +12316,24 @@ function document_date_result_matches(array $result): array
                 is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
                 is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
                 is_string($result['source'] ?? null) ? (string) $result['source'] : 'document_date_heuristic',
-                isset($result['confidence']) ? (float) $result['confidence'] : 0.0,
+                $confidence,
                 'document_date_heuristic',
                 null,
-                is_numeric($result['selectedCandidate']['score'] ?? null)
-                    ? (float) $result['selectedCandidate']['score']
-                    : null
+                $rawScore,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                $confidence,
+                $confidence
             );
         }
     }

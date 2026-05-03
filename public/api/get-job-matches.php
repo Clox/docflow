@@ -81,21 +81,14 @@ try {
                     $source = is_string($match['source'] ?? null) ? trim((string) $match['source']) : '';
                     if ($source === 'pattern') {
                         $matchType = 'pattern';
-                    } elseif ($source === 'document_date_heuristic') {
-                        $matchType = 'document_date_heuristic';
                     }
                 }
                 $confidence = isset($match['confidence']) ? (float) $match['confidence'] : null;
                 $matchSource = is_string($match['source'] ?? null) ? trim((string) $match['source']) : '';
                 if ($matchType === 'pattern' && $matchSource === 'pattern') {
                     $confidence = 1.0;
-                } elseif ($matchType === 'document_date_heuristic' && $confidence === null) {
-                    $confidence = null;
                 }
                 $score = is_numeric($match['score'] ?? null) ? (float) $match['score'] : null;
-                if ($matchType === 'document_date_heuristic' && $score === null) {
-                    $score = null;
-                }
 
                 $candidateRows[] = [
                     'value' => $candidateValue,
@@ -165,8 +158,6 @@ try {
                         : '';
                     if ($fallbackSource === 'pattern') {
                         $fallbackMatchType = 'pattern';
-                    } elseif ($fallbackSource === 'document_date_heuristic') {
-                        $fallbackMatchType = 'document_date_heuristic';
                     }
                 }
                 $fallbackSource = $index === 0 && is_string($firstMatch['source'] ?? null)
@@ -174,15 +165,10 @@ try {
                     : ($index === 0 && is_string($legacyField['source'] ?? null) ? trim((string) $legacyField['source']) : '');
                 if ($fallbackMatchType === 'pattern' && $fallbackSource === 'pattern') {
                     $fallbackConfidence = 1.0;
-                } elseif ($fallbackMatchType === 'document_date_heuristic' && $fallbackConfidence === null) {
-                    $fallbackConfidence = null;
                 }
                 $fallbackScore = $index === 0 && is_numeric($firstMatch['score'] ?? null)
                     ? (float) $firstMatch['score']
                     : null;
-                if ($fallbackMatchType === 'document_date_heuristic' && $fallbackScore === null) {
-                    $fallbackScore = null;
-                }
 
                 $candidateRows[] = [
                     'value' => $candidateValue,

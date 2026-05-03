@@ -3873,17 +3873,6 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
 
   const tbody = document.createElement('tbody');
   const formatMatchConfidence = (row) => {
-    if (row && row.matchType === 'document_date_heuristic') {
-      if (typeof row.score === 'number' && Number.isFinite(row.score)) {
-        const hasFraction = Math.abs(row.score % 1) > 0.000001;
-        return `${row.score.toLocaleString('sv-SE', {
-          minimumFractionDigits: hasFraction ? 2 : 0,
-          maximumFractionDigits: hasFraction ? 2 : 0,
-        })} poäng`;
-      }
-      return '';
-    }
-
     if (typeof row?.confidence === 'number' && Number.isFinite(row.confidence)) {
       return `${(row.confidence * 100).toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
     }
