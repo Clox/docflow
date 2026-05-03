@@ -4151,20 +4151,28 @@ body.is-resizing-sidebar {
   flex: 1;
   min-height: 0;
   flex-direction: column;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
   margin-bottom: 12px;
 }
 
-.matching-threshold-section {
+.matching-threshold-section,
+.matching-acceptance-threshold-section {
   margin: 0 0 10px;
 }
 
-.matching-threshold-section h4 {
+.matching-threshold-section h4,
+.matching-acceptance-threshold-section h4,
+.matching-replacements-section h4 {
   margin: 0 0 8px;
   font-size: 14px;
   color: #111827;
 }
 
-.matching-threshold-section p {
+.matching-threshold-section p,
+.matching-acceptance-threshold-section p,
+.matching-replacements-section p {
   margin: 0 0 6px;
 }
 

@@ -530,6 +530,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       <p>Matchningar under denna tröskel visas fortfarande i matchningsvyer men används inte som accepterade värden i fakturadetaljer, filnamnsmallar eller arkiveringslogik.</p>
     </div>
     <div class="matching-replacements-section">
+      <h4>Teckenersättningar före matchning</h4>
       <p>Definiera teckenersättningar för OCR-text före matchning.</p>
       <p>Exempel: mappa <code>é</code> till <code>ö</code> så att <code>Férfallodatum</code> kan matcha <code>Förfallodatum</code>.</p>
       <div id="matching-list" class="matching-list"></div>
