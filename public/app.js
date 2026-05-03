@@ -369,6 +369,8 @@ let ocrPageImageBlend = 0.5;
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
 let ocrSearchActiveIndex = -1;
+let pendingOcrPreservedScroll = null;
+let ocrPreservedRenderSeq = 0;
 let ocrDocumentPages = [];
 let ocrRenderedPages = [];
 let matchesRequestSeq = 0;
@@ -11097,12 +11099,20 @@ function renderOcrPages() {
 }
 
 function rerenderOcrPagesPreservingScroll() {
-  const scrollTop = ocrPagesViewEl.scrollTop;
-  const scrollLeft = ocrPagesViewEl.scrollLeft;
+  const preservedScroll = pendingOcrPreservedScroll || {
+    scrollTop: ocrPagesViewEl.scrollTop,
+    scrollLeft: ocrPagesViewEl.scrollLeft,
+  };
+  pendingOcrPreservedScroll = preservedScroll;
+  const renderSeq = ++ocrPreservedRenderSeq;
   renderOcrPages();
   window.requestAnimationFrame(() => {
-    ocrPagesViewEl.scrollTop = scrollTop;
-    ocrPagesViewEl.scrollLeft = scrollLeft;
+    if (renderSeq !== ocrPreservedRenderSeq) {
+      return;
+    }
+    ocrPagesViewEl.scrollTop = preservedScroll.scrollTop;
+    ocrPagesViewEl.scrollLeft = preservedScroll.scrollLeft;
+    pendingOcrPreservedScroll = null;
     syncOcrHighlightScroll();
     updateOcrPageControls();
   });
@@ -11195,7 +11205,10 @@ function applyOcrSearchMatch(index) {
   scrollOcrMatchIntoView(match);
 }
 
-function refreshOcrSearch() {
+function refreshOcrSearch(options = {}) {
+  const rerender = options.preserveScroll === true
+    ? rerenderOcrPagesPreservingScroll
+    : renderOcrPages;
   const query = ocrSearchInputEl.value;
   const text = ocrViewEl.value || '';
 
@@ -11204,7 +11217,7 @@ function refreshOcrSearch() {
     ocrSearchActiveIndex = -1;
     setOcrSearchButtonsEnabled(false);
     setOcrSearchStatus('0 träffar', false, true);
-    renderOcrPages();
+    rerender();
     return;
   }
 
@@ -11215,7 +11228,7 @@ function refreshOcrSearch() {
     ocrSearchActiveIndex = -1;
     setOcrSearchButtonsEnabled(false);
     setOcrSearchStatus('Ogiltig regex', true);
-    renderOcrPages();
+    rerender();
     return;
   }
 
@@ -11223,14 +11236,14 @@ function refreshOcrSearch() {
     ocrSearchActiveIndex = -1;
     setOcrSearchButtonsEnabled(false);
     setOcrSearchStatus('0 träffar');
-    renderOcrPages();
+    rerender();
     return;
   }
 
   setOcrSearchButtonsEnabled(true);
   ocrSearchActiveIndex = -1;
   setOcrSearchStatus(`${ocrSearchMatches.length} träffar`);
-  renderOcrPages();
+  rerender();
 }
 
 function stepOcrSearch(direction) {
@@ -15868,7 +15881,7 @@ if (ocrSearchBarEl instanceof HTMLElement && ocrSearchInputEl instanceof HTMLInp
     getActive: () => ocrSearchRegexEl.checked === true,
     setActive: (next) => {
       ocrSearchRegexEl.checked = next === true;
-      refreshOcrSearch();
+      refreshOcrSearch({ preserveScroll: true });
     },
   }, 'ocr-search-input-wrap');
   if (ocrSearchSideEl instanceof HTMLElement) {
@@ -21983,11 +21996,11 @@ ocrSourceTabEls.forEach((buttonEl) => {
 });
 
 ocrSearchInputEl.addEventListener('input', () => {
-  refreshOcrSearch();
+  refreshOcrSearch({ preserveScroll: true });
 });
 
 ocrSearchRegexEl.addEventListener('change', () => {
-  refreshOcrSearch();
+  refreshOcrSearch({ preserveScroll: true });
 });
 
 ocrSearchPrevEl.addEventListener('click', () => {
