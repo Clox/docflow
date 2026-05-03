@@ -383,6 +383,7 @@ function normalizeMatchesFieldHitFilterMode(value) {
 let matchesFieldHitFilterMode = normalizeMatchesFieldHitFilterMode(
   window.localStorage.getItem(MATCHES_FIELD_HIT_FILTER_STORAGE_KEY)
 );
+let settingsHighlightTimer = null;
 let metaRequestSeq = 0;
 let preferredJobIdFromHash = '';
 let archiveFoldersDraft = [];
@@ -3833,6 +3834,20 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
     filterBar.appendChild(filterLabel);
     filterBar.appendChild(filterSelect);
     container.appendChild(filterBar);
+
+    const helpText = document.createElement('p');
+    helpText.className = 'matches-filter-help';
+    helpText.appendChild(document.createTextNode('Resultat är träffar som når '));
+    const thresholdLink = document.createElement('button');
+    thresholdLink.type = 'button';
+    thresholdLink.className = 'matches-filter-help-link';
+    thresholdLink.textContent = 'tröskelvärdet';
+    thresholdLink.addEventListener('click', () => {
+      openMatchingThresholdSettings();
+    });
+    helpText.appendChild(thresholdLink);
+    helpText.appendChild(document.createTextNode(' för säkerhet.'));
+    container.appendChild(helpText);
   }
 
   const filteredFieldGroups = fieldGroups
@@ -11995,6 +12010,54 @@ function openSettingsModal() {
     applySettingsDialogLayout(settingsDialogLayout);
   }
   settingsModalEl.classList.remove('hidden');
+}
+
+function highlightSettingsElement(element) {
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+
+  if (settingsHighlightTimer !== null) {
+    window.clearTimeout(settingsHighlightTimer);
+    settingsHighlightTimer = null;
+  }
+
+  element.classList.add('settings-highlight-target');
+  settingsHighlightTimer = window.setTimeout(() => {
+    element.classList.remove('settings-highlight-target');
+    settingsHighlightTimer = null;
+  }, 1800);
+}
+
+async function openMatchingThresholdSettings() {
+  if (!settingsModalEl.classList.contains('hidden') && !canLeaveCurrentSettingsView()) {
+    return false;
+  }
+
+  openSettingsModal();
+  setSettingsTab('matching');
+
+  try {
+    await ensureSettingsPanelReady('matching');
+  } catch (error) {
+    alert('Kunde inte ladda textmatchning.');
+    return false;
+  }
+
+  const thresholdInput = document.getElementById('matching-data-field-acceptance-threshold');
+  const target = thresholdInput instanceof HTMLElement
+    ? (thresholdInput.closest('.matching-acceptance-threshold-section') || thresholdInput.closest('.matching-threshold-field') || thresholdInput)
+    : null;
+  if (target instanceof HTMLElement) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    highlightSettingsElement(target);
+  }
+  if (thresholdInput instanceof HTMLInputElement) {
+    thresholdInput.focus({ preventScroll: true });
+    thresholdInput.select();
+  }
+
+  return true;
 }
 
 function settingsPanelEl(tabId) {

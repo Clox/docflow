@@ -3011,6 +3011,27 @@ body.is-resizing-sidebar {
   padding: 5px 28px 5px 8px;
 }
 
+.matches-filter-help {
+  margin: -8px 0 12px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.matches-filter-help-link {
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.matches-filter-help-link:hover,
+.matches-filter-help-link:focus-visible {
+  color: #1d4ed8;
+}
+
 .matches-table-wrap {
   border-radius: 6px;
   background: transparent;
@@ -5050,6 +5071,26 @@ body.is-resizing-sidebar {
 .settings-field-invalid {
   border-color: #dc2626 !important;
   background: #fff5f5 !important;
+}
+
+.settings-highlight-target {
+  animation: settings-highlight-pulse 1.8s ease-out;
+  border-radius: 8px;
+}
+
+@keyframes settings-highlight-pulse {
+  0% {
+    background: rgba(0, 120, 255, 0.14);
+    box-shadow: 0 0 0 0 rgba(0, 120, 255, 0.28);
+  }
+  65% {
+    background: rgba(0, 120, 255, 0.08);
+    box-shadow: 0 0 0 8px rgba(0, 120, 255, 0);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 0 rgba(0, 120, 255, 0);
+  }
 }
 
 .rule-fields .floating-input-group select {
