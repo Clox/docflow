@@ -228,6 +228,12 @@ let archiveStructureApplyEl = null;
 let labelsListEl = null;
 let systemLabelEditorEl = null;
 let labelsAddRowEl = null;
+let labelsAddMenuToggleEl = null;
+let labelsAddMenuEl = null;
+let labelsAddMenuCreateEl = null;
+let labelsAddMenuHome = null;
+let labelsAddMenuOpenRaf = 0;
+let labelsAddMenuRepositionHandler = null;
 let labelsImportRowEl = null;
 let labelsCancelEl = null;
 let labelsApplyEl = null;
@@ -3655,6 +3661,11 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 labelText: typeof match.labelText === 'string' ? match.labelText : '',
                 between: typeof match.between === 'string' ? match.between : '',
                 searchTerm: typeof match.searchTerm === 'string' ? match.searchTerm : '',
+                scopeType: typeof match.scopeType === 'string' ? match.scopeType : '',
+                scopeText: typeof match.scopeText === 'string' ? match.scopeText : '',
+                scopeIsRegex: match.scopeIsRegex === true,
+                scopeMatchedText: typeof match.scopeMatchedText === 'string' ? match.scopeMatchedText : '',
+                scopeLineIndex: Number.isInteger(match.scopeLineIndex) ? match.scopeLineIndex : null,
                 confidence: Number.isFinite(Number(match.confidence)) ? Number(match.confidence) : null,
                 baseConfidence: Number.isFinite(Number(match.baseConfidence)) ? Number(match.baseConfidence) : null,
                 finalConfidence: Number.isFinite(Number(match.finalConfidence)) ? Number(match.finalConfidence) : null,
@@ -3706,6 +3717,11 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
               labelText: typeof field.labelText === 'string' ? field.labelText : '',
               between: typeof field.between === 'string' ? field.between : '',
               searchTerm: '',
+              scopeType: typeof field.scopeType === 'string' ? field.scopeType : '',
+              scopeText: typeof field.scopeText === 'string' ? field.scopeText : '',
+              scopeIsRegex: field.scopeIsRegex === true,
+              scopeMatchedText: typeof field.scopeMatchedText === 'string' ? field.scopeMatchedText : '',
+              scopeLineIndex: Number.isInteger(field.scopeLineIndex) ? field.scopeLineIndex : null,
               confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
               baseConfidence: Number.isFinite(Number(field.baseConfidence)) ? Number(field.baseConfidence) : null,
               finalConfidence: Number.isFinite(Number(field.finalConfidence)) ? Number(field.finalConfidence) : null,
@@ -4201,6 +4217,16 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       badge.textContent = 'olika rader';
       cell.appendChild(document.createTextNode(' '));
       cell.appendChild(badge);
+    }
+    if (row?.scopeType === 'after_text' && typeof row.scopeText === 'string' && row.scopeText.trim() !== '') {
+      const scopeBadge = document.createElement('span');
+      scopeBadge.className = 'matches-hit-row-badge';
+      scopeBadge.textContent = `Scope: efter “${row.scopeText.trim()}”`;
+      if (typeof row.scopeMatchedText === 'string' && row.scopeMatchedText.trim() !== '') {
+        scopeBadge.title = `Matchade: ${row.scopeMatchedText.trim()}`;
+      }
+      cell.appendChild(document.createTextNode(' '));
+      cell.appendChild(scopeBadge);
     }
   };
   const appendMatchPenalties = (cell, row) => {
@@ -4704,6 +4730,120 @@ function toggleSelectedJobActionsMenu(forceOpen = null) {
     : forceOpen === true;
   selectedJobActionsMenuButtonEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
   selectedJobActionsMenuEl.classList.toggle('hidden', !nextOpen);
+}
+
+function closeLabelsAddMenu() {
+  if (!(labelsAddMenuToggleEl instanceof HTMLButtonElement) || !(labelsAddMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  if (labelsAddMenuOpenRaf) {
+    window.cancelAnimationFrame(labelsAddMenuOpenRaf);
+    labelsAddMenuOpenRaf = 0;
+  }
+  if (labelsAddMenuRepositionHandler) {
+    document.removeEventListener('scroll', labelsAddMenuRepositionHandler, true);
+    window.removeEventListener('resize', labelsAddMenuRepositionHandler);
+    labelsAddMenuRepositionHandler = null;
+  }
+  labelsAddMenuToggleEl.setAttribute('aria-expanded', 'false');
+  labelsAddMenuToggleEl.classList.remove('is-open');
+  labelsAddMenuEl.classList.add('hidden');
+  labelsAddMenuEl.classList.remove('is-open-up');
+  labelsAddMenuEl.style.left = '';
+  labelsAddMenuEl.style.top = '';
+  labelsAddMenuEl.style.right = '';
+  labelsAddMenuEl.style.bottom = '';
+  labelsAddMenuEl.style.maxHeight = '';
+  labelsAddMenuEl.style.minWidth = '';
+  labelsAddMenuEl.style.visibility = '';
+  labelsAddMenuEl.style.position = '';
+  labelsAddMenuEl.style.zIndex = '';
+  if (labelsAddMenuHome && labelsAddMenuHome.parent instanceof Node && labelsAddMenuEl.parentNode !== labelsAddMenuHome.parent) {
+    const referenceNode = labelsAddMenuHome.nextSibling;
+    if (referenceNode && referenceNode.parentNode === labelsAddMenuHome.parent) {
+      labelsAddMenuHome.parent.insertBefore(labelsAddMenuEl, referenceNode);
+    } else {
+      labelsAddMenuHome.parent.appendChild(labelsAddMenuEl);
+    }
+  }
+}
+
+function toggleLabelsAddMenu(forceOpen = null) {
+  if (!(labelsAddMenuToggleEl instanceof HTMLButtonElement) || !(labelsAddMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  const nextOpen = forceOpen === null
+    ? labelsAddMenuEl.classList.contains('hidden')
+    : forceOpen === true;
+  labelsAddMenuToggleEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+  labelsAddMenuToggleEl.classList.toggle('is-open', nextOpen);
+  labelsAddMenuEl.classList.toggle('hidden', !nextOpen);
+  if (!nextOpen) {
+    closeLabelsAddMenu();
+    return;
+  }
+
+  if (!labelsAddMenuHome && labelsAddMenuEl.parentNode instanceof Node) {
+    labelsAddMenuHome = {
+      parent: labelsAddMenuEl.parentNode,
+      nextSibling: labelsAddMenuEl.nextSibling,
+    };
+  }
+  if (labelsAddMenuEl.parentNode !== document.body) {
+    document.body.appendChild(labelsAddMenuEl);
+  }
+
+  labelsAddMenuEl.style.position = 'fixed';
+  labelsAddMenuEl.style.zIndex = '70';
+  labelsAddMenuEl.style.visibility = 'hidden';
+  labelsAddMenuEl.style.left = '0px';
+  labelsAddMenuEl.style.top = '0px';
+  labelsAddMenuEl.style.bottom = 'auto';
+  labelsAddMenuEl.style.right = 'auto';
+  labelsAddMenuEl.style.display = 'block';
+
+  const positionMenu = () => {
+    if (!(labelsAddMenuToggleEl instanceof HTMLElement) || !(labelsAddMenuEl instanceof HTMLElement)) {
+      return;
+    }
+    const toggleRect = labelsAddMenuToggleEl.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const margin = 8;
+    const gap = 8;
+    const menuRect = labelsAddMenuEl.getBoundingClientRect();
+    const availableBelow = Math.max(0, viewportHeight - toggleRect.bottom - gap - margin);
+    const availableAbove = Math.max(0, toggleRect.top - gap - margin);
+    const openUp = availableBelow < menuRect.height && availableAbove > availableBelow;
+    const availableSpace = openUp ? availableAbove : availableBelow;
+    const maxHeight = Math.min(menuRect.height, availableSpace);
+    const left = Math.min(
+      Math.max(margin, toggleRect.left),
+      Math.max(margin, viewportWidth - menuRect.width - margin)
+    );
+    const top = openUp
+      ? Math.max(margin, toggleRect.top - gap - maxHeight)
+      : Math.min(viewportHeight - margin - maxHeight, toggleRect.bottom + gap);
+
+    labelsAddMenuEl.style.left = `${Math.round(left)}px`;
+    labelsAddMenuEl.style.top = `${Math.round(top)}px`;
+    labelsAddMenuEl.style.maxHeight = `${Math.round(maxHeight)}px`;
+    labelsAddMenuEl.classList.toggle('is-open-up', openUp);
+    labelsAddMenuEl.style.visibility = 'visible';
+  };
+
+  labelsAddMenuRepositionHandler = () => {
+    positionMenu();
+  };
+  labelsAddMenuOpenRaf = window.requestAnimationFrame(() => {
+    labelsAddMenuOpenRaf = 0;
+    if (!labelsAddMenuRepositionHandler) {
+      return;
+    }
+    positionMenu();
+  });
+  document.addEventListener('scroll', labelsAddMenuRepositionHandler, true);
+  window.addEventListener('resize', labelsAddMenuRepositionHandler);
 }
 
 function updateSelectedJobActionsMenu(job) {
@@ -12568,15 +12708,28 @@ function bindSettingsPanelRefs(tabId) {
     labelsListEl = document.getElementById('labels-list');
     systemLabelEditorEl = document.getElementById('system-label-editor');
     labelsAddRowEl = document.getElementById('labels-add-row');
+    labelsAddMenuToggleEl = document.getElementById('labels-add-menu-toggle');
+    labelsAddMenuEl = document.getElementById('labels-add-menu');
+    labelsAddMenuCreateEl = document.getElementById('labels-add-row-menu-create');
     labelsImportRowEl = document.getElementById('labels-import-row');
     labelsCancelEl = document.getElementById('labels-cancel');
     labelsApplyEl = document.getElementById('labels-apply');
     labelsAddRowEl.addEventListener('click', () => {
+      closeLabelsAddMenu();
       labelsDraft.push(defaultLabel());
       renderLabelsEditor();
       updateSettingsActionButtons();
     });
+    labelsAddMenuToggleEl.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleLabelsAddMenu();
+    });
+    labelsAddMenuCreateEl.addEventListener('click', () => {
+      closeLabelsAddMenu();
+      labelsAddRowEl.click();
+    });
     labelsImportRowEl.addEventListener('click', async () => {
+      closeLabelsAddMenu();
       try {
         await importSingleLabelFromJson();
       } catch (error) {
@@ -13013,6 +13166,7 @@ function closeSettingsModal(force = false) {
   }
 
   stopSettingsDialogInteractions();
+  closeLabelsAddMenu();
   restoreSettingsFooterActions(activeSettingsFooterPanelId);
   restoreSettingsSectionFooterActions(activeSettingsSectionFooterPanelId);
   if (settingsPanelActionsHostEl instanceof HTMLElement) {
@@ -13035,6 +13189,9 @@ function setSettingsTab(tabId) {
   }
   if (tabId !== 'senders') {
     closeSenderMergeOverlay();
+  }
+  if (tabId !== 'labels') {
+    closeLabelsAddMenu();
   }
   mountSettingsPanel(tabId);
   bindSettingsPanelRefs(tabId);
@@ -15138,6 +15295,7 @@ function defaultExtractionFieldRuleSet() {
     normalizationReplacements: [],
     datePosition: 'first',
     amountPosition: 'first',
+    scope: null,
   };
 }
 
@@ -15288,6 +15446,20 @@ function sanitizeExtractionFieldSearchTermsInput(searchTerms, legacyFallback = '
   return normalized;
 }
 
+function sanitizeExtractionFieldRuleScope(scope) {
+  const input = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope : {};
+  const type = String(input.type || '').trim().toLowerCase();
+  const text = String(input.text || '').trim();
+  if (type !== 'after_text' || !text) {
+    return null;
+  }
+  return {
+    type: 'after_text',
+    text,
+    isRegex: input.isRegex === true,
+  };
+}
+
 function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
   const input = ruleSet && typeof ruleSet === 'object' ? ruleSet : {};
   const legacy = legacyField && typeof legacyField === 'object' ? legacyField : {};
@@ -15305,6 +15477,7 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
     legacyIsRegex
   );
   const type = sanitizeExtractionFieldType(hasExplicitRuleSet ? input.type : legacy.type, legacy);
+  const scope = sanitizeExtractionFieldRuleScope(hasExplicitRuleSet ? input.scope : legacy.scope);
   const useSearchText = hasExplicitRuleSet
     ? input.useSearchText !== false && input.requiresSearchTerms !== false
     : searchTerms.length > 0;
@@ -15343,6 +15516,7 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
     normalizationReplacements,
     datePosition: sanitizeExtractionFieldPosition(hasExplicitRuleSet ? input.datePosition : legacy.datePosition),
     amountPosition: isDateType ? undefined : sanitizeExtractionFieldPosition(hasExplicitRuleSet ? input.amountPosition : legacy.amountPosition),
+    scope,
   };
 }
 
@@ -17634,6 +17808,40 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       searchTermsField.appendChild(searchTermsList);
       ruleFields.appendChild(searchTermsField);
 
+      const initialScope = sanitizeExtractionFieldRuleScope(ruleSet.scope);
+      const scopeToggleLabel = document.createElement('label');
+      scopeToggleLabel.className = 'extraction-field-rule-set-toggle';
+      const scopeCheckbox = document.createElement('input');
+      scopeCheckbox.type = 'checkbox';
+      scopeCheckbox.checked = initialScope !== null;
+      const scopeToggleText = document.createElement('span');
+      scopeToggleText.textContent = 'Begränsa till text efter';
+      scopeToggleLabel.appendChild(scopeCheckbox);
+      scopeToggleLabel.appendChild(scopeToggleText);
+
+      const scopeToggleField = document.createElement('div');
+      scopeToggleField.className = 'floating-input-group extraction-field-rule-set-toggle-field';
+      scopeToggleField.appendChild(scopeToggleLabel);
+      ruleFields.appendChild(scopeToggleField);
+
+      const scopeInput = document.createElement('input');
+      scopeInput.type = 'text';
+      scopeInput.placeholder = 'Ex: Så här betalar du';
+      scopeInput.value = initialScope ? initialScope.text : '';
+      let scopeIsRegex = initialScope ? initialScope.isRegex === true : false;
+      const scopeRegexButton = createRegexToggleButton({
+        getActive: () => scopeIsRegex === true,
+        setActive: (next) => {
+          scopeIsRegex = next === true;
+          syncRuleSetUi();
+        },
+      });
+      scopeRegexButton.title = 'Regex';
+      scopeRegexButton.setAttribute('aria-label', 'Regex');
+      const scopeInputWrap = createInlineInputWithAccessories(scopeInput, [scopeRegexButton], 'extraction-field-alias-input-wrap');
+      const scopeField = createFloatingField('Begränsa till text efter', scopeInputWrap);
+      ruleFields.appendChild(scopeField);
+
       const valuePatternInput = document.createElement('input');
       valuePatternInput.type = 'text';
       valuePatternInput.placeholder = 'Ex: "\\d{6}[- ]?\\d{4}"';
@@ -17813,9 +18021,18 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
           replace: typeof replacement.replace === 'string' ? replacement.replace : '',
           isRegex: replacement.isRegex === true,
         }));
+        const scopeText = scopeInput.value.trim();
+        collection[index].ruleSets[ruleSetIndex].scope = scopeCheckbox.checked && scopeText !== ''
+          ? {
+            type: 'after_text',
+            text: scopeText,
+            isRegex: scopeIsRegex === true,
+          }
+          : null;
         collection[index].ruleSets[ruleSetIndex].datePosition = sanitizeExtractionFieldPosition(datePositionSelect.value);
         collection[index].ruleSets[ruleSetIndex].amountPosition = sanitizeExtractionFieldPosition(amountPositionSelect.value);
         searchTermsField.hidden = !requiresSearchTermsCheckbox.checked;
+        scopeField.hidden = !scopeCheckbox.checked;
         valuePatternField.hidden = type !== 'regex';
         datePositionField.hidden = type !== 'date';
         amountPositionField.hidden = type !== 'amount';
@@ -17859,6 +18076,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
       typeSelect.addEventListener('change', syncRuleSetUi);
       requiresSearchTermsCheckbox.addEventListener('change', syncRuleSetUi);
+      scopeCheckbox.addEventListener('change', syncRuleSetUi);
+      scopeInput.addEventListener('input', syncRuleSetUi);
       normalizationTypeSelect.addEventListener('change', syncRuleSetUi);
       normalizationCharsInput.addEventListener('input', syncRuleSetUi);
       datePositionSelect.addEventListener('change', syncRuleSetUi);
@@ -22366,20 +22585,30 @@ document.addEventListener('pointerdown', (event) => {
     closeOcrMenu();
   }
 
-  if (
-    selectedJobActionsMenuWrapEl instanceof HTMLElement
-    && selectedJobActionsMenuButtonEl instanceof HTMLButtonElement
-    && selectedJobActionsMenuEl instanceof HTMLElement
-    && !selectedJobActionsMenuEl.classList.contains('hidden')
-    && !selectedJobActionsMenuWrapEl.contains(event.target)
-  ) {
-    closeSelectedJobActionsMenu();
-  }
+    if (
+      selectedJobActionsMenuWrapEl instanceof HTMLElement
+      && selectedJobActionsMenuButtonEl instanceof HTMLButtonElement
+      && selectedJobActionsMenuEl instanceof HTMLElement
+      && !selectedJobActionsMenuEl.classList.contains('hidden')
+      && !selectedJobActionsMenuWrapEl.contains(event.target)
+    ) {
+      closeSelectedJobActionsMenu();
+    }
 
-  if (
-    appNoticesEl instanceof HTMLElement
-    && appNoticesOverflowOpen
-    && !appNoticesEl.contains(event.target)
+    if (
+      labelsAddMenuToggleEl instanceof HTMLButtonElement
+      && labelsAddMenuEl instanceof HTMLElement
+      && !labelsAddMenuEl.classList.contains('hidden')
+      && !(event.target instanceof Node && labelsAddMenuToggleEl.contains(event.target))
+      && !(event.target instanceof Node && labelsAddMenuEl.contains(event.target))
+    ) {
+      closeLabelsAddMenu();
+    }
+
+    if (
+      appNoticesEl instanceof HTMLElement
+      && appNoticesOverflowOpen
+      && !appNoticesEl.contains(event.target)
   ) {
     closeAppNoticesOverflow();
   }
@@ -22456,6 +22685,11 @@ document.addEventListener('keydown', (event) => {
 
   if (event.key === 'Escape' && selectedJobActionsMenuEl instanceof HTMLElement && !selectedJobActionsMenuEl.classList.contains('hidden')) {
     closeSelectedJobActionsMenu();
+    return;
+  }
+
+  if (event.key === 'Escape' && labelsAddMenuEl instanceof HTMLElement && !labelsAddMenuEl.classList.contains('hidden')) {
+    closeLabelsAddMenu();
     return;
   }
 

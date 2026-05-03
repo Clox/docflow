@@ -96,6 +96,11 @@ try {
                     'labelText' => is_string($match['labelText'] ?? null) ? trim((string) $match['labelText']) : '',
                     'between' => is_string($match['between'] ?? null) ? (string) $match['between'] : '',
                     'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : '',
+                    'scopeType' => is_string($match['scopeType'] ?? null) ? trim((string) $match['scopeType']) : '',
+                    'scopeText' => is_string($match['scopeText'] ?? null) ? trim((string) $match['scopeText']) : '',
+                    'scopeIsRegex' => ($match['scopeIsRegex'] ?? false) === true,
+                    'scopeMatchedText' => is_string($match['scopeMatchedText'] ?? null) ? trim((string) $match['scopeMatchedText']) : '',
+                    'scopeLineIndex' => is_int($match['scopeLineIndex'] ?? null) ? (int) $match['scopeLineIndex'] : null,
                     'extractedRaw' => is_string($match['raw'] ?? null) ? (string) $match['raw'] : '',
                     'raw' => is_string($match['matchText'] ?? null)
                         ? (string) $match['matchText']
@@ -184,6 +189,19 @@ try {
                     'searchTerm' => $index === 0 && is_string($firstMatch['searchTerm'] ?? null)
                         ? trim((string) $firstMatch['searchTerm'])
                         : '',
+                    'scopeType' => $index === 0 && is_string($firstMatch['scopeType'] ?? null)
+                        ? trim((string) $firstMatch['scopeType'])
+                        : '',
+                    'scopeText' => $index === 0 && is_string($firstMatch['scopeText'] ?? null)
+                        ? trim((string) $firstMatch['scopeText'])
+                        : '',
+                    'scopeIsRegex' => $index === 0 && (($firstMatch['scopeIsRegex'] ?? false) === true),
+                    'scopeMatchedText' => $index === 0 && is_string($firstMatch['scopeMatchedText'] ?? null)
+                        ? trim((string) $firstMatch['scopeMatchedText'])
+                        : '',
+                    'scopeLineIndex' => $index === 0 && is_int($firstMatch['scopeLineIndex'] ?? null)
+                        ? (int) $firstMatch['scopeLineIndex']
+                        : null,
                     'extractedRaw' => $index === 0 && is_string($firstMatch['raw'] ?? null)
                         ? (string) $firstMatch['raw']
                         : ($index === 0 && is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''),

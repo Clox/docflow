@@ -2488,6 +2488,31 @@ function normalize_extraction_field_is_regex(mixed $value): bool
     return $value === true || $value === 1 || $value === '1';
 }
 
+function normalize_extraction_field_rule_scope(mixed $input): ?array
+{
+    if (!is_array($input)) {
+        return null;
+    }
+
+    $type = is_string($input['type'] ?? null) ? trim(strtolower((string) $input['type'])) : '';
+    if ($type !== 'after_text') {
+        return null;
+    }
+
+    $text = is_string($input['text'] ?? null)
+        ? normalize_inline_whitespace((string) $input['text'])
+        : '';
+    if ($text === '') {
+        return null;
+    }
+
+    return [
+        'type' => 'after_text',
+        'text' => $text,
+        'isRegex' => normalize_extraction_field_is_regex($input['isRegex'] ?? false),
+    ];
+}
+
 function normalize_extraction_field_normalization_type(mixed $value): string
 {
     $normalized = is_string($value) ? trim(strtolower($value)) : '';
@@ -2642,6 +2667,7 @@ function default_extraction_field_rule_set(array $overrides = []): array
         'normalizationReplacements' => [],
         'datePosition' => 'first',
         'amountPosition' => 'first',
+        'scope' => null,
     ];
 
     return array_merge($defaults, $overrides);
@@ -2669,6 +2695,7 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
         $legacyIsRegex = normalize_extraction_field_is_regex($row['isRegex'] ?? false);
         $searchTerms = normalize_extraction_field_search_terms($row['searchTerms'] ?? null, $legacyIsRegex);
         $datePosition = normalize_extraction_field_position($row['datePosition'] ?? null);
+        $scope = normalize_extraction_field_rule_scope($row['scope'] ?? null);
         if ($type === 'date') {
             $normalized[] = [
                 'type' => 'date',
@@ -2676,6 +2703,7 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
                 'requiresSearchTerms' => $requiresSearchTerms,
                 'searchTerms' => $searchTerms,
                 'datePosition' => $datePosition,
+                'scope' => $scope,
             ];
             continue;
         }
@@ -2698,6 +2726,7 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             'normalizationReplacements' => normalize_extraction_field_normalization_replacements($row['normalizationReplacements'] ?? null),
             'datePosition' => $datePosition,
             'amountPosition' => normalize_extraction_field_position($row['amountPosition'] ?? null),
+            'scope' => $scope,
         ]);
     }
 
@@ -2728,6 +2757,7 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
                 'requiresSearchTerms' => $requiresSearchTerms,
                 'searchTerms' => $requiresSearchTerms ? $legacyAliases : [],
                 'datePosition' => $datePosition,
+                'scope' => null,
             ]];
         }
 
@@ -2743,6 +2773,7 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             'normalizationReplacements' => $normalizationReplacements,
             'datePosition' => $datePosition,
             'amountPosition' => normalize_extraction_field_position($legacy['amountPosition'] ?? null),
+            'scope' => null,
         ])];
     }
 
@@ -12661,6 +12692,87 @@ function extract_unlabeled_pattern_field_matches(array $lines, string $pattern, 
     return sort_extraction_field_matches(array_values($matchesByKey));
 }
 
+function apply_extraction_field_after_text_scope(array $lines, array $replacementMap, array $scope): ?array
+{
+    $scopeText = is_string($scope['text'] ?? null) ? trim((string) $scope['text']) : '';
+    if ($scopeText === '') {
+        return [
+            'lines' => $lines,
+            'debug' => null,
+        ];
+    }
+
+    $hits = find_document_label_hits($lines, [[
+        'text' => $scopeText,
+        'isRegex' => normalize_extraction_field_is_regex($scope['isRegex'] ?? false),
+    ]], $replacementMap);
+    if ($hits === []) {
+        return null;
+    }
+
+    usort($hits, static function (array $left, array $right): int {
+        $lineCompare = ((int) ($left['index'] ?? 0)) <=> ((int) ($right['index'] ?? 0));
+        if ($lineCompare !== 0) {
+            return $lineCompare;
+        }
+        return ((int) ($left['labelStart'] ?? 0)) <=> ((int) ($right['labelStart'] ?? 0));
+    });
+
+    $hit = $hits[0];
+    $hitLineIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : -1;
+    $labelEnd = is_int($hit['labelEnd'] ?? null) ? max(0, (int) $hit['labelEnd']) : 0;
+    if ($hitLineIndex < 0) {
+        return null;
+    }
+
+    $scopedLines = [];
+    foreach ($lines as $lineIndex => $line) {
+        if (!is_int($lineIndex) || $lineIndex < $hitLineIndex) {
+            continue;
+        }
+
+        $resolvedLine = is_string($line) ? (string) $line : '';
+        if ($lineIndex === $hitLineIndex) {
+            $lineLength = strlen($resolvedLine);
+            $end = min($labelEnd, $lineLength);
+            $resolvedLine = str_repeat(' ', $end) . substr($resolvedLine, $end);
+        }
+        $scopedLines[$lineIndex] = $resolvedLine;
+    }
+
+    return [
+        'lines' => $scopedLines,
+        'debug' => [
+            'type' => 'after_text',
+            'text' => $scopeText,
+            'isRegex' => normalize_extraction_field_is_regex($scope['isRegex'] ?? false),
+            'matchedText' => matched_label_text_from_hit($hit),
+            'lineIndex' => $hitLineIndex,
+        ],
+    ];
+}
+
+function annotate_extraction_field_matches_with_scope(array $matches, ?array $scopeDebug): array
+{
+    if ($scopeDebug === null) {
+        return $matches;
+    }
+
+    return array_values(array_map(static function ($match) use ($scopeDebug): array {
+        $resolved = is_array($match) ? $match : [];
+        $resolved['scopeType'] = 'after_text';
+        $resolved['scopeText'] = is_string($scopeDebug['text'] ?? null) ? (string) $scopeDebug['text'] : '';
+        $resolved['scopeIsRegex'] = ($scopeDebug['isRegex'] ?? false) === true;
+        if (is_string($scopeDebug['matchedText'] ?? null) && trim((string) $scopeDebug['matchedText']) !== '') {
+            $resolved['scopeMatchedText'] = trim((string) $scopeDebug['matchedText']);
+        }
+        if (is_int($scopeDebug['lineIndex'] ?? null)) {
+            $resolved['scopeLineIndex'] = (int) $scopeDebug['lineIndex'];
+        }
+        return $resolved;
+    }, $matches));
+}
+
 function match_field_rule(
     array $lines,
     array $replacementMap,
@@ -12687,6 +12799,16 @@ function extract_configured_rule_set_field_matches(
 {
     $type = extraction_field_rule_set_type($ruleSet);
     $runtimeRuleSet = extraction_field_runtime_rule_set($ruleSet);
+    $scope = normalize_extraction_field_rule_scope($runtimeRuleSet['scope'] ?? null);
+    $scopeDebug = null;
+    if ($scope !== null) {
+        $scoped = apply_extraction_field_after_text_scope($lines, $replacementMap, $scope);
+        if ($scoped === null) {
+            return [];
+        }
+        $lines = is_array($scoped['lines'] ?? null) ? $scoped['lines'] : [];
+        $scopeDebug = is_array($scoped['debug'] ?? null) ? $scoped['debug'] : null;
+    }
     $requiresSearchTerms = extraction_field_rule_set_uses_search_text($runtimeRuleSet);
     $normalizationType = normalize_extraction_field_normalization_type($runtimeRuleSet['normalizationType'] ?? null);
     $searchTerms = normalize_extraction_field_search_terms(
@@ -12708,7 +12830,7 @@ function extract_configured_rule_set_field_matches(
             return [];
         }
 
-        return collect_labeled_candidate_matches(
+        return annotate_extraction_field_matches_with_scope(collect_labeled_candidate_matches(
             $lines,
             $searchTerms,
             $replacementMap,
@@ -12716,14 +12838,20 @@ function extract_configured_rule_set_field_matches(
             1,
             $positionSettings,
             $lineGeometries
-        );
+        ), $scopeDebug);
     }
 
     if (!$requiresSearchTerms) {
         if (in_array($type, ['regex', 'date'], true)) {
-            return extract_unlabeled_pattern_field_matches($lines, $valuePattern, $preferCaptureGroupValue);
+            return annotate_extraction_field_matches_with_scope(
+                extract_unlabeled_pattern_field_matches($lines, $valuePattern, $preferCaptureGroupValue),
+                $scopeDebug
+            );
         }
-        return collect_document_candidate_matches($lines, $candidateExtractor);
+        return annotate_extraction_field_matches_with_scope(
+            collect_document_candidate_matches($lines, $candidateExtractor),
+            $scopeDebug
+        );
     }
 
     if ($searchTerms === []) {
@@ -12731,7 +12859,7 @@ function extract_configured_rule_set_field_matches(
     }
 
     if (in_array($type, ['regex', 'date'], true)) {
-        return extract_generic_text_field_matches(
+        return annotate_extraction_field_matches_with_scope(extract_generic_text_field_matches(
             $lines,
             $searchTerms,
             $valuePattern,
@@ -12739,17 +12867,17 @@ function extract_configured_rule_set_field_matches(
             $positionSettings,
             $lineGeometries,
             $preferCaptureGroupValue
-        );
+        ), $scopeDebug);
     }
 
-    return collect_anchored_candidate_matches(
+    return annotate_extraction_field_matches_with_scope(collect_anchored_candidate_matches(
         $lines,
         $searchTerms,
         $replacementMap,
         $candidateExtractor,
         $positionSettings,
         $lineGeometries
-    );
+    ), $scopeDebug);
 }
 
 function extract_configured_rule_set_field_result(
@@ -12997,6 +13125,11 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'ruleSetIndex' => is_int($match['ruleSetIndex'] ?? null) ? (int) $match['ruleSetIndex'] : null,
                         'matchType' => is_string($match['matchType'] ?? null) ? trim((string) $match['matchType']) : null,
                         'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : null,
+                        'scopeType' => is_string($match['scopeType'] ?? null) ? trim((string) $match['scopeType']) : null,
+                        'scopeText' => is_string($match['scopeText'] ?? null) ? trim((string) $match['scopeText']) : null,
+                        'scopeIsRegex' => ($match['scopeIsRegex'] ?? false) === true,
+                        'scopeMatchedText' => is_string($match['scopeMatchedText'] ?? null) ? trim((string) $match['scopeMatchedText']) : null,
+                        'scopeLineIndex' => is_int($match['scopeLineIndex'] ?? null) ? (int) $match['scopeLineIndex'] : null,
                         'score' => is_numeric($match['score'] ?? null) ? (float) $match['score'] : null,
                         'accepted' => ($match['finalConfidence'] ?? 0) >= $resolvedThreshold,
                         'noisePenalty' => is_numeric($match['noisePenalty'] ?? null) ? clamp_confidence((float) $match['noisePenalty']) : null,

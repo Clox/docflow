@@ -164,6 +164,7 @@ final class ExtractionFieldRepository
                 search_terms_json,
                 rule_type,
                 value_pattern,
+                scope_json,
                 normalization_type,
                 normalization_chars,
                 date_position,
@@ -177,6 +178,7 @@ final class ExtractionFieldRepository
                 :search_terms_json,
                 :rule_type,
                 :value_pattern,
+                :scope_json,
                 :normalization_type,
                 :normalization_chars,
                 :date_position,
@@ -261,6 +263,13 @@ final class ExtractionFieldRepository
                     if (!is_string($searchTermsJson)) {
                         throw new RuntimeException('Could not encode field rule-set search terms.');
                     }
+                    $scopeJson = json_encode(
+                        $this->normalizeRuleSetScopeForStorage($ruleSet['scope'] ?? null),
+                        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                    );
+                    if (!is_string($scopeJson)) {
+                        throw new RuntimeException('Could not encode field rule-set scope.');
+                    }
 
                     $insertRuleSet->execute([
                         ':data_field_id' => $fieldId,
@@ -270,6 +279,7 @@ final class ExtractionFieldRepository
                             ? trim(strtolower((string) $ruleSet['type']))
                             : 'regex',
                         ':value_pattern' => is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '',
+                        ':scope_json' => $scopeJson,
                         ':normalization_type' => is_string($ruleSet['normalizationType'] ?? null) ? trim((string) $ruleSet['normalizationType']) : 'none',
                         ':normalization_chars' => is_string($ruleSet['normalizationChars'] ?? null) ? (string) $ruleSet['normalizationChars'] : '',
                         ':date_position' => is_string($ruleSet['datePosition'] ?? null) && in_array(trim(strtolower((string) $ruleSet['datePosition'])), ['first', 'second', 'last'], true)
@@ -349,6 +359,7 @@ final class ExtractionFieldRepository
                 search_terms_json,
                 rule_type,
                 value_pattern,
+                scope_json,
                 normalization_type,
                 normalization_chars,
                 date_position,
@@ -376,6 +387,7 @@ final class ExtractionFieldRepository
                 continue;
             }
             $searchTerms = json_decode((string) ($row['search_terms_json'] ?? '[]'), true);
+            $scope = json_decode((string) ($row['scope_json'] ?? '{}'), true);
             $resolvedSearchTerms = [];
             if (is_array($searchTerms)) {
                 foreach ($searchTerms as $searchTerm) {
@@ -409,6 +421,7 @@ final class ExtractionFieldRepository
                 'requiresSearchTerms' => ((int) ($row['requires_search_terms'] ?? 1)) === 1,
                 'searchTerms' => $resolvedSearchTerms,
                 'valuePattern' => is_string($row['value_pattern'] ?? null) ? trim((string) $row['value_pattern']) : '',
+                'scope' => $this->normalizeRuleSetScopeForStorage(is_array($scope) ? $scope : null) ?: null,
                 'normalizationType' => is_string($row['normalization_type'] ?? null) ? trim((string) $row['normalization_type']) : 'none',
                 'normalizationChars' => is_string($row['normalization_chars'] ?? null) ? (string) $row['normalization_chars'] : '',
                 'datePosition' => is_string($row['date_position'] ?? null) ? trim(strtolower((string) $row['date_position'])) : 'first',
@@ -417,6 +430,27 @@ final class ExtractionFieldRepository
         }
 
         return $byFieldId;
+    }
+
+    private function normalizeRuleSetScopeForStorage(mixed $scope): array
+    {
+        if (!is_array($scope)) {
+            return [];
+        }
+
+        $type = is_string($scope['type'] ?? null) ? trim(strtolower((string) $scope['type'])) : '';
+        $text = is_string($scope['text'] ?? null) ? trim((string) $scope['text']) : '';
+        if ($type !== 'after_text' || $text === '') {
+            return [];
+        }
+
+        return [
+            'type' => 'after_text',
+            'text' => $text,
+            'isRegex' => ($scope['isRegex'] ?? false) === true
+                || ($scope['isRegex'] ?? false) === 1
+                || ($scope['isRegex'] ?? false) === '1',
+        ];
     }
 
     private function normalizeScope(string $scope): string

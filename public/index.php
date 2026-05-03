@@ -688,8 +688,26 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       <div id="system-label-editor" class="categories-list"></div>
     </div>
     <div class="settings-section-actions labels-section-actions">
-      <button id="labels-add-row" type="button">Lägg till etikett</button>
-      <button id="labels-import-row" type="button">Importera etikett</button>
+      <div id="labels-split-button" class="split-button">
+        <button id="labels-add-row" class="split-button-main" type="button">Lägg till etikett</button>
+        <button
+          id="labels-add-menu-toggle"
+          class="split-button-toggle"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-label="Fler etikettåtgärder"
+          title="Fler etikettåtgärder"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 6.5 L8 10.5 L12 6.5" />
+          </svg>
+        </button>
+        <div id="labels-add-menu" class="split-button-menu hidden" role="menu" aria-label="Etikettåtgärder">
+          <button id="labels-add-row-menu-create" type="button" role="menuitem">Skapa ny etikett</button>
+          <button id="labels-import-row" type="button" role="menuitem">Importera från JSON</button>
+        </div>
+      </div>
     </div>
     <div class="panel-actions">
       <button id="labels-cancel" class="button-danger" type="button">Avbryt</button>
