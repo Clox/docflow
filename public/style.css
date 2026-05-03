@@ -2988,6 +2988,29 @@ body.is-resizing-sidebar {
   color: #555;
 }
 
+.matches-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 12px;
+  color: #374151;
+  font-size: 13px;
+}
+
+.matches-filter-label {
+  font-weight: 600;
+}
+
+.matches-filter-select {
+  min-width: 210px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+  padding: 5px 28px 5px 8px;
+}
+
 .matches-table-wrap {
   border-radius: 6px;
   background: transparent;
@@ -3091,6 +3114,24 @@ body.is-resizing-sidebar {
 
 .matches-table td.is-clickable:hover > span:first-child {
   text-decoration: underline;
+}
+
+.matches-table tbody tr.matches-row-result td {
+  color: #111827;
+}
+
+.matches-table tbody tr.matches-row-result td.matches-group-detail-start {
+  font-weight: 650;
+}
+
+.matches-table tbody tr.matches-row-candidate td {
+  color: #4b5563;
+  opacity: 0.72;
+}
+
+.matches-table tbody tr.matches-row-zero-confidence td {
+  color: #6b7280;
+  opacity: 0.42;
 }
 
 .matches-table .is-numeric {

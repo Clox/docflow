@@ -8661,8 +8661,146 @@ function find_label_hits(array $lines, array $labels, array $replacementMap, boo
     return $hits;
 }
 
+function find_line_range_for_document_offset(array $lineRanges, int $offset): ?array
+{
+    foreach ($lineRanges as $range) {
+        if (!is_array($range)) {
+            continue;
+        }
+        $start = is_int($range['start'] ?? null) ? (int) $range['start'] : -1;
+        $end = is_int($range['end'] ?? null) ? (int) $range['end'] : -1;
+        if ($start < 0 || $end < $start) {
+            continue;
+        }
+        if ($offset >= $start && $offset <= $end) {
+            return $range;
+        }
+    }
+
+    return null;
+}
+
+function find_document_label_hits(array $lines, array $labels, array $replacementMap, bool $isRegex = false): array
+{
+    $compiled = [];
+    foreach ($labels as $label) {
+        $labelText = '';
+        $labelIsRegex = $isRegex;
+        if (is_array($label)) {
+            $labelText = is_string($label['text'] ?? null)
+                ? (string) $label['text']
+                : (is_string($label['label'] ?? null) ? (string) $label['label'] : '');
+            $labelIsRegex = normalize_extraction_field_is_regex($label['isRegex'] ?? $isRegex);
+        } elseif (is_string($label) || is_numeric($label)) {
+            $labelText = (string) $label;
+        }
+
+        if ($labelText === '') {
+            continue;
+        }
+
+        $pattern = build_data_field_search_term_regex($labelText, $replacementMap, $labelIsRegex);
+        if (!is_string($pattern)) {
+            continue;
+        }
+
+        $compiled[] = [
+            'label' => $labelText,
+            'pattern' => $pattern,
+        ];
+    }
+
+    if ($compiled === []) {
+        return [];
+    }
+
+    $documentLines = [];
+    $lineRanges = [];
+    $offset = 0;
+    foreach ($lines as $index => $line) {
+        if (!is_int($index)) {
+            continue;
+        }
+        $resolvedLine = is_string($line) ? (string) $line : '';
+        $documentLines[] = $resolvedLine;
+        $length = strlen($resolvedLine);
+        $lineRanges[] = [
+            'index' => $index,
+            'start' => $offset,
+            'end' => $offset + $length,
+            'length' => $length,
+        ];
+        $offset += $length + 1;
+    }
+
+    $documentText = implode("\n", $documentLines);
+    if ($documentText === '') {
+        return [];
+    }
+
+    $hits = [];
+    foreach ($compiled as $item) {
+        $matches = [];
+        if (@preg_match_all((string) $item['pattern'], $documentText, $matches, PREG_OFFSET_CAPTURE) < 1) {
+            continue;
+        }
+
+        $fullMatches = is_array($matches[0] ?? null) ? $matches[0] : [];
+        foreach ($fullMatches as $matched) {
+            if (!is_array($matched)) {
+                continue;
+            }
+
+            $matchedText = is_string($matched[0] ?? null) ? (string) $matched[0] : '';
+            $matchStart = is_int($matched[1] ?? null) ? (int) $matched[1] : -1;
+            if ($matchedText === '' || $matchStart < 0) {
+                continue;
+            }
+
+            $matchEnd = $matchStart + strlen($matchedText);
+            $startRange = find_line_range_for_document_offset($lineRanges, $matchStart);
+            $endRange = find_line_range_for_document_offset($lineRanges, max($matchStart, $matchEnd - 1));
+            if (!is_array($endRange)) {
+                continue;
+            }
+
+            $hitLineIndex = is_int($endRange['index'] ?? null) ? (int) $endRange['index'] : -1;
+            if ($hitLineIndex < 0) {
+                continue;
+            }
+
+            $line = is_string($lines[$hitLineIndex] ?? null) ? (string) $lines[$hitLineIndex] : '';
+            $lineStart = is_int($endRange['start'] ?? null) ? (int) $endRange['start'] : 0;
+            $lineLength = is_int($endRange['length'] ?? null) ? (int) $endRange['length'] : strlen($line);
+            $labelStart = is_array($startRange) && (int) ($startRange['index'] ?? -1) === $hitLineIndex
+                ? max(0, $matchStart - $lineStart)
+                : 0;
+            $labelEnd = min($lineLength, max($labelStart, $matchEnd - $lineStart));
+            if ($labelEnd <= $labelStart) {
+                continue;
+            }
+
+            $hits[] = [
+                'index' => $hitLineIndex,
+                'line' => $line,
+                'pattern' => (string) $item['pattern'],
+                'label' => $item['label'],
+                'labelStart' => $labelStart,
+                'labelEnd' => $labelEnd,
+                'documentLabelText' => $matchedText,
+            ];
+        }
+    }
+
+    return $hits;
+}
+
 function matched_label_text_from_hit(array $hit): ?string
 {
+    if (is_string($hit['documentLabelText'] ?? null) && trim((string) $hit['documentLabelText']) !== '') {
+        return trim((string) $hit['documentLabelText']);
+    }
+
     $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
     $labelStart = is_int($hit['labelStart'] ?? null) ? (int) $hit['labelStart'] : -1;
     $labelEnd = is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : -1;
@@ -11684,6 +11822,210 @@ function collect_labeled_candidate_matches(
     return sort_extraction_field_matches(array_values($matchesByKey));
 }
 
+function matching_line_page_number(array $lineGeometries, int $lineIndex): ?int
+{
+    $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+    if ($lineGeometry === null || !is_numeric($lineGeometry['pageNumber'] ?? null)) {
+        return null;
+    }
+
+    $pageNumber = (int) $lineGeometry['pageNumber'];
+    return $pageNumber > 0 ? $pageNumber : null;
+}
+
+function anchored_candidate_line_is_in_scope(array $lineGeometries, int $hitLineIndex, int $candidateLineIndex): bool
+{
+    if ($candidateLineIndex < $hitLineIndex) {
+        return false;
+    }
+
+    $hitPageNumber = matching_line_page_number($lineGeometries, $hitLineIndex);
+    $candidatePageNumber = matching_line_page_number($lineGeometries, $candidateLineIndex);
+    if ($hitPageNumber === null || $candidatePageNumber === null) {
+        return true;
+    }
+
+    return $hitPageNumber === $candidatePageNumber;
+}
+
+function apply_anchored_fallback_position_penalty(array $components, int $hitLineIndex, int $candidateLineIndex): array
+{
+    if ($candidateLineIndex <= $hitLineIndex) {
+        return $components;
+    }
+
+    $mainDirection = is_string($components['mainDirection'] ?? null) ? (string) $components['mainDirection'] : '';
+    $lineDistance = max(0, $candidateLineIndex - $hitLineIndex);
+    if ($mainDirection === 'down' || $mainDirection === 'right') {
+        $existingPenalty = is_numeric($components['positionPenalty'] ?? null) ? (float) $components['positionPenalty'] : 0.0;
+        $anchoredPenaltyCap = min(0.85, 0.25 + ($lineDistance * 0.06));
+        $components['positionPenalty'] = min($existingPenalty, $anchoredPenaltyCap);
+        return $components;
+    }
+
+    $fallbackPenalty = min(0.85, max(0, $lineDistance - 1) * 0.04);
+    $existingPenalty = is_numeric($components['positionPenalty'] ?? null) ? (float) $components['positionPenalty'] : 0.0;
+    $components['positionPenalty'] = max($existingPenalty, $fallbackPenalty);
+    $components['positionPenaltyAxis'] = 'line';
+    $components['mainDirection'] = 'down';
+    $components['positionDiff'] = (float) $lineDistance;
+    $components['positionNormalizedDiff'] = (float) $lineDistance;
+
+    return $components;
+}
+
+function add_anchored_extraction_field_match(
+    array &$matchesByKey,
+    array $hit,
+    string $candidateLine,
+    int $candidateLineIndex,
+    array $candidate,
+    string $source,
+    ?string $searchTerm,
+    ?string $matchedSearchText,
+    array $positionSettings,
+    array $lineGeometries
+): void {
+    $value = $candidate['value'] ?? null;
+    $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+    $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+    if ($start < 0 || $value === null) {
+        return;
+    }
+
+    $spanText = is_string($candidate['spanText'] ?? null)
+        ? (string) $candidate['spanText']
+        : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+    $hitLineIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : $candidateLineIndex;
+    $confidenceComponents = candidate_confidence_components(
+        $hit,
+        $candidateLine,
+        $start,
+        $candidateLineIndex,
+        $source,
+        $positionSettings,
+        $lineGeometries,
+        $spanText
+    );
+    $confidenceComponents = apply_anchored_fallback_position_penalty(
+        $confidenceComponents,
+        $hitLineIndex,
+        $candidateLineIndex
+    );
+
+    add_extraction_field_match(
+        $matchesByKey,
+        $candidateLineIndex,
+        $start,
+        $value,
+        $raw,
+        is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
+        $source,
+        candidate_confidence_score($confidenceComponents),
+        is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
+        $searchTerm,
+        null,
+        is_numeric($confidenceComponents['noisePenalty'] ?? null) ? (float) $confidenceComponents['noisePenalty'] : null,
+        is_numeric($confidenceComponents['positionPenalty'] ?? null) ? (float) $confidenceComponents['positionPenalty'] : null,
+        is_string($confidenceComponents['positionPenaltyAxis'] ?? null) ? (string) $confidenceComponents['positionPenaltyAxis'] : null,
+        is_string($confidenceComponents['mainDirection'] ?? null) ? (string) $confidenceComponents['mainDirection'] : null,
+        is_numeric($confidenceComponents['positionDiff'] ?? null) ? (float) $confidenceComponents['positionDiff'] : null,
+        is_numeric($confidenceComponents['positionNormalizedDiff'] ?? null) ? (float) $confidenceComponents['positionNormalizedDiff'] : null,
+        is_string($confidenceComponents['betweenText'] ?? null) ? (string) $confidenceComponents['betweenText'] : null,
+        is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
+        $matchedSearchText,
+        $hitLineIndex,
+        is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null,
+        is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null
+    );
+}
+
+function collect_anchored_candidate_matches(
+    array $lines,
+    array $labels,
+    array $replacementMap,
+    callable $candidateExtractor,
+    array $positionSettings = [],
+    array $lineGeometries = [],
+    bool $labelsAreRegex = false
+): array {
+    $matchesByKey = [];
+
+    $hitsByKey = [];
+    foreach (array_merge(
+        find_label_hits($lines, $labels, $replacementMap, $labelsAreRegex),
+        find_document_label_hits($lines, $labels, $replacementMap, $labelsAreRegex)
+    ) as $hit) {
+        if (!is_array($hit)) {
+            continue;
+        }
+        $hitKey = implode('|', [
+            (string) ((int) ($hit['index'] ?? -1)),
+            (string) ((int) ($hit['labelStart'] ?? -1)),
+            (string) ((int) ($hit['labelEnd'] ?? -1)),
+            is_string($hit['label'] ?? null) ? (string) $hit['label'] : '',
+        ]);
+        $hitsByKey[$hitKey] = $hit;
+    }
+
+    $hits = array_values($hitsByKey);
+    foreach ($hits as $hit) {
+        $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
+        $label = is_string($hit['label'] ?? null) ? trim((string) $hit['label']) : '';
+        $matchedLabelText = matched_label_text_from_hit($hit);
+        $hitIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : -1;
+        $labelEnd = is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : 0;
+        if ($line === '' || $hitIndex < 0) {
+            continue;
+        }
+
+        foreach ($lines as $candidateLineIndex => $candidateLine) {
+            if (!is_int($candidateLineIndex) || $candidateLineIndex < $hitIndex) {
+                continue;
+            }
+            if (!anchored_candidate_line_is_in_scope($lineGeometries, $hitIndex, $candidateLineIndex)) {
+                continue;
+            }
+
+            $resolvedCandidateLine = is_string($candidateLine) ? (string) $candidateLine : '';
+            if ($resolvedCandidateLine === '') {
+                continue;
+            }
+
+            $candidates = $candidateExtractor($resolvedCandidateLine, 0);
+            if (!is_array($candidates)) {
+                continue;
+            }
+
+            foreach ($candidates as $candidate) {
+                if (!is_array($candidate)) {
+                    continue;
+                }
+
+                $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+                if ($candidateLineIndex === $hitIndex && $start < $labelEnd) {
+                    continue;
+                }
+
+                add_anchored_extraction_field_match(
+                    $matchesByKey,
+                    $hit,
+                    $resolvedCandidateLine,
+                    $candidateLineIndex,
+                    $candidate,
+                    $candidateLineIndex === $hitIndex ? 'tail' : 'nearby',
+                    $label !== '' ? $label : null,
+                    $matchedLabelText,
+                    $positionSettings,
+                    $lineGeometries
+                );
+            }
+        }
+    }
+
+    return sort_extraction_field_matches_by_confidence(array_values($matchesByKey));
+}
+
 function apply_cross_matching_key_penalties(array $results, array $positionSettings = []): array
 {
     $settings = normalize_matching_position_adjustment_settings($positionSettings);
@@ -11849,7 +12191,15 @@ function apply_extraction_field_acceptance_threshold(array $results, float $acce
         ));
         $selectionRuleSet = configured_field_selection_rule_set($result);
         $selectionType = extraction_field_rule_set_type($selectionRuleSet);
-        if (in_array($selectionType, ['date', 'amount'], true)) {
+        if ($selectionType === 'date') {
+            $selectedMatch = is_array($acceptedMatches[0] ?? null) ? $acceptedMatches[0] : null;
+            $result['candidateMatches'] = $acceptedMatches;
+            $result['matches'] = is_array($selectedMatch) ? [$selectedMatch] : [];
+            $result['values'] = is_array($selectedMatch) && array_key_exists('value', $selectedMatch)
+                ? [$selectedMatch['value']]
+                : [];
+            $primaryMatch = $selectedMatch;
+        } elseif ($selectionType === 'amount') {
             $selectedMatch = selected_occurrence_match(
                 $acceptedMatches,
                 extraction_field_rule_set_position($selectionRuleSet, $selectionType)
@@ -12179,14 +12529,13 @@ function extract_generic_text_field_matches(
         );
     }
 
-    return collect_labeled_candidate_matches(
+    return collect_anchored_candidate_matches(
         $lines,
         $resolvedAliases,
         $replacementMap,
         static function (string $text, int $offsetBase) use ($pattern, $preferCaptureGroupValue): array {
             return extraction_field_pattern_candidates_from_text($text, $pattern, true, $offsetBase, $preferCaptureGroupValue);
         },
-        1,
         $positionSettings,
         $lineGeometries
     );
@@ -12274,6 +12623,22 @@ function extract_unlabeled_pattern_field_matches(array $lines, string $pattern, 
     return sort_extraction_field_matches(array_values($matchesByKey));
 }
 
+function match_field_rule(
+    array $lines,
+    array $replacementMap,
+    array $ruleSet,
+    array $positionSettings = [],
+    array $lineGeometries = []
+): array {
+    return extract_configured_rule_set_field_matches(
+        $lines,
+        $replacementMap,
+        $ruleSet,
+        $positionSettings,
+        $lineGeometries
+    );
+}
+
 function extract_configured_rule_set_field_matches(
     array $lines,
     array $replacementMap,
@@ -12339,12 +12704,11 @@ function extract_configured_rule_set_field_matches(
         );
     }
 
-    return collect_labeled_candidate_matches(
+    return collect_anchored_candidate_matches(
         $lines,
         $searchTerms,
         $replacementMap,
         $candidateExtractor,
-        1,
         $positionSettings,
         $lineGeometries
     );

@@ -374,6 +374,15 @@ let ocrPreservedRenderSeq = 0;
 let ocrDocumentPages = [];
 let ocrRenderedPages = [];
 let matchesRequestSeq = 0;
+const MATCHES_FIELD_HIT_FILTER_STORAGE_KEY = 'docflowMatchesFieldHitFilterMode';
+const MATCHES_FIELD_HIT_FILTER_MODES = new Set(['results', 'candidates', 'all']);
+function normalizeMatchesFieldHitFilterMode(value) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return MATCHES_FIELD_HIT_FILTER_MODES.has(normalized) ? normalized : 'results';
+}
+let matchesFieldHitFilterMode = normalizeMatchesFieldHitFilterMode(
+  window.localStorage.getItem(MATCHES_FIELD_HIT_FILTER_STORAGE_KEY)
+);
 let metaRequestSeq = 0;
 let preferredJobIdFromHash = '';
 let archiveFoldersDraft = [];
@@ -3610,6 +3619,14 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
         if (normalizedFieldKey === '') {
           return null;
         }
+        const acceptedValues = new Set(
+          [
+            ...(Array.isArray(field.values) ? field.values : []),
+            Object.prototype.hasOwnProperty.call(field, 'value') ? field.value : null,
+          ]
+            .map((value) => (value === null || value === undefined ? '' : String(value).trim()))
+            .filter((value) => value !== '')
+        );
         const matches = Array.isArray(field.matches)
           ? field.matches
             .map((match) => {
@@ -3620,6 +3637,14 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
               if (rawValue === null || rawValue === undefined || rawValue === '') {
                 return null;
               }
+              const rowConfidence = Number.isFinite(Number(match.finalConfidence))
+                ? Number(match.finalConfidence)
+                : (Number.isFinite(Number(match.confidence))
+                  ? Number(match.confidence)
+                  : (Number.isFinite(Number(match.baseConfidence)) ? Number(match.baseConfidence) : null));
+              const accepted = Number.isFinite(Number(match.finalConfidence))
+                ? Number(match.finalConfidence) >= acceptanceThreshold
+                : false;
               return {
                 value: rawValue,
                 raw: typeof match.raw === 'string' ? match.raw : '',
@@ -3659,7 +3684,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 lineIndex: Number.isInteger(match.lineIndex) ? match.lineIndex : Number.MAX_SAFE_INTEGER,
                 labelLineIndex: Number.isInteger(match.labelLineIndex) ? match.labelLineIndex : null,
                 start: Number.isInteger(match.start) ? match.start : Number.MAX_SAFE_INTEGER,
-                accepted: Number.isFinite(Number(match.finalConfidence)) ? Number(match.finalConfidence) >= acceptanceThreshold : false,
+                accepted,
+                displayConfidence: rowConfidence,
+                isResult: accepted || (acceptedValues.has(String(rawValue).trim()) && rowConfidence === null),
               };
             })
             .filter(Boolean)
@@ -3709,6 +3736,12 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
               labelLineIndex: Number.isInteger(field.labelLineIndex) ? field.labelLineIndex : null,
               start: Number.MAX_SAFE_INTEGER,
               accepted: Number.isFinite(Number(field.finalConfidence)) ? Number(field.finalConfidence) >= acceptanceThreshold : false,
+              displayConfidence: Number.isFinite(Number(field.finalConfidence))
+                ? Number(field.finalConfidence)
+                : (Number.isFinite(Number(field.confidence))
+                  ? Number(field.confidence)
+                  : (Number.isFinite(Number(field.baseConfidence)) ? Number(field.baseConfidence) : null)),
+              isResult: true,
             }]);
         if (rows.length === 0) {
           return null;
@@ -3734,10 +3767,85 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       .filter(Boolean)
     : [];
 
-  if (fieldGroups.length === 0) {
+  const rowConfidenceValue = (row) => (
+    row && typeof row.displayConfidence === 'number' && Number.isFinite(row.displayConfidence)
+      ? row.displayConfidence
+      : (row && typeof row.finalConfidence === 'number' && Number.isFinite(row.finalConfidence)
+        ? row.finalConfidence
+        : (row && typeof row.confidence === 'number' && Number.isFinite(row.confidence) ? row.confidence : 0))
+  );
+  const rowMatchesFilterMode = (row, mode) => {
+    const confidence = rowConfidenceValue(row);
+    if (mode === 'all') {
+      return true;
+    }
+    if (row?.isResult === true || row?.accepted === true || confidence >= acceptanceThreshold) {
+      return true;
+    }
+    if (mode === 'candidates') {
+      return confidence > 0;
+    }
+    return false;
+  };
+  const hitFilterCounts = {
+    results: 0,
+    candidates: 0,
+    all: 0,
+  };
+  fieldGroups.forEach((fieldGroup) => {
+    fieldGroup.rows.forEach((row) => {
+      if (rowMatchesFilterMode(row, 'results')) {
+        hitFilterCounts.results += 1;
+      }
+      if (rowMatchesFilterMode(row, 'candidates')) {
+        hitFilterCounts.candidates += 1;
+      }
+      hitFilterCounts.all += 1;
+    });
+  });
+
+  if (fieldGroups.length > 0) {
+    const filterBar = document.createElement('div');
+    filterBar.className = 'matches-filter-bar';
+    const filterLabel = document.createElement('label');
+    filterLabel.className = 'matches-filter-label';
+    filterLabel.htmlFor = 'matches-field-hit-filter';
+    filterLabel.textContent = 'Visa träffar:';
+    const filterSelect = document.createElement('select');
+    filterSelect.id = 'matches-field-hit-filter';
+    filterSelect.className = 'matches-filter-select';
+    [
+      ['results', `Endast resultat (${hitFilterCounts.results})`],
+      ['candidates', `Resultat + kandidater (${hitFilterCounts.candidates})`],
+      ['all', `Alla träffar (${hitFilterCounts.all})`],
+    ].forEach(([value, label]) => {
+      const optionEl = document.createElement('option');
+      optionEl.value = value;
+      optionEl.textContent = label;
+      filterSelect.appendChild(optionEl);
+    });
+    filterSelect.value = matchesFieldHitFilterMode;
+    filterSelect.addEventListener('change', () => {
+      matchesFieldHitFilterMode = normalizeMatchesFieldHitFilterMode(filterSelect.value);
+      window.localStorage.setItem(MATCHES_FIELD_HIT_FILTER_STORAGE_KEY, matchesFieldHitFilterMode);
+      refreshLoadedMatchesView();
+    });
+    filterBar.appendChild(filterLabel);
+    filterBar.appendChild(filterSelect);
+    container.appendChild(filterBar);
+  }
+
+  const filteredFieldGroups = fieldGroups
+    .map((fieldGroup) => ({
+      ...fieldGroup,
+      rows: fieldGroup.rows.filter((row) => rowMatchesFilterMode(row, matchesFieldHitFilterMode)),
+    }))
+    .filter((fieldGroup) => fieldGroup.rows.length > 0);
+
+  if (filteredFieldGroups.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'matches-empty';
-    empty.textContent = emptyText;
+    empty.textContent = fieldGroups.length > 0 ? 'Inga datafältsträffar i valt filter.' : emptyText;
     container.appendChild(empty);
     return;
   }
@@ -4141,7 +4249,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
     });
   };
 
-  fieldGroups.forEach((fieldGroup, groupIndex) => {
+  filteredFieldGroups.forEach((fieldGroup, groupIndex) => {
       if (groupIndex > 0) {
         const separatorRow = document.createElement('tr');
         separatorRow.className = 'matches-group-separator';
@@ -4154,6 +4262,14 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
 
     fieldGroup.rows.forEach((row, rowIndex) => {
       const tr = document.createElement('tr');
+      const rowConfidence = rowConfidenceValue(row);
+      if (row?.isResult === true || row?.accepted === true || rowConfidence >= acceptanceThreshold) {
+        tr.classList.add('matches-row-result');
+      } else if (rowConfidence > 0) {
+        tr.classList.add('matches-row-candidate');
+      } else {
+        tr.classList.add('matches-row-zero-confidence');
+      }
       if (rowIndex === 0) {
         tr.classList.add('matches-group-start');
       }
