@@ -12325,6 +12325,28 @@ function settingsPanelEl(tabId) {
   return document.getElementById('settings-panel-' + tabId);
 }
 
+function preserveSettingsPanelScroll(renderFn) {
+  if (typeof renderFn !== 'function') {
+    return;
+  }
+  const panel = settingsPanelEl(activeSettingsTabId);
+  const scrollTop = panel instanceof HTMLElement ? panel.scrollTop : null;
+  const scrollLeft = panel instanceof HTMLElement ? panel.scrollLeft : null;
+  renderFn();
+  if (!(panel instanceof HTMLElement) || scrollTop === null || scrollLeft === null) {
+    return;
+  }
+  panel.scrollTop = scrollTop;
+  panel.scrollLeft = scrollLeft;
+  window.requestAnimationFrame(() => {
+    if (!(panel instanceof HTMLElement)) {
+      return;
+    }
+    panel.scrollTop = scrollTop;
+    panel.scrollLeft = scrollLeft;
+  });
+}
+
 function restoreSettingsFooterActions(panelId) {
   if (!panelId) {
     return;
@@ -16839,142 +16861,144 @@ function appendTreeBodyLock(bodyEl, title = 'Låst etikett') {
 }
 
 function renderClientsEditor() {
-  if (!clientsListEl) {
-    return;
-  }
+  preserveSettingsPanelScroll(() => {
+    if (!clientsListEl) {
+      return;
+    }
 
-  clientsListEl.innerHTML = '';
-  if (clientsDraft.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'categories-empty';
-    empty.textContent = 'Inga huvudmän ännu.';
-    clientsListEl.appendChild(empty);
-    return;
-  }
+    clientsListEl.innerHTML = '';
+    if (clientsDraft.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'categories-empty';
+      empty.textContent = 'Inga huvudmän ännu.';
+      clientsListEl.appendChild(empty);
+      return;
+    }
 
-  const fragment = document.createDocumentFragment();
-  clientsDraft.forEach((row, rowIndex) => {
-    const clientNode = document.createElement('div');
-    clientNode.className = 'tree-node tree-folder';
-    clientNode.dataset.clientUiKey = clientUiKey(row);
+    const fragment = document.createDocumentFragment();
+    clientsDraft.forEach((row, rowIndex) => {
+      const clientNode = document.createElement('div');
+      clientNode.className = 'tree-node tree-folder';
+      clientNode.dataset.clientUiKey = clientUiKey(row);
 
-    const clientRow = createTreeRow({ markerless: true });
+      const clientRow = createTreeRow({ markerless: true });
 
-    const clientBody = document.createElement('div');
-    clientBody.className = 'tree-body folder-body';
-    appendTreeBodyIcon(clientBody, 'tree-body-icon client-card-icon');
+      const clientBody = document.createElement('div');
+      clientBody.className = 'tree-body folder-body';
+      appendTreeBodyIcon(clientBody, 'tree-body-icon client-card-icon');
 
-    const clientActions = document.createElement('div');
-    clientActions.className = 'tree-node-actions';
+      const clientActions = document.createElement('div');
+      clientActions.className = 'tree-node-actions';
 
-    const fields = document.createElement('div');
-    fields.className = 'client-fields';
+      const fields = document.createElement('div');
+      fields.className = 'client-fields';
 
-    const folderInput = document.createElement('input');
-    folderInput.type = 'text';
-    folderInput.placeholder = 'Ex: Johan Andersson';
-    folderInput.value = row.folderName;
-    folderInput.addEventListener('input', () => {
-      clientsDraft[rowIndex].folderName = folderInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const firstNameInput = document.createElement('input');
-    firstNameInput.type = 'text';
-    firstNameInput.placeholder = 'Ex: Johan Petter';
-    firstNameInput.value = row.firstName || '';
-    firstNameInput.addEventListener('input', () => {
-      clientsDraft[rowIndex].firstName = firstNameInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const preferredFirstNameSelect = document.createElement('select');
-    const syncPreferredFirstNameOptions = (preferredName = null) => {
-      const parts = splitClientFirstNames(firstNameInput.value);
-      const currentDraft = clientsDraft[rowIndex];
-      let nextIndex = null;
-      if (typeof preferredName === 'string' && preferredName.trim() !== '') {
-        const matchIndex = parts.findIndex((part) => part === preferredName.trim());
-        nextIndex = matchIndex >= 0 ? matchIndex : null;
-      } else {
-        nextIndex = normalizePreferredFirstNameIndex(currentDraft.preferredFirstNameIndex, parts);
-      }
-      currentDraft.preferredFirstNameIndex = nextIndex;
-
-      preferredFirstNameSelect.innerHTML = '';
-      const placeholderOption = document.createElement('option');
-      placeholderOption.value = '';
-      placeholderOption.textContent = 'Välj tilltalsnamn';
-      preferredFirstNameSelect.appendChild(placeholderOption);
-      parts.forEach((part, partIndex) => {
-        const option = document.createElement('option');
-        option.value = String(partIndex);
-        option.textContent = part;
-        preferredFirstNameSelect.appendChild(option);
-      });
-      preferredFirstNameSelect.disabled = parts.length < 1;
-      preferredFirstNameSelect.value = nextIndex === null ? '' : String(nextIndex);
-    };
-    preferredFirstNameSelect.addEventListener('change', () => {
-      clientsDraft[rowIndex].preferredFirstNameIndex = normalizePreferredFirstNameIndex(
-        preferredFirstNameSelect.value,
-        firstNameInput.value
-      );
-      updateSettingsActionButtons();
-    });
-    firstNameInput.addEventListener('blur', () => {
-      const selectedOption = preferredFirstNameSelect.selectedOptions[0] || null;
-      const previousPreferredName = selectedOption && preferredFirstNameSelect.value !== ''
-        ? selectedOption.textContent
-        : preferredFirstNameForClientRow(clientsDraft[rowIndex]);
-      syncPreferredFirstNameOptions(previousPreferredName || null);
-      updateSettingsActionButtons();
-    });
-    syncPreferredFirstNameOptions(preferredFirstNameForClientRow(row) || null);
-
-    const lastNameInput = document.createElement('input');
-    lastNameInput.type = 'text';
-    lastNameInput.placeholder = 'Ex: Andersson';
-    lastNameInput.value = row.lastName || '';
-    lastNameInput.addEventListener('input', () => {
-      clientsDraft[rowIndex].lastName = lastNameInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const pinInput = document.createElement('input');
-    pinInput.type = 'text';
-    pinInput.placeholder = 'Ex: 19900101-1234';
-    pinInput.value = row.personalIdentityNumber;
-    pinInput.addEventListener('input', () => {
-      clientsDraft[rowIndex].personalIdentityNumber = pinInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const removeButton = createTrashButton({
-      variant: 'node',
-      title: 'Ta bort huvudman',
-      onClick: () => {
-        clientsDraft.splice(rowIndex, 1);
-        renderClientsEditor();
+      const folderInput = document.createElement('input');
+      folderInput.type = 'text';
+      folderInput.placeholder = 'Ex: Johan Andersson';
+      folderInput.value = row.folderName;
+      folderInput.addEventListener('input', () => {
+        clientsDraft[rowIndex].folderName = folderInput.value;
         updateSettingsActionButtons();
-      },
+      });
+
+      const firstNameInput = document.createElement('input');
+      firstNameInput.type = 'text';
+      firstNameInput.placeholder = 'Ex: Johan Petter';
+      firstNameInput.value = row.firstName || '';
+      firstNameInput.addEventListener('input', () => {
+        clientsDraft[rowIndex].firstName = firstNameInput.value;
+        updateSettingsActionButtons();
+      });
+
+      const preferredFirstNameSelect = document.createElement('select');
+      const syncPreferredFirstNameOptions = (preferredName = null) => {
+        const parts = splitClientFirstNames(firstNameInput.value);
+        const currentDraft = clientsDraft[rowIndex];
+        let nextIndex = null;
+        if (typeof preferredName === 'string' && preferredName.trim() !== '') {
+          const matchIndex = parts.findIndex((part) => part === preferredName.trim());
+          nextIndex = matchIndex >= 0 ? matchIndex : null;
+        } else {
+          nextIndex = normalizePreferredFirstNameIndex(currentDraft.preferredFirstNameIndex, parts);
+        }
+        currentDraft.preferredFirstNameIndex = nextIndex;
+
+        preferredFirstNameSelect.innerHTML = '';
+        const placeholderOption = document.createElement('option');
+        placeholderOption.value = '';
+        placeholderOption.textContent = 'Välj tilltalsnamn';
+        preferredFirstNameSelect.appendChild(placeholderOption);
+        parts.forEach((part, partIndex) => {
+          const option = document.createElement('option');
+          option.value = String(partIndex);
+          option.textContent = part;
+          preferredFirstNameSelect.appendChild(option);
+        });
+        preferredFirstNameSelect.disabled = parts.length < 1;
+        preferredFirstNameSelect.value = nextIndex === null ? '' : String(nextIndex);
+      };
+      preferredFirstNameSelect.addEventListener('change', () => {
+        clientsDraft[rowIndex].preferredFirstNameIndex = normalizePreferredFirstNameIndex(
+          preferredFirstNameSelect.value,
+          firstNameInput.value
+        );
+        updateSettingsActionButtons();
+      });
+      firstNameInput.addEventListener('blur', () => {
+        const selectedOption = preferredFirstNameSelect.selectedOptions[0] || null;
+        const previousPreferredName = selectedOption && preferredFirstNameSelect.value !== ''
+          ? selectedOption.textContent
+          : preferredFirstNameForClientRow(clientsDraft[rowIndex]);
+        syncPreferredFirstNameOptions(previousPreferredName || null);
+        updateSettingsActionButtons();
+      });
+      syncPreferredFirstNameOptions(preferredFirstNameForClientRow(row) || null);
+
+      const lastNameInput = document.createElement('input');
+      lastNameInput.type = 'text';
+      lastNameInput.placeholder = 'Ex: Andersson';
+      lastNameInput.value = row.lastName || '';
+      lastNameInput.addEventListener('input', () => {
+        clientsDraft[rowIndex].lastName = lastNameInput.value;
+        updateSettingsActionButtons();
+      });
+
+      const pinInput = document.createElement('input');
+      pinInput.type = 'text';
+      pinInput.placeholder = 'Ex: 19900101-1234';
+      pinInput.value = row.personalIdentityNumber;
+      pinInput.addEventListener('input', () => {
+        clientsDraft[rowIndex].personalIdentityNumber = pinInput.value;
+        updateSettingsActionButtons();
+      });
+
+      const removeButton = createTrashButton({
+        variant: 'node',
+        title: 'Ta bort huvudman',
+        onClick: () => {
+          clientsDraft.splice(rowIndex, 1);
+          renderClientsEditor();
+          updateSettingsActionButtons();
+        },
+      });
+
+      fields.appendChild(createFloatingField('Visningsnamn/Mappnamn', folderInput));
+      fields.appendChild(createFloatingField('Förnamn', firstNameInput));
+      fields.appendChild(createFloatingField('Tilltalsnamn', preferredFirstNameSelect));
+      fields.appendChild(createFloatingField('Efternamn', lastNameInput));
+      fields.appendChild(createFloatingField('Personnummer', pinInput));
+
+      clientActions.appendChild(removeButton);
+      clientBody.appendChild(clientActions);
+      clientBody.appendChild(fields);
+      clientRow.appendChild(clientBody);
+      clientNode.appendChild(clientRow);
+      fragment.appendChild(clientNode);
     });
 
-    fields.appendChild(createFloatingField('Visningsnamn/Mappnamn', folderInput));
-    fields.appendChild(createFloatingField('Förnamn', firstNameInput));
-    fields.appendChild(createFloatingField('Tilltalsnamn', preferredFirstNameSelect));
-    fields.appendChild(createFloatingField('Efternamn', lastNameInput));
-    fields.appendChild(createFloatingField('Personnummer', pinInput));
-
-    clientActions.appendChild(removeButton);
-    clientBody.appendChild(clientActions);
-    clientBody.appendChild(fields);
-    clientRow.appendChild(clientBody);
-    clientNode.appendChild(clientRow);
-    fragment.appendChild(clientNode);
+    clientsListEl.appendChild(fragment);
   });
-
-  clientsListEl.appendChild(fragment);
 }
 
 function focusFirstClientsField() {
@@ -17010,66 +17034,68 @@ function focusClientDraftRow(clientUiKeyValue) {
 }
 
 function renderMatchingEditor() {
-  matchingListEl.innerHTML = '';
-  syncMatchingPositionAdjustmentInputs();
+  preserveSettingsPanelScroll(() => {
+    matchingListEl.innerHTML = '';
+    syncMatchingPositionAdjustmentInputs();
 
-  if (matchingDraft.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'categories-empty';
-    empty.textContent = 'Inga ersättningar ännu.';
-    matchingListEl.appendChild(empty);
-    return;
-  }
-
-  matchingDraft.forEach((row, rowIndex) => {
-    const rowEl = document.createElement('div');
-    rowEl.className = 'matching-row';
-
-    const fromInput = document.createElement('input');
-    fromInput.type = 'text';
-    fromInput.placeholder = 'Ex: é';
-    fromInput.value = row.from;
-    fromInput.addEventListener('input', () => {
-      matchingDraft[rowIndex].from = fromInput.value;
-      updateSettingsActionButtons();
-    });
-
-    const toInput = document.createElement('input');
-    toInput.type = 'text';
-    toInput.placeholder = 'Ex: ö';
-    toInput.value = row.to;
-    toInput.addEventListener('input', () => {
-      matchingDraft[rowIndex].to = toInput.value;
-      updateSettingsActionButtons();
-    });
-
-    rowEl.appendChild(createFloatingField('Från', fromInput, 'matching-char-field'));
-    rowEl.appendChild(createFloatingField('Till', toInput, 'matching-char-field'));
-
-    if (rowIndex > 0) {
-      const removeButton = createTrashButton({
-        variant: 'row',
-        title: 'Ta bort ersättning',
-        onClick: () => {
-          matchingDraft.splice(rowIndex, 1);
-          if (matchingDraft.length === 0) {
-            matchingDraft.push(defaultReplacement());
-          }
-          renderMatchingEditor();
-          updateSettingsActionButtons();
-        },
-      });
-      rowEl.appendChild(removeButton);
-    } else {
-      const placeholder = document.createElement('div');
-      placeholder.className = 'rule-remove-placeholder';
-      rowEl.appendChild(placeholder);
+    if (matchingDraft.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'categories-empty';
+      empty.textContent = 'Inga ersättningar ännu.';
+      matchingListEl.appendChild(empty);
+      return;
     }
 
-    matchingListEl.appendChild(rowEl);
-  });
+    matchingDraft.forEach((row, rowIndex) => {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'matching-row';
 
-  updateSettingsActionButtons();
+      const fromInput = document.createElement('input');
+      fromInput.type = 'text';
+      fromInput.placeholder = 'Ex: é';
+      fromInput.value = row.from;
+      fromInput.addEventListener('input', () => {
+        matchingDraft[rowIndex].from = fromInput.value;
+        updateSettingsActionButtons();
+      });
+
+      const toInput = document.createElement('input');
+      toInput.type = 'text';
+      toInput.placeholder = 'Ex: ö';
+      toInput.value = row.to;
+      toInput.addEventListener('input', () => {
+        matchingDraft[rowIndex].to = toInput.value;
+        updateSettingsActionButtons();
+      });
+
+      rowEl.appendChild(createFloatingField('Från', fromInput, 'matching-char-field'));
+      rowEl.appendChild(createFloatingField('Till', toInput, 'matching-char-field'));
+
+      if (rowIndex > 0) {
+        const removeButton = createTrashButton({
+          variant: 'row',
+          title: 'Ta bort ersättning',
+          onClick: () => {
+            matchingDraft.splice(rowIndex, 1);
+            if (matchingDraft.length === 0) {
+              matchingDraft.push(defaultReplacement());
+            }
+            renderMatchingEditor();
+            updateSettingsActionButtons();
+          },
+        });
+        rowEl.appendChild(removeButton);
+      } else {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'rule-remove-placeholder';
+        rowEl.appendChild(placeholder);
+      }
+
+      matchingListEl.appendChild(rowEl);
+    });
+
+    updateSettingsActionButtons();
+  });
 }
 
 function syncMatchingPositionAdjustmentInputs() {
@@ -17532,37 +17558,39 @@ function renderUnlinkedSenderIdentifiers() {
 }
 
 function renderSendersEditor() {
-  if (!sendersListEl) {
-    return;
-  }
+  preserveSettingsPanelScroll(() => {
+    if (!sendersListEl) {
+      return;
+    }
 
-  const fragment = document.createDocumentFragment();
+    const fragment = document.createDocumentFragment();
 
-  if (sendersDraft.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'categories-empty';
-    empty.textContent = 'Inga avsändare ännu.';
-    fragment.appendChild(empty);
+    if (sendersDraft.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'categories-empty';
+      empty.textContent = 'Inga avsändare ännu.';
+      fragment.appendChild(empty);
+      sendersListEl.replaceChildren(fragment);
+      updateSendersSelectionSummary();
+      renderUnlinkedSenderIdentifiers();
+      return;
+    }
+
+    if (sendersSortOrder === 'similarity') {
+      buildSimilarSenderGroups().forEach((group) => {
+        fragment.appendChild(buildSimilarityGroupNode(group));
+      });
+    } else {
+      getSortedSenderEntries().forEach(({ row, rowIndex }) => {
+        fragment.appendChild(buildSenderEditorNode(row, rowIndex));
+      });
+    }
+
     sendersListEl.replaceChildren(fragment);
-    updateSendersSelectionSummary();
     renderUnlinkedSenderIdentifiers();
-    return;
-  }
-
-  if (sendersSortOrder === 'similarity') {
-    buildSimilarSenderGroups().forEach((group) => {
-      fragment.appendChild(buildSimilarityGroupNode(group));
-    });
-  } else {
-    getSortedSenderEntries().forEach(({ row, rowIndex }) => {
-      fragment.appendChild(buildSenderEditorNode(row, rowIndex));
-    });
-  }
-
-  sendersListEl.replaceChildren(fragment);
-  renderUnlinkedSenderIdentifiers();
-  updateSettingsActionButtons();
-  updateSendersSelectionSummary();
+    updateSettingsActionButtons();
+    updateSendersSelectionSummary();
+  });
 }
 
 function createSenderMergeField(label, fieldName, options, draft, onChange, extraClassName = '') {
@@ -18584,49 +18612,51 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 }
 
 function renderExtractionFieldsEditor() {
-  if (!extractionFieldsEditorEl) {
-    return;
-  }
+  preserveSettingsPanelScroll(() => {
+    if (!extractionFieldsEditorEl) {
+      return;
+    }
 
-  extractionFieldsEditorEl.innerHTML = '';
+    extractionFieldsEditorEl.innerHTML = '';
 
-  const builtInGroup = createEditorGroup('Fördefinierade', extractionFieldsBuiltInCollapsed, () => {
-    extractionFieldsBuiltInCollapsed = !extractionFieldsBuiltInCollapsed;
-  }, renderExtractionFieldsEditor);
-  const ownGroup = createEditorGroup('Egna', extractionFieldsCustomCollapsed, () => {
-    extractionFieldsCustomCollapsed = !extractionFieldsCustomCollapsed;
-  }, renderExtractionFieldsEditor);
-  ownGroup.section.classList.add('labels-editor-group--spaced');
+    const builtInGroup = createEditorGroup('Fördefinierade', extractionFieldsBuiltInCollapsed, () => {
+      extractionFieldsBuiltInCollapsed = !extractionFieldsBuiltInCollapsed;
+    }, renderExtractionFieldsEditor);
+    const ownGroup = createEditorGroup('Egna', extractionFieldsCustomCollapsed, () => {
+      extractionFieldsCustomCollapsed = !extractionFieldsCustomCollapsed;
+    }, renderExtractionFieldsEditor);
+    ownGroup.section.classList.add('labels-editor-group--spaced');
 
-  extractionFieldsEditorEl.appendChild(builtInGroup.section);
-  extractionFieldsEditorEl.appendChild(ownGroup.section);
+    extractionFieldsEditorEl.appendChild(builtInGroup.section);
+    extractionFieldsEditorEl.appendChild(ownGroup.section);
 
-  if (predefinedExtractionFieldsDraft.length === 0) {
-    const emptyBuiltIn = document.createElement('div');
-    emptyBuiltIn.className = 'categories-empty';
-    emptyBuiltIn.textContent = 'Inga fördefinierade datafält ännu.';
-    builtInGroup.content.appendChild(emptyBuiltIn);
-  } else {
-    predefinedExtractionFieldsDraft.forEach((field, index) => {
-      renderSingleExtractionFieldEditor(builtInGroup.content, predefinedExtractionFieldsDraft, index, {
-        showLock: false,
-        allowRemove: false,
+    if (predefinedExtractionFieldsDraft.length === 0) {
+      const emptyBuiltIn = document.createElement('div');
+      emptyBuiltIn.className = 'categories-empty';
+      emptyBuiltIn.textContent = 'Inga fördefinierade datafält ännu.';
+      builtInGroup.content.appendChild(emptyBuiltIn);
+    } else {
+      predefinedExtractionFieldsDraft.forEach((field, index) => {
+        renderSingleExtractionFieldEditor(builtInGroup.content, predefinedExtractionFieldsDraft, index, {
+          showLock: false,
+          allowRemove: false,
+        });
       });
-    });
-  }
+    }
 
-  if (extractionFieldsDraft.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'categories-empty';
-    empty.textContent = 'Inga datafält ännu.';
-    ownGroup.content.appendChild(empty);
-    return;
-  }
+    if (extractionFieldsDraft.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'categories-empty';
+      empty.textContent = 'Inga datafält ännu.';
+      ownGroup.content.appendChild(empty);
+      return;
+    }
 
-  extractionFieldsDraft.forEach((field, index) => {
-    renderSingleExtractionFieldEditor(ownGroup.content, extractionFieldsDraft, index, {
-      showLock: false,
-      allowRemove: true,
+    extractionFieldsDraft.forEach((field, index) => {
+      renderSingleExtractionFieldEditor(ownGroup.content, extractionFieldsDraft, index, {
+        showLock: false,
+        allowRemove: true,
+      });
     });
   });
 }
@@ -19265,44 +19295,46 @@ function renderSingleLabelEditor(container, options = {}) {
 }
 
 function renderLabelsEditor() {
-  if (!labelsListEl) {
-    return;
-  }
+  preserveSettingsPanelScroll(() => {
+    if (!labelsListEl) {
+      return;
+    }
 
-  labelsListEl.innerHTML = '';
-  const builtInGroup = createEditorGroup('Fördefinerade', labelsBuiltInCollapsed, () => {
-    labelsBuiltInCollapsed = !labelsBuiltInCollapsed;
-  }, renderLabelsEditor);
-  const ownGroup = createEditorGroup('Egna', labelsCustomCollapsed, () => {
-    labelsCustomCollapsed = !labelsCustomCollapsed;
-  }, renderLabelsEditor);
-  ownGroup.section.classList.add('labels-editor-group--spaced');
+    labelsListEl.innerHTML = '';
+    const builtInGroup = createEditorGroup('Fördefinerade', labelsBuiltInCollapsed, () => {
+      labelsBuiltInCollapsed = !labelsBuiltInCollapsed;
+    }, renderLabelsEditor);
+    const ownGroup = createEditorGroup('Egna', labelsCustomCollapsed, () => {
+      labelsCustomCollapsed = !labelsCustomCollapsed;
+    }, renderLabelsEditor);
+    ownGroup.section.classList.add('labels-editor-group--spaced');
 
-  labelsListEl.appendChild(builtInGroup.section);
-  labelsListEl.appendChild(ownGroup.section);
+    labelsListEl.appendChild(builtInGroup.section);
+    labelsListEl.appendChild(ownGroup.section);
 
-  if (labelsDraft.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'categories-empty';
-    empty.textContent = 'Inga etiketter ännu.';
-    ownGroup.content.appendChild(empty);
-  }
+    if (labelsDraft.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'categories-empty';
+      empty.textContent = 'Inga etiketter ännu.';
+      ownGroup.content.appendChild(empty);
+    }
 
-  labelsDraft.forEach((labelDraft, labelIndex) => {
-    renderSingleLabelEditor(ownGroup.content, {
-      builtIn: false,
-      labelIndex,
+    labelsDraft.forEach((labelDraft, labelIndex) => {
+      renderSingleLabelEditor(ownGroup.content, {
+        builtIn: false,
+        labelIndex,
+      });
     });
-  });
 
-  Object.keys(sanitizeSystemLabels(systemLabelsDraft)).forEach((labelKey) => {
-    renderSingleLabelEditor(builtInGroup.content, {
-      builtIn: true,
-      labelKey,
+    Object.keys(sanitizeSystemLabels(systemLabelsDraft)).forEach((labelKey) => {
+      renderSingleLabelEditor(builtInGroup.content, {
+        builtIn: true,
+        labelKey,
+      });
     });
-  });
 
-  syncLabelsEditorValidation();
+    syncLabelsEditorValidation();
+  });
 }
 
 function normalizeEditableFilenameTemplateParts(parts) {
@@ -20910,14 +20942,15 @@ function syncCategoriesEditorValidation() {
 }
 
 function renderArchiveStructureEditor() {
-  if (!(archiveStructureListEl instanceof HTMLElement)) {
-    return;
-  }
+  preserveSettingsPanelScroll(() => {
+    if (!(archiveStructureListEl instanceof HTMLElement)) {
+      return;
+    }
 
-  archiveStructureListEl.innerHTML = '';
-  const folderSortMode = ['name', 'priority', 'path'].includes(archiveStructureFolderSortMode)
-    ? archiveStructureFolderSortMode
-    : 'path';
+    archiveStructureListEl.innerHTML = '';
+    const folderSortMode = ['name', 'priority', 'path'].includes(archiveStructureFolderSortMode)
+      ? archiveStructureFolderSortMode
+      : 'path';
 
   if (archiveStructureFolderSortEl instanceof HTMLSelectElement) {
     archiveStructureFolderSortEl.value = folderSortMode;
@@ -21201,8 +21234,9 @@ function renderArchiveStructureEditor() {
     archiveStructureListEl.appendChild(node);
   });
 
-  syncCategoriesEditorValidation();
-  updateSettingsActionButtons();
+    syncCategoriesEditorValidation();
+    updateSettingsActionButtons();
+  });
 }
 
 function renderOcrProcessingCommand() {
