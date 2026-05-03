@@ -729,7 +729,26 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       <div id="system-extraction-fields-editor" class="categories-list"></div>
     </div>
     <div class="categories-actions settings-section-actions">
-      <button id="extraction-fields-add-row" type="button">Lägg till datafält</button>
+      <div id="extraction-fields-split-button" class="split-button">
+        <button id="extraction-fields-add-row" class="split-button-main" type="button">Lägg till datafält</button>
+        <button
+          id="extraction-fields-add-menu-toggle"
+          class="split-button-toggle"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-label="Fler datafältsåtgärder"
+          title="Fler datafältsåtgärder"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 6.5 L8 10.5 L12 6.5" />
+          </svg>
+        </button>
+        <div id="extraction-fields-add-menu" class="split-button-menu hidden" role="menu" aria-label="Datafältsåtgärder">
+          <button id="extraction-fields-add-row-menu-create" type="button" role="menuitem">Skapa nytt datafält</button>
+          <button id="extraction-fields-import-row" type="button" role="menuitem">Importera från JSON</button>
+        </div>
+      </div>
     </div>
     <div class="panel-actions">
       <button id="extraction-fields-cancel" class="button-danger" type="button">Avbryt</button>

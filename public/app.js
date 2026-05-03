@@ -240,6 +240,13 @@ let labelsApplyEl = null;
 let extractionFieldsEditorEl = null;
 let systemExtractionFieldsEditorEl = null;
 let extractionFieldsAddRowEl = null;
+let extractionFieldsAddMenuToggleEl = null;
+let extractionFieldsAddMenuEl = null;
+let extractionFieldsAddMenuCreateEl = null;
+let extractionFieldsAddMenuHome = null;
+let extractionFieldsAddMenuOpenRaf = 0;
+let extractionFieldsAddMenuRepositionHandler = null;
+let extractionFieldsImportRowEl = null;
 let extractionFieldsCancelEl = null;
 let extractionFieldsApplyEl = null;
 let extractionFieldsTabEls = [];
@@ -4844,6 +4851,120 @@ function toggleLabelsAddMenu(forceOpen = null) {
   });
   document.addEventListener('scroll', labelsAddMenuRepositionHandler, true);
   window.addEventListener('resize', labelsAddMenuRepositionHandler);
+}
+
+function closeExtractionFieldsAddMenu() {
+  if (!(extractionFieldsAddMenuToggleEl instanceof HTMLButtonElement) || !(extractionFieldsAddMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  if (extractionFieldsAddMenuOpenRaf) {
+    window.cancelAnimationFrame(extractionFieldsAddMenuOpenRaf);
+    extractionFieldsAddMenuOpenRaf = 0;
+  }
+  if (extractionFieldsAddMenuRepositionHandler) {
+    document.removeEventListener('scroll', extractionFieldsAddMenuRepositionHandler, true);
+    window.removeEventListener('resize', extractionFieldsAddMenuRepositionHandler);
+    extractionFieldsAddMenuRepositionHandler = null;
+  }
+  extractionFieldsAddMenuToggleEl.setAttribute('aria-expanded', 'false');
+  extractionFieldsAddMenuToggleEl.classList.remove('is-open');
+  extractionFieldsAddMenuEl.classList.add('hidden');
+  extractionFieldsAddMenuEl.classList.remove('is-open-up');
+  extractionFieldsAddMenuEl.style.left = '';
+  extractionFieldsAddMenuEl.style.top = '';
+  extractionFieldsAddMenuEl.style.right = '';
+  extractionFieldsAddMenuEl.style.bottom = '';
+  extractionFieldsAddMenuEl.style.maxHeight = '';
+  extractionFieldsAddMenuEl.style.minWidth = '';
+  extractionFieldsAddMenuEl.style.visibility = '';
+  extractionFieldsAddMenuEl.style.position = '';
+  extractionFieldsAddMenuEl.style.zIndex = '';
+  if (extractionFieldsAddMenuHome && extractionFieldsAddMenuHome.parent instanceof Node && extractionFieldsAddMenuEl.parentNode !== extractionFieldsAddMenuHome.parent) {
+    const referenceNode = extractionFieldsAddMenuHome.nextSibling;
+    if (referenceNode && referenceNode.parentNode === extractionFieldsAddMenuHome.parent) {
+      extractionFieldsAddMenuHome.parent.insertBefore(extractionFieldsAddMenuEl, referenceNode);
+    } else {
+      extractionFieldsAddMenuHome.parent.appendChild(extractionFieldsAddMenuEl);
+    }
+  }
+}
+
+function toggleExtractionFieldsAddMenu(forceOpen = null) {
+  if (!(extractionFieldsAddMenuToggleEl instanceof HTMLButtonElement) || !(extractionFieldsAddMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  const nextOpen = forceOpen === null
+    ? extractionFieldsAddMenuEl.classList.contains('hidden')
+    : forceOpen === true;
+  extractionFieldsAddMenuToggleEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+  extractionFieldsAddMenuToggleEl.classList.toggle('is-open', nextOpen);
+  extractionFieldsAddMenuEl.classList.toggle('hidden', !nextOpen);
+  if (!nextOpen) {
+    closeExtractionFieldsAddMenu();
+    return;
+  }
+
+  if (!extractionFieldsAddMenuHome && extractionFieldsAddMenuEl.parentNode instanceof Node) {
+    extractionFieldsAddMenuHome = {
+      parent: extractionFieldsAddMenuEl.parentNode,
+      nextSibling: extractionFieldsAddMenuEl.nextSibling,
+    };
+  }
+  if (extractionFieldsAddMenuEl.parentNode !== document.body) {
+    document.body.appendChild(extractionFieldsAddMenuEl);
+  }
+
+  extractionFieldsAddMenuEl.style.position = 'fixed';
+  extractionFieldsAddMenuEl.style.zIndex = '70';
+  extractionFieldsAddMenuEl.style.visibility = 'hidden';
+  extractionFieldsAddMenuEl.style.left = '0px';
+  extractionFieldsAddMenuEl.style.top = '0px';
+  extractionFieldsAddMenuEl.style.bottom = 'auto';
+  extractionFieldsAddMenuEl.style.right = 'auto';
+  extractionFieldsAddMenuEl.style.display = 'block';
+
+  const positionMenu = () => {
+    if (!(extractionFieldsAddMenuToggleEl instanceof HTMLElement) || !(extractionFieldsAddMenuEl instanceof HTMLElement)) {
+      return;
+    }
+    const toggleRect = extractionFieldsAddMenuToggleEl.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const margin = 8;
+    const gap = 8;
+    const menuRect = extractionFieldsAddMenuEl.getBoundingClientRect();
+    const availableBelow = Math.max(0, viewportHeight - toggleRect.bottom - gap - margin);
+    const availableAbove = Math.max(0, toggleRect.top - gap - margin);
+    const openUp = availableBelow < menuRect.height && availableAbove > availableBelow;
+    const availableSpace = openUp ? availableAbove : availableBelow;
+    const maxHeight = Math.min(menuRect.height, availableSpace);
+    const left = Math.min(
+      Math.max(margin, toggleRect.left),
+      Math.max(margin, viewportWidth - menuRect.width - margin)
+    );
+    const top = openUp
+      ? Math.max(margin, toggleRect.top - gap - maxHeight)
+      : Math.min(viewportHeight - margin - maxHeight, toggleRect.bottom + gap);
+
+    extractionFieldsAddMenuEl.style.left = `${Math.round(left)}px`;
+    extractionFieldsAddMenuEl.style.top = `${Math.round(top)}px`;
+    extractionFieldsAddMenuEl.style.maxHeight = `${Math.round(maxHeight)}px`;
+    extractionFieldsAddMenuEl.classList.toggle('is-open-up', openUp);
+    extractionFieldsAddMenuEl.style.visibility = 'visible';
+  };
+
+  extractionFieldsAddMenuRepositionHandler = () => {
+    positionMenu();
+  };
+  extractionFieldsAddMenuOpenRaf = window.requestAnimationFrame(() => {
+    extractionFieldsAddMenuOpenRaf = 0;
+    if (!extractionFieldsAddMenuRepositionHandler) {
+      return;
+    }
+    positionMenu();
+  });
+  document.addEventListener('scroll', extractionFieldsAddMenuRepositionHandler, true);
+  window.addEventListener('resize', extractionFieldsAddMenuRepositionHandler);
 }
 
 function updateSelectedJobActionsMenu(job) {
@@ -12759,6 +12880,10 @@ function bindSettingsPanelRefs(tabId) {
     extractionFieldsEditorEl = document.getElementById('extraction-fields-editor');
     systemExtractionFieldsEditorEl = document.getElementById('system-extraction-fields-editor');
     extractionFieldsAddRowEl = document.getElementById('extraction-fields-add-row');
+    extractionFieldsAddMenuToggleEl = document.getElementById('extraction-fields-add-menu-toggle');
+    extractionFieldsAddMenuEl = document.getElementById('extraction-fields-add-menu');
+    extractionFieldsAddMenuCreateEl = document.getElementById('extraction-fields-add-row-menu-create');
+    extractionFieldsImportRowEl = document.getElementById('extraction-fields-import-row');
     extractionFieldsCancelEl = document.getElementById('extraction-fields-cancel');
     extractionFieldsApplyEl = document.getElementById('extraction-fields-apply');
     extractionFieldsTabEls = Array.from(document.querySelectorAll('[data-extraction-fields-tab]'));
@@ -12774,6 +12899,7 @@ function bindSettingsPanelRefs(tabId) {
       });
     });
     extractionFieldsAddRowEl.addEventListener('click', () => {
+      closeExtractionFieldsAddMenu();
       if (activeExtractionFieldsTabId !== 'fields') {
         return;
       }
@@ -12781,6 +12907,22 @@ function bindSettingsPanelRefs(tabId) {
       renderExtractionFieldsEditor();
       renderSystemExtractionFieldsEditor();
       updateSettingsActionButtons();
+    });
+    extractionFieldsAddMenuToggleEl.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleExtractionFieldsAddMenu();
+    });
+    extractionFieldsAddMenuCreateEl.addEventListener('click', () => {
+      closeExtractionFieldsAddMenu();
+      extractionFieldsAddRowEl.click();
+    });
+    extractionFieldsImportRowEl.addEventListener('click', async () => {
+      closeExtractionFieldsAddMenu();
+      try {
+        await importSingleExtractionFieldFromJson();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Kunde inte importera datafältet.');
+      }
     });
     extractionFieldsCancelEl.addEventListener('click', () => {
       let parsed = {};
@@ -13167,6 +13309,7 @@ function closeSettingsModal(force = false) {
 
   stopSettingsDialogInteractions();
   closeLabelsAddMenu();
+  closeExtractionFieldsAddMenu();
   restoreSettingsFooterActions(activeSettingsFooterPanelId);
   restoreSettingsSectionFooterActions(activeSettingsSectionFooterPanelId);
   if (settingsPanelActionsHostEl instanceof HTMLElement) {
@@ -13192,6 +13335,9 @@ function setSettingsTab(tabId) {
   }
   if (tabId !== 'labels') {
     closeLabelsAddMenu();
+  }
+  if (tabId !== 'data-fields') {
+    closeExtractionFieldsAddMenu();
   }
   mountSettingsPanel(tabId);
   bindSettingsPanelRefs(tabId);
@@ -15107,6 +15253,292 @@ async function importSingleLabelFromJson() {
     labelsBuiltInCollapsed = previousBuiltInCollapsed;
     labelsCustomCollapsed = previousCustomCollapsed;
     renderLabelsEditor();
+    updateSettingsActionButtons();
+    throw error;
+  }
+}
+
+function parseImportedExtractionFieldJson(text) {
+  const source = typeof text === 'string' ? text.trim() : '';
+  if (source === '') {
+    return { error: 'Klistra in ett datafält i JSON-format först.' };
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(source);
+  } catch (error) {
+    return { error: 'JSON kunde inte tolkas.' };
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { error: 'Importerad datafält måste vara ett JSON-objekt.' };
+  }
+
+  const hasRequiredFields = typeof parsed.key === 'string'
+    && parsed.key.trim() !== ''
+    && typeof parsed.name === 'string'
+    && parsed.name.trim() !== '';
+  if (!hasRequiredFields) {
+    return { error: 'Importerad datafält måste innehålla key och name.' };
+  }
+
+  const field = sanitizeExtractionField({
+    ...parsed,
+    isSystemField: false,
+    isPredefinedField: false,
+    systemFieldKey: '',
+    predefinedFieldKey: '',
+  }, extractionFieldsDraft.length);
+
+  return { field };
+}
+
+function extractionFieldImportConflictDetails(imported) {
+  if (!imported || typeof imported !== 'object' || !imported.field) {
+    return { error: 'Importerad datafält saknas.' };
+  }
+
+  const field = imported.field;
+  const fieldKey = typeof field.key === 'string' ? field.key.trim() : '';
+  if (fieldKey === '') {
+    return { error: 'Importerad datafält saknar key.' };
+  }
+
+  const duplicateSystem = sanitizeExtractionFields(systemExtractionFieldsDraft)
+    .find((row) => typeof row.key === 'string' && row.key.trim() === fieldKey) || null;
+  if (duplicateSystem) {
+    return { error: `Datafält-id "${fieldKey}" krockar med ett systemdatafält.` };
+  }
+
+  const duplicatePredefined = sanitizeExtractionFields(predefinedExtractionFieldsDraft)
+    .find((row) => typeof row.key === 'string' && row.key.trim() === fieldKey) || null;
+  if (duplicatePredefined) {
+    return { error: `Datafält-id "${fieldKey}" krockar med ett fördefinierat datafält.` };
+  }
+
+  const existingIndex = extractionFieldsDraft.findIndex((row) => sanitizeExtractionField(row).key === fieldKey);
+  if (existingIndex >= 0) {
+    return {
+      kind: 'replace-custom',
+      fieldKey,
+      existingIndex,
+      message: `Datafält-id "${fieldKey}" finns redan. Ersätt det befintliga datafältet?`,
+    };
+  }
+
+  return {
+    kind: 'create-custom',
+    fieldKey,
+  };
+}
+
+function importedExtractionFieldSelector(imported) {
+  if (!imported || typeof imported !== 'object' || !imported.field) {
+    return '';
+  }
+  const fieldKey = typeof imported.field.key === 'string' ? imported.field.key.trim() : '';
+  if (fieldKey !== '') {
+    return `[data-field-key="${escapeCssAttributeValue(fieldKey)}"]`;
+  }
+  return '';
+}
+
+function revealImportedExtractionFieldInEditor(imported) {
+  if (!(extractionFieldsEditorEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const selector = importedExtractionFieldSelector(imported);
+  if (!selector) {
+    return;
+  }
+
+  const target = extractionFieldsEditorEl.querySelector(selector);
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  target.classList.add('settings-label-imported');
+  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  window.setTimeout(() => {
+    target.classList.remove('settings-label-imported');
+  }, 1800);
+}
+
+function showExtractionFieldImportDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'settings-dialog label-import-dialog';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Importera datafält';
+
+    const body = document.createElement('div');
+    body.className = 'label-import-dialog-body';
+
+    const description = document.createElement('p');
+    description.textContent = 'Klistra in ett datafält i samma JSON-format som kopiera-knappen exporterar, eller välj en JSON-fil.';
+
+    const sourceRow = document.createElement('div');
+    sourceRow.className = 'label-import-source-row';
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.json,application/json';
+    fileInput.hidden = true;
+
+    const fileButton = document.createElement('button');
+    fileButton.type = 'button';
+    fileButton.className = 'label-import-file-button';
+    fileButton.textContent = 'Välj fil';
+
+    const fileName = document.createElement('div');
+    fileName.className = 'label-import-file-name';
+    fileName.textContent = 'Ingen fil vald';
+
+    sourceRow.append(fileButton, fileName, fileInput);
+
+    const textarea = document.createElement('textarea');
+    textarea.placeholder = '{\n  "key": "bankgiro",\n  "name": "Bankgiro",\n  "type": "regex",\n  "ruleSets": [ ... ]\n}';
+    textarea.spellcheck = false;
+
+    const error = document.createElement('div');
+    error.className = 'label-import-error';
+
+    const actions = document.createElement('div');
+    actions.className = 'panel-actions';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'button-danger';
+    cancelButton.textContent = 'Avbryt';
+
+    const importButton = document.createElement('button');
+    importButton.type = 'button';
+    importButton.className = 'button-success';
+    importButton.textContent = 'Importera';
+
+    actions.append(cancelButton, importButton);
+    body.append(description, sourceRow, textarea, error);
+    dialog.append(title, body, actions);
+    overlay.appendChild(dialog);
+
+    const finish = (value = null) => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      overlay.remove();
+      resolve(value);
+    };
+
+    const submit = () => {
+      const result = parseImportedExtractionFieldJson(textarea.value);
+      if (!result || !result.field) {
+        error.textContent = result && typeof result.error === 'string'
+          ? result.error
+          : 'Importen misslyckades.';
+        textarea.focus();
+        return;
+      }
+      finish(result);
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        finish(null);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        submit();
+      }
+    };
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        finish(null);
+      }
+    });
+    cancelButton.addEventListener('click', () => finish(null));
+    importButton.addEventListener('click', submit);
+    fileButton.addEventListener('click', () => {
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      if (!file) {
+        return;
+      }
+      try {
+        textarea.value = await openFileAsText(file);
+        fileName.textContent = file.name;
+        error.textContent = '';
+      } catch (fileError) {
+        error.textContent = fileError instanceof Error ? fileError.message : 'Kunde inte läsa filen.';
+      }
+    });
+
+    document.addEventListener('keydown', onKeyDown, true);
+    document.body.appendChild(overlay);
+    textarea.focus();
+  });
+}
+
+async function importSingleExtractionFieldFromJson() {
+  const imported = await showExtractionFieldImportDialog();
+  if (!imported || !imported.field) {
+    return;
+  }
+
+  const conflict = extractionFieldImportConflictDetails(imported);
+  if (typeof conflict.error === 'string' && conflict.error !== '') {
+    alert(conflict.error);
+    return;
+  }
+
+  if (conflict.kind === 'replace-custom' && conflict.message) {
+    const confirmed = window.confirm(conflict.message);
+    if (!confirmed) {
+      return;
+    }
+  }
+
+  const previousExtractionFieldsDraft = extractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+  const previousPredefinedExtractionFieldsDraft = predefinedExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+  const previousSystemExtractionFieldsDraft = systemExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+  const previousBaselineJson = extractionFieldsBaselineJson;
+  const previousCustomCollapsed = extractionFieldsCustomCollapsed;
+
+  try {
+    const field = imported.field;
+    const existingIndex = extractionFieldsDraft.findIndex((row) => sanitizeExtractionField(row).key === field.key);
+    if (existingIndex >= 0) {
+      extractionFieldsDraft.splice(existingIndex, 1, field);
+    } else {
+      extractionFieldsDraft.push(field);
+    }
+    extractionFieldsCustomCollapsed = false;
+
+    renderExtractionFieldsEditor();
+    renderSystemExtractionFieldsEditor();
+    updateSettingsActionButtons();
+    await saveExtractionFields();
+    revealImportedExtractionFieldInEditor(imported);
+  } catch (error) {
+    extractionFieldsDraft = previousExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+    predefinedExtractionFieldsDraft = previousPredefinedExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+    systemExtractionFieldsDraft = previousSystemExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+    extractionFieldsBaselineJson = previousBaselineJson;
+    extractionFieldsCustomCollapsed = previousCustomCollapsed;
+    renderExtractionFieldsEditor();
+    renderSystemExtractionFieldsEditor();
     updateSettingsActionButtons();
     throw error;
   }
@@ -17523,6 +17955,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
   const fieldNode = document.createElement('div');
   fieldNode.className = 'tree-node tree-category';
+  if (typeof field.key === 'string' && field.key.trim() !== '') {
+    fieldNode.dataset.fieldKey = field.key.trim();
+  }
   if (showLock) {
     fieldNode.dataset.systemField = 'true';
   }
@@ -22606,9 +23041,19 @@ document.addEventListener('pointerdown', (event) => {
     }
 
     if (
-      appNoticesEl instanceof HTMLElement
-      && appNoticesOverflowOpen
-      && !appNoticesEl.contains(event.target)
+      extractionFieldsAddMenuToggleEl instanceof HTMLButtonElement
+      && extractionFieldsAddMenuEl instanceof HTMLElement
+      && !extractionFieldsAddMenuEl.classList.contains('hidden')
+      && !(event.target instanceof Node && extractionFieldsAddMenuToggleEl.contains(event.target))
+      && !(event.target instanceof Node && extractionFieldsAddMenuEl.contains(event.target))
+    ) {
+      closeExtractionFieldsAddMenu();
+    }
+
+  if (
+    appNoticesEl instanceof HTMLElement
+    && appNoticesOverflowOpen
+    && !appNoticesEl.contains(event.target)
   ) {
     closeAppNoticesOverflow();
   }
@@ -22690,6 +23135,11 @@ document.addEventListener('keydown', (event) => {
 
   if (event.key === 'Escape' && labelsAddMenuEl instanceof HTMLElement && !labelsAddMenuEl.classList.contains('hidden')) {
     closeLabelsAddMenu();
+    return;
+  }
+
+  if (event.key === 'Escape' && extractionFieldsAddMenuEl instanceof HTMLElement && !extractionFieldsAddMenuEl.classList.contains('hidden')) {
+    closeExtractionFieldsAddMenu();
     return;
   }
 
