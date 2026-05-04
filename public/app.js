@@ -193,6 +193,10 @@ let matchingTrailingDelimiterPenaltyEl = null;
 let matchingOtherMatchKeyPenaltyEl = null;
 let matchingRightYOffsetPenaltyEl = null;
 let matchingDownXOffsetPenaltyEl = null;
+let matchingDownYDistanceCurveEl = null;
+let matchingDownYDistanceCurvePreviewEl = null;
+let matchingDownYDistanceCurveAddPointEl = null;
+let matchingDataFieldAcceptanceThresholdEl = null;
 let ocrSkipExistingTextEl = null;
 let ocrOptimizeLevelEl = null;
 let ocrTextExtractionMethodEl = null;
@@ -3680,6 +3684,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 trailingDelimiterPenalty: Number.isFinite(Number(match.trailingDelimiterPenalty)) ? Number(match.trailingDelimiterPenalty) : null,
                 otherMatchKeyPenalty: Number.isFinite(Number(match.otherMatchKeyPenalty)) ? Number(match.otherMatchKeyPenalty) : null,
                 positionPenalty: Number.isFinite(Number(match.positionPenalty)) ? Number(match.positionPenalty) : (Number.isFinite(Number(match.directionPenalty)) ? Number(match.directionPenalty) : null),
+                verticalDistancePenalty: Number.isFinite(Number(match.verticalDistancePenalty)) ? Number(match.verticalDistancePenalty) : null,
+                verticalDistance: Number.isFinite(Number(match.verticalDistance)) ? Number(match.verticalDistance) : null,
+                verticalNormalizedDistance: Number.isFinite(Number(match.verticalNormalizedDistance)) ? Number(match.verticalNormalizedDistance) : null,
                 positionPenaltyAxis: typeof match.positionPenaltyAxis === 'string' ? match.positionPenaltyAxis : '',
                 mainDirection: typeof match.mainDirection === 'string' ? match.mainDirection : '',
                 noiseText: typeof match.noiseText === 'string' ? match.noiseText : '',
@@ -3736,6 +3743,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
               trailingDelimiterPenalty: Number.isFinite(Number(field.trailingDelimiterPenalty)) ? Number(field.trailingDelimiterPenalty) : null,
               otherMatchKeyPenalty: Number.isFinite(Number(field.otherMatchKeyPenalty)) ? Number(field.otherMatchKeyPenalty) : null,
               positionPenalty: Number.isFinite(Number(field.positionPenalty)) ? Number(field.positionPenalty) : (Number.isFinite(Number(field.directionPenalty)) ? Number(field.directionPenalty) : null),
+              verticalDistancePenalty: Number.isFinite(Number(field.verticalDistancePenalty)) ? Number(field.verticalDistancePenalty) : null,
+              verticalDistance: Number.isFinite(Number(field.verticalDistance)) ? Number(field.verticalDistance) : null,
+              verticalNormalizedDistance: Number.isFinite(Number(field.verticalNormalizedDistance)) ? Number(field.verticalNormalizedDistance) : null,
               positionPenaltyAxis: typeof field.positionPenaltyAxis === 'string' ? field.positionPenaltyAxis : '',
               mainDirection: typeof field.mainDirection === 'string' ? field.mainDirection : '',
               noiseText: typeof field.noiseText === 'string' ? field.noiseText : '',
@@ -4271,6 +4281,15 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       }
       positionEl.textContent = `${label} -${formatPenaltyPercent(row.positionPenalty)}`;
       parts.push(positionEl);
+    }
+    if (typeof row?.verticalDistancePenalty === 'number' && Number.isFinite(row.verticalDistancePenalty) && row.verticalDistancePenalty > 0) {
+      const verticalDistanceEl = document.createElement('span');
+      verticalDistanceEl.className = 'matches-penalty-text';
+      verticalDistanceEl.textContent = `Vertikalt avstånd -${formatPenaltyPercent(row.verticalDistancePenalty)}`;
+      if (typeof row.verticalNormalizedDistance === 'number' && Number.isFinite(row.verticalNormalizedDistance)) {
+        verticalDistanceEl.title = `${row.verticalNormalizedDistance.toLocaleString('sv-SE', { maximumFractionDigits: 2 })} radhöjder`;
+      }
+      parts.push(verticalDistanceEl);
     }
 
     if (parts.length === 0) {
@@ -12627,6 +12646,9 @@ function bindSettingsPanelRefs(tabId) {
     matchingOtherMatchKeyPenaltyEl = document.getElementById('matching-other-match-key-penalty');
     matchingRightYOffsetPenaltyEl = document.getElementById('matching-right-y-offset-penalty');
     matchingDownXOffsetPenaltyEl = document.getElementById('matching-down-x-offset-penalty');
+    matchingDownYDistanceCurveEl = document.getElementById('matching-down-y-distance-curve');
+    matchingDownYDistanceCurvePreviewEl = document.getElementById('matching-down-y-distance-curve-preview');
+    matchingDownYDistanceCurveAddPointEl = document.getElementById('matching-down-y-distance-curve-add-point');
     matchingDataFieldAcceptanceThresholdEl = document.getElementById('matching-data-field-acceptance-threshold');
     const bindMatchingPenaltyInput = (inputEl, key) => {
       if (!(inputEl instanceof HTMLInputElement)) {
@@ -12647,6 +12669,19 @@ function bindSettingsPanelRefs(tabId) {
     bindMatchingPenaltyInput(matchingOtherMatchKeyPenaltyEl, 'otherMatchKeyPenalty');
     bindMatchingPenaltyInput(matchingRightYOffsetPenaltyEl, 'rightYOffsetPenalty');
     bindMatchingPenaltyInput(matchingDownXOffsetPenaltyEl, 'downXOffsetPenalty');
+    if (matchingDownYDistanceCurveAddPointEl instanceof HTMLButtonElement) {
+      matchingDownYDistanceCurveAddPointEl.addEventListener('click', () => {
+        const curve = sanitizeMatchingPenaltyCurve(matchingPositionAdjustmentDraft.downYDistancePenaltyCurve);
+        const lastPoint = curve[curve.length - 1] || { x: 0, y: 0 };
+        curve.push({
+          x: Math.max(0, lastPoint.x + 1),
+          y: Math.min(1, lastPoint.y + 0.1)
+        });
+        matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = sanitizeMatchingPenaltyCurve(curve);
+        renderMatchingDownYDistanceCurveEditor();
+        updateSettingsActionButtons();
+      });
+    }
     if (matchingDataFieldAcceptanceThresholdEl instanceof HTMLInputElement) {
       matchingDataFieldAcceptanceThresholdEl.addEventListener('input', () => {
         matchingDataFieldAcceptanceThresholdDraft = sanitizeMatchingPercentInput(
@@ -13902,8 +13937,19 @@ function defaultMatchingPositionAdjustmentSettings() {
     trailingDelimiterPenalty: 0.25,
     otherMatchKeyPenalty: 0.5,
     rightYOffsetPenalty: 0.25,
-    downXOffsetPenalty: 0.25
+    downXOffsetPenalty: 0.25,
+    downYDistancePenaltyCurve: defaultMatchingDownYDistancePenaltyCurve()
   };
+}
+
+function defaultMatchingDownYDistancePenaltyCurve() {
+  return [
+    { x: 0, y: 0 },
+    { x: 2, y: 0 },
+    { x: 4, y: 0.25 },
+    { x: 8, y: 0.8 },
+    { x: 10, y: 1 }
+  ];
 }
 
 function clampMatchingDecimal(value, fallback = 0, max = 1) {
@@ -13937,6 +13983,42 @@ function formatMatchingPercentInput(value, maxDecimal = 1) {
   return percent.toFixed(2).replace(/0+$/u, '').replace(/\.$/u, '');
 }
 
+function sanitizeMatchingPenaltyCurve(points, fallback = defaultMatchingDownYDistancePenaltyCurve()) {
+  const source = Array.isArray(points) ? points : fallback;
+  const normalized = source
+    .map((point) => {
+      if (!point || typeof point !== 'object') {
+        return null;
+      }
+      const x = clampMatchingDecimal(point.x, -1, null);
+      const y = clampMatchingDecimal(point.y, 0, 1);
+      if (x < 0) {
+        return null;
+      }
+      return { x, y };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.x - right.x || left.y - right.y);
+
+  const dedupedByX = new Map();
+  normalized.forEach((point) => {
+    dedupedByX.set(point.x.toFixed(6), point);
+  });
+  const deduped = Array.from(dedupedByX.values());
+  if (deduped.length < 2) {
+    const fallbackPoints = Array.isArray(fallback) && fallback.length >= 2
+      ? fallback
+      : defaultMatchingDownYDistancePenaltyCurve();
+    return fallbackPoints
+      .map((point) => ({
+        x: clampMatchingDecimal(point.x, 0, null),
+        y: clampMatchingDecimal(point.y, 0, 1)
+      }))
+      .sort((left, right) => left.x - right.x || left.y - right.y);
+  }
+  return deduped;
+}
+
 function sanitizeMatchingPositionAdjustmentSettings(value) {
   const input = value && typeof value === 'object' ? value : {};
   const defaults = defaultMatchingPositionAdjustmentSettings();
@@ -13953,7 +14035,8 @@ function sanitizeMatchingPositionAdjustmentSettings(value) {
       input.downXOffsetPenalty ?? input.downRightPenalty,
       defaults.downXOffsetPenalty,
       null
-    )
+    ),
+    downYDistancePenaltyCurve: sanitizeMatchingPenaltyCurve(input.downYDistancePenaltyCurve, defaults.downYDistancePenaltyCurve)
   };
 }
 
@@ -17037,6 +17120,7 @@ function renderMatchingEditor() {
   preserveSettingsPanelScroll(() => {
     matchingListEl.innerHTML = '';
     syncMatchingPositionAdjustmentInputs();
+    renderMatchingDownYDistanceCurveEditor();
 
     if (matchingDraft.length === 0) {
       const empty = document.createElement('div');
@@ -17095,6 +17179,136 @@ function renderMatchingEditor() {
     });
 
     updateSettingsActionButtons();
+  });
+}
+
+function renderMatchingDownYDistanceCurveEditor() {
+  if (!(matchingDownYDistanceCurveEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const curve = sanitizeMatchingPenaltyCurve(matchingPositionAdjustmentDraft.downYDistancePenaltyCurve);
+  matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = curve;
+  matchingDownYDistanceCurveEl.replaceChildren();
+
+  curve.forEach((point, pointIndex) => {
+    const row = document.createElement('div');
+    row.className = 'matching-curve-point-row';
+
+    const xInput = document.createElement('input');
+    xInput.type = 'number';
+    xInput.min = '0';
+    xInput.step = '0.1';
+    xInput.inputMode = 'decimal';
+    xInput.value = formatMatchingCurveNumber(point.x);
+
+    const yInput = document.createElement('input');
+    yInput.type = 'number';
+    yInput.min = '0';
+    yInput.max = '100';
+    yInput.step = '0.1';
+    yInput.inputMode = 'decimal';
+    yInput.value = formatMatchingPercentInput(point.y, 1);
+
+    const updatePoint = () => {
+      const nextCurve = sanitizeMatchingPenaltyCurve(matchingPositionAdjustmentDraft.downYDistancePenaltyCurve);
+      nextCurve[pointIndex] = {
+        x: clampMatchingDecimal(xInput.value, point.x, null),
+        y: sanitizeMatchingPercentInput(yInput.value, point.y, 1)
+      };
+      matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = sanitizeMatchingPenaltyCurve(nextCurve);
+      renderMatchingDownYDistanceCurveEditor();
+      updateSettingsActionButtons();
+    };
+
+    xInput.addEventListener('change', updatePoint);
+    yInput.addEventListener('change', updatePoint);
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'matching-curve-point-remove';
+    removeButton.textContent = 'Ta bort';
+    removeButton.disabled = curve.length <= 2;
+    removeButton.addEventListener('click', () => {
+      const nextCurve = curve.filter((_, index) => index !== pointIndex);
+      matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = sanitizeMatchingPenaltyCurve(nextCurve);
+      renderMatchingDownYDistanceCurveEditor();
+      updateSettingsActionButtons();
+    });
+
+    row.appendChild(createFloatingField('Avstånd (radhöjder)', xInput));
+    row.appendChild(createFloatingField('Straff', wrapPercentInput(yInput)));
+    row.appendChild(removeButton);
+    matchingDownYDistanceCurveEl.appendChild(row);
+  });
+
+  renderMatchingDownYDistanceCurvePreview(curve);
+}
+
+function formatMatchingCurveNumber(value) {
+  const resolved = clampMatchingDecimal(value, 0, null);
+  if (Number.isInteger(resolved)) {
+    return String(resolved);
+  }
+  return resolved.toFixed(2).replace(/0+$/u, '').replace(/\.$/u, '');
+}
+
+function wrapPercentInput(input) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'matching-percent-field';
+  const suffix = document.createElement('span');
+  suffix.textContent = '%';
+  wrapper.appendChild(input);
+  wrapper.appendChild(suffix);
+  return wrapper;
+}
+
+function renderMatchingDownYDistanceCurvePreview(curve) {
+  if (!(matchingDownYDistanceCurvePreviewEl instanceof SVGElement)) {
+    return;
+  }
+
+  const points = sanitizeMatchingPenaltyCurve(curve);
+  const maxX = Math.max(1, ...points.map((point) => point.x));
+  const width = 240;
+  const height = 90;
+  const padding = 12;
+  const plotWidth = width - (padding * 2);
+  const plotHeight = height - (padding * 2);
+  const toSvgPoint = (point) => {
+    const x = padding + ((point.x / maxX) * plotWidth);
+    const y = padding + ((1 - point.y) * plotHeight);
+    return { x, y };
+  };
+  const svgPoints = points.map(toSvgPoint);
+  const path = svgPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
+
+  matchingDownYDistanceCurvePreviewEl.replaceChildren();
+
+  const grid = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  grid.setAttribute('d', `M ${padding} ${padding} V ${height - padding} H ${width - padding}`);
+  grid.setAttribute('fill', 'none');
+  grid.setAttribute('stroke', '#dbeafe');
+  grid.setAttribute('stroke-width', '1');
+
+  const curvePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  curvePath.setAttribute('d', path);
+  curvePath.setAttribute('fill', 'none');
+  curvePath.setAttribute('stroke', '#2563eb');
+  curvePath.setAttribute('stroke-width', '2');
+  curvePath.setAttribute('stroke-linecap', 'round');
+  curvePath.setAttribute('stroke-linejoin', 'round');
+
+  matchingDownYDistanceCurvePreviewEl.appendChild(grid);
+  matchingDownYDistanceCurvePreviewEl.appendChild(curvePath);
+
+  svgPoints.forEach((point) => {
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', point.x.toFixed(2));
+    dot.setAttribute('cy', point.y.toFixed(2));
+    dot.setAttribute('r', '3');
+    dot.setAttribute('fill', '#1d4ed8');
+    matchingDownYDistanceCurvePreviewEl.appendChild(dot);
   });
 }
 

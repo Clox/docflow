@@ -4183,6 +4183,69 @@ body.is-resizing-sidebar {
   gap: 12px;
 }
 
+.matching-curve-editor {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fbfdff;
+}
+
+.matching-curve-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.matching-curve-header button,
+.matching-curve-point-remove {
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.matching-curve-header button:hover,
+.matching-curve-point-remove:hover {
+  background: #f3f4f6;
+}
+
+.matching-curve-preview {
+  display: block;
+  width: 100%;
+  max-width: 360px;
+  height: 92px;
+  margin: 0 0 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.matching-curve-points {
+  display: grid;
+  gap: 8px;
+}
+
+.matching-curve-point-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 130px) minmax(80px, 130px) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.matching-curve-point-row input {
+  width: 100%;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
 .matching-threshold-field {
   max-width: none;
 }

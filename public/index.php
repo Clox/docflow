@@ -515,7 +515,15 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           </div>
         </div>
       </div>
-      <p>Kandidater som ligger till vänster eller ovanför förkastas. För kandidater till höger används bara y-avvikelse, och för kandidater under används bara x-avvikelse.</p>
+      <div class="matching-curve-editor">
+        <div class="matching-curve-header">
+          <label class="settings-label">Straffkurva för vertikalt avstånd</label>
+          <button id="matching-down-y-distance-curve-add-point" type="button">Lägg till punkt</button>
+        </div>
+        <svg id="matching-down-y-distance-curve-preview" class="matching-curve-preview" viewBox="0 0 240 90" role="img" aria-label="Förhandsvisning av straffkurva"></svg>
+        <div id="matching-down-y-distance-curve" class="matching-curve-points"></div>
+      </div>
+      <p>Kandidater som ligger till vänster eller ovanför förkastas. För kandidater till höger används bara y-avvikelse. För kandidater under används x-avvikelse och separat straff för vertikalt avstånd.</p>
     </div>
     <div class="matching-acceptance-threshold-section">
       <h4>Accepterade datafältsvärden</h4>

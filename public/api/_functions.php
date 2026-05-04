@@ -4492,6 +4492,18 @@ function default_matching_position_adjustment_settings(): array
         'otherMatchKeyPenalty' => 0.5,
         'rightYOffsetPenalty' => 0.25,
         'downXOffsetPenalty' => 0.25,
+        'downYDistancePenaltyCurve' => default_matching_down_y_distance_penalty_curve(),
+    ];
+}
+
+function default_matching_down_y_distance_penalty_curve(): array
+{
+    return [
+        ['x' => 0.0, 'y' => 0.0],
+        ['x' => 2.0, 'y' => 0.0],
+        ['x' => 4.0, 'y' => 0.25],
+        ['x' => 8.0, 'y' => 0.8],
+        ['x' => 10.0, 'y' => 1.0],
     ];
 }
 
@@ -4553,7 +4565,100 @@ function normalize_matching_position_adjustment_settings(?array $input): array
             $defaults['downXOffsetPenalty'],
             null
         ),
+        'downYDistancePenaltyCurve' => normalize_matching_penalty_curve(
+            is_array($source['downYDistancePenaltyCurve'] ?? null)
+                ? $source['downYDistancePenaltyCurve']
+                : (is_array($source['down_y_distance_penalty_curve'] ?? null) ? $source['down_y_distance_penalty_curve'] : null),
+            $defaults['downYDistancePenaltyCurve']
+        ),
     ];
+}
+
+function normalize_matching_penalty_curve(?array $points, array $fallback): array
+{
+    $sourcePoints = is_array($points) ? $points : $fallback;
+    $normalized = [];
+
+    foreach ($sourcePoints as $point) {
+        if (!is_array($point)) {
+            continue;
+        }
+        $x = normalize_matching_decimal_setting($point['x'] ?? null, -1.0, null);
+        $y = normalize_matching_decimal_setting($point['y'] ?? null, 0.0, 1.0);
+        if ($x < 0.0) {
+            continue;
+        }
+        $normalized[] = [
+            'x' => $x,
+            'y' => clamp_confidence($y),
+        ];
+    }
+
+    if (count($normalized) < 2) {
+        if ($fallback === []) {
+            return [
+                ['x' => 0.0, 'y' => 0.0],
+                ['x' => 1.0, 'y' => 1.0],
+            ];
+        }
+        return normalize_matching_penalty_curve($fallback, []);
+    }
+
+    usort($normalized, static function (array $left, array $right): int {
+        $xCompare = ((float) ($left['x'] ?? 0.0)) <=> ((float) ($right['x'] ?? 0.0));
+        if ($xCompare !== 0) {
+            return $xCompare;
+        }
+        return ((float) ($left['y'] ?? 0.0)) <=> ((float) ($right['y'] ?? 0.0));
+    });
+
+    $deduped = [];
+    foreach ($normalized as $point) {
+        $xKey = sprintf('%.6F', (float) $point['x']);
+        $deduped[$xKey] = $point;
+    }
+
+    return array_values($deduped);
+}
+
+function interpolate_matching_penalty_curve(array $points, float $x): float
+{
+    $curve = normalize_matching_penalty_curve($points, default_matching_down_y_distance_penalty_curve());
+    if (count($curve) === 0) {
+        return 0.0;
+    }
+
+    $resolvedX = max(0.0, $x);
+    $first = $curve[0];
+    if ($resolvedX <= (float) ($first['x'] ?? 0.0)) {
+        return clamp_confidence((float) ($first['y'] ?? 0.0));
+    }
+
+    $last = $curve[count($curve) - 1];
+    if ($resolvedX >= (float) ($last['x'] ?? 0.0)) {
+        return clamp_confidence((float) ($last['y'] ?? 0.0));
+    }
+
+    for ($index = 1; $index < count($curve); $index++) {
+        $left = $curve[$index - 1];
+        $right = $curve[$index];
+        $leftX = (float) ($left['x'] ?? 0.0);
+        $rightX = (float) ($right['x'] ?? $leftX);
+        if ($resolvedX > $rightX) {
+            continue;
+        }
+
+        $leftY = clamp_confidence((float) ($left['y'] ?? 0.0));
+        $rightY = clamp_confidence((float) ($right['y'] ?? $leftY));
+        if (abs($rightX - $leftX) < 0.000001) {
+            return $rightY;
+        }
+
+        $ratio = ($resolvedX - $leftX) / ($rightX - $leftX);
+        return clamp_confidence($leftY + (($rightY - $leftY) * $ratio));
+    }
+
+    return clamp_confidence((float) ($last['y'] ?? 0.0));
 }
 
 function ensure_directory(string $path): void
@@ -9406,6 +9511,18 @@ function position_penalty_line_height(array $labelBbox, array $candidateBbox): f
     return $lineHeight > 0.0 ? $lineHeight : 1.0;
 }
 
+function position_penalty_min_line_height(array $labelBbox, array $candidateBbox): float
+{
+    $labelHeight = bbox_height($labelBbox);
+    $candidateHeight = bbox_height($candidateBbox);
+    $positiveHeights = array_values(array_filter([$labelHeight, $candidateHeight], static fn (float $height): bool => $height > 0.0));
+    if ($positiveHeights !== []) {
+        return max(1.0, min($positiveHeights));
+    }
+
+    return position_penalty_line_height($labelBbox, $candidateBbox);
+}
+
 function bbox_horizontal_overlap(array $labelBbox, array $candidateBbox): float
 {
     return bbox_overlap_length(
@@ -9632,6 +9749,9 @@ function candidate_position_penalty_details(
 ): array {
     $empty = [
         'penalty' => 0.0,
+        'verticalDistancePenalty' => 0.0,
+        'verticalDistance' => 0.0,
+        'verticalNormalizedDistance' => 0.0,
         'mainDirection' => null,
         'axis' => null,
         'diff' => 0.0,
@@ -9656,10 +9776,14 @@ function candidate_position_penalty_details(
     $labelCenter = bbox_center_point($labelBbox);
     $candidateCenter = bbox_center_point($candidateBbox);
     $lineHeight = position_penalty_line_height($labelBbox, $candidateBbox);
+    $minLineHeight = position_penalty_min_line_height($labelBbox, $candidateBbox);
 
     if ($mainDirection === 'left' || $mainDirection === 'up') {
         return [
             'penalty' => 1.0,
+            'verticalDistancePenalty' => 0.0,
+            'verticalDistance' => 0.0,
+            'verticalNormalizedDistance' => 0.0,
             'mainDirection' => $mainDirection,
             'axis' => 'invalid',
             'diff' => 0.0,
@@ -9672,6 +9796,9 @@ function candidate_position_penalty_details(
         $normalizedDiff = $lineHeight > 0.0 ? ($diff / $lineHeight) : 0.0;
         return [
             'penalty' => max(0.0, $normalizedDiff * (float) ($settings['rightYOffsetPenalty'] ?? 0.0)),
+            'verticalDistancePenalty' => 0.0,
+            'verticalDistance' => 0.0,
+            'verticalNormalizedDistance' => 0.0,
             'mainDirection' => $mainDirection,
             'axis' => 'y',
             'diff' => $diff,
@@ -9681,8 +9808,18 @@ function candidate_position_penalty_details(
 
     $diff = bbox_best_horizontal_alignment_diff($labelBbox, $candidateBbox);
     $normalizedDiff = $lineHeight > 0.0 ? ($diff / $lineHeight) : 0.0;
+    $verticalDistance = max(0.0, (float) ($candidateBbox['y0'] ?? 0.0) - (float) ($labelBbox['y1'] ?? 0.0));
+    $verticalNormalizedDistance = $minLineHeight > 0.0 ? ($verticalDistance / $minLineHeight) : 0.0;
+    $verticalDistancePenalty = interpolate_matching_penalty_curve(
+        is_array($settings['downYDistancePenaltyCurve'] ?? null) ? $settings['downYDistancePenaltyCurve'] : [],
+        $verticalNormalizedDistance
+    );
+
     return [
         'penalty' => max(0.0, $normalizedDiff * (float) ($settings['downXOffsetPenalty'] ?? 0.0)),
+        'verticalDistancePenalty' => clamp_confidence($verticalDistancePenalty),
+        'verticalDistance' => $verticalDistance,
+        'verticalNormalizedDistance' => $verticalNormalizedDistance,
         'mainDirection' => $mainDirection,
         'axis' => 'x',
         'diff' => $diff,
@@ -9786,12 +9923,16 @@ function candidate_confidence_score(
         ? (float) $components['trailingDelimiterPenalty']
         : 0.0;
     $positionPenalty = isset($components['positionPenalty']) && is_numeric($components['positionPenalty']) ? (float) $components['positionPenalty'] : 0.0;
+    $verticalDistancePenalty = isset($components['verticalDistancePenalty']) && is_numeric($components['verticalDistancePenalty'])
+        ? (float) $components['verticalDistancePenalty']
+        : 0.0;
     $contentPenalty = isset($components['contentPenalty']) && is_numeric($components['contentPenalty']) ? (float) $components['contentPenalty'] : 0.0;
 
     $confidence = $base;
     $confidence *= max(0.0, 1.0 - clamp_confidence($noisePenalty));
     $confidence *= max(0.0, 1.0 - clamp_confidence($trailingDelimiterPenalty));
     $confidence *= max(0.0, 1.0 - clamp_confidence($positionPenalty));
+    $confidence *= max(0.0, 1.0 - clamp_confidence($verticalDistancePenalty));
     $confidence -= max(0.0, $contentPenalty);
 
     return clamp_confidence($confidence);
@@ -9855,6 +9996,13 @@ function candidate_confidence_components(
         'noisePenalty' => clamp_confidence($noisePenalty),
         'trailingDelimiterPenalty' => max(0.0, $trailingDelimiterPenalty),
         'positionPenalty' => max(0.0, (float) ($positionPenaltyDetails['penalty'] ?? 0.0)),
+        'verticalDistancePenalty' => is_numeric($positionPenaltyDetails['verticalDistancePenalty'] ?? null)
+            ? clamp_confidence((float) $positionPenaltyDetails['verticalDistancePenalty'])
+            : null,
+        'verticalDistance' => is_numeric($positionPenaltyDetails['verticalDistance'] ?? null) ? (float) $positionPenaltyDetails['verticalDistance'] : null,
+        'verticalNormalizedDistance' => is_numeric($positionPenaltyDetails['verticalNormalizedDistance'] ?? null)
+            ? (float) $positionPenaltyDetails['verticalNormalizedDistance']
+            : null,
         'positionPenaltyAxis' => is_string($positionPenaltyDetails['axis'] ?? null) ? (string) $positionPenaltyDetails['axis'] : null,
         'mainDirection' => is_string($positionPenaltyDetails['mainDirection'] ?? null) ? (string) $positionPenaltyDetails['mainDirection'] : null,
         'positionDiff' => is_numeric($positionPenaltyDetails['diff'] ?? null) ? (float) $positionPenaltyDetails['diff'] : null,
@@ -11512,7 +11660,10 @@ function add_extraction_field_match(
     ?float $trailingDelimiterPenalty = null,
     ?float $otherMatchKeyPenalty = null,
     ?float $baseConfidence = null,
-    ?float $finalConfidence = null
+    ?float $finalConfidence = null,
+    ?float $verticalDistancePenalty = null,
+    ?float $verticalDistance = null,
+    ?float $verticalNormalizedDistance = null
 ): void {
     if ($lineIndex < 0 || $start < 0 || $value === null) {
         return;
@@ -11551,6 +11702,15 @@ function add_extraction_field_match(
     }
     if (is_numeric($positionPenalty)) {
         $candidate['positionPenalty'] = max(0.0, (float) $positionPenalty);
+    }
+    if (is_numeric($verticalDistancePenalty)) {
+        $candidate['verticalDistancePenalty'] = clamp_confidence((float) $verticalDistancePenalty);
+    }
+    if (is_numeric($verticalDistance)) {
+        $candidate['verticalDistance'] = max(0.0, (float) $verticalDistance);
+    }
+    if (is_numeric($verticalNormalizedDistance)) {
+        $candidate['verticalNormalizedDistance'] = max(0.0, (float) $verticalNormalizedDistance);
     }
     if (is_numeric($otherMatchKeyPenalty)) {
         $candidate['otherMatchKeyPenalty'] = max(0.0, (float) $otherMatchKeyPenalty);
@@ -11723,7 +11883,13 @@ function collect_labeled_candidate_matches(
                         $matchedLabelText,
                         $hitIndex,
                         is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null,
-                        is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null
+                        is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null,
+                        null,
+                        null,
+                        null,
+                        is_numeric($confidenceComponents['verticalDistancePenalty'] ?? null) ? (float) $confidenceComponents['verticalDistancePenalty'] : null,
+                        is_numeric($confidenceComponents['verticalDistance'] ?? null) ? (float) $confidenceComponents['verticalDistance'] : null,
+                        is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null
                     );
                 }
             }
@@ -11779,7 +11945,13 @@ function collect_labeled_candidate_matches(
                     $matchedLabelText,
                     $hitIndex,
                     is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null,
-                    is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null
+                    is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null,
+                    null,
+                    null,
+                    null,
+                    is_numeric($confidenceComponents['verticalDistancePenalty'] ?? null) ? (float) $confidenceComponents['verticalDistancePenalty'] : null,
+                    is_numeric($confidenceComponents['verticalDistance'] ?? null) ? (float) $confidenceComponents['verticalDistance'] : null,
+                    is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null
                 );
             }
         }
@@ -11844,7 +12016,13 @@ function collect_labeled_candidate_matches(
                     $matchedLabelText,
                     $hitIndex,
                     is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null,
-                    is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null
+                    is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null,
+                    null,
+                    null,
+                    null,
+                    is_numeric($confidenceComponents['verticalDistancePenalty'] ?? null) ? (float) $confidenceComponents['verticalDistancePenalty'] : null,
+                    is_numeric($confidenceComponents['verticalDistance'] ?? null) ? (float) $confidenceComponents['verticalDistance'] : null,
+                    is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null
                 );
             }
         }
@@ -11967,7 +12145,13 @@ function add_anchored_extraction_field_match(
         $matchedSearchText,
         $hitLineIndex,
         is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null,
-        is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null
+        is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null,
+        null,
+        null,
+        null,
+        is_numeric($confidenceComponents['verticalDistancePenalty'] ?? null) ? (float) $confidenceComponents['verticalDistancePenalty'] : null,
+        is_numeric($confidenceComponents['verticalDistance'] ?? null) ? (float) $confidenceComponents['verticalDistance'] : null,
+        is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null
     );
 }
 
@@ -13136,6 +13320,9 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'trailingDelimiterPenalty' => is_numeric($match['trailingDelimiterPenalty'] ?? null) ? max(0.0, (float) $match['trailingDelimiterPenalty']) : null,
                         'otherMatchKeyPenalty' => is_numeric($match['otherMatchKeyPenalty'] ?? null) ? max(0.0, (float) $match['otherMatchKeyPenalty']) : null,
                         'positionPenalty' => is_numeric($match['positionPenalty'] ?? null) ? max(0.0, (float) $match['positionPenalty']) : (is_numeric($match['directionPenalty'] ?? null) ? max(0.0, (float) $match['directionPenalty']) : null),
+                        'verticalDistancePenalty' => is_numeric($match['verticalDistancePenalty'] ?? null) ? clamp_confidence((float) $match['verticalDistancePenalty']) : null,
+                        'verticalDistance' => is_numeric($match['verticalDistance'] ?? null) ? max(0.0, (float) $match['verticalDistance']) : null,
+                        'verticalNormalizedDistance' => is_numeric($match['verticalNormalizedDistance'] ?? null) ? max(0.0, (float) $match['verticalNormalizedDistance']) : null,
                         'positionPenaltyAxis' => is_string($match['positionPenaltyAxis'] ?? null) ? trim((string) $match['positionPenaltyAxis']) : null,
                         'mainDirection' => is_string($match['mainDirection'] ?? null) ? trim((string) $match['mainDirection']) : null,
                         'positionDiff' => is_numeric($match['positionDiff'] ?? null) ? (float) $match['positionDiff'] : null,
