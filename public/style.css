@@ -3289,6 +3289,15 @@ body.is-resizing-sidebar {
   min-width: 0;
 }
 
+.ocr-word-tooltip-header-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
 .ocr-word-tooltip-index {
   display: inline-flex;
   align-items: center;
@@ -3377,6 +3386,28 @@ body.is-resizing-sidebar {
   flex-direction: column;
   gap: 6px;
   line-height: 1.35;
+}
+
+.ocr-word-tooltip-text--detail-line {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #111827;
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ocr-word-tooltip-text-label {
+  font-weight: 700;
+  color: #64748b;
+}
+
+.ocr-word-tooltip-text-value {
+  color: #111827;
 }
 
 .ocr-word-tooltip-bbox-line {

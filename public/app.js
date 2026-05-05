@@ -11531,26 +11531,59 @@ function buildWordTooltip(word) {
     `│${' '.repeat(Math.max(0, lineWidth - 2))}│`,
     `└${'─'.repeat(Math.max(1, lineWidth - bottomRight.length - 2))} ${bottomRight}`,
   ].join('\n');
-  const index = Number.isInteger(word.index) ? word.index + 1 : 1;
-  const rect = {
-    x0,
-    y0,
-    x1,
-    y1,
-  };
-  const copyPayload = {
-    index,
-    text: typeof word.text === 'string' ? word.text : '',
-    ...(Number.isFinite(word.score) ? { score: Number(word.score) } : {}),
-    bbox: rect,
-  };
+  const copyPayload = buildOcrWordCopyPayload(word);
   return {
-    indexLabel: `BBox #${index}`,
+    indexLabel: `BBox #${copyPayload.index}`,
     text: typeof word.text === 'string' ? word.text : '',
     meta: [scorePart, bboxPart].filter(Boolean).join('\n'),
     copyText: `${JSON.stringify(copyPayload, null, 2)}\n`,
     copyTitle: 'Kopiera index, text och koordinater som JSON',
   };
+}
+
+function buildOcrWordCopyPayload(word) {
+  const index = Number.isInteger(word?.index) ? word.index + 1 : 1;
+  const rectSource = word?.rect && typeof word.rect === 'object' ? word.rect : null;
+  const x0 = Number(rectSource?.x0);
+  const y0 = Number(rectSource?.y0);
+  const x1 = Number(rectSource?.x1);
+  const y1 = Number(rectSource?.y1);
+  const rect = [x0, y0, x1, y1].every((value) => Number.isFinite(value))
+    ? {
+        x0: Math.round(x0),
+        y0: Math.round(y0),
+        x1: Math.round(x1),
+        y1: Math.round(y1),
+      }
+    : null;
+
+  return {
+    index,
+    text: typeof word?.text === 'string' ? word.text : '',
+    ...(Number.isFinite(word?.score) ? { score: Number(word.score) } : {}),
+    ...(rect ? { bbox: rect } : {}),
+  };
+}
+
+function buildOcrWordCopyPayloadForPage(page, wordIndex) {
+  if (!page || !Array.isArray(page.words) || !Number.isInteger(wordIndex)) {
+    return null;
+  }
+
+  const word = page.words.find((entry) => entry.index === wordIndex) || null;
+  return word ? buildOcrWordCopyPayload(word) : null;
+}
+
+function buildOcrWordCopyPayloadsForPage(page, wordIndexes) {
+  if (!Array.isArray(page?.words) || !(wordIndexes instanceof Set) || wordIndexes.size === 0) {
+    return [];
+  }
+
+  return Array.from(wordIndexes)
+    .filter((wordIndex) => Number.isInteger(wordIndex))
+    .sort((left, right) => left - right)
+    .map((wordIndex) => buildOcrWordCopyPayloadForPage(page, wordIndex))
+    .filter(Boolean);
 }
 
 function ocrDataFieldWordIndexListForPage(page, row, kind, pageMatches = null) {
@@ -11655,6 +11688,10 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   const matchIndex = Number.isInteger(row?.matchIndex) ? row.matchIndex + 1 : 1;
   const keyWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'key', pageMatches);
   const valueWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'value', pageMatches);
+  const keyWordBboxes = buildOcrWordCopyPayloadsForPage(page, keyWordIndexes);
+  const valueWordBboxes = buildOcrWordCopyPayloadsForPage(page, valueWordIndexes);
+  const keyText = ocrDataFieldKeyCandidateTexts(row).join(' / ');
+  const valueText = ocrDataFieldValueCandidateTexts(row).join(' / ');
   const confidenceText = ocrDataFieldConfidenceTooltip(row, { includeHint: false });
   const copyPayload = {
     fieldKey: typeof group?.fieldKey === 'string' ? group.fieldKey : '',
@@ -11699,6 +11736,12 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     copyPayload.pageNumber = row.pageNumber;
   }
 
+  const bboxCopyPayload = {
+    ...copyPayload,
+    keyBBoxes: keyWordBboxes,
+    valueBBoxes: valueWordBboxes,
+  };
+
   return {
     indexLabel: `Träff #${matchIndex}`,
     text: [
@@ -11708,6 +11751,10 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     meta: confidenceText ? `────────────\n${confidenceText}\n────────────` : '',
     copyText: `${JSON.stringify(copyPayload, null, 2)}\n`,
     copyTitle: 'Kopiera träff som JSON',
+    bboxCopyText: `${JSON.stringify(bboxCopyPayload, null, 2)}\n`,
+    bboxCopyTitle: 'Kopiera träff med alla bboxar som JSON',
+    keyText,
+    valueText,
     keyWordIndexes: Array.from(keyWordIndexes).sort((left, right) => left - right),
     valueWordIndexes: Array.from(valueWordIndexes).sort((left, right) => left - right),
   };
@@ -11833,6 +11880,99 @@ function ensureOcrWordTooltipEl() {
   return tooltipEl;
 }
 
+function syncOcrWordTooltipCopyButton(buttonEl, sectionState, options = {}) {
+  if (!(buttonEl instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const {
+    textKey,
+    titleKey,
+    timerKey,
+    defaultTitle,
+    label = '⧉',
+  } = options;
+  const text = String(sectionState?.[textKey] || '').trim();
+  const title = String(sectionState?.[titleKey] || defaultTitle || '');
+
+  buttonEl.disabled = text === '';
+  buttonEl.textContent = label;
+  buttonEl.classList.remove('is-copied', 'is-copy-failed');
+  buttonEl.setAttribute('aria-label', title);
+  buttonEl.setAttribute('title', title);
+
+  if (sectionState?.[timerKey]) {
+    window.clearTimeout(sectionState[timerKey]);
+    sectionState[timerKey] = 0;
+  }
+}
+
+function bindOcrWordTooltipCopyButton(buttonEl, sectionState, options = {}) {
+  if (!(buttonEl instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const {
+    textKey,
+    titleKey,
+    timerKey,
+    defaultTitle,
+    successTitle = 'Kopierat',
+    failureTitle = 'Kunde inte kopiera',
+    label = '⧉',
+  } = options;
+
+  syncOcrWordTooltipCopyButton(buttonEl, sectionState, {
+    textKey,
+    titleKey,
+    timerKey,
+    defaultTitle,
+    label,
+  });
+
+  buttonEl.addEventListener('click', async () => {
+    const text = String(sectionState?.[textKey] || '').trim();
+    if (!text) {
+      return;
+    }
+
+    const defaultButtonTitle = String(sectionState?.[titleKey] || defaultTitle || '');
+    try {
+      const copied = await copyTextToClipboard(text);
+      if (!copied) {
+        throw new Error('copy_failed');
+      }
+      buttonEl.classList.add('is-copied');
+      buttonEl.classList.remove('is-copy-failed');
+      buttonEl.setAttribute('aria-label', successTitle);
+      buttonEl.setAttribute('title', successTitle);
+      if (sectionState?.[timerKey]) {
+        window.clearTimeout(sectionState[timerKey]);
+      }
+      sectionState[timerKey] = window.setTimeout(() => {
+        buttonEl.classList.remove('is-copied');
+        buttonEl.setAttribute('aria-label', defaultButtonTitle);
+        buttonEl.setAttribute('title', defaultButtonTitle);
+        sectionState[timerKey] = 0;
+      }, 1200);
+    } catch (error) {
+      buttonEl.classList.add('is-copy-failed');
+      buttonEl.classList.remove('is-copied');
+      buttonEl.setAttribute('aria-label', failureTitle);
+      buttonEl.setAttribute('title', failureTitle);
+      if (sectionState?.[timerKey]) {
+        window.clearTimeout(sectionState[timerKey]);
+      }
+      sectionState[timerKey] = window.setTimeout(() => {
+        buttonEl.classList.remove('is-copy-failed');
+        buttonEl.setAttribute('aria-label', defaultButtonTitle);
+        buttonEl.setAttribute('title', defaultButtonTitle);
+        sectionState[timerKey] = 0;
+      }, 1200);
+    }
+  });
+}
+
 function createOcrWordTooltipSection(options = {}) {
   const includeText = options.includeText !== false;
   if (!ensureOcrWordTooltipEl()) {
@@ -11850,6 +11990,9 @@ function createOcrWordTooltipSection(options = {}) {
   const headerEl = document.createElement('div');
   headerEl.className = 'ocr-word-tooltip-header';
 
+  const headerActionsEl = document.createElement('div');
+  headerActionsEl.className = 'ocr-word-tooltip-header-actions';
+
   const indexEl = document.createElement('span');
   indexEl.className = 'ocr-word-tooltip-index';
   indexEl.textContent = '#1';
@@ -11858,6 +12001,13 @@ function createOcrWordTooltipSection(options = {}) {
   copyButtonEl.type = 'button';
   copyButtonEl.className = 'ocr-word-tooltip-copy';
   copyButtonEl.textContent = '⧉';
+
+  const bboxCopyButtonEl = includeText ? null : document.createElement('button');
+  if (bboxCopyButtonEl instanceof HTMLButtonElement) {
+    bboxCopyButtonEl.type = 'button';
+    bboxCopyButtonEl.className = 'ocr-word-tooltip-copy';
+    bboxCopyButtonEl.textContent = '≡⧉';
+  }
 
   const textEl = document.createElement('div');
   textEl.className = 'ocr-word-tooltip-text';
@@ -11872,55 +12022,38 @@ function createOcrWordTooltipSection(options = {}) {
     copyText: '',
     copyTitle: 'Kopiera index, text och koordinater som JSON',
     copyResetTimerId: 0,
+    bboxCopyText: '',
+    bboxCopyTitle: 'Kopiera träff med alla bboxar som JSON',
+    bboxCopyResetTimerId: 0,
     tooltipPage: null,
     tooltipMatchLookup: null,
   };
 
-  copyButtonEl.setAttribute('aria-label', state.copyTitle);
-  copyButtonEl.setAttribute('title', state.copyTitle);
-  copyButtonEl.addEventListener('click', async () => {
-    const text = state.copyText.trim();
-    if (!text) {
-      return;
-    }
-    const defaultTitle = state.copyTitle;
-    try {
-      const copied = await copyTextToClipboard(text);
-      if (!copied) {
-        throw new Error('copy_failed');
-      }
-      copyButtonEl.classList.add('is-copied');
-      copyButtonEl.classList.remove('is-copy-failed');
-      copyButtonEl.setAttribute('aria-label', 'Kopierat');
-      copyButtonEl.setAttribute('title', 'Kopierat');
-      if (state.copyResetTimerId) {
-        window.clearTimeout(state.copyResetTimerId);
-      }
-      state.copyResetTimerId = window.setTimeout(() => {
-        copyButtonEl.classList.remove('is-copied');
-        copyButtonEl.setAttribute('aria-label', defaultTitle);
-        copyButtonEl.setAttribute('title', defaultTitle);
-        state.copyResetTimerId = 0;
-      }, 1200);
-    } catch (error) {
-      copyButtonEl.classList.add('is-copy-failed');
-      copyButtonEl.classList.remove('is-copied');
-      copyButtonEl.setAttribute('aria-label', 'Kunde inte kopiera');
-      copyButtonEl.setAttribute('title', 'Kunde inte kopiera');
-      if (state.copyResetTimerId) {
-        window.clearTimeout(state.copyResetTimerId);
-      }
-      state.copyResetTimerId = window.setTimeout(() => {
-        copyButtonEl.classList.remove('is-copy-failed');
-        copyButtonEl.setAttribute('aria-label', defaultTitle);
-        copyButtonEl.setAttribute('title', defaultTitle);
-        state.copyResetTimerId = 0;
-      }, 1200);
-    }
+  bindOcrWordTooltipCopyButton(copyButtonEl, state, {
+    textKey: 'copyText',
+    titleKey: 'copyTitle',
+    timerKey: 'copyResetTimerId',
+    defaultTitle: 'Kopiera index, text och koordinater som JSON',
+    label: '⧉',
   });
+  if (bboxCopyButtonEl instanceof HTMLButtonElement) {
+    bindOcrWordTooltipCopyButton(bboxCopyButtonEl, state, {
+      textKey: 'bboxCopyText',
+      titleKey: 'bboxCopyTitle',
+      timerKey: 'bboxCopyResetTimerId',
+      defaultTitle: 'Kopiera träff med alla bboxar som JSON',
+      label: '≡⧉',
+      successTitle: 'Kopierat',
+      failureTitle: 'Kunde inte kopiera',
+    });
+  }
 
   headerEl.appendChild(indexEl);
-  headerEl.appendChild(copyButtonEl);
+  headerActionsEl.appendChild(copyButtonEl);
+  if (bboxCopyButtonEl instanceof HTMLButtonElement) {
+    headerActionsEl.appendChild(bboxCopyButtonEl);
+  }
+  headerEl.appendChild(headerActionsEl);
   contentEl.appendChild(headerEl);
   contentEl.appendChild(textEl);
   contentEl.appendChild(metaEl);
@@ -11938,6 +12071,7 @@ function createOcrWordTooltipSection(options = {}) {
     textEl,
     metaEl,
     copyButtonEl,
+    bboxCopyButtonEl,
     state,
     includeText,
   };
@@ -11979,6 +12113,10 @@ function clearOcrWordTooltipSection(section) {
     window.clearTimeout(section.state.copyResetTimerId);
     section.state.copyResetTimerId = 0;
   }
+  if (section.state?.bboxCopyResetTimerId) {
+    window.clearTimeout(section.state.bboxCopyResetTimerId);
+    section.state.bboxCopyResetTimerId = 0;
+  }
 
   if (section.indexEl instanceof HTMLElement) {
     section.indexEl.textContent = '';
@@ -11990,20 +12128,33 @@ function clearOcrWordTooltipSection(section) {
     section.metaEl.textContent = '';
     section.metaEl.hidden = true;
   }
-  if (section.copyButtonEl instanceof HTMLButtonElement) {
-    section.copyButtonEl.disabled = true;
-    section.copyButtonEl.textContent = '⧉';
-    section.copyButtonEl.classList.remove('is-copied', 'is-copy-failed');
-    section.copyButtonEl.setAttribute('aria-label', 'Kopiera index, text och koordinater som JSON');
-    section.copyButtonEl.setAttribute('title', 'Kopiera index, text och koordinater som JSON');
-  }
-
   section.state.copyText = '';
   section.state.copyTitle = 'Kopiera index, text och koordinater som JSON';
+  section.state.bboxCopyText = '';
+  section.state.bboxCopyTitle = 'Kopiera träff med alla bboxar som JSON';
   section.state.tooltipPage = null;
   section.state.tooltipMatchLookup = null;
   section.state.keyWordIndexes = [];
   section.state.valueWordIndexes = [];
+
+  if (section.copyButtonEl instanceof HTMLButtonElement) {
+    syncOcrWordTooltipCopyButton(section.copyButtonEl, section.state, {
+      textKey: 'copyText',
+      titleKey: 'copyTitle',
+      timerKey: 'copyResetTimerId',
+      defaultTitle: 'Kopiera index, text och koordinater som JSON',
+      label: '⧉',
+    });
+  }
+  if (section.bboxCopyButtonEl instanceof HTMLButtonElement) {
+    syncOcrWordTooltipCopyButton(section.bboxCopyButtonEl, section.state, {
+      textKey: 'bboxCopyText',
+      titleKey: 'bboxCopyTitle',
+      timerKey: 'bboxCopyResetTimerId',
+      defaultTitle: 'Kopiera träff med alla bboxar som JSON',
+      label: '≡⧉',
+    });
+  }
 }
 
 function setOcrWordTooltipSectionData(section, tooltipData) {
@@ -12015,9 +12166,15 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
     window.clearTimeout(section.state.copyResetTimerId);
     section.state.copyResetTimerId = 0;
   }
+  if (section.state?.bboxCopyResetTimerId) {
+    window.clearTimeout(section.state.bboxCopyResetTimerId);
+    section.state.bboxCopyResetTimerId = 0;
+  }
 
   section.state.copyText = tooltipData.copyText || '';
   section.state.copyTitle = tooltipData.copyTitle || 'Kopiera index, text och koordinater som JSON';
+  section.state.bboxCopyText = tooltipData.bboxCopyText || '';
+  section.state.bboxCopyTitle = tooltipData.bboxCopyTitle || 'Kopiera träff med alla bboxar som JSON';
   section.state.keyWordIndexes = Array.isArray(tooltipData.keyWordIndexes) ? tooltipData.keyWordIndexes : [];
   section.state.valueWordIndexes = Array.isArray(tooltipData.valueWordIndexes) ? tooltipData.valueWordIndexes : [];
 
@@ -12036,8 +12193,30 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
         { label: 'Nyckel-BBoxar', wordIndexes: keyWordIndexes },
         { label: 'Värde-BBoxar', wordIndexes: valueWordIndexes },
       ];
+      const detailTextSpecs = [
+        { label: 'Nyckel', value: tooltipData.keyText },
+        { label: 'Värde', value: tooltipData.valueText },
+      ];
 
       section.textEl.replaceChildren();
+      detailTextSpecs.forEach((textSpec) => {
+        const detailLineEl = document.createElement('div');
+        detailLineEl.className = 'ocr-word-tooltip-text ocr-word-tooltip-text--detail-line';
+
+        const labelEl = document.createElement('span');
+        labelEl.className = 'ocr-word-tooltip-text-label';
+        labelEl.textContent = `${textSpec.label}: `;
+
+        const valueEl = document.createElement('span');
+        valueEl.className = 'ocr-word-tooltip-text-value';
+        valueEl.textContent = typeof textSpec.value === 'string' && textSpec.value.trim() !== ''
+          ? textSpec.value
+          : '—';
+
+        detailLineEl.append(labelEl, valueEl);
+        section.textEl.appendChild(detailLineEl);
+      });
+
       if (keyWordIndexes.size === 0 && valueWordIndexes.size === 0) {
         if (section.metaEl instanceof HTMLElement) {
           section.metaEl.textContent = '';
@@ -12046,9 +12225,17 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
         if (section.copyButtonEl instanceof HTMLButtonElement) {
           section.copyButtonEl.disabled = true;
           section.copyButtonEl.classList.remove('is-copied', 'is-copy-failed');
+          section.copyButtonEl.setAttribute('aria-label', section.state.copyTitle);
+          section.copyButtonEl.setAttribute('title', section.state.copyTitle);
         }
-        return;
+        if (section.bboxCopyButtonEl instanceof HTMLButtonElement) {
+          section.bboxCopyButtonEl.disabled = true;
+          section.bboxCopyButtonEl.classList.remove('is-copied', 'is-copy-failed');
+          section.bboxCopyButtonEl.setAttribute('aria-label', section.state.bboxCopyTitle);
+          section.bboxCopyButtonEl.setAttribute('title', section.state.bboxCopyTitle);
+        }
       }
+
       lineSpecs.forEach((lineSpec) => {
         const lineEl = document.createElement('div');
         lineEl.className = 'ocr-word-tooltip-bbox-line';
@@ -12069,7 +12256,6 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
           Array.from(lineSpec.wordIndexes)
             .sort((left, right) => left - right)
             .forEach((wordIndex) => {
-              const wordEl = ocrWordTooltipWordElementForPage(page, wordIndex);
               const chipEl = document.createElement('button');
               chipEl.type = 'button';
               chipEl.className = 'ocr-word-tooltip-bbox-chip';
@@ -12108,11 +12294,22 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
     section.metaEl.hidden = tooltipData.meta === '';
   }
   if (section.copyButtonEl instanceof HTMLButtonElement) {
-    section.copyButtonEl.disabled = section.state.copyText.trim() === '';
-    section.copyButtonEl.textContent = '⧉';
-    section.copyButtonEl.classList.remove('is-copied', 'is-copy-failed');
-    section.copyButtonEl.setAttribute('aria-label', section.state.copyTitle);
-    section.copyButtonEl.setAttribute('title', section.state.copyTitle);
+    syncOcrWordTooltipCopyButton(section.copyButtonEl, section.state, {
+      textKey: 'copyText',
+      titleKey: 'copyTitle',
+      timerKey: 'copyResetTimerId',
+      defaultTitle: 'Kopiera index, text och koordinater som JSON',
+      label: '⧉',
+    });
+  }
+  if (section.bboxCopyButtonEl instanceof HTMLButtonElement) {
+    syncOcrWordTooltipCopyButton(section.bboxCopyButtonEl, section.state, {
+      textKey: 'bboxCopyText',
+      titleKey: 'bboxCopyTitle',
+      timerKey: 'bboxCopyResetTimerId',
+      defaultTitle: 'Kopiera träff med alla bboxar som JSON',
+      label: '≡⧉',
+    });
   }
 }
 
