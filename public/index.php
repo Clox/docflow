@@ -271,7 +271,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
               <button id="ocr-zoom-in" type="button" aria-label="Zooma in">+</button>
             </div>
           </div>
-          <div id="ocr-page-image-controls" class="ocr-page-image-controls hidden">
+          <div id="ocr-page-image-controls" class="ocr-toolbar-panel ocr-page-image-controls hidden">
             <label id="ocr-page-image-toggle" class="ocr-page-image-toggle" for="ocr-show-page-image">
               <input id="ocr-show-page-image" type="checkbox">
               <span>Visa PDF-bakgrund</span>
@@ -321,7 +321,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
               </div>
             </div>
           </div>
-          <div id="ocr-menu-wrap" class="ocr-toolbar-menu-wrap hidden">
+          <div id="ocr-menu-wrap" class="ocr-toolbar-panel ocr-toolbar-menu-wrap hidden">
             <button
               id="ocr-menu-button"
               class="ocr-toolbar-menu-button icon-button icon-menu-button"

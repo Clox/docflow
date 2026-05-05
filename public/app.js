@@ -44,6 +44,7 @@ const ocrMenuEl = document.getElementById('ocr-menu');
 const ocrDownloadActionEl = document.getElementById('ocr-download-action');
 let ocrWordTooltipEl = null;
 let ocrWordTooltipHideTimerId = 0;
+let ocrWordTooltipShowTimerId = 0;
 let ocrWordTooltipAnchorEl = null;
 let ocrWordTooltipIsHovered = false;
 let ocrWordTooltipCopyText = '';
@@ -11477,11 +11478,38 @@ function buildObjectPageMatchLookup(page, pageMatches) {
 
 function buildWordTooltip(word) {
   const scorePart = Number.isFinite(word.score) ? `Score ${Number(word.score).toFixed(4)}` : '';
-  const bboxPart = `BBox ${Math.round(word.rect.x0)}, ${Math.round(word.rect.y0)}, ${Math.round(word.rect.x1)}, ${Math.round(word.rect.y1)}`;
-  return {
-    indexLabel: `#${Number.isInteger(word.index) ? word.index + 1 : 1}`,
+  const x0 = Math.round(word.rect.x0);
+  const y0 = Math.round(word.rect.y0);
+  const x1 = Math.round(word.rect.x1);
+  const y1 = Math.round(word.rect.y1);
+  const topLeft = `${x0},${y0}`;
+  const bottomRight = `${x1},${y1}`;
+  const lineWidth = Math.max(12, Math.max(topLeft.length, bottomRight.length) + 10);
+  const bboxPart = [
+    'BBox',
+    `${topLeft}${'─'.repeat(Math.max(1, lineWidth - topLeft.length - 1))}┐`,
+    `│${' '.repeat(Math.max(0, lineWidth - 2))}│`,
+    `└${'─'.repeat(Math.max(1, lineWidth - bottomRight.length - 2))} ${bottomRight}`,
+  ].join('\n');
+  const index = Number.isInteger(word.index) ? word.index + 1 : 1;
+  const rect = {
+    x0,
+    y0,
+    x1,
+    y1,
+  };
+  const copyPayload = {
+    index,
     text: typeof word.text === 'string' ? word.text : '',
-    meta: [scorePart, bboxPart].filter(Boolean).join('  •  '),
+    ...(Number.isFinite(word.score) ? { score: Number(word.score) } : {}),
+    bbox: rect,
+  };
+  return {
+    indexLabel: `#${index}`,
+    text: typeof word.text === 'string' ? word.text : '',
+    meta: [scorePart, bboxPart].filter(Boolean).join('\n'),
+    copyText: `${JSON.stringify(copyPayload, null, 2)}\n`,
+    copyTitle: 'Kopiera index, text och bbox som JSON',
   };
 }
 
@@ -11492,8 +11520,20 @@ function clearOcrWordTooltipHideTimer() {
   }
 }
 
+function clearOcrWordTooltipShowTimer() {
+  if (ocrWordTooltipShowTimerId) {
+    window.clearTimeout(ocrWordTooltipShowTimerId);
+    ocrWordTooltipShowTimerId = 0;
+  }
+}
+
+function isOcrWordTooltipVisible() {
+  return ocrWordTooltipEl instanceof HTMLElement && ocrWordTooltipEl.classList.contains('is-visible');
+}
+
 function hideOcrWordTooltip() {
   clearOcrWordTooltipHideTimer();
+  clearOcrWordTooltipShowTimer();
   ocrWordTooltipAnchorEl = null;
   ocrWordTooltipIsHovered = false;
   if (!(ocrWordTooltipEl instanceof HTMLElement)) {
@@ -11512,6 +11552,34 @@ function scheduleOcrWordTooltipHide() {
     }
     hideOcrWordTooltip();
   }, 2000);
+}
+
+function scheduleOcrWordTooltipShow(anchorEl, word, delayMs = 500) {
+  if (!(anchorEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const tooltipEl = ensureOcrWordTooltipEl();
+  if (!(tooltipEl instanceof HTMLElement)) {
+    return;
+  }
+
+  clearOcrWordTooltipShowTimer();
+  clearOcrWordTooltipHideTimer();
+
+  if (isOcrWordTooltipVisible() && ocrWordTooltipAnchorEl === anchorEl) {
+    return;
+  }
+
+  if (!isOcrWordTooltipVisible()) {
+    showOcrWordTooltip(anchorEl, word);
+    return;
+  }
+
+  ocrWordTooltipShowTimerId = window.setTimeout(() => {
+    ocrWordTooltipShowTimerId = 0;
+    showOcrWordTooltip(anchorEl, word);
+  }, delayMs);
 }
 
 function ensureOcrWordTooltipEl() {
@@ -11536,41 +11604,40 @@ function ensureOcrWordTooltipEl() {
 
   const indexEl = document.createElement('span');
   indexEl.className = 'ocr-word-tooltip-index';
+  indexEl.textContent = '#1';
 
   const copyButtonEl = document.createElement('button');
   copyButtonEl.type = 'button';
   copyButtonEl.className = 'ocr-word-tooltip-copy';
-  copyButtonEl.textContent = 'Kopiera';
-  copyButtonEl.setAttribute('aria-label', 'Kopiera ordtexten');
+  copyButtonEl.textContent = '⧉';
+  copyButtonEl.setAttribute('aria-label', 'Kopiera index, text och bbox som JSON');
+  copyButtonEl.setAttribute('title', 'Kopiera index, text och bbox som JSON');
   copyButtonEl.addEventListener('click', async () => {
     const text = ocrWordTooltipCopyText.trim();
     if (!text) {
       return;
     }
-    const defaultLabel = 'Kopiera';
-    const successLabel = 'Kopierad';
-    const failureLabel = 'Kunde inte kopiera';
     try {
       const copied = await copyTextToClipboard(text);
       if (!copied) {
         throw new Error('copy_failed');
       }
       copyButtonEl.classList.add('is-copied');
-      copyButtonEl.textContent = successLabel;
-      copyButtonEl.setAttribute('aria-label', successLabel);
+      copyButtonEl.setAttribute('aria-label', 'Kopierat');
+      copyButtonEl.setAttribute('title', 'Kopierat');
       window.setTimeout(() => {
         copyButtonEl.classList.remove('is-copied');
-        copyButtonEl.textContent = defaultLabel;
-        copyButtonEl.setAttribute('aria-label', 'Kopiera ordtexten');
+        copyButtonEl.setAttribute('aria-label', 'Kopiera index, text och bbox som JSON');
+        copyButtonEl.setAttribute('title', 'Kopiera index, text och bbox som JSON');
       }, 1200);
     } catch (error) {
       copyButtonEl.classList.add('is-copy-failed');
-      copyButtonEl.textContent = failureLabel;
-      copyButtonEl.setAttribute('aria-label', failureLabel);
+      copyButtonEl.setAttribute('aria-label', 'Kunde inte kopiera');
+      copyButtonEl.setAttribute('title', 'Kunde inte kopiera');
       window.setTimeout(() => {
         copyButtonEl.classList.remove('is-copy-failed');
-        copyButtonEl.textContent = defaultLabel;
-        copyButtonEl.setAttribute('aria-label', 'Kopiera ordtexten');
+        copyButtonEl.setAttribute('aria-label', 'Kopiera index, text och bbox som JSON');
+        copyButtonEl.setAttribute('title', 'Kopiera index, text och bbox som JSON');
       }, 1200);
     }
   });
@@ -11614,11 +11681,12 @@ function showOcrWordTooltip(anchorEl, word) {
     return;
   }
 
+  clearOcrWordTooltipShowTimer();
   clearOcrWordTooltipHideTimer();
   ocrWordTooltipAnchorEl = anchorEl;
   ocrWordTooltipIsHovered = false;
   const tooltipData = buildWordTooltip(word);
-  ocrWordTooltipCopyText = tooltipData.text;
+  ocrWordTooltipCopyText = tooltipData.copyText;
   if (ocrWordTooltipIndexEl instanceof HTMLElement) {
     ocrWordTooltipIndexEl.textContent = tooltipData.indexLabel;
   }
@@ -11630,10 +11698,11 @@ function showOcrWordTooltip(anchorEl, word) {
     ocrWordTooltipMetaEl.hidden = tooltipData.meta === '';
   }
   if (ocrWordTooltipCopyButtonEl instanceof HTMLButtonElement) {
-    ocrWordTooltipCopyButtonEl.disabled = tooltipData.text.trim() === '';
-    ocrWordTooltipCopyButtonEl.textContent = 'Kopiera';
+    ocrWordTooltipCopyButtonEl.disabled = tooltipData.copyText.trim() === '';
+    ocrWordTooltipCopyButtonEl.textContent = '⧉';
     ocrWordTooltipCopyButtonEl.classList.remove('is-copied', 'is-copy-failed');
-    ocrWordTooltipCopyButtonEl.setAttribute('aria-label', 'Kopiera ordtexten');
+    ocrWordTooltipCopyButtonEl.setAttribute('aria-label', tooltipData.copyTitle);
+    ocrWordTooltipCopyButtonEl.setAttribute('title', tooltipData.copyTitle);
   }
   tooltipEl.setAttribute('aria-hidden', 'false');
   tooltipEl.classList.remove('hidden');
@@ -11670,9 +11739,10 @@ function bindOcrWordTooltip(wordEl, word) {
   const tooltipText = word;
   wordEl.removeAttribute('title');
   wordEl.addEventListener('mouseenter', () => {
-    showOcrWordTooltip(wordEl, tooltipText);
+    scheduleOcrWordTooltipShow(wordEl, tooltipText);
   });
   wordEl.addEventListener('mouseleave', () => {
+    clearOcrWordTooltipShowTimer();
     scheduleOcrWordTooltipHide();
   });
 }
