@@ -50,9 +50,9 @@ try {
         $clientMatches = [];
     }
 
-    $isInvalidDirectionMatch = static function (array $match): bool {
+    $isInvalidPositionMatch = static function (array $match): bool {
         return is_string($match['positionPenaltyAxis'] ?? null)
-            && trim((string) $match['positionPenaltyAxis']) === 'invalid';
+            && in_array(trim((string) $match['positionPenaltyAxis']), ['invalid', 'invalid_bbox'], true);
     };
 
     $fields = [];
@@ -75,7 +75,7 @@ try {
                 if (!is_array($match)) {
                     continue;
                 }
-                if ($isInvalidDirectionMatch($match)) {
+                if ($isInvalidPositionMatch($match)) {
                     continue;
                 }
 

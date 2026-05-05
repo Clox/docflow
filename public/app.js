@@ -3851,7 +3851,14 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
         ? row.finalConfidence
         : (row && typeof row.confidence === 'number' && Number.isFinite(row.confidence) ? row.confidence : 0))
   );
+  const isInvalidPositionMatchRow = (row) => {
+    const axis = row && typeof row.positionPenaltyAxis === 'string' ? row.positionPenaltyAxis.trim() : '';
+    return axis === 'invalid' || axis === 'invalid_bbox';
+  };
   const rowMatchesFilterMode = (row, mode) => {
+    if (isInvalidPositionMatchRow(row)) {
+      return false;
+    }
     const confidence = rowConfidenceValue(row);
     if (mode === 'all') {
       return true;
@@ -13370,7 +13377,15 @@ function ocrDataFieldRowConfidenceValue(row) {
   return null;
 }
 
+function isInvalidOcrDataFieldRow(row) {
+  const axis = row && typeof row.positionPenaltyAxis === 'string' ? row.positionPenaltyAxis.trim() : '';
+  return axis === 'invalid' || axis === 'invalid_bbox';
+}
+
 function ocrDataFieldRowMatchesFilterMode(row, mode) {
+  if (isInvalidOcrDataFieldRow(row)) {
+    return false;
+  }
   const confidence = ocrDataFieldRowConfidenceValue(row) ?? 0;
   if (mode === 'all') {
     return true;

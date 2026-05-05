@@ -9802,10 +9802,7 @@ function candidate_position_penalty_details(
     $candidateCenter = bbox_center_point($candidateBbox);
     $lineHeight = position_penalty_line_height($labelBbox, $candidateBbox);
     $minLineHeight = position_penalty_min_line_height($labelBbox, $candidateBbox);
-    $isLeftOfLabel = ((float) ($candidateBbox['x1'] ?? 0.0)) <= ((float) ($labelBbox['x0'] ?? 0.0));
-    $isAboveLabel = ((float) ($candidateBbox['y1'] ?? 0.0)) <= ((float) ($labelBbox['y0'] ?? 0.0));
-
-    if ($isLeftOfLabel || $isAboveLabel || $mainDirection === 'left' || $mainDirection === 'up') {
+    if ($mainDirection === 'left' || $mainDirection === 'up') {
         return [
             ...$geometryContext,
             'penalty' => 1.0,
@@ -12109,14 +12106,10 @@ function matching_line_page_number(array $lineGeometries, int $lineIndex): ?int
 
 function anchored_candidate_line_is_in_scope(array $lineGeometries, int $hitLineIndex, int $candidateLineIndex): bool
 {
-    if ($candidateLineIndex < $hitLineIndex) {
-        return false;
-    }
-
     $hitPageNumber = matching_line_page_number($lineGeometries, $hitLineIndex);
     $candidatePageNumber = matching_line_page_number($lineGeometries, $candidateLineIndex);
     if ($hitPageNumber === null || $candidatePageNumber === null) {
-        return true;
+        return $candidateLineIndex >= $hitLineIndex;
     }
 
     return $hitPageNumber === $candidatePageNumber;
@@ -12268,7 +12261,7 @@ function collect_anchored_candidate_matches(
         }
 
         foreach ($lines as $candidateLineIndex => $candidateLine) {
-            if (!is_int($candidateLineIndex) || $candidateLineIndex < $hitIndex) {
+            if (!is_int($candidateLineIndex) || $candidateLineIndex < 0) {
                 continue;
             }
             if (!anchored_candidate_line_is_in_scope($lineGeometries, $hitIndex, $candidateLineIndex)) {
