@@ -11576,25 +11576,22 @@ function buildObjectPageMatchLookup(page, pageMatches) {
 }
 
 function buildWordTooltip(word) {
-  const scorePart = Number.isFinite(word.score) ? `Score ${Number(word.score).toFixed(4)}` : '';
   const x0 = Math.round(word.rect.x0);
   const y0 = Math.round(word.rect.y0);
   const x1 = Math.round(word.rect.x1);
   const y1 = Math.round(word.rect.y1);
-  const topLeft = `${x0},${y0}`;
-  const bottomRight = `${x1},${y1}`;
-  const lineWidth = Math.max(12, Math.max(topLeft.length, bottomRight.length) + 10);
-  const bboxPart = [
-    'Koordinater',
-    `${topLeft}${'─'.repeat(Math.max(1, lineWidth - topLeft.length - 1))}┐`,
-    `│${' '.repeat(Math.max(0, lineWidth - 2))}│`,
-    `└${'─'.repeat(Math.max(1, lineWidth - bottomRight.length - 2))} ${bottomRight}`,
-  ].join('\n');
   const copyPayload = buildOcrWordCopyPayload(word);
   return {
     indexLabel: `BBox #${copyPayload.index}`,
     text: typeof word.text === 'string' ? word.text : '',
-    meta: [scorePart, bboxPart].filter(Boolean).join('\n'),
+    metaRows: Number.isFinite(word.score)
+      ? [{ label: 'Score', value: Number(word.score).toFixed(4) }]
+      : [],
+    metaDiagram: {
+      title: 'Koordinater',
+      startLabel: `X${x0},Y${y0}`,
+      endLabel: `X${x1},Y${y1}`,
+    },
     copyText: `${JSON.stringify(copyPayload, null, 2)}\n`,
     copyTitle: 'Kopiera index, text och koordinater som JSON',
   };
@@ -11852,6 +11849,35 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     keyBBoxes: keyWordBboxes,
     valueBBoxes: valueWordBboxes,
   };
+  const metaRows = [];
+  String(confidenceText || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .forEach((line) => {
+      const colonMatch = line.match(/^(.+?):\s*(.+)$/u);
+      if (colonMatch) {
+        metaRows.push({
+          label: colonMatch[1] || '',
+          value: colonMatch[2] || '',
+        });
+        return;
+      }
+
+      const spacedMatch = line.match(/^(.+?)\s+([−-].+)$/u);
+      if (spacedMatch) {
+        metaRows.push({
+          label: spacedMatch[1] || '',
+          value: spacedMatch[2] || '',
+        });
+        return;
+      }
+
+      metaRows.push({
+        value: line,
+        raw: true,
+      });
+    });
 
   return {
     indexLabel: `Träff #${matchIndex}`,
@@ -11859,7 +11885,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
       `Nyckel-BBoxar: ${formatOcrWordIndexList(keyWordIndexes)}`,
       `Värde-BBoxar: ${formatOcrWordIndexList(valueWordIndexes)}`,
     ].join('\n'),
-    meta: confidenceText ? `────────────\n${confidenceText}\n────────────` : '',
+    metaRows,
     copyText: `${JSON.stringify(copyPayload, null, 2)}\n`,
     copyTitle: 'Kopiera träff som JSON',
     bboxCopyText: `${JSON.stringify(bboxCopyPayload, null, 2)}\n`,
@@ -12084,6 +12110,91 @@ function bindOcrWordTooltipCopyButton(buttonEl, sectionState, options = {}) {
   });
 }
 
+function renderOcrWordTooltipMeta(section, tooltipData) {
+  if (!(section?.metaEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const metaEl = section.metaEl;
+  metaEl.replaceChildren();
+
+  const metaRows = Array.isArray(tooltipData?.metaRows) ? tooltipData.metaRows : [];
+  const metaText = typeof tooltipData?.meta === 'string' ? tooltipData.meta.trim() : '';
+  const metaDiagram = tooltipData?.metaDiagram && typeof tooltipData.metaDiagram === 'object'
+    ? tooltipData.metaDiagram
+    : null;
+
+  if (metaText === '' && metaRows.length === 0 && !metaDiagram) {
+    metaEl.hidden = true;
+    return;
+  }
+
+  metaEl.hidden = false;
+
+  if (metaRows.length > 0) {
+    metaRows.forEach((row) => {
+      if (row && row.raw === true) {
+        const rawEl = document.createElement('div');
+        rawEl.className = 'ocr-word-tooltip-meta-text';
+        rawEl.textContent = typeof row.value === 'string' ? row.value : '';
+        metaEl.appendChild(rawEl);
+        return;
+      }
+
+      const rowEl = document.createElement('div');
+      rowEl.className = 'ocr-word-tooltip-meta-row';
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'ocr-word-tooltip-meta-row-label';
+      labelEl.textContent = typeof row?.label === 'string' && row.label.trim() !== ''
+        ? `${row.label}:`
+        : '';
+
+      const valueEl = document.createElement('span');
+      valueEl.className = 'ocr-word-tooltip-meta-row-value';
+      valueEl.textContent = typeof row?.value === 'string' ? row.value : '';
+
+      if (labelEl.textContent !== '') {
+        rowEl.appendChild(labelEl);
+      }
+      rowEl.appendChild(valueEl);
+      metaEl.appendChild(rowEl);
+    });
+    return;
+  }
+
+  if (metaText !== '') {
+    const textEl = document.createElement('div');
+    textEl.className = 'ocr-word-tooltip-meta-text';
+    textEl.textContent = metaText;
+    metaEl.appendChild(textEl);
+  }
+
+  if (metaDiagram) {
+    const titleEl = document.createElement('div');
+    titleEl.className = 'ocr-word-tooltip-meta-title';
+    titleEl.textContent = typeof metaDiagram.title === 'string' && metaDiagram.title.trim() !== ''
+      ? metaDiagram.title
+      : 'Koordinater';
+
+    const figureEl = document.createElement('div');
+    figureEl.className = 'ocr-word-tooltip-meta-figure';
+
+    const startEl = document.createElement('span');
+    startEl.className = 'ocr-word-tooltip-meta-figure-value ocr-word-tooltip-meta-figure-value--start';
+    startEl.textContent = typeof metaDiagram.startLabel === 'string' ? metaDiagram.startLabel : '';
+
+    const endEl = document.createElement('span');
+    endEl.className = 'ocr-word-tooltip-meta-figure-value ocr-word-tooltip-meta-figure-value--end';
+    endEl.textContent = typeof metaDiagram.endLabel === 'string' ? metaDiagram.endLabel : '';
+
+    figureEl.appendChild(startEl);
+    figureEl.appendChild(endEl);
+    metaEl.appendChild(titleEl);
+    metaEl.appendChild(figureEl);
+  }
+}
+
 function createOcrWordTooltipSection(options = {}) {
   const includeText = options.includeText !== false;
   if (!ensureOcrWordTooltipEl()) {
@@ -12117,13 +12228,18 @@ function createOcrWordTooltipSection(options = {}) {
   if (bboxCopyButtonEl instanceof HTMLButtonElement) {
     bboxCopyButtonEl.type = 'button';
     bboxCopyButtonEl.className = 'ocr-word-tooltip-copy';
-    bboxCopyButtonEl.textContent = '≡⧉';
+    bboxCopyButtonEl.textContent = '▣⧉';
   }
 
-  const textEl = document.createElement('div');
-  textEl.className = 'ocr-word-tooltip-text';
-  if (!includeText) {
-    textEl.classList.add('ocr-word-tooltip-text--detail');
+  const textEl = includeText ? document.createElement('div') : null;
+  if (textEl instanceof HTMLElement) {
+    textEl.className = 'ocr-word-tooltip-text';
+    textEl.classList.add('ocr-word-tooltip-text--content');
+  }
+
+  const detailEl = includeText ? null : document.createElement('div');
+  if (detailEl instanceof HTMLElement) {
+    detailEl.className = 'ocr-word-tooltip-detail';
   }
 
   const metaEl = document.createElement('div');
@@ -12153,7 +12269,7 @@ function createOcrWordTooltipSection(options = {}) {
       titleKey: 'bboxCopyTitle',
       timerKey: 'bboxCopyResetTimerId',
       defaultTitle: 'Kopiera träff med alla bboxar som JSON',
-      label: '≡⧉',
+      label: '▣⧉',
       successTitle: 'Kopierat',
       failureTitle: 'Kunde inte kopiera',
     });
@@ -12166,7 +12282,11 @@ function createOcrWordTooltipSection(options = {}) {
   }
   headerEl.appendChild(headerActionsEl);
   contentEl.appendChild(headerEl);
-  contentEl.appendChild(textEl);
+  if (includeText) {
+    contentEl.appendChild(textEl);
+  } else if (detailEl instanceof HTMLElement) {
+    contentEl.appendChild(detailEl);
+  }
   contentEl.appendChild(metaEl);
   sectionEl.appendChild(contentEl);
 
@@ -12180,6 +12300,7 @@ function createOcrWordTooltipSection(options = {}) {
     sectionEl,
     indexEl,
     textEl,
+    detailEl,
     metaEl,
     copyButtonEl,
     bboxCopyButtonEl,
@@ -12235,6 +12356,9 @@ function clearOcrWordTooltipSection(section) {
   if (section.textEl instanceof HTMLElement) {
     section.textEl.replaceChildren();
   }
+  if (section.detailEl instanceof HTMLElement) {
+    section.detailEl.replaceChildren();
+  }
   if (section.metaEl instanceof HTMLElement) {
     section.metaEl.textContent = '';
     section.metaEl.hidden = true;
@@ -12263,7 +12387,7 @@ function clearOcrWordTooltipSection(section) {
       titleKey: 'bboxCopyTitle',
       timerKey: 'bboxCopyResetTimerId',
       defaultTitle: 'Kopiera träff med alla bboxar som JSON',
-      label: '≡⧉',
+      label: '▣⧉',
     });
   }
 }
@@ -12292,117 +12416,101 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
   if (section.indexEl instanceof HTMLElement) {
     section.indexEl.textContent = tooltipData.indexLabel || '';
   }
-  if (section.textEl instanceof HTMLElement) {
-    if (section.includeText) {
-      section.textEl.textContent = tooltipData.text || '';
-    } else {
-      const page = section.state.tooltipPage;
-      const matchLookup = section.state.tooltipMatchLookup;
-      const keyWordIndexes = new Set(section.state.keyWordIndexes);
-      const valueWordIndexes = new Set(section.state.valueWordIndexes);
-      const lineSpecs = [
-        { label: 'Nyckel-BBoxar', wordIndexes: keyWordIndexes },
-        { label: 'Värde-BBoxar', wordIndexes: valueWordIndexes },
-      ];
-      const detailTextSpecs = [
-        { label: 'Nyckel', value: tooltipData.keyText },
-        { label: 'Värde', value: tooltipData.valueText },
-      ];
+  if (section.includeText && section.textEl instanceof HTMLElement) {
+    section.textEl.textContent = tooltipData.text || '';
+  }
+  if (!section.includeText && section.detailEl instanceof HTMLElement) {
+    const page = section.state.tooltipPage;
+    const matchLookup = section.state.tooltipMatchLookup;
+    const keyWordIndexes = new Set(section.state.keyWordIndexes);
+    const valueWordIndexes = new Set(section.state.valueWordIndexes);
 
-      section.textEl.replaceChildren();
-      detailTextSpecs.forEach((textSpec) => {
-        const detailLineEl = document.createElement('div');
-        detailLineEl.className = 'ocr-word-tooltip-text ocr-word-tooltip-text--detail-line';
+    const detailGroups = [
+      { label: 'Nyckel', value: tooltipData.keyText, wordIndexes: keyWordIndexes },
+      { label: 'Värde', value: tooltipData.valueText, wordIndexes: valueWordIndexes },
+    ];
 
-        const labelEl = document.createElement('span');
-        labelEl.className = 'ocr-word-tooltip-text-label';
-        labelEl.textContent = `${textSpec.label}: `;
+    section.detailEl.replaceChildren();
+    detailGroups.forEach((group) => {
+      const itemEl = document.createElement('div');
+      itemEl.className = 'ocr-word-tooltip-detail-item';
 
-        const valueEl = document.createElement('span');
-        valueEl.className = 'ocr-word-tooltip-text-value';
-        valueEl.textContent = typeof textSpec.value === 'string' && textSpec.value.trim() !== ''
-          ? textSpec.value
-          : '—';
+      const itemLabelEl = document.createElement('div');
+      itemLabelEl.className = 'ocr-word-tooltip-detail-item-label';
+      itemLabelEl.textContent = `${group.label}:`;
 
-        detailLineEl.append(labelEl, valueEl);
-        section.textEl.appendChild(detailLineEl);
-      });
+      const bodyEl = document.createElement('div');
+      bodyEl.className = 'ocr-word-tooltip-detail-item-body';
 
-      if (keyWordIndexes.size === 0 && valueWordIndexes.size === 0) {
-        if (section.metaEl instanceof HTMLElement) {
-          section.metaEl.textContent = '';
-          section.metaEl.hidden = true;
-        }
-        if (section.copyButtonEl instanceof HTMLButtonElement) {
-          section.copyButtonEl.disabled = true;
-          section.copyButtonEl.classList.remove('is-copied', 'is-copy-failed');
-          section.copyButtonEl.setAttribute('aria-label', section.state.copyTitle);
-          section.copyButtonEl.setAttribute('title', section.state.copyTitle);
-        }
-        if (section.bboxCopyButtonEl instanceof HTMLButtonElement) {
-          section.bboxCopyButtonEl.disabled = true;
-          section.bboxCopyButtonEl.classList.remove('is-copied', 'is-copy-failed');
-          section.bboxCopyButtonEl.setAttribute('aria-label', section.state.bboxCopyTitle);
-          section.bboxCopyButtonEl.setAttribute('title', section.state.bboxCopyTitle);
-        }
+      const textRowEl = document.createElement('div');
+      textRowEl.className = 'ocr-word-tooltip-detail-row';
+
+      const textRowLabelEl = document.createElement('span');
+      textRowLabelEl.className = 'ocr-word-tooltip-detail-row-label';
+      textRowLabelEl.textContent = 'Text:';
+
+      const textRowValueEl = document.createElement('span');
+      textRowValueEl.className = 'ocr-word-tooltip-detail-row-value ocr-word-tooltip-detail-row-value--text';
+      textRowValueEl.textContent = typeof group.value === 'string' && group.value.trim() !== ''
+        ? group.value
+        : '—';
+
+      textRowEl.append(textRowLabelEl, textRowValueEl);
+
+      const bboxRowEl = document.createElement('div');
+      bboxRowEl.className = 'ocr-word-tooltip-detail-row';
+
+      const bboxRowLabelEl = document.createElement('span');
+      bboxRowLabelEl.className = 'ocr-word-tooltip-detail-row-label';
+      bboxRowLabelEl.textContent = 'BBoxar:';
+
+      const bboxValueEl = document.createElement('div');
+      bboxValueEl.className = 'ocr-word-tooltip-detail-row-bboxes';
+
+      if (group.wordIndexes.size === 0) {
+        const emptyEl = document.createElement('span');
+        emptyEl.className = 'ocr-word-tooltip-detail-row-empty';
+        emptyEl.textContent = '—';
+        bboxValueEl.appendChild(emptyEl);
+      } else {
+        Array.from(group.wordIndexes)
+          .sort((left, right) => left - right)
+          .forEach((wordIndex) => {
+            const chipEl = document.createElement('button');
+            chipEl.type = 'button';
+            chipEl.className = 'ocr-word-tooltip-bbox-chip';
+            chipEl.textContent = `#${wordIndex + 1}`;
+            chipEl.setAttribute('aria-label', `Öppna bbox #${wordIndex + 1}`);
+            chipEl.setAttribute('title', `Öppna bbox #${wordIndex + 1}`);
+            chipEl.addEventListener('mouseenter', () => {
+              setOcrWordTooltipWordHighlights(page, [wordIndex]);
+            });
+            chipEl.addEventListener('focus', () => {
+              setOcrWordTooltipWordHighlights(page, [wordIndex]);
+            });
+            chipEl.addEventListener('mouseleave', () => {
+              clearOcrWordTooltipWordHighlights();
+            });
+            chipEl.addEventListener('blur', () => {
+              clearOcrWordTooltipWordHighlights();
+            });
+            chipEl.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openOcrWordTooltipForWordIndex(page, wordIndex, matchLookup);
+            });
+            bboxValueEl.appendChild(chipEl);
+          });
       }
 
-      lineSpecs.forEach((lineSpec) => {
-        const lineEl = document.createElement('div');
-        lineEl.className = 'ocr-word-tooltip-bbox-line';
-
-        const labelEl = document.createElement('span');
-        labelEl.className = 'ocr-word-tooltip-bbox-label';
-        labelEl.textContent = `${lineSpec.label}:`;
-
-        const chipsEl = document.createElement('div');
-        chipsEl.className = 'ocr-word-tooltip-bbox-chips';
-
-        if (lineSpec.wordIndexes.size === 0) {
-          const emptyEl = document.createElement('span');
-          emptyEl.className = 'ocr-word-tooltip-bbox-empty';
-          emptyEl.textContent = '—';
-          chipsEl.appendChild(emptyEl);
-        } else {
-          Array.from(lineSpec.wordIndexes)
-            .sort((left, right) => left - right)
-            .forEach((wordIndex) => {
-              const chipEl = document.createElement('button');
-              chipEl.type = 'button';
-              chipEl.className = 'ocr-word-tooltip-bbox-chip';
-              chipEl.textContent = `#${wordIndex + 1}`;
-              chipEl.setAttribute('aria-label', `Öppna bbox #${wordIndex + 1}`);
-              chipEl.setAttribute('title', `Öppna bbox #${wordIndex + 1}`);
-              chipEl.addEventListener('mouseenter', () => {
-                setOcrWordTooltipWordHighlights(page, [wordIndex]);
-              });
-              chipEl.addEventListener('focus', () => {
-                setOcrWordTooltipWordHighlights(page, [wordIndex]);
-              });
-              chipEl.addEventListener('mouseleave', () => {
-                clearOcrWordTooltipWordHighlights();
-              });
-              chipEl.addEventListener('blur', () => {
-                clearOcrWordTooltipWordHighlights();
-              });
-              chipEl.addEventListener('click', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                openOcrWordTooltipForWordIndex(page, wordIndex, matchLookup);
-              });
-              chipsEl.appendChild(chipEl);
-            });
-        }
-
-        lineEl.appendChild(labelEl);
-        lineEl.appendChild(chipsEl);
-        section.textEl.appendChild(lineEl);
-      });
-    }
+      bboxRowEl.append(bboxRowLabelEl, bboxValueEl);
+      bodyEl.append(textRowEl, bboxRowEl);
+      itemEl.append(itemLabelEl, bodyEl);
+      section.detailEl.appendChild(itemEl);
+    });
   }
   if (section.metaEl instanceof HTMLElement) {
-    section.metaEl.textContent = tooltipData.meta || '';
-    section.metaEl.hidden = tooltipData.meta === '';
+    renderOcrWordTooltipMeta(section, tooltipData);
   }
   if (section.copyButtonEl instanceof HTMLButtonElement) {
     syncOcrWordTooltipCopyButton(section.copyButtonEl, section.state, {
@@ -12419,7 +12527,7 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
       titleKey: 'bboxCopyTitle',
       timerKey: 'bboxCopyResetTimerId',
       defaultTitle: 'Kopiera träff med alla bboxar som JSON',
-      label: '≡⧉',
+      label: '▣⧉',
     });
   }
 }
