@@ -23,7 +23,7 @@ body {
   border-right: 1px solid #ddd;
   background: #fff;
   position: relative;
-  z-index: 3;
+  z-index: 46;
   display: flex;
   flex-direction: column;
   --sidebar-list-size: 35%;
@@ -1604,6 +1604,7 @@ body.is-resizing-sidebar {
 }
 
 .ocr-toolbar {
+  --ocr-toolbar-panel-height: 72px;
   --ocr-toolbar-control-height: 60px;
   --ocr-toolbar-content-offset: 76px;
 }
@@ -1612,8 +1613,9 @@ body.is-resizing-sidebar {
   display: inline-flex;
   box-sizing: border-box;
   align-items: stretch;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: 3px;
+  padding: 6px 8px;
+  height: var(--ocr-toolbar-panel-height);
   border: 1px solid #d8dee8;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
@@ -1626,14 +1628,14 @@ body.is-resizing-sidebar {
   align-items: stretch;
   gap: 1px;
   position: relative;
-  width: 450px;
-  min-width: 450px;
-  max-width: 450px;
-  flex: 0 0 450px;
-  margin-right: 10px;
-  min-height: 54px;
+  width: 430px;
+  min-width: 430px;
+  max-width: 430px;
+  flex: 0 0 430px;
+  margin-right: 8px;
+  height: var(--ocr-toolbar-panel-height);
   box-sizing: border-box;
-  padding: 2px 10px 4px;
+  padding: 2px 8px 3px;
   border: 1px solid #d8dee8;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.96);
@@ -1644,11 +1646,11 @@ body.is-resizing-sidebar {
 .ocr-search-mode-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   min-width: 0;
   width: 100%;
-  padding-right: 82px;
+  padding-right: 72px;
 }
 
 .ocr-search-mode-toggle {
@@ -1749,7 +1751,8 @@ body.is-resizing-sidebar {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  padding: 6px;
+  height: var(--ocr-toolbar-panel-height);
+  padding: 2px;
 }
 
 .ocr-toolbar-menu-button {
@@ -1765,8 +1768,8 @@ body.is-resizing-sidebar {
   top: calc(100% + 6px);
   right: 0;
   z-index: 40;
-  min-width: 190px;
-  padding: 6px;
+  min-width: 180px;
+  padding: 4px;
   border: 1px solid #d7dee8;
   border-radius: 8px;
   background: #fff;
@@ -1800,12 +1803,12 @@ body.is-resizing-sidebar {
 
 .ocr-source-tabs {
   display: inline-flex;
-  align-items: stretch;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
   max-width: 100%;
-  min-height: var(--ocr-toolbar-control-height);
+  height: var(--ocr-toolbar-panel-height);
   box-sizing: border-box;
-  padding: 8px 6px;
+  padding: 6px 5px;
   border: 1px solid #d8dee8;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
@@ -1851,18 +1854,20 @@ body.is-resizing-sidebar {
   z-index: 45;
   isolation: isolate;
   display: flex;
-  align-items: flex-end;
-  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  row-gap: 6px;
   min-width: 0;
 }
 
 .ocr-page-controls {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  min-height: var(--ocr-toolbar-control-height);
+  gap: 10px;
+  height: var(--ocr-toolbar-panel-height);
   box-sizing: border-box;
-  padding: 10px 10px;
+  padding: 8px 8px;
   border: 1px solid #d8dee8;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
@@ -1870,7 +1875,7 @@ body.is-resizing-sidebar {
 }
 
 .ocr-page-controls {
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .ocr-search-bar {
@@ -3355,6 +3360,7 @@ body.is-resizing-sidebar {
 .ocr-page-image-controls {
   flex-direction: column;
   align-items: stretch;
+  justify-content: center;
   width: max-content;
   gap: 4px;
 }

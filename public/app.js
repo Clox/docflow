@@ -11571,11 +11571,6 @@ function scheduleOcrWordTooltipShow(anchorEl, word, delayMs = 500) {
     return;
   }
 
-  if (!isOcrWordTooltipVisible()) {
-    showOcrWordTooltip(anchorEl, word);
-    return;
-  }
-
   ocrWordTooltipShowTimerId = window.setTimeout(() => {
     ocrWordTooltipShowTimerId = 0;
     showOcrWordTooltip(anchorEl, word);
