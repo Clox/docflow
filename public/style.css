@@ -3070,6 +3070,35 @@ body.is-resizing-sidebar {
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12), 0 0 0 2px rgba(59, 130, 246, 0.18);
 }
 
+.ocr-word-tooltip {
+  position: fixed;
+  z-index: 1100;
+  max-width: min(340px, calc(100vw - 24px));
+  padding: 8px 10px;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.96);
+  color: #f8fafc;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.22);
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.08s ease, transform 0.08s ease;
+}
+
+.ocr-word-tooltip.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ocr-word-tooltip.hidden {
+  display: none;
+}
+
 .ocr-page-highlight,
 .ocr-page-text {
   margin: 0;

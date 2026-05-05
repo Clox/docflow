@@ -42,6 +42,10 @@ const ocrMenuWrapEl = document.getElementById('ocr-menu-wrap');
 const ocrMenuButtonEl = document.getElementById('ocr-menu-button');
 const ocrMenuEl = document.getElementById('ocr-menu');
 const ocrDownloadActionEl = document.getElementById('ocr-download-action');
+let ocrWordTooltipEl = null;
+let ocrWordTooltipHideTimerId = 0;
+let ocrWordTooltipAnchorEl = null;
+let ocrWordTooltipIsHovered = false;
 const mainEl = document.querySelector('.main');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
@@ -3666,7 +3670,8 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
             .map((value) => (value === null || value === undefined ? '' : String(value).trim()))
             .filter((value) => value !== '')
         );
-        const matches = Array.isArray(field.matches)
+        const hasMatchRows = Array.isArray(field.matches);
+        const matches = hasMatchRows
           ? field.matches
             .map((match) => {
               if (!match || typeof match !== 'object') {
@@ -3740,66 +3745,69 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
             .filter(Boolean)
           : [];
         const fallbackValue = Object.prototype.hasOwnProperty.call(field, 'value') ? field.value : null;
+        const fallbackRow = (fallbackValue === null || fallbackValue === undefined || fallbackValue === '')
+          ? null
+          : {
+            value: fallbackValue,
+            raw: typeof field.raw === 'string' ? field.raw : '',
+            matchText: typeof field.matchText === 'string' ? field.matchText : '',
+            extractedRaw: typeof field.extractedRaw === 'string' ? field.extractedRaw : '',
+            source: typeof field.source === 'string' ? field.source : '',
+            labelText: typeof field.labelText === 'string' ? field.labelText : '',
+            between: typeof field.between === 'string' ? field.between : '',
+            searchTerm: '',
+            scopeType: typeof field.scopeType === 'string' ? field.scopeType : '',
+            scopeText: typeof field.scopeText === 'string' ? field.scopeText : '',
+            scopeIsRegex: field.scopeIsRegex === true,
+            scopeMatchedText: typeof field.scopeMatchedText === 'string' ? field.scopeMatchedText : '',
+            scopeLineIndex: Number.isInteger(field.scopeLineIndex) ? field.scopeLineIndex : null,
+            confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
+            baseConfidence: Number.isFinite(Number(field.baseConfidence)) ? Number(field.baseConfidence) : null,
+            finalConfidence: Number.isFinite(Number(field.finalConfidence)) ? Number(field.finalConfidence) : null,
+            noisePenalty: Number.isFinite(Number(field.noisePenalty)) ? Number(field.noisePenalty) : null,
+            trailingDelimiterPenalty: Number.isFinite(Number(field.trailingDelimiterPenalty)) ? Number(field.trailingDelimiterPenalty) : null,
+            otherMatchKeyPenalty: Number.isFinite(Number(field.otherMatchKeyPenalty)) ? Number(field.otherMatchKeyPenalty) : null,
+            positionPenalty: Number.isFinite(Number(field.positionPenalty)) ? Number(field.positionPenalty) : (Number.isFinite(Number(field.directionPenalty)) ? Number(field.directionPenalty) : null),
+            verticalDistancePenalty: Number.isFinite(Number(field.verticalDistancePenalty)) ? Number(field.verticalDistancePenalty) : null,
+            verticalDistance: Number.isFinite(Number(field.verticalDistance)) ? Number(field.verticalDistance) : null,
+            verticalNormalizedDistance: Number.isFinite(Number(field.verticalNormalizedDistance)) ? Number(field.verticalNormalizedDistance) : null,
+            positionPenaltyAxis: typeof field.positionPenaltyAxis === 'string' ? field.positionPenaltyAxis : '',
+            mainDirection: typeof field.mainDirection === 'string' ? field.mainDirection : '',
+            invalidReason: typeof field.invalidReason === 'string' ? field.invalidReason : '',
+            noiseText: typeof field.noiseText === 'string' ? field.noiseText : '',
+            noiseSegments: Array.isArray(field.noiseSegments)
+              ? field.noiseSegments
+                .map((segment) => {
+                  if (!segment || typeof segment !== 'object') {
+                    return null;
+                  }
+                  return {
+                    text: typeof segment.text === 'string' ? segment.text : '',
+                    lineIndex: Number.isInteger(segment.lineIndex) ? segment.lineIndex : null,
+                    start: Number.isInteger(segment.start) ? segment.start : null,
+                    end: Number.isInteger(segment.end) ? segment.end : null,
+                  };
+                })
+                .filter((segment) => segment && segment.text !== '' && Number.isInteger(segment.lineIndex) && Number.isInteger(segment.start) && Number.isInteger(segment.end) && segment.end > segment.start)
+              : [],
+            score: Number.isFinite(Number(field.score)) ? Number(field.score) : null,
+            matchType: typeof field.matchType === 'string' ? field.matchType : '',
+            lineIndex: Number.MAX_SAFE_INTEGER,
+            labelLineIndex: Number.isInteger(field.labelLineIndex) ? field.labelLineIndex : null,
+            start: Number.MAX_SAFE_INTEGER,
+            accepted: Number.isFinite(Number(field.finalConfidence)) ? Number(field.finalConfidence) >= acceptanceThreshold : false,
+            displayConfidence: Number.isFinite(Number(field.finalConfidence))
+              ? Number(field.finalConfidence)
+              : (Number.isFinite(Number(field.confidence))
+                ? Number(field.confidence)
+                : (Number.isFinite(Number(field.baseConfidence)) ? Number(field.baseConfidence) : null)),
+            isResult: true,
+          };
         const rows = matches.length > 0
           ? matches
-          : (fallbackValue === null || fallbackValue === undefined || fallbackValue === ''
+          : (hasMatchRows
             ? []
-            : [{
-              value: fallbackValue,
-              raw: typeof field.raw === 'string' ? field.raw : '',
-              matchText: typeof field.matchText === 'string' ? field.matchText : '',
-              extractedRaw: typeof field.extractedRaw === 'string' ? field.extractedRaw : '',
-              source: typeof field.source === 'string' ? field.source : '',
-              labelText: typeof field.labelText === 'string' ? field.labelText : '',
-              between: typeof field.between === 'string' ? field.between : '',
-              searchTerm: '',
-              scopeType: typeof field.scopeType === 'string' ? field.scopeType : '',
-              scopeText: typeof field.scopeText === 'string' ? field.scopeText : '',
-              scopeIsRegex: field.scopeIsRegex === true,
-              scopeMatchedText: typeof field.scopeMatchedText === 'string' ? field.scopeMatchedText : '',
-              scopeLineIndex: Number.isInteger(field.scopeLineIndex) ? field.scopeLineIndex : null,
-              confidence: Number.isFinite(Number(field.confidence)) ? Number(field.confidence) : null,
-              baseConfidence: Number.isFinite(Number(field.baseConfidence)) ? Number(field.baseConfidence) : null,
-              finalConfidence: Number.isFinite(Number(field.finalConfidence)) ? Number(field.finalConfidence) : null,
-              noisePenalty: Number.isFinite(Number(field.noisePenalty)) ? Number(field.noisePenalty) : null,
-              trailingDelimiterPenalty: Number.isFinite(Number(field.trailingDelimiterPenalty)) ? Number(field.trailingDelimiterPenalty) : null,
-              otherMatchKeyPenalty: Number.isFinite(Number(field.otherMatchKeyPenalty)) ? Number(field.otherMatchKeyPenalty) : null,
-              positionPenalty: Number.isFinite(Number(field.positionPenalty)) ? Number(field.positionPenalty) : (Number.isFinite(Number(field.directionPenalty)) ? Number(field.directionPenalty) : null),
-              verticalDistancePenalty: Number.isFinite(Number(field.verticalDistancePenalty)) ? Number(field.verticalDistancePenalty) : null,
-              verticalDistance: Number.isFinite(Number(field.verticalDistance)) ? Number(field.verticalDistance) : null,
-              verticalNormalizedDistance: Number.isFinite(Number(field.verticalNormalizedDistance)) ? Number(field.verticalNormalizedDistance) : null,
-              positionPenaltyAxis: typeof field.positionPenaltyAxis === 'string' ? field.positionPenaltyAxis : '',
-              mainDirection: typeof field.mainDirection === 'string' ? field.mainDirection : '',
-              invalidReason: typeof field.invalidReason === 'string' ? field.invalidReason : '',
-              noiseText: typeof field.noiseText === 'string' ? field.noiseText : '',
-              noiseSegments: Array.isArray(field.noiseSegments)
-                ? field.noiseSegments
-                  .map((segment) => {
-                    if (!segment || typeof segment !== 'object') {
-                      return null;
-                    }
-                    return {
-                      text: typeof segment.text === 'string' ? segment.text : '',
-                      lineIndex: Number.isInteger(segment.lineIndex) ? segment.lineIndex : null,
-                      start: Number.isInteger(segment.start) ? segment.start : null,
-                      end: Number.isInteger(segment.end) ? segment.end : null,
-                    };
-                  })
-                  .filter((segment) => segment && segment.text !== '' && Number.isInteger(segment.lineIndex) && Number.isInteger(segment.start) && Number.isInteger(segment.end) && segment.end > segment.start)
-                : [],
-              score: Number.isFinite(Number(field.score)) ? Number(field.score) : null,
-              matchType: typeof field.matchType === 'string' ? field.matchType : '',
-              lineIndex: Number.MAX_SAFE_INTEGER,
-              labelLineIndex: Number.isInteger(field.labelLineIndex) ? field.labelLineIndex : null,
-              start: Number.MAX_SAFE_INTEGER,
-              accepted: Number.isFinite(Number(field.finalConfidence)) ? Number(field.finalConfidence) >= acceptanceThreshold : false,
-              displayConfidence: Number.isFinite(Number(field.finalConfidence))
-                ? Number(field.finalConfidence)
-                : (Number.isFinite(Number(field.confidence))
-                  ? Number(field.confidence)
-                  : (Number.isFinite(Number(field.baseConfidence)) ? Number(field.baseConfidence) : null)),
-              isResult: true,
-            }]);
+            : (fallbackRow ? [fallbackRow] : []));
         if (rows.length === 0) {
           return null;
         }
@@ -3857,7 +3865,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       if (rowMatchesFilterMode(row, 'candidates')) {
         hitFilterCounts.candidates += 1;
       }
-      hitFilterCounts.all += 1;
+      if (rowMatchesFilterMode(row, 'all')) {
+        hitFilterCounts.all += 1;
+      }
     });
   });
 
@@ -11469,6 +11479,116 @@ function buildWordTooltip(word) {
   return parts.join('\n');
 }
 
+function clearOcrWordTooltipHideTimer() {
+  if (ocrWordTooltipHideTimerId) {
+    window.clearTimeout(ocrWordTooltipHideTimerId);
+    ocrWordTooltipHideTimerId = 0;
+  }
+}
+
+function hideOcrWordTooltip() {
+  clearOcrWordTooltipHideTimer();
+  ocrWordTooltipAnchorEl = null;
+  ocrWordTooltipIsHovered = false;
+  if (!(ocrWordTooltipEl instanceof HTMLElement)) {
+    return;
+  }
+  ocrWordTooltipEl.classList.remove('is-visible');
+  ocrWordTooltipEl.setAttribute('aria-hidden', 'true');
+  ocrWordTooltipEl.classList.add('hidden');
+}
+
+function scheduleOcrWordTooltipHide() {
+  clearOcrWordTooltipHideTimer();
+  ocrWordTooltipHideTimerId = window.setTimeout(() => {
+    if (ocrWordTooltipIsHovered || (ocrWordTooltipAnchorEl instanceof HTMLElement && ocrWordTooltipAnchorEl.matches(':hover'))) {
+      return;
+    }
+    hideOcrWordTooltip();
+  }, 2000);
+}
+
+function ensureOcrWordTooltipEl() {
+  if (ocrWordTooltipEl instanceof HTMLElement) {
+    return ocrWordTooltipEl;
+  }
+  if (!(document.body instanceof HTMLElement)) {
+    return null;
+  }
+
+  const tooltipEl = document.createElement('div');
+  tooltipEl.id = 'ocr-word-tooltip';
+  tooltipEl.className = 'ocr-word-tooltip hidden';
+  tooltipEl.setAttribute('role', 'tooltip');
+  tooltipEl.setAttribute('aria-hidden', 'true');
+  tooltipEl.addEventListener('mouseenter', () => {
+    ocrWordTooltipIsHovered = true;
+    clearOcrWordTooltipHideTimer();
+  });
+  tooltipEl.addEventListener('mouseleave', () => {
+    ocrWordTooltipIsHovered = false;
+    scheduleOcrWordTooltipHide();
+  });
+  document.body.appendChild(tooltipEl);
+  ocrWordTooltipEl = tooltipEl;
+  return tooltipEl;
+}
+
+function showOcrWordTooltip(anchorEl, text) {
+  if (!(anchorEl instanceof HTMLElement)) {
+    return;
+  }
+  const tooltipEl = ensureOcrWordTooltipEl();
+  if (!(tooltipEl instanceof HTMLElement)) {
+    return;
+  }
+
+  clearOcrWordTooltipHideTimer();
+  ocrWordTooltipAnchorEl = anchorEl;
+  ocrWordTooltipIsHovered = false;
+  tooltipEl.textContent = text;
+  tooltipEl.setAttribute('aria-hidden', 'false');
+  tooltipEl.classList.remove('hidden');
+  tooltipEl.classList.add('is-visible');
+  tooltipEl.style.visibility = 'hidden';
+  tooltipEl.style.left = '0px';
+  tooltipEl.style.top = '0px';
+
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const tooltipRect = tooltipEl.getBoundingClientRect();
+  const gap = 10;
+  const viewportPadding = 8;
+  const maxLeft = Math.max(viewportPadding, window.innerWidth - tooltipRect.width - viewportPadding);
+  const maxTop = Math.max(viewportPadding, window.innerHeight - tooltipRect.height - viewportPadding);
+
+  let left = anchorRect.left + (anchorRect.width / 2) - (tooltipRect.width / 2);
+  let top = anchorRect.top - tooltipRect.height - gap;
+  if (top < viewportPadding) {
+    top = anchorRect.bottom + gap;
+  }
+
+  left = Math.min(Math.max(left, viewportPadding), maxLeft);
+  top = Math.min(Math.max(top, viewportPadding), maxTop);
+
+  tooltipEl.style.left = `${Math.round(left)}px`;
+  tooltipEl.style.top = `${Math.round(top)}px`;
+  tooltipEl.style.visibility = '';
+}
+
+function bindOcrWordTooltip(wordEl, word) {
+  if (!(wordEl instanceof HTMLElement)) {
+    return;
+  }
+  const tooltipText = buildWordTooltip(word);
+  wordEl.removeAttribute('title');
+  wordEl.addEventListener('mouseenter', () => {
+    showOcrWordTooltip(wordEl, tooltipText);
+  });
+  wordEl.addEventListener('mouseleave', () => {
+    scheduleOcrWordTooltipHide();
+  });
+}
+
 function fitTextSvg(el, text, xScale = 1.03, yScale = 1.6) {
   const font = [
     'Arial, Helvetica, sans-serif',
@@ -11581,7 +11701,7 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
     wordEl.style.top = `${scaledTop}px`;
     wordEl.style.width = `${scaledWidth}px`;
     wordEl.style.height = `${scaledHeight}px`;
-    wordEl.title = buildWordTooltip(word);
+    bindOcrWordTooltip(wordEl, word);
     surfaceEl.appendChild(wordEl);
     wordElements.set(word.index, wordEl);
     wordsToFit.push({ wordEl, text: word.text });
@@ -11780,6 +11900,7 @@ function renderTextOcrPage(page, pageMatches, targetWidth) {
 function renderOcrPages() {
   const pages = ocrDocumentPages;
   ocrRenderedPages = [];
+  hideOcrWordTooltip();
   ocrPagesViewEl.innerHTML = '';
   const objectPages = pages.filter((page) => page.renderMode === 'objects');
   const maxObjectPageWidth = objectPages.reduce((maxWidth, page) => Math.max(maxWidth, page.pageWidth || 0), 0);

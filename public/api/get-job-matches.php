@@ -50,6 +50,11 @@ try {
         $clientMatches = [];
     }
 
+    $isInvalidDirectionMatch = static function (array $match): bool {
+        return is_string($match['positionPenaltyAxis'] ?? null)
+            && trim((string) $match['positionPenaltyAxis']) === 'invalid';
+    };
+
     $fields = [];
     $allFieldKeys = array_values(array_unique(array_merge(array_keys($fieldValues), array_keys($fieldMeta))));
     foreach ($allFieldKeys as $fieldKey) {
@@ -68,6 +73,9 @@ try {
         if ($matches !== []) {
             foreach ($matches as $match) {
                 if (!is_array($match)) {
+                    continue;
+                }
+                if ($isInvalidDirectionMatch($match)) {
                     continue;
                 }
 
@@ -157,6 +165,10 @@ try {
         }
 
         if ($candidateRows === []) {
+            if ($matches !== []) {
+                continue;
+            }
+
             foreach ($values as $index => $candidateValue) {
                 $fallbackConfidence = $index === 0
                     ? (isset($firstMatch['confidence']) ? (float) $firstMatch['confidence'] : (isset($legacyField['confidence']) ? (float) $legacyField['confidence'] : null))
