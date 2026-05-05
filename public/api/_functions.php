@@ -9789,6 +9789,12 @@ function candidate_position_penalty_details(
         ];
     }
 
+    $pageNumber = is_numeric($relation['pageNumber'] ?? null) ? (int) $relation['pageNumber'] : null;
+    $geometryContext = [
+        'labelBbox' => $labelBbox,
+        'valueBbox' => $candidateBbox,
+        'pageNumber' => $pageNumber,
+    ];
     $settings = normalize_matching_position_adjustment_settings($positionSettings);
     $hitIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : null;
     $mainDirection = bbox_main_direction($labelBbox, $candidateBbox, $hitIndex, $candidateLineIndex);
@@ -9796,9 +9802,12 @@ function candidate_position_penalty_details(
     $candidateCenter = bbox_center_point($candidateBbox);
     $lineHeight = position_penalty_line_height($labelBbox, $candidateBbox);
     $minLineHeight = position_penalty_min_line_height($labelBbox, $candidateBbox);
+    $isLeftOfLabel = ((float) ($candidateBbox['x1'] ?? 0.0)) <= ((float) ($labelBbox['x0'] ?? 0.0));
+    $isAboveLabel = ((float) ($candidateBbox['y1'] ?? 0.0)) <= ((float) ($labelBbox['y0'] ?? 0.0));
 
-    if ($mainDirection === 'left' || $mainDirection === 'up') {
+    if ($isLeftOfLabel || $isAboveLabel || $mainDirection === 'left' || $mainDirection === 'up') {
         return [
+            ...$geometryContext,
             'penalty' => 1.0,
             'verticalDistancePenalty' => 0.0,
             'verticalDistance' => 0.0,
@@ -9807,6 +9816,7 @@ function candidate_position_penalty_details(
             'axis' => 'invalid',
             'diff' => 0.0,
             'normalizedDiff' => 0.0,
+            'invalidReason' => 'Fel riktning',
         ];
     }
 
@@ -9814,6 +9824,7 @@ function candidate_position_penalty_details(
         $diff = abs((float) ($candidateBbox['y1'] ?? 0.0) - (float) ($labelBbox['y1'] ?? 0.0));
         $normalizedDiff = $lineHeight > 0.0 ? ($diff / $lineHeight) : 0.0;
         return [
+            ...$geometryContext,
             'penalty' => max(0.0, $normalizedDiff * (float) ($settings['rightYOffsetPenalty'] ?? 0.0)),
             'verticalDistancePenalty' => 0.0,
             'verticalDistance' => 0.0,
@@ -9835,6 +9846,7 @@ function candidate_position_penalty_details(
     );
 
     return [
+        ...$geometryContext,
         'penalty' => max(0.0, $normalizedDiff * (float) ($settings['downXOffsetPenalty'] ?? 0.0)),
         'verticalDistancePenalty' => clamp_confidence($verticalDistancePenalty),
         'verticalDistance' => $verticalDistance,
@@ -12118,7 +12130,7 @@ function apply_anchored_position_geometry_policy(array $components, int $hitLine
 
     $mainDirection = is_string($components['mainDirection'] ?? null) ? (string) $components['mainDirection'] : '';
     $positionPenaltyAxis = is_string($components['positionPenaltyAxis'] ?? null) ? (string) $components['positionPenaltyAxis'] : '';
-    if ($positionPenaltyAxis === 'invalid_bbox') {
+    if ($positionPenaltyAxis === 'invalid' || $positionPenaltyAxis === 'invalid_bbox') {
         return $components;
     }
     $lineDistance = max(0, $candidateLineIndex - $hitLineIndex);
@@ -12208,7 +12220,11 @@ function add_anchored_extraction_field_match(
         null,
         is_numeric($confidenceComponents['verticalDistancePenalty'] ?? null) ? (float) $confidenceComponents['verticalDistancePenalty'] : null,
         is_numeric($confidenceComponents['verticalDistance'] ?? null) ? (float) $confidenceComponents['verticalDistance'] : null,
-        is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null
+        is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null,
+        is_string($confidenceComponents['invalidReason'] ?? null) ? (string) $confidenceComponents['invalidReason'] : null,
+        is_array($confidenceComponents['labelBbox'] ?? null) ? $confidenceComponents['labelBbox'] : null,
+        is_array($confidenceComponents['valueBbox'] ?? null) ? $confidenceComponents['valueBbox'] : null,
+        is_numeric($confidenceComponents['pageNumber'] ?? null) ? (int) $confidenceComponents['pageNumber'] : null
     );
 }
 
