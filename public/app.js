@@ -46,6 +46,11 @@ let ocrWordTooltipEl = null;
 let ocrWordTooltipHideTimerId = 0;
 let ocrWordTooltipAnchorEl = null;
 let ocrWordTooltipIsHovered = false;
+let ocrWordTooltipCopyText = '';
+let ocrWordTooltipIndexEl = null;
+let ocrWordTooltipTextEl = null;
+let ocrWordTooltipMetaEl = null;
+let ocrWordTooltipCopyButtonEl = null;
 const mainEl = document.querySelector('.main');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
@@ -11471,12 +11476,13 @@ function buildObjectPageMatchLookup(page, pageMatches) {
 }
 
 function buildWordTooltip(word) {
-  const parts = [word.text];
-  if (Number.isFinite(word.score)) {
-    parts.push(`Score: ${Number(word.score).toFixed(4)}`);
-  }
-  parts.push(`BBox: ${Math.round(word.rect.x0)}, ${Math.round(word.rect.y0)}, ${Math.round(word.rect.x1)}, ${Math.round(word.rect.y1)}`);
-  return parts.join('\n');
+  const scorePart = Number.isFinite(word.score) ? `Score ${Number(word.score).toFixed(4)}` : '';
+  const bboxPart = `BBox ${Math.round(word.rect.x0)}, ${Math.round(word.rect.y0)}, ${Math.round(word.rect.x1)}, ${Math.round(word.rect.y1)}`;
+  return {
+    indexLabel: `#${Number.isInteger(word.index) ? word.index + 1 : 1}`,
+    text: typeof word.text === 'string' ? word.text : '',
+    meta: [scorePart, bboxPart].filter(Boolean).join('  •  '),
+  };
 }
 
 function clearOcrWordTooltipHideTimer() {
@@ -11521,6 +11527,67 @@ function ensureOcrWordTooltipEl() {
   tooltipEl.className = 'ocr-word-tooltip hidden';
   tooltipEl.setAttribute('role', 'tooltip');
   tooltipEl.setAttribute('aria-hidden', 'true');
+
+  const contentEl = document.createElement('div');
+  contentEl.className = 'ocr-word-tooltip-content';
+
+  const headerEl = document.createElement('div');
+  headerEl.className = 'ocr-word-tooltip-header';
+
+  const indexEl = document.createElement('span');
+  indexEl.className = 'ocr-word-tooltip-index';
+
+  const copyButtonEl = document.createElement('button');
+  copyButtonEl.type = 'button';
+  copyButtonEl.className = 'ocr-word-tooltip-copy';
+  copyButtonEl.textContent = 'Kopiera';
+  copyButtonEl.setAttribute('aria-label', 'Kopiera ordtexten');
+  copyButtonEl.addEventListener('click', async () => {
+    const text = ocrWordTooltipCopyText.trim();
+    if (!text) {
+      return;
+    }
+    const defaultLabel = 'Kopiera';
+    const successLabel = 'Kopierad';
+    const failureLabel = 'Kunde inte kopiera';
+    try {
+      const copied = await copyTextToClipboard(text);
+      if (!copied) {
+        throw new Error('copy_failed');
+      }
+      copyButtonEl.classList.add('is-copied');
+      copyButtonEl.textContent = successLabel;
+      copyButtonEl.setAttribute('aria-label', successLabel);
+      window.setTimeout(() => {
+        copyButtonEl.classList.remove('is-copied');
+        copyButtonEl.textContent = defaultLabel;
+        copyButtonEl.setAttribute('aria-label', 'Kopiera ordtexten');
+      }, 1200);
+    } catch (error) {
+      copyButtonEl.classList.add('is-copy-failed');
+      copyButtonEl.textContent = failureLabel;
+      copyButtonEl.setAttribute('aria-label', failureLabel);
+      window.setTimeout(() => {
+        copyButtonEl.classList.remove('is-copy-failed');
+        copyButtonEl.textContent = defaultLabel;
+        copyButtonEl.setAttribute('aria-label', 'Kopiera ordtexten');
+      }, 1200);
+    }
+  });
+
+  const textEl = document.createElement('div');
+  textEl.className = 'ocr-word-tooltip-text';
+
+  const metaEl = document.createElement('div');
+  metaEl.className = 'ocr-word-tooltip-meta';
+
+  headerEl.appendChild(indexEl);
+  headerEl.appendChild(copyButtonEl);
+  contentEl.appendChild(headerEl);
+  contentEl.appendChild(textEl);
+  contentEl.appendChild(metaEl);
+  tooltipEl.appendChild(contentEl);
+
   tooltipEl.addEventListener('mouseenter', () => {
     ocrWordTooltipIsHovered = true;
     clearOcrWordTooltipHideTimer();
@@ -11531,10 +11598,14 @@ function ensureOcrWordTooltipEl() {
   });
   document.body.appendChild(tooltipEl);
   ocrWordTooltipEl = tooltipEl;
+  ocrWordTooltipIndexEl = indexEl;
+  ocrWordTooltipTextEl = textEl;
+  ocrWordTooltipMetaEl = metaEl;
+  ocrWordTooltipCopyButtonEl = copyButtonEl;
   return tooltipEl;
 }
 
-function showOcrWordTooltip(anchorEl, text) {
+function showOcrWordTooltip(anchorEl, word) {
   if (!(anchorEl instanceof HTMLElement)) {
     return;
   }
@@ -11546,7 +11617,24 @@ function showOcrWordTooltip(anchorEl, text) {
   clearOcrWordTooltipHideTimer();
   ocrWordTooltipAnchorEl = anchorEl;
   ocrWordTooltipIsHovered = false;
-  tooltipEl.textContent = text;
+  const tooltipData = buildWordTooltip(word);
+  ocrWordTooltipCopyText = tooltipData.text;
+  if (ocrWordTooltipIndexEl instanceof HTMLElement) {
+    ocrWordTooltipIndexEl.textContent = tooltipData.indexLabel;
+  }
+  if (ocrWordTooltipTextEl instanceof HTMLElement) {
+    ocrWordTooltipTextEl.textContent = tooltipData.text;
+  }
+  if (ocrWordTooltipMetaEl instanceof HTMLElement) {
+    ocrWordTooltipMetaEl.textContent = tooltipData.meta;
+    ocrWordTooltipMetaEl.hidden = tooltipData.meta === '';
+  }
+  if (ocrWordTooltipCopyButtonEl instanceof HTMLButtonElement) {
+    ocrWordTooltipCopyButtonEl.disabled = tooltipData.text.trim() === '';
+    ocrWordTooltipCopyButtonEl.textContent = 'Kopiera';
+    ocrWordTooltipCopyButtonEl.classList.remove('is-copied', 'is-copy-failed');
+    ocrWordTooltipCopyButtonEl.setAttribute('aria-label', 'Kopiera ordtexten');
+  }
   tooltipEl.setAttribute('aria-hidden', 'false');
   tooltipEl.classList.remove('hidden');
   tooltipEl.classList.add('is-visible');
@@ -11579,7 +11667,7 @@ function bindOcrWordTooltip(wordEl, word) {
   if (!(wordEl instanceof HTMLElement)) {
     return;
   }
-  const tooltipText = buildWordTooltip(word);
+  const tooltipText = word;
   wordEl.removeAttribute('title');
   wordEl.addEventListener('mouseenter', () => {
     showOcrWordTooltip(wordEl, tooltipText);

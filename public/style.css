@@ -3073,17 +3073,16 @@ body.is-resizing-sidebar {
 .ocr-word-tooltip {
   position: fixed;
   z-index: 1100;
-  max-width: min(340px, calc(100vw - 24px));
-  padding: 8px 10px;
-  border: 1px solid #1f2937;
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.96);
-  color: #f8fafc;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 10px;
+  border: 1px solid #b45309;
+  border-radius: 10px;
+  background: #fef3c7;
+  color: #111827;
   font-size: 12px;
   line-height: 1.35;
-  white-space: pre-line;
   overflow-wrap: anywhere;
-  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.22);
+  box-shadow: 0 14px 28px rgba(120, 53, 15, 0.22);
   pointer-events: auto;
   opacity: 0;
   transform: translateY(2px);
@@ -3097,6 +3096,84 @@ body.is-resizing-sidebar {
 
 .ocr-word-tooltip.hidden {
   display: none;
+}
+
+.ocr-word-tooltip-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ocr-word-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ocr-word-tooltip-index {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid #92400e;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  color: #111827;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.ocr-word-tooltip-copy {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 4px 10px;
+  border: 1px solid #d97706;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #111827;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ocr-word-tooltip-copy:hover {
+  background: #fde68a;
+  border-color: #b45309;
+}
+
+.ocr-word-tooltip-copy:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ocr-word-tooltip-text {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 251, 235, 0.95);
+  color: #111827;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ocr-word-tooltip-meta {
+  min-width: 0;
+  color: #451a03;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ocr-page-highlight,
