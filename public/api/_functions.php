@@ -12129,7 +12129,7 @@ function apply_anchored_position_geometry_policy(array $components, int $hitLine
     $lineDistance = max(0, $candidateLineIndex - $hitLineIndex);
     if ($mainDirection === 'down' || $mainDirection === 'right') {
         $existingPenalty = is_numeric($components['positionPenalty'] ?? null) ? (float) $components['positionPenalty'] : 0.0;
-        $anchoredPenaltyCap = min(0.85, 0.25 + ($lineDistance * 0.06));
+        $anchoredPenaltyCap = min(1, ($lineDistance * 0.06));
         $components['positionPenalty'] = min($existingPenalty, $anchoredPenaltyCap);
         return $components;
     }
