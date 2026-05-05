@@ -11466,6 +11466,58 @@ function buildObjectPageMatchLookup(page, pageMatches) {
     }
   };
 
+  if (isOcrDataFieldMode()) {
+    const dataFieldRows = ocrDataFieldRowsForPage(page);
+    const pageDataFieldMatches = Array.isArray(pageMatches) ? pageMatches : [];
+    dataFieldRows.forEach((row) => {
+      if (!row || typeof row !== 'object') {
+        return;
+      }
+      [
+        ['key', row.keyBbox || ocrDataFieldDerivedBBoxForRow(page, row, 'key', pageDataFieldMatches)],
+        ['value', row.valueBbox || ocrDataFieldDerivedBBoxForRow(page, row, 'value', pageDataFieldMatches)],
+      ].forEach(([kind, bbox]) => {
+        const wordIndexes = ocrWordIndexesForBBox(page, bbox);
+        wordIndexes.forEach((wordIndex) => {
+          const match = {
+            globalIndex: row.matchIndex,
+            row,
+            kind,
+            start: Number.isInteger(row.matchIndex) ? row.matchIndex : 0,
+            end: Number.isInteger(row.matchIndex) ? row.matchIndex + 1 : 1,
+          };
+          if (kind === 'key') {
+            matchedKeyWordIndexes.add(wordIndex);
+            addMatchToWordIndexMap(keyMatchesByWordIndex, wordIndex, match);
+          } else if (kind === 'value') {
+            matchedValueWordIndexes.add(wordIndex);
+            addMatchToWordIndexMap(valueMatchesByWordIndex, wordIndex, match);
+          }
+          matchedWordIndexes.add(wordIndex);
+          if (row.matchIndex === ocrDataFieldSelection.matchIndex) {
+            activeWordIndexes.add(wordIndex);
+            if (kind === 'key') {
+              activeKeyWordIndexes.add(wordIndex);
+            } else if (kind === 'value') {
+              activeValueWordIndexes.add(wordIndex);
+            }
+          }
+        });
+      });
+    });
+
+    return {
+      matchedWordIndexes,
+      activeWordIndexes,
+      matchedKeyWordIndexes,
+      matchedValueWordIndexes,
+      activeKeyWordIndexes,
+      activeValueWordIndexes,
+      keyMatchesByWordIndex,
+      valueMatchesByWordIndex,
+    };
+  }
+
   (page.searchEntries || []).forEach((entry) => {
     const overlapsAny = pageMatches.some((match) => entry.start < match.end && entry.end > match.start);
     if (overlapsAny) {
@@ -11592,6 +11644,12 @@ function ocrDataFieldWordIndexListForPage(page, row, kind, pageMatches = null) {
     return wordIndexes;
   }
 
+  const directBBox = kind === 'key' ? row.keyBbox : row.valueBbox;
+  const directWordIndexes = ocrWordIndexesForBBox(page, directBBox);
+  if (directWordIndexes.size > 0) {
+    return directWordIndexes;
+  }
+
   const matches = Array.isArray(pageMatches) ? pageMatches : ocrDataFieldPageMatchesForPage(page);
   matches.forEach((match) => {
     if (!match || match.kind !== kind || !match.row || match.row.matchIndex !== row.matchIndex) {
@@ -11623,6 +11681,52 @@ function ocrWordTooltipWordElementForPage(page, wordIndex) {
   }
 
   return page.wordElements.get(wordIndex) || null;
+}
+
+function ocrWordIndexesForBBox(page, bbox) {
+  const indexes = new Set();
+  if (!bbox || typeof bbox !== 'object' || !Array.isArray(page?.words)) {
+    return indexes;
+  }
+
+  const bboxLeft = Number(bbox.x0);
+  const bboxTop = Number(bbox.y0);
+  const bboxRight = Number(bbox.x1);
+  const bboxBottom = Number(bbox.y1);
+  if (![bboxLeft, bboxTop, bboxRight, bboxBottom].every(Number.isFinite)) {
+    return indexes;
+  }
+
+  page.words.forEach((word) => {
+    const rect = word?.rect;
+    if (!rect || !Number.isInteger(word.index)) {
+      return;
+    }
+    const rectLeft = Number(rect.x0);
+    const rectTop = Number(rect.y0);
+    const rectRight = Number(rect.x1);
+    const rectBottom = Number(rect.y1);
+    if (![rectLeft, rectTop, rectRight, rectBottom].every(Number.isFinite)) {
+      return;
+    }
+
+    const centerX = (rectLeft + rectRight) / 2;
+    const centerY = (rectTop + rectBottom) / 2;
+    if (centerX >= bboxLeft && centerX <= bboxRight && centerY >= bboxTop && centerY <= bboxBottom) {
+      indexes.add(word.index);
+      return;
+    }
+
+    const overlapWidth = Math.max(0, Math.min(rectRight, bboxRight) - Math.max(rectLeft, bboxLeft));
+    const overlapHeight = Math.max(0, Math.min(rectBottom, bboxBottom) - Math.max(rectTop, bboxTop));
+    const overlapArea = overlapWidth * overlapHeight;
+    const rectArea = Math.max(1, (rectRight - rectLeft) * (rectBottom - rectTop));
+    if (overlapArea / rectArea >= 0.35) {
+      indexes.add(word.index);
+    }
+  });
+
+  return indexes;
 }
 
 function clearOcrWordTooltipWordHighlights() {
@@ -12553,10 +12657,6 @@ function scheduleOcrWordTooltipShow(anchorEl, word, detailRows = [], matchLookup
   clearOcrWordTooltipShowTimer();
   clearOcrWordTooltipHideTimer();
 
-  if (isOcrWordTooltipVisible() && ocrWordTooltipAnchorEl === anchorEl) {
-    return;
-  }
-
   ocrWordTooltipShowTimerId = window.setTimeout(() => {
     ocrWordTooltipShowTimerId = 0;
     showOcrWordTooltip(anchorEl, word, detailRows, matchLookup);
@@ -12657,9 +12757,7 @@ function bindOcrWordTooltip(wordEl, word, page = null, matchLookup = null, pageM
     event.preventDefault();
     event.stopPropagation();
     const detailRows = getOcrWordTooltipDetailRows(tooltipWord, page, matchLookup);
-    if (!isOcrWordTooltipVisible() || ocrWordTooltipAnchorEl !== wordEl) {
-      showOcrWordTooltip(wordEl, tooltipWord, detailRows, matchLookup);
-    }
+    showOcrWordTooltip(wordEl, tooltipWord, detailRows, matchLookup);
     setOcrWordTooltipLocked(true);
   });
 }

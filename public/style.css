@@ -3260,6 +3260,10 @@ body.is-resizing-sidebar {
   color: #111827;
 }
 
+.ocr-word-tooltip-section[hidden] {
+  display: none;
+}
+
 .ocr-word-tooltip-section.is-detail {
   border-color: #cbd5e1;
   background: #fbfcfe;
