@@ -3129,6 +3129,10 @@ body.is-resizing-sidebar {
   min-width: 0;
 }
 
+.ocr-word-tooltip.is-detail .ocr-word-tooltip-content {
+  gap: 6px;
+}
+
 .ocr-word-tooltip-header {
   display: flex;
   align-items: center;
@@ -3143,10 +3147,12 @@ body.is-resizing-sidebar {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #64748b;
+  color: #0f172a;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
   white-space: nowrap;
   flex: 0 0 auto;
 }
@@ -3230,6 +3236,10 @@ body.is-resizing-sidebar {
   overflow-y: hidden;
   word-break: normal;
   text-overflow: clip;
+}
+
+.ocr-word-tooltip.is-detail .ocr-word-tooltip-meta {
+  padding-top: 7px;
 }
 
 .ocr-page-highlight,
