@@ -531,7 +531,13 @@ def _texts_are_diacritic_compatible(left: str, right: str) -> bool:
     return distance <= max(1, math.floor(max_len * 0.2))
 
 
-def _transfer_swedish_diacritics(source_text: str, truth_text: str) -> str:
+def _transfer_swedish_diacritics_token(source_text: str, truth_text: str) -> str:
+    # Preserve lone invoice-style "à" tokens from RapidOCR.
+    # This avoids Tesseract turning "à 2,21 kr" into "å 2,21 kr" while
+    # keeping the normal Swedish å/ä/ö transfer logic for real words.
+    if source_text.strip() == 'à':
+        return source_text
+
     source_chars = list(source_text)
     truth_chars = list(truth_text)
     if not source_chars or not truth_chars:
@@ -590,6 +596,22 @@ def _transfer_swedish_diacritics(source_text: str, truth_text: str) -> str:
 
     result.reverse()
     return ''.join(result)
+
+
+def _transfer_swedish_diacritics(source_text: str, truth_text: str) -> str:
+    if re.search(r'\s', source_text) and re.search(r'\s', truth_text):
+        source_parts = re.split(r'(\s+)', source_text)
+        truth_parts = re.split(r'(\s+)', truth_text)
+        if len(source_parts) == len(truth_parts):
+            transferred_parts: list[str] = []
+            for source_part, truth_part in zip(source_parts, truth_parts):
+                if source_part.isspace() or truth_part.isspace():
+                    transferred_parts.append(source_part)
+                else:
+                    transferred_parts.append(_transfer_swedish_diacritics_token(source_part, truth_part))
+            return ''.join(transferred_parts)
+
+    return _transfer_swedish_diacritics_token(source_text, truth_text)
 
 
 def _build_debug_word_from_fragments(

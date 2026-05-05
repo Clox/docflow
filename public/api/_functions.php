@@ -6682,6 +6682,32 @@ function texts_are_diacritic_compatible(string $left, string $right): bool
 
 function transfer_swedish_diacritics(string $sourceText, string $truthText): string
 {
+    if (preg_match('/\s/u', $sourceText) === 1 && preg_match('/\s/u', $truthText) === 1) {
+        $sourceParts = preg_split('/(\s+)/u', $sourceText, -1, PREG_SPLIT_DELIM_CAPTURE);
+        $truthParts = preg_split('/(\s+)/u', $truthText, -1, PREG_SPLIT_DELIM_CAPTURE);
+        if (is_array($sourceParts) && is_array($truthParts) && count($sourceParts) === count($truthParts)) {
+            $transferredParts = [];
+            foreach (array_map(null, $sourceParts, $truthParts) as [$sourcePart, $truthPart]) {
+                if (preg_match('/^\s+$/u', $sourcePart) === 1 || preg_match('/^\s+$/u', $truthPart) === 1) {
+                    $transferredParts[] = $sourcePart;
+                } else {
+                    $transferredParts[] = transfer_swedish_diacritics_token($sourcePart, $truthPart);
+                }
+            }
+
+            return implode('', $transferredParts);
+        }
+    }
+
+    return transfer_swedish_diacritics_token($sourceText, $truthText);
+}
+
+function transfer_swedish_diacritics_token(string $sourceText, string $truthText): string
+{
+    if (trim($sourceText) === 'à') {
+        return $sourceText;
+    }
+
     $sourceChars = utf8_chars($sourceText);
     $truthChars = utf8_chars($truthText);
     $sourceCount = count($sourceChars);
@@ -7244,6 +7270,11 @@ function texts_are_similar_enough(string $left, string $right): bool
     return $distance <= max(1, (int) floor($maxLen * 0.2));
 }
 
+function is_lone_invoice_at_token(string $text): bool
+{
+    return trim($text) === 'à';
+}
+
 function choose_experiment_merged_word(array $tesseractWord, ?array $rapidocrWord): array
 {
     if ($rapidocrWord === null) {
@@ -7251,6 +7282,14 @@ function choose_experiment_merged_word(array $tesseractWord, ?array $rapidocrWor
             'chosen' => $tesseractWord,
             'source' => 'tesseract-only',
             'rapidocrWord' => null,
+        ];
+    }
+
+    if (is_lone_invoice_at_token((string) ($rapidocrWord['text'] ?? ''))) {
+        return [
+            'chosen' => $rapidocrWord,
+            'source' => 'rapidocr-lone-a-guard',
+            'rapidocrWord' => $rapidocrWord,
         ];
     }
 
