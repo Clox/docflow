@@ -25,11 +25,19 @@ const matchesViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value=
 const metaViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="meta"]') : null;
 const reviewViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="review"]') : null;
 const ocrSearchBarEl = document.getElementById('ocr-search-bar');
+const ocrSearchModeToggleEl = document.getElementById('ocr-search-mode-toggle');
+const ocrSearchTextPanelEl = document.getElementById('ocr-search-text-panel');
+const ocrSearchDataFieldPanelEl = document.getElementById('ocr-search-datafield-panel');
 const ocrSearchInputEl = document.getElementById('ocr-search-input');
+const ocrSearchFieldSelectEl = document.getElementById('ocr-search-field-select');
+const ocrSearchFilterEl = ocrSearchFieldSelectEl ? ocrSearchFieldSelectEl.closest('.ocr-search-filter') : null;
 const ocrSearchRegexEl = document.getElementById('ocr-search-regex');
 const ocrSearchPrevEl = document.getElementById('ocr-search-prev');
 const ocrSearchNextEl = document.getElementById('ocr-search-next');
 const ocrSearchStatusEl = document.getElementById('ocr-search-status');
+const ocrSearchConfidenceRowEl = document.getElementById('ocr-search-confidence-row');
+const ocrSearchConfidenceEl = document.getElementById('ocr-search-confidence');
+const ocrSearchFieldHitFilterEl = document.getElementById('ocr-search-field-hit-filter');
 const ocrMenuWrapEl = document.getElementById('ocr-menu-wrap');
 const ocrMenuButtonEl = document.getElementById('ocr-menu-button');
 const ocrMenuEl = document.getElementById('ocr-menu');
@@ -381,6 +389,11 @@ let currentViewMode = 'pdf';
 let currentOcrSource = 'merged';
 let currentOcrZoom = 100;
 let currentOcrDocumentMode = 'text';
+let ocrSearchMode = 'text';
+let ocrDataFieldSelection = {
+  fieldKey: '',
+  matchIndex: -1,
+};
 let ocrShowPageImage = false;
 let ocrPageImageBlend = 0.5;
 let ocrRequestSeq = 0;
@@ -391,6 +404,7 @@ let ocrPreservedRenderSeq = 0;
 let ocrDocumentPages = [];
 let ocrRenderedPages = [];
 let matchesRequestSeq = 0;
+let pendingMatchesFocus = null;
 const MATCHES_FIELD_HIT_FILTER_STORAGE_KEY = 'docflowMatchesFieldHitFilterMode';
 const MATCHES_FIELD_HIT_FILTER_MODES = new Set(['results', 'candidates', 'all']);
 function normalizeMatchesFieldHitFilterMode(value) {
@@ -3336,12 +3350,19 @@ async function setViewerOcr(jobId) {
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
   syncOcrHighlightPresentation();
+  const restoreSelectionScroll = () => {
+    if (!isOcrDataFieldMode()) {
+      return;
+    }
+    const rows = ocrDataFieldCurrentRowsWithIndexes();
+    scrollOcrDataFieldMatchIntoView(rows[ocrDataFieldSelection.matchIndex] || null);
+  };
 
   if (!jobId) {
     loadedOcrJobId = '';
     loadedOcrSource = '';
     setOcrDocumentText('');
-    refreshOcrSearch();
+    await refreshOcrSearch();
     return;
   }
 
@@ -3350,7 +3371,7 @@ async function setViewerOcr(jobId) {
     loadedOcrJobId = '';
     loadedOcrSource = '';
     setOcrDocumentText(`Ingen ${ocrSourceDisplayName(currentOcrSource)} tillgänglig medan dokumentet bearbetas.`);
-    refreshOcrSearch();
+    await refreshOcrSearch();
     return;
   }
 
@@ -3360,8 +3381,8 @@ async function setViewerOcr(jobId) {
   }
 
   if (loadedOcrJobId === jobId && loadedOcrSource === currentOcrSource && ocrDocumentPages.length > 0) {
-    refreshOcrSearch();
-    restoreOcrViewState(currentOcrSource);
+    await refreshOcrSearch();
+    restoreOcrViewState(currentOcrSource, restoreSelectionScroll);
     return;
   }
 
@@ -3370,8 +3391,8 @@ async function setViewerOcr(jobId) {
     loadedOcrJobId = jobId;
     loadedOcrSource = currentOcrSource;
     setOcrDocumentPages(cachedContent.pages, cachedContent.text || '', cachedContent.mode || 'text');
-    refreshOcrSearch();
-    restoreOcrViewState(currentOcrSource);
+    await refreshOcrSearch();
+    restoreOcrViewState(currentOcrSource, restoreSelectionScroll);
     return;
   }
 
@@ -3379,7 +3400,7 @@ async function setViewerOcr(jobId) {
   loadedOcrSource = currentOcrSource;
   const requestSeq = ++ocrRequestSeq;
   setOcrDocumentText(`Laddar ${ocrSourceDisplayName(currentOcrSource)}...`);
-  refreshOcrSearch();
+  await refreshOcrSearch();
 
   try {
     const response = await fetch(
@@ -3397,8 +3418,8 @@ async function setViewerOcr(jobId) {
         mode: 'text',
       });
       setOcrDocumentText(resolvedText);
-      refreshOcrSearch();
-      restoreOcrViewState(currentOcrSource);
+      await refreshOcrSearch();
+      restoreOcrViewState(currentOcrSource, restoreSelectionScroll);
       return;
     }
     if (!response.ok) {
@@ -3420,8 +3441,8 @@ async function setViewerOcr(jobId) {
       mode,
     });
     setOcrDocumentPages(pages, resolvedText, mode);
-    refreshOcrSearch();
-    restoreOcrViewState(currentOcrSource);
+    await refreshOcrSearch();
+    restoreOcrViewState(currentOcrSource, restoreSelectionScroll);
   } catch (error) {
     if (requestSeq !== ocrRequestSeq) {
       return;
@@ -3433,8 +3454,8 @@ async function setViewerOcr(jobId) {
       mode: 'text',
     });
     setOcrDocumentText(resolvedText);
-    refreshOcrSearch();
-    restoreOcrViewState(currentOcrSource);
+    await refreshOcrSearch();
+    restoreOcrViewState(currentOcrSource, restoreSelectionScroll);
   }
 }
 
@@ -3689,6 +3710,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 verticalNormalizedDistance: Number.isFinite(Number(match.verticalNormalizedDistance)) ? Number(match.verticalNormalizedDistance) : null,
                 positionPenaltyAxis: typeof match.positionPenaltyAxis === 'string' ? match.positionPenaltyAxis : '',
                 mainDirection: typeof match.mainDirection === 'string' ? match.mainDirection : '',
+                invalidReason: typeof match.invalidReason === 'string' ? match.invalidReason : '',
                 noiseText: typeof match.noiseText === 'string' ? match.noiseText : '',
                 noiseSegments: Array.isArray(match.noiseSegments)
                   ? match.noiseSegments
@@ -3748,6 +3770,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
               verticalNormalizedDistance: Number.isFinite(Number(field.verticalNormalizedDistance)) ? Number(field.verticalNormalizedDistance) : null,
               positionPenaltyAxis: typeof field.positionPenaltyAxis === 'string' ? field.positionPenaltyAxis : '',
               mainDirection: typeof field.mainDirection === 'string' ? field.mainDirection : '',
+              invalidReason: typeof field.invalidReason === 'string' ? field.invalidReason : '',
               noiseText: typeof field.noiseText === 'string' ? field.noiseText : '',
               noiseSegments: Array.isArray(field.noiseSegments)
                 ? field.noiseSegments
@@ -4278,6 +4301,8 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
         label = 'Y-avvikelse';
       } else if (row.positionPenaltyAxis === 'invalid') {
         label = 'Fel riktning';
+      } else if (row.positionPenaltyAxis === 'invalid_bbox') {
+        label = row.invalidReason || 'Ogiltig bbox';
       }
       positionEl.textContent = `${label} -${formatPenaltyPercent(row.positionPenalty)}`;
       parts.push(positionEl);
@@ -4318,6 +4343,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
 
     fieldGroup.rows.forEach((row, rowIndex) => {
       const tr = document.createElement('tr');
+      tr.classList.add('matches-datafield-row');
+      tr.dataset.fieldKey = fieldGroup.key;
+      tr.dataset.matchIndex = String(rowIndex);
       const rowConfidence = rowConfidenceValue(row);
       if (row?.isResult === true || row?.accepted === true || rowConfidence >= acceptanceThreshold) {
         tr.classList.add('matches-row-result');
@@ -4486,6 +4514,52 @@ function appendClientMatchesSection(container, title, clientMatches, emptyMessag
   container.appendChild(tableWrap);
 }
 
+function findMatchesDataFieldRowElement(fieldKey, matchIndex) {
+  const normalizedFieldKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  if (normalizedFieldKey === '' || !Number.isInteger(matchIndex)) {
+    return null;
+  }
+
+  return Array.from(matchesViewEl.querySelectorAll('tr.matches-datafield-row')).find((rowEl) => (
+    rowEl instanceof HTMLElement
+    && rowEl.dataset.fieldKey === normalizedFieldKey
+    && Number.parseInt(rowEl.dataset.matchIndex || '', 10) === matchIndex
+  )) || null;
+}
+
+function syncPendingMatchesFocus() {
+  if (!pendingMatchesFocus || !(matchesViewEl instanceof HTMLElement) || matchesViewEl.classList.contains('hidden')) {
+    return;
+  }
+
+  const targetRow = findMatchesDataFieldRowElement(pendingMatchesFocus.fieldKey, pendingMatchesFocus.matchIndex);
+  if (!targetRow) {
+    if (matchesFieldHitFilterMode !== 'all') {
+      matchesFieldHitFilterMode = 'all';
+      window.localStorage.setItem(MATCHES_FIELD_HIT_FILTER_STORAGE_KEY, matchesFieldHitFilterMode);
+      refreshLoadedMatchesView();
+      return;
+    }
+    pendingMatchesFocus = null;
+    return;
+  }
+
+  Array.from(matchesViewEl.querySelectorAll('.matches-datafield-row.is-target')).forEach((rowEl) => {
+    rowEl.classList.remove('is-target');
+    rowEl.removeAttribute('aria-current');
+  });
+
+  targetRow.classList.add('is-target');
+  targetRow.setAttribute('aria-current', 'true');
+  window.requestAnimationFrame(() => {
+    if (!(matchesViewEl instanceof HTMLElement) || matchesViewEl.classList.contains('hidden')) {
+      return;
+    }
+    targetRow.scrollIntoView({ block: 'center', inline: 'nearest' });
+  });
+  pendingMatchesFocus = null;
+}
+
 function renderMatchesContent(payload) {
   matchesViewEl.innerHTML = '';
 
@@ -4497,13 +4571,51 @@ function renderMatchesContent(payload) {
   appendRuleMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
   appendFieldMatchesSection(matchesViewEl, 'Datafält', fields, 'Inga datafältsmatchningar hittades.', { job });
   appendClientMatchesSection(matchesViewEl, 'Huvudman', clients, 'Inga huvudmansmatchningar hittades.');
+  syncPendingMatchesFocus();
 }
 
 function refreshLoadedMatchesView() {
   if (!loadedMatchesPayload || matchesViewEl.classList.contains('hidden')) {
+    if (currentViewMode === 'ocr' && isOcrDataFieldMode() && loadedMatchesJobId === selectedJobId) {
+      refreshOcrSearch({ preserveScroll: true });
+    }
     return;
   }
   renderMatchesContent(loadedMatchesPayload);
+  if (currentViewMode === 'ocr' && isOcrDataFieldMode() && loadedMatchesJobId === selectedJobId) {
+    refreshOcrSearch({ preserveScroll: true });
+  }
+}
+
+async function ensureLoadedMatchesPayload(jobId) {
+  const normalizedJobId = typeof jobId === 'string' ? jobId.trim() : '';
+  if (normalizedJobId === '') {
+    return null;
+  }
+
+  if (loadedMatchesJobId === normalizedJobId && loadedMatchesPayload) {
+    return loadedMatchesPayload;
+  }
+
+  const requestSeq = ++matchesRequestSeq;
+  const response = await fetch('/api/get-job-matches.php?id=' + encodeURIComponent(normalizedJobId), { cache: 'no-store' });
+  if (response.status === 404) {
+    loadedMatchesJobId = normalizedJobId;
+    loadedMatchesPayload = null;
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error('Kunde inte hämta matchningar');
+  }
+
+  const payload = await response.json();
+  if (requestSeq !== matchesRequestSeq) {
+    return null;
+  }
+
+  loadedMatchesJobId = normalizedJobId;
+  loadedMatchesPayload = payload;
+  return payload;
 }
 
 async function setViewerMatches(jobId) {
@@ -4544,7 +4656,6 @@ async function setViewerMatches(jobId) {
 
   loadedMatchesJobId = jobId;
   loadedMatchesPayload = null;
-  const requestSeq = ++matchesRequestSeq;
   matchesViewEl.innerHTML = '';
   const loading = document.createElement('div');
   loading.className = 'matches-empty';
@@ -4552,9 +4663,8 @@ async function setViewerMatches(jobId) {
   matchesViewEl.appendChild(loading);
 
   try {
-    const response = await fetch('/api/get-job-matches.php?id=' + encodeURIComponent(jobId), { cache: 'no-store' });
-    if (response.status === 404) {
-      loadedMatchesPayload = null;
+    const payload = await ensureLoadedMatchesPayload(jobId);
+    if (payload === null) {
       matchesViewEl.innerHTML = '';
       const empty = document.createElement('div');
       empty.className = 'matches-empty';
@@ -4562,21 +4672,8 @@ async function setViewerMatches(jobId) {
       matchesViewEl.appendChild(empty);
       return;
     }
-    if (!response.ok) {
-      throw new Error('Kunde inte hämta matchningar');
-    }
-
-    const payload = await response.json();
-    if (requestSeq !== matchesRequestSeq) {
-      return;
-    }
-
-    loadedMatchesPayload = payload;
     renderMatchesContent(payload);
   } catch (error) {
-    if (requestSeq !== matchesRequestSeq) {
-      return;
-    }
     matchesViewEl.innerHTML = '';
     const fail = document.createElement('div');
     fail.className = 'matches-empty';
@@ -10293,6 +10390,17 @@ function setActiveOcrSource(source, options = {}) {
   }
 }
 
+function ensureOcrDataFieldSource() {
+  if (!isOcrDataFieldMode()) {
+    return false;
+  }
+  if (normalizeOcrSource(currentOcrSource) === 'merged-objects') {
+    return false;
+  }
+  setActiveOcrSource('merged-objects');
+  return true;
+}
+
 function ocrSourceDisplayName(source) {
   if (source === 'tesseract') {
     return 'Tesseract-objekt';
@@ -10895,7 +11003,7 @@ function setCachedOcrViewContent(source, content) {
   ocrViewContentBySource.set(normalizedSource, content);
 }
 
-function restoreOcrViewState(source) {
+function restoreOcrViewState(source, afterRestore = null) {
   const state = ocrViewStateBySource.get(normalizeOcrSource(source)) || null;
   const scrollTop = state && Number.isFinite(Number(state.scrollTop)) ? Number(state.scrollTop) : 0;
   const scrollLeft = state && Number.isFinite(Number(state.scrollLeft)) ? Number(state.scrollLeft) : 0;
@@ -10905,6 +11013,9 @@ function restoreOcrViewState(source) {
       ocrPagesViewEl.scrollTop = scrollTop;
       ocrPagesViewEl.scrollLeft = scrollLeft;
       syncOcrHighlightScroll();
+      if (typeof afterRestore === 'function') {
+        afterRestore();
+      }
     });
   });
 }
@@ -11015,6 +11126,58 @@ function normalizeWordRect(bbox) {
     x1: Math.max(...xs),
     y1: Math.max(...ys),
   };
+}
+
+function normalizeWhitespaceForMatch(text) {
+  if (typeof text !== 'string' || text === '') {
+    return { text: '', indexMap: [] };
+  }
+  let normalized = '';
+  const indexMap = [];
+  let pendingSpaceIndex = -1;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (/\s/u.test(character)) {
+      if (normalized !== '' && pendingSpaceIndex === -1) {
+        pendingSpaceIndex = index;
+      }
+      continue;
+    }
+    if (pendingSpaceIndex !== -1) {
+      normalized += ' ';
+      indexMap.push(pendingSpaceIndex);
+      pendingSpaceIndex = -1;
+    }
+    normalized += character.toLocaleLowerCase('sv-SE');
+    indexMap.push(index);
+  }
+  return { text: normalized, indexMap };
+}
+
+function findNormalizedTextSpan(haystack, needle) {
+  if (typeof haystack !== 'string' || typeof needle !== 'string') {
+    return null;
+  }
+  const normalizedNeedleSource = needle.trim();
+  if (normalizedNeedleSource === '') {
+    return null;
+  }
+  const normalizedHaystack = normalizeWhitespaceForMatch(haystack);
+  const normalizedNeedle = normalizeWhitespaceForMatch(normalizedNeedleSource);
+  if (normalizedHaystack.text === '' || normalizedNeedle.text === '') {
+    return null;
+  }
+  const startIndex = normalizedHaystack.text.indexOf(normalizedNeedle.text);
+  if (startIndex < 0) {
+    return null;
+  }
+  const endIndex = startIndex + normalizedNeedle.text.length - 1;
+  const start = normalizedHaystack.indexMap[startIndex];
+  const end = normalizedHaystack.indexMap[endIndex] + 1;
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) {
+    return null;
+  }
+  return { start, end };
 }
 
 function buildObjectSearchRows(words) {
@@ -11204,7 +11367,16 @@ function buildOcrPageHighlightHtml(pageText, pageMatches) {
       html += escapeHtml(pageText.slice(cursor, match.start));
     }
     const matchedText = pageText.slice(match.start, match.end);
-    const className = match.globalIndex === ocrSearchActiveIndex ? ' class="is-active"' : '';
+    const classes = [];
+    if (match.globalIndex === ocrSearchActiveIndex) {
+      classes.push('is-active');
+    }
+    if (match.kind === 'key') {
+      classes.push('is-datafield-key');
+    } else if (match.kind === 'value') {
+      classes.push('is-datafield-value');
+    }
+    const className = classes.length > 0 ? ` class="${classes.join(' ')}"` : '';
     html += `<mark${className}>${escapeHtml(matchedText)}</mark>`;
     cursor = match.end;
   });
@@ -11248,21 +11420,43 @@ function resizeOcrPage(wrapperEl, highlightEl, textareaEl, targetWidth = null) {
 function buildObjectPageMatchLookup(page, pageMatches) {
   const matchedWordIndexes = new Set();
   const activeWordIndexes = new Set();
+  const matchedKeyWordIndexes = new Set();
+  const matchedValueWordIndexes = new Set();
+  const activeKeyWordIndexes = new Set();
+  const activeValueWordIndexes = new Set();
   const activeMatch = ocrSearchActiveIndex >= 0 ? pageMatches.find((match) => match.globalIndex === ocrSearchActiveIndex) : null;
 
   (page.searchEntries || []).forEach((entry) => {
     const overlapsAny = pageMatches.some((match) => entry.start < match.end && entry.end > match.start);
     if (overlapsAny) {
       matchedWordIndexes.add(entry.wordIndex);
+      pageMatches.forEach((match) => {
+        if (entry.start < match.end && entry.end > match.start) {
+          if (match.kind === 'key') {
+            matchedKeyWordIndexes.add(entry.wordIndex);
+          } else if (match.kind === 'value') {
+            matchedValueWordIndexes.add(entry.wordIndex);
+          }
+        }
+      });
     }
     if (activeMatch && entry.start < activeMatch.end && entry.end > activeMatch.start) {
       activeWordIndexes.add(entry.wordIndex);
+      if (activeMatch.kind === 'key') {
+        activeKeyWordIndexes.add(entry.wordIndex);
+      } else if (activeMatch.kind === 'value') {
+        activeValueWordIndexes.add(entry.wordIndex);
+      }
     }
   });
 
   return {
     matchedWordIndexes,
     activeWordIndexes,
+    matchedKeyWordIndexes,
+    matchedValueWordIndexes,
+    activeKeyWordIndexes,
+    activeValueWordIndexes,
   };
 }
 
@@ -11334,6 +11528,13 @@ function fitTextSvg(el, text, xScale = 1.03, yScale = 1.6) {
   );
 }
 
+function ocrDataFieldRowsForPage(page) {
+  return ocrDataFieldCurrentRowsWithIndexes().filter((row) => {
+    const resolvedPage = ocrDataFieldResolvePageForRow(row);
+    return resolvedPage && resolvedPage.number === page.number;
+  });
+}
+
 function renderObjectOcrPage(page, pageMatches, objectScale) {
   const wrapperEl = document.createElement('div');
   wrapperEl.className = 'ocr-page ocr-page--objects';
@@ -11347,11 +11548,11 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
   surfaceEl.style.width = `${Math.ceil(page.pageWidth * objectScale)}px`;
   surfaceEl.style.height = `${Math.ceil(page.pageHeight * objectScale)}px`;
 
-  const matchLookup = buildObjectPageMatchLookup(page, pageMatches);
   const wordElements = new Map();
   const wordsToFit = [];
+  const matchLookup = buildObjectPageMatchLookup(page, pageMatches);
 
-  const layeredWords = [...page.words].sort((left, right) => {
+  [...page.words].sort((left, right) => {
     const leftArea = left.rect.width * left.rect.height;
     const rightArea = right.rect.width * right.rect.height;
     if (leftArea !== rightArea) {
@@ -11361,16 +11562,16 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
       return left.rect.y0 - right.rect.y0;
     }
     return left.rect.x0 - right.rect.x0;
-  });
-
-  layeredWords.forEach((word) => {
+  }).forEach((word) => {
     const wordEl = document.createElement('div');
     wordEl.className = 'ocr-word-box';
-    if (matchLookup.matchedWordIndexes.has(word.index)) {
-      wordEl.classList.add('is-match');
-    }
-    if (matchLookup.activeWordIndexes.has(word.index)) {
-      wordEl.classList.add('is-active');
+    if (!isOcrDataFieldMode()) {
+      if (matchLookup.matchedWordIndexes.has(word.index)) {
+        wordEl.classList.add('is-match');
+      }
+      if (matchLookup.activeWordIndexes.has(word.index)) {
+        wordEl.classList.add('is-active');
+      }
     }
     const scaledLeft = word.rect.x0 * objectScale;
     const scaledTop = word.rect.y0 * objectScale;
@@ -11398,6 +11599,135 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
   wordsToFit.forEach(({ wordEl, text }) => {
     fitTextSvg(wordEl, text, xScale, yScale);
   });
+
+  if (isOcrDataFieldMode()) {
+    const dataFieldRows = ocrDataFieldRowsForPage(page);
+    const dataFieldPageMatches = Array.isArray(pageMatches) ? pageMatches : [];
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const pageWidth = Math.ceil(page.pageWidth * objectScale);
+    const pageHeight = Math.ceil(page.pageHeight * objectScale);
+    const connectionSvg = document.createElementNS(svgNS, 'svg');
+    connectionSvg.classList.add('ocr-datafield-connections');
+    connectionSvg.setAttribute('width', String(pageWidth));
+    connectionSvg.setAttribute('height', String(pageHeight));
+    connectionSvg.setAttribute('viewBox', `0 0 ${pageWidth} ${pageHeight}`);
+    connectionSvg.setAttribute('aria-hidden', 'true');
+    const defsEl = document.createElementNS(svgNS, 'defs');
+    const markerEl = document.createElementNS(svgNS, 'marker');
+    markerEl.setAttribute('id', 'ocr-datafield-arrowhead');
+    markerEl.setAttribute('markerWidth', '8');
+    markerEl.setAttribute('markerHeight', '8');
+    markerEl.setAttribute('refX', '6');
+    markerEl.setAttribute('refY', '3');
+    markerEl.setAttribute('orient', 'auto');
+    markerEl.setAttribute('markerUnits', 'strokeWidth');
+    const markerPathEl = document.createElementNS(svgNS, 'path');
+    markerPathEl.setAttribute('d', 'M0,0 L6,3 L0,6 Z');
+    markerPathEl.setAttribute('fill', 'currentColor');
+    markerEl.appendChild(markerPathEl);
+    defsEl.appendChild(markerEl);
+    connectionSvg.appendChild(defsEl);
+
+    const boxByKey = new Map();
+    const connectionByKey = new Map();
+    const bboxKey = (kind, bbox) => [
+      kind,
+      bbox.x0.toFixed(1),
+      bbox.y0.toFixed(1),
+      bbox.x1.toFixed(1),
+      bbox.y1.toFixed(1),
+    ].join('|');
+    const connectionKey = (keyBBox, valueBBox) => [
+      keyBBox.x0.toFixed(1),
+      keyBBox.y0.toFixed(1),
+      keyBBox.x1.toFixed(1),
+      keyBBox.y1.toFixed(1),
+      valueBBox.x0.toFixed(1),
+      valueBBox.y0.toFixed(1),
+      valueBBox.x1.toFixed(1),
+      valueBBox.y1.toFixed(1),
+    ].join('|');
+
+    dataFieldRows.forEach((row) => {
+      const keyBBox = row.keyBbox || ocrDataFieldDerivedBBoxForRow(page, row, 'key', dataFieldPageMatches);
+      const valueBBox = row.valueBbox || ocrDataFieldDerivedBBoxForRow(page, row, 'value', dataFieldPageMatches);
+      const connection = ocrDataFieldConnectionPathForBoxes(keyBBox, valueBBox);
+      if (connection && keyBBox && valueBBox) {
+        const nextKey = connectionKey(keyBBox, valueBBox);
+        const existingConnection = connectionByKey.get(nextKey);
+        connectionByKey.set(nextKey, {
+          connection,
+        });
+      }
+      [
+        ['key', keyBBox],
+        ['value', valueBBox],
+      ].forEach(([kind, bbox]) => {
+        if (!bbox) {
+          return;
+        }
+        const key = bboxKey(kind, bbox);
+        if (!boxByKey.has(key)) {
+          boxByKey.set(key, {
+            kind,
+            bbox,
+          });
+        }
+      });
+    });
+
+    connectionByKey.forEach(({ connection }) => {
+      const connectionEl = document.createElementNS(svgNS, 'path');
+      connectionEl.classList.add('ocr-datafield-connection');
+      connectionEl.setAttribute(
+        'd',
+        `M ${Math.max(0, connection.x1 * objectScale)} ${Math.max(0, connection.y1 * objectScale)} L ${Math.max(0, connection.x2 * objectScale)} ${Math.max(0, connection.y2 * objectScale)}`
+      );
+      connectionSvg.appendChild(connectionEl);
+    });
+
+    boxByKey.forEach(({ kind, bbox }) => {
+      const highlightEl = document.createElement('div');
+      highlightEl.className = `ocr-datafield-box ocr-datafield-box--${kind}`;
+      highlightEl.style.left = `${Math.max(0, bbox.x0 * objectScale)}px`;
+      highlightEl.style.top = `${Math.max(0, bbox.y0 * objectScale)}px`;
+      highlightEl.style.width = `${Math.max(1, (bbox.x1 - bbox.x0) * objectScale)}px`;
+      highlightEl.style.height = `${Math.max(1, (bbox.y1 - bbox.y0) * objectScale)}px`;
+      surfaceEl.appendChild(highlightEl);
+    });
+
+    const activeRow = dataFieldRows.find((row) => row.matchIndex === ocrDataFieldSelection.matchIndex) || null;
+    if (activeRow) {
+      const activeKeyBBox = activeRow.keyBbox || ocrDataFieldDerivedBBoxForRow(page, activeRow, 'key', dataFieldPageMatches);
+      const activeValueBBox = activeRow.valueBbox || ocrDataFieldDerivedBBoxForRow(page, activeRow, 'value', dataFieldPageMatches);
+      const activeConnection = ocrDataFieldConnectionPathForBoxes(activeKeyBBox, activeValueBBox);
+      if (activeConnection) {
+        const activeConnectionEl = document.createElementNS(svgNS, 'path');
+        activeConnectionEl.classList.add('ocr-datafield-connection', 'is-active');
+        activeConnectionEl.setAttribute(
+          'd',
+          `M ${Math.max(0, activeConnection.x1 * objectScale)} ${Math.max(0, activeConnection.y1 * objectScale)} L ${Math.max(0, activeConnection.x2 * objectScale)} ${Math.max(0, activeConnection.y2 * objectScale)}`
+        );
+        connectionSvg.appendChild(activeConnectionEl);
+      }
+      [
+        ['key', activeKeyBBox],
+        ['value', activeValueBBox],
+      ].forEach(([kind, bbox]) => {
+        if (!bbox) {
+          return;
+        }
+        const activeHighlightEl = document.createElement('div');
+        activeHighlightEl.className = `ocr-datafield-box ocr-datafield-box--${kind} is-active`;
+        activeHighlightEl.style.left = `${Math.max(0, bbox.x0 * objectScale)}px`;
+        activeHighlightEl.style.top = `${Math.max(0, bbox.y0 * objectScale)}px`;
+        activeHighlightEl.style.width = `${Math.max(1, (bbox.x1 - bbox.x0) * objectScale)}px`;
+        activeHighlightEl.style.height = `${Math.max(1, (bbox.y1 - bbox.y0) * objectScale)}px`;
+        surfaceEl.appendChild(activeHighlightEl);
+      });
+    }
+    surfaceEl.appendChild(connectionSvg);
+  }
 
   return {
     ...page,
@@ -11456,6 +11786,7 @@ function renderOcrPages() {
   const availableWidth = Math.max(360, ocrPagesViewEl.clientWidth - 32);
   const fitScale = maxObjectPageWidth > 0 ? (availableWidth / maxObjectPageWidth) : 1;
   const objectScale = fitScale * (currentOcrZoom / 100);
+  const dataFieldMode = isOcrDataFieldMode();
   let documentTextPageWidth = 0;
   const textPageMeasurements = new Map();
 
@@ -11476,13 +11807,15 @@ function renderOcrPages() {
   });
 
   pages.forEach((page) => {
-    const pageMatches = ocrSearchMatches
-      .map((match, globalIndex) => ({
-        start: Math.max(match.start, page.start) - page.start,
-        end: Math.min(match.end, page.end) - page.start,
-        globalIndex,
-      }))
-      .filter((match) => match.start < match.end);
+    const pageMatches = dataFieldMode
+      ? ocrDataFieldPageMatchesForPage(page)
+      : ocrSearchMatches
+        .map((match, globalIndex) => ({
+          start: Math.max(match.start, page.start) - page.start,
+          end: Math.min(match.end, page.end) - page.start,
+          globalIndex,
+        }))
+        .filter((match) => match.start < match.end);
 
     if (page.renderMode === 'objects') {
       ocrRenderedPages.push(renderObjectOcrPage(page, pageMatches, objectScale));
@@ -11543,6 +11876,735 @@ function setOcrSearchButtonsEnabled(enabled) {
   ocrSearchNextEl.disabled = !enabled;
 }
 
+function normalizeOcrSearchMode(value) {
+  return String(value || '').trim() === 'datafield' ? 'datafield' : 'text';
+}
+
+function ocrSearchModeButtons() {
+  return ocrSearchModeToggleEl instanceof HTMLElement
+    ? Array.from(ocrSearchModeToggleEl.querySelectorAll('[data-ocr-search-mode]'))
+    : [];
+}
+
+function syncOcrSearchModeUi() {
+  const isDataFieldMode = ocrSearchMode === 'datafield';
+  if (ocrSearchBarEl instanceof HTMLElement) {
+    ocrSearchBarEl.setAttribute('data-ocr-search-mode', ocrSearchMode);
+  }
+  ocrSearchModeButtons().forEach((buttonEl) => {
+    const nextActive = buttonEl.dataset.ocrSearchMode === ocrSearchMode;
+    buttonEl.classList.toggle('is-active', nextActive);
+    buttonEl.setAttribute('aria-pressed', nextActive ? 'true' : 'false');
+  });
+  if (ocrPagesViewEl instanceof HTMLElement) {
+    ocrPagesViewEl.classList.toggle('is-datafield-mode', isDataFieldMode);
+  }
+  if (ocrSearchTextPanelEl instanceof HTMLElement) {
+    ocrSearchTextPanelEl.classList.toggle('hidden', isDataFieldMode);
+  }
+  if (ocrSearchDataFieldPanelEl instanceof HTMLElement) {
+    ocrSearchDataFieldPanelEl.classList.toggle('hidden', !isDataFieldMode);
+  }
+  if (ocrSearchFilterEl instanceof HTMLElement) {
+    ocrSearchFilterEl.classList.toggle('hidden', !isDataFieldMode);
+  }
+  syncOcrDataFieldHitFilterUi();
+  syncOcrDataFieldConfidenceUi(isDataFieldMode ? ocrDataFieldActiveRow() : null);
+}
+
+function isOcrDataFieldMode() {
+  return ocrSearchMode === 'datafield';
+}
+
+function ocrDataFieldGroupsForJob(jobId = loadedMatchesJobId || selectedJobId) {
+  if (loadedMatchesJobId !== jobId || !loadedMatchesPayload || typeof loadedMatchesPayload !== 'object') {
+    return [];
+  }
+
+  const fields = loadedMatchesPayload && typeof loadedMatchesPayload.fields === 'object' && loadedMatchesPayload.fields !== null
+    ? loadedMatchesPayload.fields
+    : {};
+
+  return Object.entries(fields)
+    .map(([fieldKey, field]) => {
+      if (!field || typeof field !== 'object') {
+        return null;
+      }
+      const normalizedFieldKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+      if (normalizedFieldKey === '') {
+        return null;
+      }
+
+      const sourceRows = Array.isArray(field.matches)
+        ? field.matches
+        : (Array.isArray(field.rows) ? field.rows : []);
+      const rows = sourceRows
+          .map((row, index) => {
+            if (!row || typeof row !== 'object') {
+              return null;
+            }
+            const value = typeof row.value === 'string' ? row.value.trim() : '';
+            if (value === '') {
+              return null;
+            }
+            const normalizeBBox = (bbox) => {
+              if (!bbox || typeof bbox !== 'object') {
+                return null;
+              }
+              if (Array.isArray(bbox)) {
+                return normalizeWordRect(bbox);
+              }
+              return normalizeWordRect(bbox);
+            };
+            const keyBbox = normalizeBBox(row.labelBbox);
+            const valueBbox = normalizeBBox(row.valueBbox);
+            const pageNumber = Number.isInteger(row.pageNumber) ? row.pageNumber : null;
+            return {
+              ...row,
+              value,
+              rowIndex: index,
+              keyBbox,
+              valueBbox,
+              pageNumber,
+              hasBBox: keyBbox !== null || valueBbox !== null,
+            };
+          })
+          .filter(Boolean)
+        ;
+
+      if (rows.length === 0) {
+        return null;
+      }
+
+      return {
+        fieldKey: normalizedFieldKey,
+        name: typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : normalizedFieldKey,
+        rows,
+      };
+    })
+    .filter(Boolean);
+}
+
+function ocrDataFieldGroupByKey(fieldKey) {
+  const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  if (normalizedKey === '') {
+    return null;
+  }
+  return ocrDataFieldGroupsForJob().find((group) => group.fieldKey === normalizedKey) || null;
+}
+
+function ocrDataFieldCurrentGroup() {
+  const groups = ocrDataFieldGroupsForJob();
+  if (groups.length === 0) {
+    return null;
+  }
+  if (ocrDataFieldSelection.fieldKey !== '') {
+    const selected = groups.find((group) => group.fieldKey === ocrDataFieldSelection.fieldKey) || null;
+    if (selected) {
+      return selected;
+    }
+  }
+  return groups[0] || null;
+}
+
+function ocrDataFieldCurrentRows() {
+  const group = ocrDataFieldCurrentGroup();
+  if (!group || !Array.isArray(group.rows)) {
+    return [];
+  }
+  return group.rows.filter((row) => ocrDataFieldRowMatchesFilterMode(row, matchesFieldHitFilterMode));
+}
+
+function ocrDataFieldCurrentRowsWithIndexes() {
+  return ocrDataFieldCurrentRows().map((row, matchIndex) => ({
+    ...row,
+    matchIndex,
+  }));
+}
+
+function ocrDataFieldStatusText(rowCount) {
+  const count = Number(rowCount);
+  if (!Number.isFinite(count) || count <= 0) {
+    return '0 träffar';
+  }
+  return count === 1 ? '1 träff' : `${count} träffar`;
+}
+
+function ocrDataFieldRowConfidenceValue(row) {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+
+  const candidates = [
+    row.displayConfidence,
+    row.finalConfidence,
+    row.confidence,
+    row.baseConfidence,
+  ];
+
+  for (const candidate of candidates) {
+    const numericValue = Number(candidate);
+    if (Number.isFinite(numericValue)) {
+      return numericValue;
+    }
+  }
+
+  return null;
+}
+
+function ocrDataFieldRowMatchesFilterMode(row, mode) {
+  const confidence = ocrDataFieldRowConfidenceValue(row) ?? 0;
+  if (mode === 'all') {
+    return true;
+  }
+  if (row?.isResult === true || row?.accepted === true || confidence >= matchingDataFieldAcceptanceThresholdDraft) {
+    return true;
+  }
+  if (mode === 'candidates') {
+    return confidence > 0;
+  }
+  return false;
+}
+
+function ocrDataFieldFilterCounts(rows) {
+  const counts = { results: 0, candidates: 0, all: 0 };
+  if (!Array.isArray(rows)) {
+    return counts;
+  }
+
+  rows.forEach((row) => {
+    if (ocrDataFieldRowMatchesFilterMode(row, 'results')) {
+      counts.results += 1;
+    }
+    if (ocrDataFieldRowMatchesFilterMode(row, 'candidates')) {
+      counts.candidates += 1;
+    }
+    counts.all += 1;
+  });
+
+  return counts;
+}
+
+function syncOcrDataFieldHitFilterUi() {
+  if (!(ocrSearchFieldHitFilterEl instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const group = ocrDataFieldCurrentGroup();
+  const counts = ocrDataFieldFilterCounts(group ? group.rows : []);
+  const optionMap = {
+    results: 'Endast resultat',
+    candidates: 'Resultat + kandidater',
+    all: 'Alla träffar',
+  };
+
+  Array.from(ocrSearchFieldHitFilterEl.options).forEach((optionEl) => {
+    if (optionEl instanceof HTMLOptionElement && Object.prototype.hasOwnProperty.call(optionMap, optionEl.value)) {
+      optionEl.textContent = optionMap[optionEl.value];
+    }
+  });
+
+  ocrSearchFieldHitFilterEl.value = matchesFieldHitFilterMode;
+}
+
+function ocrDataFieldSelectionStatusText(matchIndex, rowCount) {
+  const count = Number(rowCount);
+  if (!Number.isFinite(count) || count <= 0) {
+    return '0 träffar';
+  }
+  const index = Number.isFinite(Number(matchIndex)) ? Number(matchIndex) : 0;
+  const normalizedIndex = Math.max(0, Math.min(count - 1, Math.trunc(index)));
+  return `${normalizedIndex + 1}/${count}`;
+}
+
+function ocrDataFieldActiveRow() {
+  const rows = ocrDataFieldCurrentRowsWithIndexes();
+  if (rows.length === 0) {
+    return null;
+  }
+  const index = Number.isInteger(ocrDataFieldSelection.matchIndex)
+    ? ocrDataFieldSelection.matchIndex
+    : 0;
+  return rows[Math.max(0, Math.min(rows.length - 1, index))] || null;
+}
+
+function formatOcrPercent(value, options = {}) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return '–';
+  }
+  const spaced = options.spaced === true;
+  const formatted = Math.abs(numericValue * 100).toLocaleString('sv-SE', {
+    minimumFractionDigits: options.minimumFractionDigits ?? 0,
+    maximumFractionDigits: options.maximumFractionDigits ?? 0,
+  });
+  return spaced ? `${formatted} %` : `${formatted}%`;
+}
+
+function ocrDataFieldConfidenceValue(row) {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+  const candidates = [
+    row.displayConfidence,
+    row.finalConfidence,
+    row.confidence,
+    row.baseConfidence,
+  ];
+  for (const candidate of candidates) {
+    const numericValue = Number(candidate);
+    if (Number.isFinite(numericValue)) {
+      return numericValue;
+    }
+  }
+  return null;
+}
+
+function ocrDataFieldPositionPenaltyLabel(row) {
+  if (!row || typeof row !== 'object') {
+    return 'Position';
+  }
+  if (row.positionPenaltyAxis === 'x') {
+    return 'X-avvikelse';
+  }
+  if (row.positionPenaltyAxis === 'y') {
+    return 'Y-avvikelse';
+  }
+  if (row.positionPenaltyAxis === 'invalid') {
+    return 'Fel riktning';
+  }
+  if (row.positionPenaltyAxis === 'invalid_bbox') {
+    return typeof row.invalidReason === 'string' && row.invalidReason.trim() !== ''
+      ? row.invalidReason.trim()
+      : 'Ogiltig bbox';
+  }
+  return 'Position';
+}
+
+function ocrDataFieldConfidenceTooltip(row) {
+  const lines = [];
+  const confidenceValue = ocrDataFieldConfidenceValue(row);
+  if (confidenceValue !== null) {
+    lines.push(`Säkerhet: ${formatOcrPercent(confidenceValue)}`);
+  }
+
+  const appendPenalty = (label, value) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) {
+      return;
+    }
+    lines.push(`${label} −${formatOcrPercent(numericValue)}`);
+  };
+
+  appendPenalty(ocrDataFieldPositionPenaltyLabel(row), row && typeof row.positionPenalty === 'number' ? row.positionPenalty : null);
+  appendPenalty('Brus', row && typeof row.noisePenalty === 'number' ? row.noisePenalty : null);
+  appendPenalty('Vertikalt avstånd', row && typeof row.verticalDistancePenalty === 'number' ? row.verticalDistancePenalty : null);
+  appendPenalty('Avslutstecken', row && typeof row.trailingDelimiterPenalty === 'number' ? row.trailingDelimiterPenalty : null);
+  appendPenalty('Annan nyckel', row && typeof row.otherMatchKeyPenalty === 'number' ? row.otherMatchKeyPenalty : null);
+
+  lines.push('');
+  lines.push('Klicka för att visa i Matchningar');
+
+  return lines.length > 2 ? lines.join('\n') : 'Ingen säkerhet tillgänglig.\n\nKlicka för att visa i Matchningar';
+}
+
+function syncOcrDataFieldConfidenceUi(row = null) {
+  if (!(ocrSearchConfidenceRowEl instanceof HTMLElement) || !(ocrSearchConfidenceEl instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const activeRow = row && typeof row === 'object' ? row : null;
+  const showConfidence = isOcrDataFieldMode() && !!activeRow;
+  ocrSearchConfidenceRowEl.classList.toggle('hidden', !showConfidence);
+  ocrSearchConfidenceEl.disabled = !showConfidence;
+  ocrSearchConfidenceEl.setAttribute('aria-disabled', !showConfidence ? 'true' : 'false');
+
+  if (!showConfidence) {
+    ocrSearchConfidenceEl.textContent = '';
+    ocrSearchConfidenceEl.removeAttribute('title');
+    ocrSearchConfidenceEl.removeAttribute('aria-label');
+    return;
+  }
+
+  const confidenceValue = ocrDataFieldConfidenceValue(activeRow);
+  const confidenceText = confidenceValue !== null ? formatOcrPercent(confidenceValue) : '–';
+  const title = ocrDataFieldConfidenceTooltip(activeRow);
+  ocrSearchConfidenceEl.replaceChildren();
+  const confidenceValueEl = document.createElement('span');
+  confidenceValueEl.className = 'ocr-search-confidence-value';
+  confidenceValueEl.textContent = `${confidenceText} ↗`;
+  ocrSearchConfidenceEl.append(confidenceValueEl);
+  ocrSearchConfidenceEl.title = title;
+  ocrSearchConfidenceEl.setAttribute('aria-label', `${title.replace(/\n+/g, '. ')}`);
+}
+
+function ocrDataFieldCandidateTexts(row) {
+  const texts = [
+    row && typeof row.labelText === 'string' ? row.labelText : '',
+    row && typeof row.searchTerm === 'string' ? row.searchTerm : '',
+    row && typeof row.matchText === 'string' ? row.matchText : '',
+    row && typeof row.raw === 'string' ? row.raw : '',
+    row && typeof row.extractedRaw === 'string' ? row.extractedRaw : '',
+    row && typeof row.value === 'string' ? row.value : '',
+  ];
+  return Array.from(new Set(texts.map((text) => String(text || '').trim()).filter((text) => text !== '')));
+}
+
+function ocrDataFieldKeyCandidateTexts(row) {
+  const texts = [
+    row && typeof row.labelText === 'string' ? row.labelText : '',
+    row && typeof row.searchTerm === 'string' ? row.searchTerm : '',
+  ];
+  return Array.from(new Set(texts.map((text) => String(text || '').trim()).filter((text) => text !== '')));
+}
+
+function ocrDataFieldValueCandidateTexts(row) {
+  const texts = [
+    row && typeof row.value === 'string' ? row.value : '',
+  ];
+  return Array.from(new Set(texts.map((text) => String(text || '').trim()).filter((text) => text !== '')));
+}
+
+function ocrDataFieldResolvePageForRow(row) {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+  if (Number.isInteger(row.pageNumber) && row.pageNumber > 0) {
+    return ocrDocumentPages.find((page) => page.number === row.pageNumber) || null;
+  }
+
+  const candidateTexts = ocrDataFieldCandidateTexts(row);
+  if (candidateTexts.length === 0) {
+    return null;
+  }
+
+  for (const page of ocrDocumentPages) {
+    const pageText = typeof page?.searchText === 'string' && page.searchText !== ''
+      ? page.searchText
+      : (typeof page?.text === 'string' ? page.text : '');
+    if (pageText === '') {
+      continue;
+    }
+    if (candidateTexts.some((candidateText) => findNormalizedTextSpan(pageText, candidateText))) {
+      return page;
+    }
+  }
+
+  return null;
+}
+
+function ocrDataFieldPageMatchesForPage(page) {
+  const pageText = typeof page?.searchText === 'string' && page.searchText !== ''
+    ? page.searchText
+    : (typeof page?.text === 'string' ? page.text : '');
+  if (pageText === '') {
+    return [];
+  }
+
+  const matches = [];
+  ocrDataFieldCurrentRowsWithIndexes().forEach((row) => {
+    if (!row || typeof row !== 'object') {
+      return;
+    }
+    const valueTexts = ocrDataFieldValueCandidateTexts(row);
+    const keyTexts = ocrDataFieldKeyCandidateTexts(row);
+
+    [
+      ['key', keyTexts],
+      ['value', valueTexts],
+    ].forEach(([kind, candidateTexts]) => {
+      candidateTexts.forEach((candidateText) => {
+        const span = findNormalizedTextSpan(pageText, candidateText);
+        if (!span) {
+          return;
+        }
+        matches.push({
+          start: span.start,
+          end: span.end,
+          globalIndex: row.matchIndex,
+          row,
+          kind,
+          candidateText,
+        });
+      });
+    });
+  });
+
+  return matches.sort((left, right) => {
+    if (left.start !== right.start) {
+      return left.start - right.start;
+    }
+    if (left.end !== right.end) {
+      return left.end - right.end;
+    }
+    return left.globalIndex - right.globalIndex;
+  });
+}
+
+function ocrDataFieldMatchWordIndexesForPage(page, match) {
+  const wordIndexes = new Set();
+  if (!page || !match || !Array.isArray(page.searchEntries)) {
+    return wordIndexes;
+  }
+
+  page.searchEntries.forEach((entry) => {
+    if (!entry || !Number.isInteger(entry.wordIndex)) {
+      return;
+    }
+    if (entry.start < match.end && entry.end > match.start) {
+      wordIndexes.add(entry.wordIndex);
+    }
+  });
+
+  return wordIndexes;
+}
+
+function ocrDataFieldBBoxFromWordIndexes(page, wordIndexes) {
+  if (!page || !Array.isArray(page.words) || !(wordIndexes instanceof Set) || wordIndexes.size === 0) {
+    return null;
+  }
+
+  const rects = [];
+  wordIndexes.forEach((wordIndex) => {
+    const word = page.words.find((entry) => entry.index === wordIndex) || null;
+    if (word && word.rect) {
+      rects.push(word.rect);
+    }
+  });
+
+  if (rects.length === 0) {
+    return null;
+  }
+
+  return {
+    x0: Math.min(...rects.map((rect) => rect.x0)),
+    y0: Math.min(...rects.map((rect) => rect.y0)),
+    x1: Math.max(...rects.map((rect) => rect.x1)),
+    y1: Math.max(...rects.map((rect) => rect.y1)),
+  };
+}
+
+function ocrDataFieldDerivedBBoxForRow(page, row, kind, pageMatches = null) {
+  const directBBox = kind === 'key' ? row?.keyBbox : row?.valueBbox;
+  if (directBBox) {
+    return directBBox;
+  }
+
+  const relevantMatches = Array.isArray(pageMatches)
+    ? pageMatches.filter((match) => match && match.row && match.row.matchIndex === row.matchIndex && match.kind === kind)
+    : [];
+  if (relevantMatches.length === 0) {
+    return null;
+  }
+
+  const wordIndexes = new Set();
+  relevantMatches.forEach((match) => {
+    ocrDataFieldMatchWordIndexesForPage(page, match).forEach((wordIndex) => {
+      wordIndexes.add(wordIndex);
+    });
+  });
+
+  return ocrDataFieldBBoxFromWordIndexes(page, wordIndexes);
+}
+
+function ocrDataFieldConnectionPathForBoxes(keyBBox, valueBBox) {
+  if (!keyBBox || !valueBBox) {
+    return null;
+  }
+
+  const keyCenterX = (keyBBox.x0 + keyBBox.x1) / 2;
+  const keyCenterY = (keyBBox.y0 + keyBBox.y1) / 2;
+  const valueCenterX = (valueBBox.x0 + valueBBox.x1) / 2;
+  const valueCenterY = (valueBBox.y0 + valueBBox.y1) / 2;
+  const dx = valueCenterX - keyCenterX;
+  const dy = valueCenterY - keyCenterY;
+
+  if (dx === 0 && dy === 0) {
+    return null;
+  }
+
+  const edgePointForBox = (bbox, targetDx, targetDy) => {
+    const halfWidth = Math.max(0.0001, (bbox.x1 - bbox.x0) / 2);
+    const halfHeight = Math.max(0.0001, (bbox.y1 - bbox.y0) / 2);
+    const absDx = Math.abs(targetDx);
+    const absDy = Math.abs(targetDy);
+    const xScale = absDx > 0 ? halfWidth / absDx : Number.POSITIVE_INFINITY;
+    const yScale = absDy > 0 ? halfHeight / absDy : Number.POSITIVE_INFINITY;
+    const scale = Math.min(xScale, yScale);
+    return {
+      x: (bbox.x0 + bbox.x1) / 2 + (targetDx * scale),
+      y: (bbox.y0 + bbox.y1) / 2 + (targetDy * scale),
+    };
+  };
+
+  const startPoint = edgePointForBox(keyBBox, dx, dy);
+  const endPoint = edgePointForBox(valueBBox, -dx, -dy);
+  return {
+    x1: startPoint.x,
+    y1: startPoint.y,
+    x2: endPoint.x,
+    y2: endPoint.y,
+  };
+}
+
+function syncOcrDataFieldSelection() {
+  const group = ocrDataFieldCurrentGroup();
+  if (!group) {
+    ocrDataFieldSelection.fieldKey = '';
+    ocrDataFieldSelection.matchIndex = -1;
+    return null;
+  }
+
+  if (ocrDataFieldSelection.fieldKey !== group.fieldKey) {
+    ocrDataFieldSelection.fieldKey = group.fieldKey;
+    ocrDataFieldSelection.matchIndex = 0;
+  }
+
+  const rows = group.rows || [];
+  if (rows.length === 0) {
+    ocrDataFieldSelection.matchIndex = -1;
+    return group;
+  }
+
+  if (!Number.isInteger(ocrDataFieldSelection.matchIndex) || ocrDataFieldSelection.matchIndex < 0 || ocrDataFieldSelection.matchIndex >= rows.length) {
+    ocrDataFieldSelection.matchIndex = 0;
+  }
+
+  return group;
+}
+
+function applyOcrDataFieldSelection(index) {
+  if (ensureOcrDataFieldSource()) {
+    return;
+  }
+  const rows = ocrDataFieldCurrentRows();
+  if (rows.length === 0) {
+    ocrDataFieldSelection.matchIndex = -1;
+    renderOcrHighlightLayer();
+    setOcrSearchButtonsEnabled(false);
+    setOcrSearchStatus('0 träffar', false, true);
+    syncOcrDataFieldConfidenceUi(null);
+    return;
+  }
+
+  const lastIndex = rows.length - 1;
+  const normalizedIndex = Math.max(0, Math.min(lastIndex, Number.parseInt(String(index), 10) || 0));
+  ocrDataFieldSelection.matchIndex = normalizedIndex;
+  setOcrSearchStatus(ocrDataFieldSelectionStatusText(normalizedIndex, rows.length));
+  setOcrSearchButtonsEnabled(rows.length > 0);
+  syncOcrDataFieldConfidenceUi(rows[normalizedIndex] || null);
+  renderOcrHighlightLayer();
+  scrollOcrDataFieldMatchIntoView(rows[normalizedIndex] || null);
+}
+
+function stepOcrDataFieldSelection(direction) {
+  if (ensureOcrDataFieldSource()) {
+    return;
+  }
+  const rows = ocrDataFieldCurrentRows();
+  if (rows.length === 0) {
+    return;
+  }
+
+  const lastIndex = rows.length - 1;
+  let nextIndex = Number.isInteger(ocrDataFieldSelection.matchIndex) ? ocrDataFieldSelection.matchIndex : -1;
+  if (nextIndex < 0) {
+    nextIndex = direction > 0 ? 0 : lastIndex;
+  } else {
+    nextIndex += direction;
+    if (nextIndex > lastIndex) {
+      nextIndex = 0;
+    } else if (nextIndex < 0) {
+      nextIndex = lastIndex;
+    }
+  }
+  applyOcrDataFieldSelection(nextIndex);
+}
+
+function syncOcrDataFieldFieldSelect() {
+  if (!(ocrSearchFieldSelectEl instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const groups = ocrDataFieldGroupsForJob();
+  const currentFieldKey = ocrDataFieldCurrentGroup() ? ocrDataFieldCurrentGroup().fieldKey : '';
+  const previousValue = ocrSearchFieldSelectEl.value;
+
+  ocrSearchFieldSelectEl.innerHTML = '';
+  if (groups.length === 0) {
+    const optionEl = document.createElement('option');
+    optionEl.value = '';
+    optionEl.textContent = 'Inga datafält';
+    ocrSearchFieldSelectEl.appendChild(optionEl);
+    ocrSearchFieldSelectEl.disabled = true;
+    ocrSearchFieldSelectEl.value = '';
+    return;
+  }
+
+  ocrSearchFieldSelectEl.disabled = false;
+  groups.forEach((group) => {
+    const optionEl = document.createElement('option');
+    optionEl.value = group.fieldKey;
+    optionEl.textContent = group.name;
+    ocrSearchFieldSelectEl.appendChild(optionEl);
+  });
+
+  const preferredFieldKey = ocrDataFieldSelection.fieldKey !== ''
+    ? ocrDataFieldSelection.fieldKey
+    : currentFieldKey;
+  const selectedGroup = groups.find((group) => group.fieldKey === preferredFieldKey) || groups[0];
+  ocrDataFieldSelection.fieldKey = selectedGroup ? selectedGroup.fieldKey : '';
+  if (ocrDataFieldSelection.fieldKey !== '' && ocrDataFieldSelection.matchIndex < 0) {
+    ocrDataFieldSelection.matchIndex = 0;
+  }
+  ocrSearchFieldSelectEl.value = ocrDataFieldSelection.fieldKey || groups[0].fieldKey;
+
+  if (previousValue !== ocrSearchFieldSelectEl.value) {
+    ocrDataFieldSelection.matchIndex = 0;
+  }
+}
+
+async function refreshOcrDataFieldSearch(options = {}) {
+  const job = findJobById(selectedJobId);
+  if (!job || job.status === 'processing') {
+    ocrDataFieldSelection.fieldKey = '';
+    ocrDataFieldSelection.matchIndex = -1;
+    setOcrSearchButtonsEnabled(false);
+    setOcrSearchStatus('0 träffar', false, true);
+    syncOcrDataFieldConfidenceUi(null);
+    renderOcrPages();
+    return;
+  }
+
+  try {
+    await ensureLoadedMatchesPayload(job.id);
+  } catch (error) {
+    setOcrSearchButtonsEnabled(false);
+    setOcrSearchStatus('Kunde inte ladda matchningar', true);
+    syncOcrDataFieldConfidenceUi(null);
+    renderOcrPages();
+    return;
+  }
+
+  syncOcrDataFieldFieldSelect();
+  syncOcrDataFieldHitFilterUi();
+  const group = syncOcrDataFieldSelection();
+  const rows = group ? group.rows : [];
+  if (rows.length === 0) {
+    setOcrSearchButtonsEnabled(false);
+    setOcrSearchStatus('0 träffar', false, true);
+    syncOcrDataFieldConfidenceUi(null);
+    renderOcrPages();
+    return;
+  }
+
+  setOcrSearchButtonsEnabled(true);
+  setOcrSearchStatus(ocrDataFieldStatusText(rows.length));
+  syncOcrDataFieldConfidenceUi(rows[ocrDataFieldSelection.matchIndex] || null);
+  renderOcrPages();
+  scrollOcrDataFieldMatchIntoView(rows[ocrDataFieldSelection.matchIndex] || null);
+}
+
 function syncOcrHighlightPresentation() {
   const activeElement = document.activeElement;
   const selectionMode = activeElement instanceof HTMLElement
@@ -11592,6 +12654,10 @@ function buildOcrSearchMatches(text, query, useRegex) {
 }
 
 function applyOcrSearchMatch(index) {
+  if (isOcrDataFieldMode()) {
+    applyOcrDataFieldSelection(index);
+    return;
+  }
   if (index < 0 || index >= ocrSearchMatches.length) {
     ocrSearchActiveIndex = -1;
     renderOcrHighlightLayer();
@@ -11605,7 +12671,7 @@ function applyOcrSearchMatch(index) {
   scrollOcrMatchIntoView(match);
 }
 
-function refreshOcrSearch(options = {}) {
+async function refreshOcrTextSearch(options = {}) {
   const rerender = options.preserveScroll === true
     ? rerenderOcrPagesPreservingScroll
     : renderOcrPages;
@@ -11647,6 +12713,10 @@ function refreshOcrSearch(options = {}) {
 }
 
 function stepOcrSearch(direction) {
+  if (isOcrDataFieldMode()) {
+    stepOcrDataFieldSelection(direction);
+    return;
+  }
   if (ocrSearchMatches.length === 0) {
     return;
   }
@@ -11668,6 +12738,13 @@ function stepOcrSearch(direction) {
   applyOcrSearchMatch(nextIndex);
 }
 
+async function refreshOcrSearch(options = {}) {
+  if (isOcrDataFieldMode()) {
+    return refreshOcrDataFieldSearch(options);
+  }
+  return refreshOcrTextSearch(options);
+}
+
 function renderOcrHighlightLayer() {
   renderOcrPages();
 }
@@ -11677,6 +12754,15 @@ function syncOcrHighlightScroll() {
 }
 
 function scrollOcrMatchIntoView(match) {
+  if (isOcrDataFieldMode()) {
+    const rows = ocrDataFieldCurrentRowsWithIndexes();
+    const targetRow = rows.find((row) => row.matchIndex === ocrDataFieldSelection.matchIndex) || null;
+    if (!targetRow) {
+      return;
+    }
+    scrollOcrDataFieldMatchIntoView(targetRow);
+    return;
+  }
   const page = ocrRenderedPages.find((entry) => match.start >= entry.start && match.start <= entry.end);
   if (!page) {
     return;
@@ -11721,6 +12807,84 @@ function scrollOcrMatchIntoView(match) {
   ocrPagesViewEl.scrollTop = targetTop;
   ocrPagesViewEl.scrollLeft = targetLeft;
   syncOcrHighlightScroll();
+}
+
+function scrollOcrDataFieldMatchIntoView(row) {
+  if (!row || typeof row !== 'object') {
+    return;
+  }
+
+  const resolvedPage = ocrDataFieldResolvePageForRow(row);
+  const pageNumber = Number.isInteger(row.pageNumber) ? row.pageNumber : (resolvedPage ? resolvedPage.number : null);
+  if (!Number.isInteger(pageNumber)) {
+    return;
+  }
+
+  const page = ocrRenderedPages.find((entry) => entry.number === pageNumber) || null;
+  if (!page || !page.wrapperEl) {
+    return;
+  }
+
+  if (page.renderMode !== 'objects') {
+    const targetTop = Math.max(0, page.wrapperEl.offsetTop - (ocrPagesViewEl.clientHeight / 3));
+    ocrPagesViewEl.scrollTop = targetTop;
+    ocrPagesViewEl.scrollLeft = 0;
+    syncOcrHighlightScroll();
+    return;
+  }
+
+  const pageMatches = ocrDataFieldPageMatchesForPage(page);
+  const targetBox = row.valueBbox
+    || row.keyBbox
+    || ocrDataFieldDerivedBBoxForRow(page, row, 'value', pageMatches)
+    || ocrDataFieldDerivedBBoxForRow(page, row, 'key', pageMatches);
+  if (!targetBox) {
+    const targetTop = Math.max(0, page.wrapperEl.offsetTop - (ocrPagesViewEl.clientHeight / 3));
+    ocrPagesViewEl.scrollTop = targetTop;
+    ocrPagesViewEl.scrollLeft = 0;
+    syncOcrHighlightScroll();
+    return;
+  }
+
+  const objectScale = Number.isFinite(Number(page.objectScale)) ? Number(page.objectScale) : 1;
+  const targetLeftEdge = Math.min(targetBox.x0, row.keyBbox ? row.keyBbox.x0 : targetBox.x0);
+  const targetTopEdge = Math.min(targetBox.y0, row.keyBbox ? row.keyBbox.y0 : targetBox.y0);
+  const targetLeft = Math.max(0, page.wrapperEl.offsetLeft + (targetLeftEdge * objectScale) - 40);
+  const targetTop = Math.max(0, page.wrapperEl.offsetTop + (targetTopEdge * objectScale) - (ocrPagesViewEl.clientHeight / 3));
+  ocrPagesViewEl.scrollTop = Math.max(0, targetTop);
+  ocrPagesViewEl.scrollLeft = Math.max(0, targetLeft);
+  syncOcrHighlightScroll();
+}
+
+function openMatchesViewForOcrDataFieldRow(row) {
+  if (!row || typeof row !== 'object') {
+    return;
+  }
+
+  const fieldKey = ocrDataFieldSelection.fieldKey !== ''
+    ? ocrDataFieldSelection.fieldKey
+    : (ocrDataFieldCurrentGroup() ? ocrDataFieldCurrentGroup().fieldKey : '');
+  if (fieldKey === '' || !Number.isInteger(row.matchIndex)) {
+    return;
+  }
+
+  pendingMatchesFocus = {
+    jobId: selectedJobId,
+    fieldKey,
+    matchIndex: row.matchIndex,
+  };
+
+  if (currentViewMode === 'matches' && loadedMatchesJobId === selectedJobId && loadedMatchesPayload) {
+    refreshLoadedMatchesView();
+    return;
+  }
+
+  if (currentViewMode === 'matches') {
+    void setViewerMatches(selectedJobId);
+    return;
+  }
+
+  setViewMode('matches');
 }
 
 function applySelectedJobId(jobId, options = {}) {
@@ -16755,7 +17919,7 @@ function createRegexToggleInput(inputEl, options = {}, extraClass = '') {
 }
 
 if (ocrSearchBarEl instanceof HTMLElement && ocrSearchInputEl instanceof HTMLInputElement && ocrSearchRegexEl instanceof HTMLInputElement) {
-  const ocrSearchSideEl = ocrSearchBarEl.querySelector('.ocr-search-side');
+  const ocrSearchTextPanelHostEl = ocrSearchTextPanelEl instanceof HTMLElement ? ocrSearchTextPanelEl : ocrSearchBarEl;
   const { wrapper: ocrSearchInputWrap, button: ocrSearchRegexButton } = createRegexToggleInput(ocrSearchInputEl, {
     getActive: () => ocrSearchRegexEl.checked === true,
     setActive: (next) => {
@@ -16763,11 +17927,7 @@ if (ocrSearchBarEl instanceof HTMLElement && ocrSearchInputEl instanceof HTMLInp
       refreshOcrSearch({ preserveScroll: true });
     },
   }, 'ocr-search-input-wrap');
-  if (ocrSearchSideEl instanceof HTMLElement) {
-    ocrSearchBarEl.insertBefore(ocrSearchInputWrap, ocrSearchSideEl);
-  } else {
-    ocrSearchBarEl.insertBefore(ocrSearchInputWrap, ocrSearchPrevEl);
-  }
+  ocrSearchTextPanelHostEl.insertBefore(ocrSearchInputWrap, ocrSearchRegexEl);
   ocrSearchRegexEl.addEventListener('change', () => {
     if (typeof ocrSearchRegexButton.syncState === 'function') {
       ocrSearchRegexButton.syncState();
@@ -23065,6 +24225,56 @@ ocrSourceTabEls.forEach((buttonEl) => {
   });
 });
 
+ocrSearchModeButtons().forEach((buttonEl) => {
+  buttonEl.addEventListener('click', () => {
+    const nextMode = normalizeOcrSearchMode(buttonEl.dataset.ocrSearchMode || 'text');
+    if (nextMode === ocrSearchMode) {
+      return;
+    }
+    ocrSearchMode = nextMode;
+    syncOcrSearchModeUi();
+    if (isOcrDataFieldMode() && ensureOcrDataFieldSource()) {
+      return;
+    }
+    refreshOcrSearch({ preserveScroll: true });
+  });
+});
+
+if (ocrSearchFieldSelectEl instanceof HTMLSelectElement) {
+  ocrSearchFieldSelectEl.addEventListener('change', () => {
+    if (!isOcrDataFieldMode()) {
+      return;
+    }
+    if (ensureOcrDataFieldSource()) {
+      return;
+    }
+    const nextFieldKey = typeof ocrSearchFieldSelectEl.value === 'string' ? ocrSearchFieldSelectEl.value.trim() : '';
+    const nextGroup = ocrDataFieldGroupByKey(nextFieldKey) || ocrDataFieldCurrentGroup();
+    ocrDataFieldSelection.fieldKey = nextGroup ? nextGroup.fieldKey : '';
+    ocrDataFieldSelection.matchIndex = 0;
+    refreshOcrSearch({ preserveScroll: true });
+  });
+}
+
+if (ocrSearchFieldHitFilterEl instanceof HTMLSelectElement) {
+  ocrSearchFieldHitFilterEl.addEventListener('change', () => {
+    const nextMode = normalizeMatchesFieldHitFilterMode(ocrSearchFieldHitFilterEl.value);
+    if (nextMode === matchesFieldHitFilterMode) {
+      syncOcrDataFieldHitFilterUi();
+      return;
+    }
+    matchesFieldHitFilterMode = nextMode;
+    window.localStorage.setItem(MATCHES_FIELD_HIT_FILTER_STORAGE_KEY, matchesFieldHitFilterMode);
+    syncOcrDataFieldHitFilterUi();
+    refreshLoadedMatchesView();
+    if (isOcrDataFieldMode()) {
+      refreshOcrSearch({ preserveScroll: true });
+    }
+  });
+}
+
+syncOcrSearchModeUi();
+
 ocrSearchInputEl.addEventListener('input', () => {
   refreshOcrSearch({ preserveScroll: true });
 });
@@ -23080,6 +24290,12 @@ ocrSearchPrevEl.addEventListener('click', () => {
 ocrSearchNextEl.addEventListener('click', () => {
   stepOcrSearch(1);
 });
+
+if (ocrSearchConfidenceEl instanceof HTMLButtonElement) {
+  ocrSearchConfidenceEl.addEventListener('click', () => {
+    openMatchesViewForOcrDataFieldRow(ocrDataFieldActiveRow());
+  });
+}
 
 ocrPageCurrentEl.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter') {

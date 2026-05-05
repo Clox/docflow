@@ -9443,58 +9443,24 @@ function bbox_overlap_length(float $leftStart, float $leftEnd, float $rightStart
 
 function bbox_main_direction(array $labelBbox, array $candidateBbox, ?int $labelLineIndex = null, ?int $candidateLineIndex = null): string
 {
-    $labelX0 = (float) ($labelBbox['x0'] ?? 0.0);
-    $labelX1 = (float) ($labelBbox['x1'] ?? 0.0);
-    $labelY0 = (float) ($labelBbox['y0'] ?? 0.0);
-    $labelY1 = (float) ($labelBbox['y1'] ?? 0.0);
-    $candidateX0 = (float) ($candidateBbox['x0'] ?? 0.0);
-    $candidateX1 = (float) ($candidateBbox['x1'] ?? 0.0);
-    $candidateY0 = (float) ($candidateBbox['y0'] ?? 0.0);
-    $candidateY1 = (float) ($candidateBbox['y1'] ?? 0.0);
-    $horizontalOverlap = bbox_overlap_length($labelX0, $labelX1, $candidateX0, $candidateX1);
-    $verticalOverlap = bbox_overlap_length($labelY0, $labelY1, $candidateY0, $candidateY1);
-    if ($labelLineIndex !== null && $candidateLineIndex !== null && $candidateLineIndex !== $labelLineIndex) {
-        if ($horizontalOverlap > 0.0) {
-            return $candidateLineIndex > $labelLineIndex ? 'down' : 'up';
-        }
-    }
-    if ($verticalOverlap > 0.0) {
-        $labelCenter = bbox_center_point($labelBbox);
-        $candidateCenter = bbox_center_point($candidateBbox);
-        return ((float) ($candidateCenter['x'] ?? 0.0)) >= ((float) ($labelCenter['x'] ?? 0.0)) ? 'right' : 'left';
-    }
-    if ($horizontalOverlap > 0.0) {
-        $labelCenter = bbox_center_point($labelBbox);
-        $candidateCenter = bbox_center_point($candidateBbox);
-        return ((float) ($candidateCenter['y'] ?? 0.0)) >= ((float) ($labelCenter['y'] ?? 0.0)) ? 'down' : 'up';
-    }
-
     $vector = bbox_gap_vector($labelBbox, $candidateBbox);
     $dx = (float) ($vector['dx'] ?? 0.0);
     $dy = (float) ($vector['dy'] ?? 0.0);
     if (abs($dx) < 0.001 && abs($dy) < 0.001) {
-        return 'right';
-    }
-
-    $angle = normalize_angle_360(rad2deg(atan2($dy, $dx)));
-    $references = [
-        'right' => 0.0,
-        'down' => 90.0,
-        'left' => 180.0,
-        'up' => 270.0,
-    ];
-
-    $bestDirection = 'right';
-    $bestDistance = PHP_FLOAT_MAX;
-    foreach ($references as $direction => $referenceAngle) {
-        $distance = angular_distance_degrees($angle, $referenceAngle);
-        if ($distance < $bestDistance) {
-            $bestDistance = $distance;
-            $bestDirection = $direction;
+        $labelCenter = bbox_center_point($labelBbox);
+        $candidateCenter = bbox_center_point($candidateBbox);
+        $dx = ((float) ($candidateCenter['x'] ?? 0.0)) - ((float) ($labelCenter['x'] ?? 0.0));
+        $dy = ((float) ($candidateCenter['y'] ?? 0.0)) - ((float) ($labelCenter['y'] ?? 0.0));
+        if (abs($dx) < 0.001 && abs($dy) < 0.001) {
+            return 'right';
         }
     }
 
-    return $bestDirection;
+    if (abs($dx) >= abs($dy)) {
+        return $dx >= 0.0 ? 'right' : 'left';
+    }
+
+    return $dy >= 0.0 ? 'down' : 'up';
 }
 
 function bbox_height(array $bbox): float
@@ -9756,18 +9722,32 @@ function candidate_position_penalty_details(
         'axis' => null,
         'diff' => 0.0,
         'normalizedDiff' => 0.0,
+        'labelBbox' => null,
+        'valueBbox' => null,
+        'pageNumber' => null,
+        'invalidReason' => null,
     ];
 
     $relation = resolve_candidate_geometry_relation($hit, $candidateStart, $candidateLineIndex, $candidateSpanText, $lineGeometries);
     if (!is_array($relation)) {
-        return $empty;
+        return [
+            ...$empty,
+            'penalty' => 1.0,
+            'axis' => 'invalid_bbox',
+            'invalidReason' => 'Ogiltig bbox',
+        ];
     }
 
     $labelBbox = is_array($relation['labelBbox'] ?? null) ? $relation['labelBbox'] : null;
     $candidateBbox = is_array($relation['candidateBbox'] ?? null) ? $relation['candidateBbox'] : null;
     $connector = is_array($relation['connector'] ?? null) ? $relation['connector'] : null;
     if ($labelBbox === null || $candidateBbox === null) {
-        return $empty;
+        return [
+            ...$empty,
+            'penalty' => 1.0,
+            'axis' => 'invalid_bbox',
+            'invalidReason' => 'Ogiltig bbox',
+        ];
     }
 
     $settings = normalize_matching_position_adjustment_settings($positionSettings);
@@ -10007,6 +9987,10 @@ function candidate_confidence_components(
         'mainDirection' => is_string($positionPenaltyDetails['mainDirection'] ?? null) ? (string) $positionPenaltyDetails['mainDirection'] : null,
         'positionDiff' => is_numeric($positionPenaltyDetails['diff'] ?? null) ? (float) $positionPenaltyDetails['diff'] : null,
         'positionNormalizedDiff' => is_numeric($positionPenaltyDetails['normalizedDiff'] ?? null) ? (float) ($positionPenaltyDetails['normalizedDiff']) : null,
+        'labelBbox' => is_array($positionPenaltyDetails['labelBbox'] ?? null) ? $positionPenaltyDetails['labelBbox'] : null,
+        'valueBbox' => is_array($positionPenaltyDetails['valueBbox'] ?? null) ? $positionPenaltyDetails['valueBbox'] : null,
+        'pageNumber' => is_numeric($positionPenaltyDetails['pageNumber'] ?? null) ? (int) $positionPenaltyDetails['pageNumber'] : null,
+        'invalidReason' => is_string($positionPenaltyDetails['invalidReason'] ?? null) ? (string) $positionPenaltyDetails['invalidReason'] : null,
         'contentPenalty' => max(0.0, $contentPenalty),
         'betweenText' => $betweenText,
         'noiseText' => $noiseText,
@@ -11663,7 +11647,11 @@ function add_extraction_field_match(
     ?float $finalConfidence = null,
     ?float $verticalDistancePenalty = null,
     ?float $verticalDistance = null,
-    ?float $verticalNormalizedDistance = null
+    ?float $verticalNormalizedDistance = null,
+    ?string $invalidReason = null,
+    ?array $labelBbox = null,
+    ?array $valueBbox = null,
+    ?int $pageNumber = null
 ): void {
     if ($lineIndex < 0 || $start < 0 || $value === null) {
         return;
@@ -11711,6 +11699,20 @@ function add_extraction_field_match(
     }
     if (is_numeric($verticalNormalizedDistance)) {
         $candidate['verticalNormalizedDistance'] = max(0.0, (float) $verticalNormalizedDistance);
+    }
+    if (is_string($invalidReason) && trim($invalidReason) !== '') {
+        $candidate['invalidReason'] = trim($invalidReason);
+    } elseif (is_string($positionPenaltyAxis) && trim($positionPenaltyAxis) === 'invalid_bbox') {
+        $candidate['invalidReason'] = 'Ogiltig bbox';
+    }
+    if (is_array($labelBbox)) {
+        $candidate['labelBbox'] = $labelBbox;
+    }
+    if (is_array($valueBbox)) {
+        $candidate['valueBbox'] = $valueBbox;
+    }
+    if (is_int($pageNumber) && $pageNumber > 0) {
+        $candidate['pageNumber'] = $pageNumber;
     }
     if (is_numeric($otherMatchKeyPenalty)) {
         $candidate['otherMatchKeyPenalty'] = max(0.0, (float) $otherMatchKeyPenalty);
@@ -11889,7 +11891,11 @@ function collect_labeled_candidate_matches(
                         null,
                         is_numeric($confidenceComponents['verticalDistancePenalty'] ?? null) ? (float) $confidenceComponents['verticalDistancePenalty'] : null,
                         is_numeric($confidenceComponents['verticalDistance'] ?? null) ? (float) $confidenceComponents['verticalDistance'] : null,
-                        is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null
+                        is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null,
+                        is_string($confidenceComponents['invalidReason'] ?? null) ? (string) $confidenceComponents['invalidReason'] : null,
+                        is_array($confidenceComponents['labelBbox'] ?? null) ? $confidenceComponents['labelBbox'] : null,
+                        is_array($confidenceComponents['valueBbox'] ?? null) ? $confidenceComponents['valueBbox'] : null,
+                        is_numeric($confidenceComponents['pageNumber'] ?? null) ? (int) $confidenceComponents['pageNumber'] : null
                     );
                 }
             }
@@ -11951,7 +11957,11 @@ function collect_labeled_candidate_matches(
                     null,
                     is_numeric($confidenceComponents['verticalDistancePenalty'] ?? null) ? (float) $confidenceComponents['verticalDistancePenalty'] : null,
                     is_numeric($confidenceComponents['verticalDistance'] ?? null) ? (float) $confidenceComponents['verticalDistance'] : null,
-                    is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null
+                    is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null,
+                    is_string($confidenceComponents['invalidReason'] ?? null) ? (string) $confidenceComponents['invalidReason'] : null,
+                    is_array($confidenceComponents['labelBbox'] ?? null) ? $confidenceComponents['labelBbox'] : null,
+                    is_array($confidenceComponents['valueBbox'] ?? null) ? $confidenceComponents['valueBbox'] : null,
+                    is_numeric($confidenceComponents['pageNumber'] ?? null) ? (int) $confidenceComponents['pageNumber'] : null
                 );
             }
         }
@@ -12022,7 +12032,11 @@ function collect_labeled_candidate_matches(
                     null,
                     is_numeric($confidenceComponents['verticalDistancePenalty'] ?? null) ? (float) $confidenceComponents['verticalDistancePenalty'] : null,
                     is_numeric($confidenceComponents['verticalDistance'] ?? null) ? (float) $confidenceComponents['verticalDistance'] : null,
-                    is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null
+                    is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null,
+                    is_string($confidenceComponents['invalidReason'] ?? null) ? (string) $confidenceComponents['invalidReason'] : null,
+                    is_array($confidenceComponents['labelBbox'] ?? null) ? $confidenceComponents['labelBbox'] : null,
+                    is_array($confidenceComponents['valueBbox'] ?? null) ? $confidenceComponents['valueBbox'] : null,
+                    is_numeric($confidenceComponents['pageNumber'] ?? null) ? (int) $confidenceComponents['pageNumber'] : null
                 );
             }
         }
@@ -12057,13 +12071,17 @@ function anchored_candidate_line_is_in_scope(array $lineGeometries, int $hitLine
     return $hitPageNumber === $candidatePageNumber;
 }
 
-function apply_anchored_fallback_position_penalty(array $components, int $hitLineIndex, int $candidateLineIndex): array
+function apply_anchored_position_geometry_policy(array $components, int $hitLineIndex, int $candidateLineIndex): array
 {
     if ($candidateLineIndex <= $hitLineIndex) {
         return $components;
     }
 
     $mainDirection = is_string($components['mainDirection'] ?? null) ? (string) $components['mainDirection'] : '';
+    $positionPenaltyAxis = is_string($components['positionPenaltyAxis'] ?? null) ? (string) $components['positionPenaltyAxis'] : '';
+    if ($positionPenaltyAxis === 'invalid_bbox') {
+        return $components;
+    }
     $lineDistance = max(0, $candidateLineIndex - $hitLineIndex);
     if ($mainDirection === 'down' || $mainDirection === 'right') {
         $existingPenalty = is_numeric($components['positionPenalty'] ?? null) ? (float) $components['positionPenalty'] : 0.0;
@@ -12072,13 +12090,13 @@ function apply_anchored_fallback_position_penalty(array $components, int $hitLin
         return $components;
     }
 
-    $fallbackPenalty = min(0.85, max(0, $lineDistance - 1) * 0.04);
-    $existingPenalty = is_numeric($components['positionPenalty'] ?? null) ? (float) $components['positionPenalty'] : 0.0;
-    $components['positionPenalty'] = max($existingPenalty, $fallbackPenalty);
-    $components['positionPenaltyAxis'] = 'line';
-    $components['mainDirection'] = 'down';
-    $components['positionDiff'] = (float) $lineDistance;
-    $components['positionNormalizedDiff'] = (float) $lineDistance;
+    if ($mainDirection === 'left' || $mainDirection === 'up') {
+        return $components;
+    }
+
+    $components['positionPenalty'] = 1.0;
+    $components['positionPenaltyAxis'] = 'invalid_bbox';
+    $components['invalidReason'] = 'Ogiltig bbox';
 
     return $components;
 }
@@ -12116,7 +12134,7 @@ function add_anchored_extraction_field_match(
         $lineGeometries,
         $spanText
     );
-    $confidenceComponents = apply_anchored_fallback_position_penalty(
+    $confidenceComponents = apply_anchored_position_geometry_policy(
         $confidenceComponents,
         $hitLineIndex,
         $candidateLineIndex
@@ -12462,7 +12480,7 @@ function apply_extraction_field_acceptance_threshold(array $results, float $acce
     return $results;
 }
 
-function document_date_result_matches(array $result): array
+function document_date_result_matches(array $result, array $lineGeometries = []): array
 {
     $matchesByKey = [];
     $candidates = is_array($result['candidates'] ?? null) ? $result['candidates'] : [];
@@ -12482,35 +12500,32 @@ function document_date_result_matches(array $result): array
         $confidence = isset($candidate['confidence'])
             ? clamp_confidence((float) $candidate['confidence'])
             : clamp_confidence(((int) ($candidate['score'] ?? 0)) / 180);
+        $candidateBbox = null;
+        $candidatePageNumber = null;
+        $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+        if ($lineGeometry !== null) {
+            $candidateLength = is_string($raw) && $raw !== '' ? strlen($raw) : (is_string($value) ? strlen($value) : 1);
+            $candidateBbox = line_geometry_span_bbox($lineGeometry, $start, $start + max(1, $candidateLength));
+            $candidatePageNumber = matching_line_page_number($lineGeometries, $lineIndex);
+        }
         add_extraction_field_match(
-            $matchesByKey,
-            $lineIndex,
-            $start,
-            $value,
-            $raw,
-            $raw,
-            'document_date_heuristic',
-            $confidence,
-            'document_date_heuristic',
-            null,
-            is_numeric($candidate['rawScore'] ?? null)
+            matchesByKey: $matchesByKey,
+            lineIndex: $lineIndex,
+            start: $start,
+            value: $value,
+            raw: $raw,
+            matchText: $raw,
+            source: 'document_date_heuristic',
+            confidence: $confidence,
+            matchType: 'document_date_heuristic',
+            score: is_numeric($candidate['rawScore'] ?? null)
                 ? (float) $candidate['rawScore']
                 : (float) ((int) ($candidate['score'] ?? 0)),
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            $confidence,
-            $confidence
+            baseConfidence: $confidence,
+            finalConfidence: $confidence,
+            labelBbox: $candidateBbox,
+            valueBbox: $candidateBbox,
+            pageNumber: $candidatePageNumber
         );
     }
 
@@ -12524,31 +12539,19 @@ function document_date_result_matches(array $result): array
                     ? (float) $result['selectedCandidate']['score']
                     : null);
             add_extraction_field_match(
-                $matchesByKey,
-                $lineIndex,
-                0,
-                $result['value'],
-                is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
-                is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
-                is_string($result['source'] ?? null) ? (string) $result['source'] : 'document_date_heuristic',
-                $confidence,
-                'document_date_heuristic',
-                null,
-                $rawScore,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                $confidence,
-                $confidence
+                matchesByKey: $matchesByKey,
+                lineIndex: $lineIndex,
+                start: 0,
+                value: $result['value'],
+                raw: is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
+                matchText: is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
+                source: is_string($result['source'] ?? null) ? (string) $result['source'] : 'document_date_heuristic',
+                confidence: $confidence,
+                matchType: 'document_date_heuristic',
+                score: $rawScore,
+                baseConfidence: $confidence,
+                finalConfidence: $confidence,
+                pageNumber: $lineIndex >= 0 ? matching_line_page_number($lineGeometries, $lineIndex) : null
             );
         }
     }
@@ -12587,7 +12590,8 @@ function extraction_field_rule_set_position(array $ruleSet, string $type): strin
 function collect_document_candidate_matches(
     array $lines,
     callable $candidateExtractor,
-    float $confidence = 0.55
+    float $confidence = 0.55,
+    array $lineGeometries = []
 ): array {
     $matchesByKey = [];
     foreach ($lines as $lineIndex => $line) {
@@ -12613,6 +12617,19 @@ function collect_document_candidate_matches(
                 continue;
             }
 
+            $candidateBbox = null;
+            $candidatePageNumber = null;
+            $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+            if ($lineGeometry !== null) {
+                $candidateLength = is_string($raw) && $raw !== ''
+                    ? strlen($raw)
+                    : (is_string($candidate['matchText'] ?? null)
+                        ? strlen((string) $candidate['matchText'])
+                        : (is_scalar($value) ? strlen((string) $value) : 1));
+                $candidateBbox = line_geometry_span_bbox($lineGeometry, $start, $start + max(1, $candidateLength));
+                $candidatePageNumber = matching_line_page_number($lineGeometries, $lineIndex);
+            }
+
             add_extraction_field_match(
                 $matchesByKey,
                 $lineIndex,
@@ -12622,7 +12639,15 @@ function collect_document_candidate_matches(
                 is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
                 'pattern',
                 $confidence,
-                is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null
+                is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                $candidateBbox,
+                $candidateBbox,
+                $candidatePageNumber
             );
         }
     }
@@ -12832,7 +12857,7 @@ function extract_unlabeled_pattern_field_result(array $lines, string $pattern, b
     return empty_extraction_field_result();
 }
 
-function extract_unlabeled_pattern_field_matches(array $lines, string $pattern, bool $preferCaptureGroupValue = true): array
+function extract_unlabeled_pattern_field_matches(array $lines, string $pattern, bool $preferCaptureGroupValue = true, array $lineGeometries = []): array
 {
     $resolvedPattern = trim($pattern);
     if ($resolvedPattern === '') {
@@ -12859,16 +12884,32 @@ function extract_unlabeled_pattern_field_matches(array $lines, string $pattern, 
                 continue;
             }
 
+            $candidateBbox = null;
+            $candidatePageNumber = null;
+            $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+            if ($lineGeometry !== null) {
+                $candidateLength = is_string($raw) && $raw !== ''
+                    ? strlen($raw)
+                    : (is_string($candidate['matchText'] ?? null)
+                        ? strlen((string) $candidate['matchText'])
+                        : (is_scalar($value) ? strlen((string) $value) : 1));
+                $candidateBbox = line_geometry_span_bbox($lineGeometry, $start, $start + max(1, $candidateLength));
+                $candidatePageNumber = matching_line_page_number($lineGeometries, $lineIndex);
+            }
+
             add_extraction_field_match(
-                $matchesByKey,
-                $lineIndex,
-                $start,
-                $value,
-                $raw,
-                is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
-                'pattern',
-                0.55,
-                is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern'
+                matchesByKey: $matchesByKey,
+                lineIndex: $lineIndex,
+                start: $start,
+                value: $value,
+                raw: $raw,
+                matchText: is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
+                source: 'pattern',
+                confidence: 0.55,
+                matchType: is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern',
+                labelBbox: $candidateBbox,
+                valueBbox: $candidateBbox,
+                pageNumber: $candidatePageNumber
             );
         }
     }
@@ -13027,13 +13068,13 @@ function extract_configured_rule_set_field_matches(
 
     if (!$requiresSearchTerms) {
         if (in_array($type, ['regex', 'date'], true)) {
-            return annotate_extraction_field_matches_with_scope(
-                extract_unlabeled_pattern_field_matches($lines, $valuePattern, $preferCaptureGroupValue),
-                $scopeDebug
-            );
+        return annotate_extraction_field_matches_with_scope(
+            extract_unlabeled_pattern_field_matches($lines, $valuePattern, $preferCaptureGroupValue, $lineGeometries),
+            $scopeDebug
+        );
         }
         return annotate_extraction_field_matches_with_scope(
-            collect_document_candidate_matches($lines, $candidateExtractor),
+            collect_document_candidate_matches($lines, $candidateExtractor, 0.55, $lineGeometries),
             $scopeDebug
         );
     }
@@ -13106,9 +13147,9 @@ function extract_configured_text_field_results(
         $matchedRuleSet = default_extraction_field_rule_set();
         $matches = [];
         if ($extractor === 'document_date') {
-            $result = extract_document_date_field_result($lines);
-            $ruleSets = [];
-            $matches = document_date_result_matches($result);
+        $result = extract_document_date_field_result($lines);
+        $ruleSets = [];
+            $matches = document_date_result_matches($result, $lineGeometries);
         } else {
             $result = empty_extraction_field_result();
             foreach ($ruleSets as $ruleSetIndex => $ruleSet) {
@@ -13325,8 +13366,12 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'verticalNormalizedDistance' => is_numeric($match['verticalNormalizedDistance'] ?? null) ? max(0.0, (float) $match['verticalNormalizedDistance']) : null,
                         'positionPenaltyAxis' => is_string($match['positionPenaltyAxis'] ?? null) ? trim((string) $match['positionPenaltyAxis']) : null,
                         'mainDirection' => is_string($match['mainDirection'] ?? null) ? trim((string) $match['mainDirection']) : null,
+                        'invalidReason' => is_string($match['invalidReason'] ?? null) ? trim((string) $match['invalidReason']) : null,
                         'positionDiff' => is_numeric($match['positionDiff'] ?? null) ? (float) $match['positionDiff'] : null,
                         'positionNormalizedDiff' => is_numeric($match['positionNormalizedDiff'] ?? null) ? (float) $match['positionNormalizedDiff'] : null,
+                        'labelBbox' => is_array($match['labelBbox'] ?? null) ? $match['labelBbox'] : null,
+                        'valueBbox' => is_array($match['valueBbox'] ?? null) ? $match['valueBbox'] : null,
+                        'pageNumber' => is_int($match['pageNumber'] ?? null) ? (int) $match['pageNumber'] : null,
                         'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : null,
                         'noiseSegments' => array_values(array_filter(array_map(
                             static function ($segment): ?array {

@@ -117,6 +117,10 @@ try {
                     'verticalNormalizedDistance' => is_numeric($match['verticalNormalizedDistance'] ?? null) ? (float) $match['verticalNormalizedDistance'] : null,
                     'positionPenaltyAxis' => is_string($match['positionPenaltyAxis'] ?? null) ? trim((string) $match['positionPenaltyAxis']) : '',
                     'mainDirection' => is_string($match['mainDirection'] ?? null) ? trim((string) $match['mainDirection']) : '',
+                    'invalidReason' => is_string($match['invalidReason'] ?? null) ? trim((string) $match['invalidReason']) : '',
+                    'labelBbox' => is_array($match['labelBbox'] ?? null) ? $match['labelBbox'] : null,
+                    'valueBbox' => is_array($match['valueBbox'] ?? null) ? $match['valueBbox'] : null,
+                    'pageNumber' => is_int($match['pageNumber'] ?? null) ? (int) $match['pageNumber'] : null,
                     'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : '',
                     'noiseSegments' => array_values(array_filter(array_map(
                         static function ($segment): ?array {
@@ -227,6 +231,10 @@ try {
                     'verticalNormalizedDistance' => $index === 0 && is_numeric($firstMatch['verticalNormalizedDistance'] ?? null) ? (float) $firstMatch['verticalNormalizedDistance'] : null,
                     'positionPenaltyAxis' => $index === 0 && is_string($firstMatch['positionPenaltyAxis'] ?? null) ? trim((string) $firstMatch['positionPenaltyAxis']) : '',
                     'mainDirection' => $index === 0 && is_string($firstMatch['mainDirection'] ?? null) ? trim((string) $firstMatch['mainDirection']) : '',
+                    'invalidReason' => $index === 0 && is_string($firstMatch['invalidReason'] ?? null) ? trim((string) $firstMatch['invalidReason']) : '',
+                    'labelBbox' => $index === 0 && is_array($firstMatch['labelBbox'] ?? null) ? $firstMatch['labelBbox'] : null,
+                    'valueBbox' => $index === 0 && is_array($firstMatch['valueBbox'] ?? null) ? $firstMatch['valueBbox'] : null,
+                    'pageNumber' => $index === 0 && is_int($firstMatch['pageNumber'] ?? null) ? (int) $firstMatch['pageNumber'] : null,
                     'noiseText' => $index === 0 && is_string($firstMatch['noiseText'] ?? null) ? (string) $firstMatch['noiseText'] : '',
                     'noiseSegments' => $index === 0
                         ? array_values(array_filter(array_map(

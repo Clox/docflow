@@ -1610,19 +1610,126 @@ body.is-resizing-sidebar {
 
 .ocr-search-bar {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  max-width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  position: relative;
+  width: 450px;
+  min-width: 450px;
+  max-width: 450px;
+  flex: 0 0 450px;
   margin-right: 10px;
-  min-height: var(--ocr-toolbar-control-height);
+  min-height: 54px;
   box-sizing: border-box;
-  padding: 4px 10px;
+  padding: 2px 10px 4px;
   border: 1px solid #d8dee8;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
   cursor: default;
+}
+
+.ocr-search-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+  width: 100%;
+  padding-right: 82px;
+}
+
+.ocr-search-mode-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 3px;
+  padding: 2px;
+  border: 1px solid #d8dee8;
+  border-radius: 999px;
+  background: #f8fafc;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  width: max-content;
+}
+
+.ocr-search-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+#ocr-search-bar[data-ocr-search-mode="text"] .ocr-search-filter {
+  display: none !important;
+}
+
+.ocr-search-filter-label {
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.ocr-search-filter .matches-filter-select {
+  min-width: 180px;
+}
+
+.segmented-control-button {
+  min-height: 24px;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #475569;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.segmented-control-button:hover {
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.segmented-control-button.is-active {
+  background: #fff;
+  color: #0f3d86;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.ocr-search-content-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  margin-top: auto;
+  padding-top: 2px;
+  padding-right: 0;
+}
+
+.ocr-search-panel {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.ocr-search-panel--text {
+  flex: 1 1 auto;
+}
+
+
+#ocr-search-field-select {
+  width: 250px;
+  min-width: 250px;
+  max-width: 250px;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
 }
 
 .ocr-toolbar-menu-wrap {
@@ -1726,7 +1833,8 @@ body.is-resizing-sidebar {
   top: 8px;
   left: 12px;
   right: 12px;
-  z-index: 3;
+  z-index: 100;
+  isolation: isolate;
   display: flex;
   align-items: flex-end;
   gap: 12px;
@@ -1755,19 +1863,96 @@ body.is-resizing-sidebar {
 }
 
 .ocr-search-side {
-  display: flex;
-  flex-direction: column;
-  align-self: stretch;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 2px;
-  min-width: 0;
+  position: static;
+  display: contents;
 }
 
 .ocr-search-nav-row {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  align-self: center;
+  margin-left: auto;
+  order: 2;
+}
+
+.ocr-search-confidence-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  align-self: center;
+  min-height: 24px;
+  order: 1;
+}
+
+.ocr-search-confidence-row.hidden {
+  display: none;
+}
+
+.ocr-search-status {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  flex: 0 0 auto;
+  max-width: 78px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  pointer-events: none;
+}
+
+.ocr-search-confidence {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0f172a;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ocr-search-confidence-value {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid #d8dee8;
+  border-radius: 999px;
+  background: #f8fafc;
+}
+
+.ocr-search-confidence:hover .ocr-search-confidence-value {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-color: #94a3b8;
+}
+
+.ocr-search-confidence:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.ocr-search-confidence:focus-visible .ocr-search-confidence-value {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-color: #94a3b8;
+}
+
+.ocr-search-confidence:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ocr-search-confidence:disabled .ocr-search-confidence-value {
+  text-decoration: none;
 }
 
 .ocr-page-nav,
@@ -1862,8 +2047,8 @@ body.is-resizing-sidebar {
 }
 
 #ocr-search-bar .ocr-search-input-wrap {
-  width: min(320px, 28vw);
-  min-width: 180px;
+  width: 100%;
+  min-width: 220px;
   grid-template-columns: minmax(0, 1fr) var(--inline-input-accessories-width);
   border: 1px solid #ccc;
   border-radius: 4px;
@@ -2771,10 +2956,61 @@ body.is-resizing-sidebar {
   opacity: var(--ocr-page-surface-opacity, 1);
 }
 
+.ocr-datafield-box {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: 3px;
+  border: 2px solid rgba(180, 135, 15, 0.6);
+  background: rgba(248, 227, 139, 0.72);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.82) inset;
+}
+
+.ocr-datafield-box--key {
+  border-color: rgba(180, 135, 15, 0.58);
+  background: rgba(248, 227, 139, 0.68);
+}
+
+.ocr-datafield-box--value {
+  border-color: rgba(180, 135, 15, 0.62);
+  background: rgba(248, 227, 139, 0.78);
+}
+
+.ocr-datafield-box.is-active {
+  box-shadow:
+    0 0 0 2px rgba(177, 95, 8, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+  border-color: rgba(177, 95, 8, 0.65);
+  background: rgba(243, 179, 61, 0.9);
+}
+
+.ocr-datafield-connections {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.ocr-datafield-connection {
+  fill: none;
+  stroke: rgba(180, 135, 15, 0.62);
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  marker-end: url(#ocr-datafield-arrowhead);
+}
+
+.ocr-datafield-connection.is-active {
+  stroke: rgba(177, 95, 8, 0.95);
+  stroke-width: 2.75;
+}
+
 
 
 .ocr-word-box {
   position: absolute;
+  z-index: 3;
   padding: 0;
   border: 1px solid rgba(15, 23, 42, 0.22);
   background: rgba(255, 255, 255, 0.82);
@@ -2783,6 +3019,14 @@ body.is-resizing-sidebar {
   user-select: none;
   cursor: default;
   transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.ocr-pages-view.is-datafield-mode .ocr-word-box {
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.ocr-pages-view.is-datafield-mode .ocr-word-box.is-active {
+  background: rgba(243, 179, 61, 0.76);
 }
 
 .ocr-word-box:hover {
@@ -2809,6 +3053,21 @@ body.is-resizing-sidebar {
 .ocr-word-box.is-active {
   background: rgba(243, 179, 61, 0.92);
   border-color: rgba(177, 95, 8, 0.65);
+}
+
+.ocr-word-box.is-datafield-key {
+  background: rgba(37, 99, 235, 0.22);
+  border-color: rgba(37, 99, 235, 0.72);
+}
+
+.ocr-word-box.is-datafield-value {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: rgba(245, 158, 11, 0.72);
+}
+
+.ocr-word-box.is-active.is-datafield-key,
+.ocr-word-box.is-active.is-datafield-value {
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12), 0 0 0 2px rgba(59, 130, 246, 0.18);
 }
 
 .ocr-page-highlight,
@@ -2840,6 +3099,22 @@ body.is-resizing-sidebar {
 
 .ocr-page-highlight mark.is-active {
   background: #f3b33d;
+}
+
+.ocr-page-highlight mark.is-datafield-key {
+  background: rgba(37, 99, 235, 0.22);
+}
+
+.ocr-page-highlight mark.is-datafield-value {
+  background: rgba(245, 158, 11, 0.22);
+}
+
+.ocr-page-highlight mark.is-active.is-datafield-key {
+  background: rgba(37, 99, 235, 0.42);
+}
+
+.ocr-page-highlight mark.is-active.is-datafield-value {
+  background: rgba(245, 158, 11, 0.42);
 }
 
 .ocr-page-text {
@@ -3153,6 +3428,16 @@ body.is-resizing-sidebar {
 .matches-table tbody tr.matches-row-zero-confidence td {
   color: #6b7280;
   opacity: 0.42;
+}
+
+.matches-table tbody tr.matches-datafield-row.is-target td {
+  opacity: 1;
+  background: #eef6ff;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.22);
+}
+
+.matches-table tbody tr.matches-datafield-row.is-target td.matches-group-detail-start {
+  background: #e7f0ff;
 }
 
 .matches-table .is-numeric {

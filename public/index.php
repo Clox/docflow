@@ -286,15 +286,39 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
               value="50"
               aria-label="Blandning mellan PDF-bakgrund och OCR-lager">
           </div>
-          <div id="ocr-search-bar" class="ocr-search-bar hidden">
-            <input id="ocr-search-input" type="text" placeholder="Sök i OCR">
-            <input id="ocr-search-regex" type="checkbox" hidden>
-            <div class="ocr-search-side">
-              <div class="ocr-search-nav-row">
-                <button id="ocr-search-prev" type="button" aria-label="Föregående träff">↑</button>
-                <button id="ocr-search-next" type="button" aria-label="Nästa träff">↓</button>
+          <div id="ocr-search-bar" class="ocr-search-bar hidden" data-ocr-search-mode="text">
+            <div class="ocr-search-mode-row">
+              <div id="ocr-search-mode-toggle" class="ocr-search-mode-toggle segmented-control" role="tablist" aria-label="Sökläge">
+                <button type="button" class="segmented-control-button is-active" data-ocr-search-mode="text" aria-pressed="true">Text</button>
+                <button type="button" class="segmented-control-button" data-ocr-search-mode="datafield" aria-pressed="false">Datafält</button>
+              </div>
+              <div class="ocr-search-filter">
+                <select id="ocr-search-field-hit-filter" class="matches-filter-select">
+                  <option value="results">Endast resultat</option>
+                  <option value="candidates">Resultat + kandidater</option>
+                  <option value="all">Alla träffar</option>
+                </select>
               </div>
               <span id="ocr-search-status" class="ocr-search-status"></span>
+            </div>
+            <div class="ocr-search-content-row">
+              <div class="ocr-search-panel ocr-search-panel--text" id="ocr-search-text-panel">
+                <input id="ocr-search-input" type="text" placeholder="Sök i OCR">
+                <input id="ocr-search-regex" type="checkbox" hidden>
+              </div>
+              <div class="ocr-search-panel ocr-search-panel--datafield hidden" id="ocr-search-datafield-panel">
+                <select id="ocr-search-field-select" aria-label="Välj datafält"></select>
+              </div>
+              <div class="ocr-search-side">
+                <div class="ocr-search-nav-row">
+                  <button id="ocr-search-prev" type="button" aria-label="Föregående träff">↑</button>
+                  <button id="ocr-search-next" type="button" aria-label="Nästa träff">↓</button>
+                </div>
+                <div id="ocr-search-confidence-row" class="ocr-search-confidence-row hidden">
+                  <button id="ocr-search-confidence" class="ocr-search-confidence" type="button">
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <div id="ocr-menu-wrap" class="ocr-toolbar-menu-wrap hidden">
