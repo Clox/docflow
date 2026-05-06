@@ -11356,6 +11356,175 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
     return $candidates;
 }
 
+function extraction_field_document_line_entries(array $lines): array
+{
+    $entries = [];
+    $offset = 0;
+    foreach ($lines as $lineIndex => $line) {
+        if (!is_int($lineIndex)) {
+            continue;
+        }
+
+        $text = is_string($line) ? (string) $line : '';
+        $length = strlen($text);
+        $entries[$lineIndex] = [
+            'lineIndex' => $lineIndex,
+            'start' => $offset,
+            'length' => $length,
+            'text' => $text,
+        ];
+        $offset += $length + 1;
+    }
+
+    return $entries;
+}
+
+function extraction_field_document_line_index_for_offset(array $lineEntries, int $offset): ?int
+{
+    $resolvedLineIndex = null;
+    foreach ($lineEntries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $start = is_int($entry['start'] ?? null) ? (int) $entry['start'] : -1;
+        if ($start > $offset) {
+            break;
+        }
+
+        $resolvedLineIndex = is_int($entry['lineIndex'] ?? null) ? (int) $entry['lineIndex'] : null;
+    }
+
+    return $resolvedLineIndex;
+}
+
+function extraction_field_document_span_bbox(array $lineEntries, array $lineGeometries, int $start, int $end): ?array
+{
+    if ($start < 0 || $end <= $start) {
+        return null;
+    }
+
+    $bbox = null;
+    foreach ($lineEntries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $lineIndex = is_int($entry['lineIndex'] ?? null) ? (int) $entry['lineIndex'] : null;
+        $lineStart = is_int($entry['start'] ?? null) ? (int) $entry['start'] : -1;
+        $lineLength = is_int($entry['length'] ?? null) ? (int) $entry['length'] : -1;
+        if ($lineIndex === null || $lineStart < 0 || $lineLength < 0) {
+            continue;
+        }
+
+        $lineEnd = $lineStart + $lineLength;
+        if ($lineEnd <= $start || $lineStart >= $end) {
+            continue;
+        }
+
+        $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+        if ($lineGeometry === null) {
+            continue;
+        }
+
+        $localStart = max(0, $start - $lineStart);
+        $localEnd = min($lineLength, $end - $lineStart);
+        if ($localEnd <= $localStart) {
+            continue;
+        }
+
+        $lineBBox = line_geometry_span_bbox($lineGeometry, $localStart, $localEnd);
+        if ($lineBBox === null) {
+            continue;
+        }
+
+        if ($bbox === null) {
+            $bbox = $lineBBox;
+            continue;
+        }
+
+        $bbox = [
+            'x0' => min($bbox['x0'], $lineBBox['x0']),
+            'y0' => min($bbox['y0'], $lineBBox['y0']),
+            'x1' => max($bbox['x1'], $lineBBox['x1']),
+            'y1' => max($bbox['y1'], $lineBBox['y1']),
+        ];
+    }
+
+    return $bbox;
+}
+
+function extraction_field_document_pattern_candidates_from_lines(array $lines, string $searchString, bool $isRegex, array $lineGeometries = [], bool $preferCaptureGroupValue = true): array
+{
+    $resolvedPattern = trim($searchString);
+    if ($resolvedPattern === '') {
+        return [];
+    }
+
+    $lineEntries = extraction_field_document_line_entries($lines);
+    if ($lineEntries === []) {
+        return [];
+    }
+
+    $documentText = '';
+    foreach ($lineEntries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $documentText .= is_string($entry['text'] ?? null) ? (string) $entry['text'] : '';
+        $documentText .= "\n";
+    }
+
+    $matches = extraction_field_pattern_candidates_from_text($documentText, $resolvedPattern, $isRegex, 0, $preferCaptureGroupValue);
+    if ($matches === []) {
+        return [];
+    }
+
+    $candidates = [];
+    foreach ($matches as $candidate) {
+        if (!is_array($candidate)) {
+            continue;
+        }
+
+        $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+        $matchText = is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw;
+        $value = $candidate['value'] ?? null;
+        $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+        if ($value === null || $start < 0) {
+            continue;
+        }
+
+        $rawLength = is_string($raw) ? strlen($raw) : (is_string($matchText) ? strlen($matchText) : (is_scalar($value) ? strlen((string) $value) : 1));
+        $end = $start + max(1, $rawLength);
+        $lineIndex = extraction_field_document_line_index_for_offset($lineEntries, $start);
+        if ($lineIndex === null) {
+            continue;
+        }
+
+        $lineEntry = is_array($lineEntries[$lineIndex] ?? null) ? $lineEntries[$lineIndex] : null;
+        $lineStart = is_array($lineEntry) && is_int($lineEntry['start'] ?? null) ? (int) $lineEntry['start'] : -1;
+        $lineLength = is_array($lineEntry) && is_int($lineEntry['length'] ?? null) ? (int) $lineEntry['length'] : -1;
+        $candidateStart = $lineStart >= 0 ? max(0, $start - $lineStart) : 0;
+        $candidatePageNumber = matching_line_page_number($lineGeometries, $lineIndex);
+
+        $candidates[] = [
+            'value' => $value,
+            'raw' => $raw,
+            'matchText' => $matchText,
+            'start' => $candidateStart,
+            'spanText' => $raw,
+            'matchType' => is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern',
+            'lineIndex' => $lineIndex,
+            'labelBbox' => null,
+            'valueBbox' => null,
+            'pageNumber' => $candidatePageNumber,
+        ];
+    }
+
+    return $candidates;
+}
+
 function apply_extraction_field_normalization(mixed $value, array $ruleSet): mixed
 {
     if (!is_string($value)) {
@@ -12869,97 +13038,64 @@ function extract_generic_text_field_matches(
 
 function extract_unlabeled_pattern_field_result(array $lines, string $pattern, bool $preferCaptureGroupValue = true): array
 {
-    $resolvedPattern = trim($pattern);
-    if ($resolvedPattern === '') {
+    $candidates = extraction_field_document_pattern_candidates_from_lines($lines, $pattern, true, [], $preferCaptureGroupValue);
+    if ($candidates === []) {
         return empty_extraction_field_result();
     }
 
-    foreach ($lines as $lineIndex => $line) {
-        $resolvedLine = is_string($line) ? $line : '';
-        if ($resolvedLine === '') {
-            continue;
-        }
-
-        $candidates = extraction_field_pattern_candidates_from_text($resolvedLine, $resolvedPattern, true, 0, $preferCaptureGroupValue);
-        foreach ($candidates as $candidate) {
-            if (!is_array($candidate)) {
-                continue;
-            }
-
-            $value = $candidate['value'] ?? null;
-            if ($value === null) {
-                continue;
-            }
-
-            return [
-                'value' => $value,
-                'confidence' => 1.0,
-                'lineIndex' => is_int($lineIndex) ? $lineIndex : null,
-                'source' => 'pattern',
-                'raw' => is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null,
-                'matchText' => is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : (is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null),
-            ];
-        }
+    $candidate = is_array($candidates[0] ?? null) ? $candidates[0] : null;
+    if ($candidate === null) {
+        return empty_extraction_field_result();
     }
 
-    return empty_extraction_field_result();
+    return [
+        'value' => $candidate['value'] ?? null,
+        'confidence' => 1.0,
+        'lineIndex' => is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : null,
+        'source' => 'pattern',
+        'raw' => is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null,
+        'matchText' => is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : (is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null),
+        'labelBbox' => is_array($candidate['labelBbox'] ?? null) ? $candidate['labelBbox'] : null,
+        'valueBbox' => is_array($candidate['valueBbox'] ?? null) ? $candidate['valueBbox'] : null,
+        'pageNumber' => is_int($candidate['pageNumber'] ?? null) ? (int) $candidate['pageNumber'] : null,
+    ];
 }
 
 function extract_unlabeled_pattern_field_matches(array $lines, string $pattern, bool $preferCaptureGroupValue = true, array $lineGeometries = []): array
 {
-    $resolvedPattern = trim($pattern);
-    if ($resolvedPattern === '') {
+    $candidates = extraction_field_document_pattern_candidates_from_lines($lines, $pattern, true, $lineGeometries, $preferCaptureGroupValue);
+    if ($candidates === []) {
         return [];
     }
 
     $matchesByKey = [];
-    foreach ($lines as $lineIndex => $line) {
-        $resolvedLine = is_string($line) ? $line : '';
-        if ($resolvedLine === '' || !is_int($lineIndex)) {
+    foreach ($candidates as $candidate) {
+        if (!is_array($candidate)) {
             continue;
         }
 
-        $candidates = extraction_field_pattern_candidates_from_text($resolvedLine, $resolvedPattern, true, 0, $preferCaptureGroupValue);
-        foreach ($candidates as $candidate) {
-            if (!is_array($candidate)) {
-                continue;
-            }
-
-            $value = $candidate['value'] ?? null;
-            $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
-            $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
-            if ($value === null || $start < 0) {
-                continue;
-            }
-
-            $candidateBbox = null;
-            $candidatePageNumber = null;
-            $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
-            if ($lineGeometry !== null) {
-                $candidateLength = is_string($raw) && $raw !== ''
-                    ? strlen($raw)
-                    : (is_string($candidate['matchText'] ?? null)
-                        ? strlen((string) $candidate['matchText'])
-                        : (is_scalar($value) ? strlen((string) $value) : 1));
-                $candidateBbox = line_geometry_span_bbox($lineGeometry, $start, $start + max(1, $candidateLength));
-                $candidatePageNumber = matching_line_page_number($lineGeometries, $lineIndex);
-            }
-
-            add_extraction_field_match(
-                matchesByKey: $matchesByKey,
-                lineIndex: $lineIndex,
-                start: $start,
-                value: $value,
-                raw: $raw,
-                matchText: is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
-                source: 'pattern',
-                confidence: 1.0,
-                matchType: is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern',
-                labelBbox: $candidateBbox,
-                valueBbox: $candidateBbox,
-                pageNumber: $candidatePageNumber
-            );
+        $value = $candidate['value'] ?? null;
+        $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+        $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+        $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
+        if ($value === null || $start < 0 || $lineIndex < 0) {
+            continue;
         }
+
+        add_extraction_field_match(
+            matchesByKey: $matchesByKey,
+            lineIndex: $lineIndex,
+            start: $start,
+            value: $value,
+            raw: $raw,
+            matchText: is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
+            source: 'pattern',
+            confidence: 1.0,
+            matchType: is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern',
+            labelBbox: is_array($candidate['labelBbox'] ?? null) ? $candidate['labelBbox'] : null,
+            valueBbox: is_array($candidate['valueBbox'] ?? null) ? $candidate['valueBbox'] : null,
+            pageNumber: is_int($candidate['pageNumber'] ?? null) ? (int) $candidate['pageNumber'] : null
+        );
     }
 
     return sort_extraction_field_matches(array_values($matchesByKey));
@@ -13116,10 +13252,10 @@ function extract_configured_rule_set_field_matches(
 
     if (!$requiresSearchTerms) {
         if (in_array($type, ['regex', 'date'], true)) {
-        return annotate_extraction_field_matches_with_scope(
-            extract_unlabeled_pattern_field_matches($lines, $valuePattern, $preferCaptureGroupValue, $lineGeometries),
-            $scopeDebug
-        );
+            return annotate_extraction_field_matches_with_scope(
+                extract_unlabeled_pattern_field_matches($lines, $valuePattern, $preferCaptureGroupValue, $lineGeometries),
+                $scopeDebug
+            );
         }
         return annotate_extraction_field_matches_with_scope(
             collect_document_candidate_matches($lines, $candidateExtractor, 0.55, $lineGeometries),
@@ -13284,6 +13420,10 @@ function extract_configured_text_field_results(
             $acceptedMatches
         ));
         $primaryMatch = is_array($acceptedMatches[0] ?? null) ? $acceptedMatches[0] : null;
+        $resolvedMatchedRuleSetIndex = $matchedRuleSetIndex;
+        if (is_array($primaryMatch) && is_int($primaryMatch['ruleSetIndex'] ?? null)) {
+            $resolvedMatchedRuleSetIndex = (int) $primaryMatch['ruleSetIndex'];
+        }
 
         $results[$key] = [
             'key' => $key,
@@ -13305,7 +13445,7 @@ function extract_configured_text_field_results(
             'source' => is_array($primaryMatch) && is_string($primaryMatch['source'] ?? null) ? (string) $primaryMatch['source'] : 'none',
             'raw' => is_array($primaryMatch) && is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null,
             'matchText' => is_array($primaryMatch) && is_string($primaryMatch['matchText'] ?? null) ? (string) $primaryMatch['matchText'] : (is_array($primaryMatch) && is_string($primaryMatch['raw'] ?? null) ? (string) $primaryMatch['raw'] : null),
-            'matchedRuleSetIndex' => $matchedRuleSetIndex,
+            'matchedRuleSetIndex' => $resolvedMatchedRuleSetIndex,
             'matches' => $resolvedMatches,
         ];
         if (is_array($result['selectedCandidate'] ?? null)) {

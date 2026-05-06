@@ -11481,8 +11481,8 @@ function buildObjectPageMatchLookup(page, pageMatches) {
         return;
       }
       [
-        ['key', row.keyBbox || ocrDataFieldDerivedBBoxForRow(page, row, 'key', pageDataFieldMatches)],
-        ['value', row.valueBbox || ocrDataFieldDerivedBBoxForRow(page, row, 'value', pageDataFieldMatches)],
+        ['key', ocrDataFieldResolvedBBoxForRow(page, row, 'key', pageDataFieldMatches)],
+        ['value', ocrDataFieldResolvedBBoxForRow(page, row, 'value', pageDataFieldMatches)],
       ].forEach(([kind, bbox]) => {
         const wordIndexes = ocrWordIndexesForBBox(page, bbox);
         wordIndexes.forEach((wordIndex) => {
@@ -11648,20 +11648,30 @@ function ocrDataFieldWordIndexListForPage(page, row, kind, pageMatches = null) {
     return wordIndexes;
   }
 
+  const hasKey = ocrDataFieldMatchHasKey(row);
   const directBBox = kind === 'key' ? row.keyBbox : row.valueBbox;
   const directWordIndexes = ocrWordIndexesForBBox(page, directBBox);
-  if (directWordIndexes.size > 0) {
-    return directWordIndexes;
-  }
-
   const matches = Array.isArray(pageMatches) ? pageMatches : ocrDataFieldPageMatchesForPage(page);
+  const matchedWordIndexes = new Set();
   matches.forEach((match) => {
     if (!match || match.kind !== kind || !match.row || match.row.matchIndex !== row.matchIndex) {
       return;
     }
     ocrDataFieldMatchWordIndexesForPage(page, match).forEach((wordIndex) => {
-      wordIndexes.add(wordIndex);
+      matchedWordIndexes.add(wordIndex);
     });
+  });
+
+  if (kind === 'value' && !hasKey && matchedWordIndexes.size > 0) {
+    return matchedWordIndexes;
+  }
+
+  if (directWordIndexes.size > 0) {
+    return directWordIndexes;
+  }
+
+  matchedWordIndexes.forEach((wordIndex) => {
+    wordIndexes.add(wordIndex);
   });
 
   return wordIndexes;
@@ -13098,8 +13108,8 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
     ].join('|');
 
     dataFieldRows.forEach((row) => {
-      const keyBBox = row.keyBbox || ocrDataFieldDerivedBBoxForRow(page, row, 'key', dataFieldPageMatches);
-      const valueBBox = row.valueBbox || ocrDataFieldDerivedBBoxForRow(page, row, 'value', dataFieldPageMatches);
+      const keyBBox = ocrDataFieldResolvedBBoxForRow(page, row, 'key', dataFieldPageMatches);
+      const valueBBox = ocrDataFieldResolvedBBoxForRow(page, row, 'value', dataFieldPageMatches);
       const connection = ocrDataFieldConnectionPathForBoxes(keyBBox, valueBBox);
       if (connection && keyBBox && valueBBox) {
         const nextKey = connectionKey(keyBBox, valueBBox);
@@ -13112,6 +13122,24 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
         ['key', keyBBox],
         ['value', valueBBox],
       ].forEach(([kind, bbox]) => {
+        if (kind === 'value' && !ocrDataFieldMatchHasKey(row)) {
+          const wordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'value', dataFieldPageMatches);
+          wordIndexes.forEach((wordIndex) => {
+            const word = page.words.find((entry) => entry.index === wordIndex) || null;
+            const wordBBox = word?.rect || null;
+            if (!wordBBox) {
+              return;
+            }
+            const key = bboxKey(kind, wordBBox);
+            if (!boxByKey.has(key)) {
+              boxByKey.set(key, {
+                kind,
+                bbox: wordBBox,
+              });
+            }
+          });
+          return;
+        }
         if (!bbox) {
           return;
         }
@@ -13147,8 +13175,8 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
 
     const activeRow = dataFieldRows.find((row) => row.matchIndex === ocrDataFieldSelection.matchIndex) || null;
     if (activeRow) {
-      const activeKeyBBox = activeRow.keyBbox || ocrDataFieldDerivedBBoxForRow(page, activeRow, 'key', dataFieldPageMatches);
-      const activeValueBBox = activeRow.valueBbox || ocrDataFieldDerivedBBoxForRow(page, activeRow, 'value', dataFieldPageMatches);
+      const activeKeyBBox = ocrDataFieldResolvedBBoxForRow(page, activeRow, 'key', dataFieldPageMatches);
+      const activeValueBBox = ocrDataFieldResolvedBBoxForRow(page, activeRow, 'value', dataFieldPageMatches);
       const activeConnection = ocrDataFieldConnectionPathForBoxes(activeKeyBBox, activeValueBBox);
       if (activeConnection) {
         const activeConnectionEl = document.createElementNS(svgNS, 'path');
@@ -13163,6 +13191,24 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
         ['key', activeKeyBBox],
         ['value', activeValueBBox],
       ].forEach(([kind, bbox]) => {
+        if (kind === 'value' && !ocrDataFieldMatchHasKey(activeRow)) {
+          const wordIndexes = ocrDataFieldWordIndexListForPage(page, activeRow, 'value', dataFieldPageMatches);
+          wordIndexes.forEach((wordIndex) => {
+            const word = page.words.find((entry) => entry.index === wordIndex) || null;
+            const wordBBox = word?.rect || null;
+            if (!wordBBox) {
+              return;
+            }
+            const activeHighlightEl = document.createElement('div');
+            activeHighlightEl.className = `ocr-datafield-box ocr-datafield-box--${kind} is-active`;
+            activeHighlightEl.style.left = `${Math.max(0, wordBBox.x0 * objectScale)}px`;
+            activeHighlightEl.style.top = `${Math.max(0, wordBBox.y0 * objectScale)}px`;
+            activeHighlightEl.style.width = `${Math.max(1, (wordBBox.x1 - wordBBox.x0) * objectScale)}px`;
+            activeHighlightEl.style.height = `${Math.max(1, (wordBBox.y1 - wordBBox.y0) * objectScale)}px`;
+            surfaceEl.appendChild(activeHighlightEl);
+          });
+          return;
+        }
         if (!bbox) {
           return;
         }
@@ -13744,6 +13790,35 @@ function ocrDataFieldValueCandidateTexts(row) {
   return Array.from(new Set(texts.map((text) => String(text || '').trim()).filter((text) => text !== '')));
 }
 
+function ocrDataFieldSpanCandidateTexts(row, kind = 'value') {
+  const hasKey = ocrDataFieldMatchHasKey(row);
+  const valueTexts = ocrDataFieldValueCandidateTexts(row);
+  const candidateTexts = ocrDataFieldCandidateTexts(row);
+
+  if (kind === 'key') {
+    return ocrDataFieldKeyCandidateTexts(row);
+  }
+
+  if (!hasKey) {
+    const matchTexts = candidateTexts.filter((text) => !valueTexts.includes(text));
+    if (matchTexts.length > 0) {
+      return matchTexts.sort((left, right) => {
+        if (right.length !== left.length) {
+          return right.length - left.length;
+        }
+        return left.localeCompare(right, 'sv');
+      });
+    }
+  }
+
+  return Array.from(new Set([...valueTexts, ...candidateTexts])).sort((left, right) => {
+    if (right.length !== left.length) {
+      return right.length - left.length;
+    }
+    return left.localeCompare(right, 'sv');
+  });
+}
+
 function ocrDataFieldResolvePageForRow(row) {
   if (!row || typeof row !== 'object') {
     return null;
@@ -13752,7 +13827,7 @@ function ocrDataFieldResolvePageForRow(row) {
     return ocrDocumentPages.find((page) => page.number === row.pageNumber) || null;
   }
 
-  const candidateTexts = ocrDataFieldCandidateTexts(row);
+  const candidateTexts = ocrDataFieldSpanCandidateTexts(row, 'value');
   if (candidateTexts.length === 0) {
     return null;
   }
@@ -13764,7 +13839,7 @@ function ocrDataFieldResolvePageForRow(row) {
     if (pageText === '') {
       continue;
     }
-    if (candidateTexts.some((candidateText) => findNormalizedTextSpan(pageText, candidateText))) {
+    if (ocrDataFieldSpanCandidateTexts(row, 'value').some((candidateText) => findNormalizedTextSpan(pageText, candidateText))) {
       return page;
     }
   }
@@ -13785,8 +13860,8 @@ function ocrDataFieldPageMatchesForPage(page) {
     if (!row || typeof row !== 'object') {
       return;
     }
-    const valueTexts = ocrDataFieldValueCandidateTexts(row);
-    const keyTexts = ocrDataFieldKeyCandidateTexts(row);
+    const keyTexts = ocrDataFieldSpanCandidateTexts(row, 'key');
+    const valueTexts = ocrDataFieldSpanCandidateTexts(row, 'value');
 
     [
       ['key', keyTexts],
@@ -13884,6 +13959,16 @@ function ocrDataFieldDerivedBBoxForRow(page, row, kind, pageMatches = null) {
   });
 
   return ocrDataFieldBBoxFromWordIndexes(page, wordIndexes);
+}
+
+function ocrDataFieldResolvedBBoxForRow(page, row, kind, pageMatches = null) {
+  const directBBox = kind === 'key' ? row?.keyBbox : row?.valueBbox;
+  const derivedBBox = ocrDataFieldDerivedBBoxForRow(page, row, kind, pageMatches);
+  if (kind === 'value' && !ocrDataFieldMatchHasKey(row) && derivedBBox) {
+    return derivedBBox;
+  }
+
+  return directBBox || derivedBBox;
 }
 
 function ocrDataFieldConnectionPathForBoxes(keyBBox, valueBBox) {
@@ -14313,10 +14398,8 @@ function scrollOcrDataFieldMatchIntoView(row) {
   }
 
   const pageMatches = ocrDataFieldPageMatchesForPage(page);
-  const targetBox = row.valueBbox
-    || row.keyBbox
-    || ocrDataFieldDerivedBBoxForRow(page, row, 'value', pageMatches)
-    || ocrDataFieldDerivedBBoxForRow(page, row, 'key', pageMatches);
+  const targetBox = ocrDataFieldResolvedBBoxForRow(page, row, 'value', pageMatches)
+    || ocrDataFieldResolvedBBoxForRow(page, row, 'key', pageMatches);
   if (!targetBox) {
     const targetTop = Math.max(0, page.wrapperEl.offsetTop - (ocrPagesViewEl.clientHeight / 3));
     ocrPagesViewEl.scrollTop = targetTop;
