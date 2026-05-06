@@ -11885,6 +11885,12 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
       });
     });
 
+  const securityRowIndex = metaRows.findIndex((row) => row && row.raw !== true && typeof row.label === 'string' && row.label.trim() === 'Säkerhet');
+  if (securityRowIndex >= 0) {
+    const [securityRow] = metaRows.splice(securityRowIndex, 1);
+    metaRows.push(securityRow);
+  }
+
   return {
     indexLabel: `Träff #${matchIndex}`,
     text: [
@@ -12159,6 +12165,9 @@ function renderOcrWordTooltipMeta(section, tooltipData) {
 
       const valueEl = document.createElement('span');
       valueEl.className = 'ocr-word-tooltip-meta-row-value';
+      if (typeof row?.label === 'string' && row.label.trim() === 'Säkerhet') {
+        valueEl.classList.add('ocr-word-tooltip-meta-row-value--confidence');
+      }
       valueEl.textContent = typeof row?.value === 'string' ? row.value : '';
 
       if (labelEl.textContent !== '') {

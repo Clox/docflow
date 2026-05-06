@@ -3572,6 +3572,12 @@ body.is-resizing-sidebar {
   word-break: break-word;
 }
 
+.ocr-word-tooltip-meta-row-value--confidence {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
 .ocr-word-tooltip-meta-title {
   margin: 0 0 6px;
   color: #64748b;
