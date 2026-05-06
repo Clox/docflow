@@ -14186,7 +14186,10 @@ function syncOcrDataFieldFieldSelect() {
 
   const groups = ocrDataFieldGroupsForJob();
   const currentFieldKey = ocrDataFieldCurrentGroup() ? ocrDataFieldCurrentGroup().fieldKey : '';
-  const previousValue = ocrSearchFieldSelectEl.value;
+  const visibleGroups = groups.filter((group) => Array.isArray(group?.rows) && group.rows.some((row) => ocrDataFieldRowMatchesFilterMode(row, matchesFieldHitFilterMode)));
+  const selectedFieldKey = ocrDataFieldSelection.fieldKey !== '' ? ocrDataFieldSelection.fieldKey : currentFieldKey;
+  const selectedGroup = groups.find((group) => group.fieldKey === selectedFieldKey) || null;
+  const selectedGroupIsVisible = selectedGroup ? visibleGroups.some((group) => group.fieldKey === selectedGroup.fieldKey) : false;
 
   ocrSearchFieldSelectEl.innerHTML = '';
   if (groups.length === 0) {
@@ -14200,26 +14203,30 @@ function syncOcrDataFieldFieldSelect() {
   }
 
   ocrSearchFieldSelectEl.disabled = false;
-  groups.forEach((group) => {
+  visibleGroups.forEach((group) => {
     const optionEl = document.createElement('option');
     optionEl.value = group.fieldKey;
     optionEl.textContent = group.name;
     ocrSearchFieldSelectEl.appendChild(optionEl);
   });
 
-  const preferredFieldKey = ocrDataFieldSelection.fieldKey !== ''
-    ? ocrDataFieldSelection.fieldKey
-    : currentFieldKey;
-  const selectedGroup = groups.find((group) => group.fieldKey === preferredFieldKey) || groups[0];
-  ocrDataFieldSelection.fieldKey = selectedGroup ? selectedGroup.fieldKey : '';
+  if (selectedGroup && !selectedGroupIsVisible) {
+    const stickyOptionEl = document.createElement('option');
+    stickyOptionEl.value = selectedGroup.fieldKey;
+    stickyOptionEl.textContent = selectedGroup.name;
+    stickyOptionEl.disabled = true;
+    stickyOptionEl.selected = true;
+    ocrSearchFieldSelectEl.appendChild(stickyOptionEl);
+  }
+
+  const nextFieldKey = selectedGroup
+    ? selectedGroup.fieldKey
+    : (visibleGroups[0] ? visibleGroups[0].fieldKey : '');
+  ocrDataFieldSelection.fieldKey = nextFieldKey;
   if (ocrDataFieldSelection.fieldKey !== '' && ocrDataFieldSelection.matchIndex < 0) {
     ocrDataFieldSelection.matchIndex = 0;
   }
-  ocrSearchFieldSelectEl.value = ocrDataFieldSelection.fieldKey || groups[0].fieldKey;
-
-  if (previousValue !== ocrSearchFieldSelectEl.value) {
-    ocrDataFieldSelection.matchIndex = 0;
-  }
+  ocrSearchFieldSelectEl.value = ocrDataFieldSelection.fieldKey || (visibleGroups[0] ? visibleGroups[0].fieldKey : '');
 }
 
 async function refreshOcrDataFieldSearch(options = {}) {

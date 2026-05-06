@@ -9495,6 +9495,10 @@ function bbox_main_direction(array $labelBbox, array $candidateBbox, ?int $label
         }
     }
 
+    if (abs($dx) >= abs($dy)) {
+        return $dx >= 0.0 ? 'right' : 'left';
+    }
+
     if ($labelLineIndex !== null && $candidateLineIndex !== null) {
         if ($candidateLineIndex > $labelLineIndex && $dy >= 0.0) {
             return 'down';
@@ -9503,10 +9507,6 @@ function bbox_main_direction(array $labelBbox, array $candidateBbox, ?int $label
         if ($candidateLineIndex < $labelLineIndex && $dy <= 0.0) {
             return 'up';
         }
-    }
-
-    if (abs($dx) >= abs($dy)) {
-        return $dx >= 0.0 ? 'right' : 'left';
     }
 
     return $dy >= 0.0 ? 'down' : 'up';
@@ -12543,43 +12543,47 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                 continue;
             }
 
-            $lineGeometry = is_array($lineGeometries[$candidateLineIndex] ?? null) ? $lineGeometries[$candidateLineIndex] : null;
-            $segmentCandidates = [];
-            if ($lineGeometry !== null && is_array($lineGeometry['segments'] ?? null)) {
-                foreach ($lineGeometry['segments'] as $segment) {
-                    if (!is_array($segment)) {
-                        continue;
-                    }
-
-                    $segmentText = is_string($segment['text'] ?? null) ? trim((string) $segment['text']) : '';
-                    $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
-                    if ($segmentText === '' || $segmentStart < 0) {
-                        continue;
-                    }
-
-                    $segmentMatches = extraction_field_pattern_candidates_from_text(
-                        $segmentText,
-                        $pattern,
-                        true,
-                        $segmentStart,
-                        $preferCaptureGroupValue
-                    );
-                    if ($segmentMatches === []) {
-                        continue;
-                    }
-
-                    foreach ($segmentMatches as $segmentMatch) {
-                        if (!is_array($segmentMatch)) {
+            $candidates = extraction_field_pattern_candidates_from_text(
+                $resolvedCandidateLine,
+                $pattern,
+                true,
+                0,
+                $preferCaptureGroupValue
+            );
+            if ($candidates === []) {
+                $lineGeometry = is_array($lineGeometries[$candidateLineIndex] ?? null) ? $lineGeometries[$candidateLineIndex] : null;
+                if ($lineGeometry !== null && is_array($lineGeometry['segments'] ?? null)) {
+                    foreach ($lineGeometry['segments'] as $segment) {
+                        if (!is_array($segment)) {
                             continue;
                         }
-                        $segmentCandidates[] = $segmentMatch;
+
+                        $segmentText = is_string($segment['text'] ?? null) ? trim((string) $segment['text']) : '';
+                        $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+                        if ($segmentText === '' || $segmentStart < 0) {
+                            continue;
+                        }
+
+                        $segmentMatches = extraction_field_pattern_candidates_from_text(
+                            $segmentText,
+                            $pattern,
+                            true,
+                            $segmentStart,
+                            $preferCaptureGroupValue
+                        );
+                        if ($segmentMatches === []) {
+                            continue;
+                        }
+
+                        foreach ($segmentMatches as $segmentMatch) {
+                            if (!is_array($segmentMatch)) {
+                                continue;
+                            }
+                            $candidates[] = $segmentMatch;
+                        }
                     }
                 }
             }
-
-            $candidates = $segmentCandidates !== []
-                ? $segmentCandidates
-                : extraction_field_pattern_candidates_from_text($resolvedCandidateLine, $pattern, true, 0, $preferCaptureGroupValue);
             if (!is_array($candidates) || $candidates === []) {
                 continue;
             }
