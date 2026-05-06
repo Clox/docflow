@@ -3081,6 +3081,21 @@ body.is-resizing-sidebar {
   background: rgba(219, 234, 254, 0.4);
 }
 
+.ocr-word-box.is-tooltip-hover {
+  z-index: 6;
+  border-color: rgba(239, 68, 68, 0.95);
+  background: rgba(254, 202, 202, 0.46);
+  box-shadow:
+    0 0 0 1px rgba(127, 29, 29, 0.28),
+    0 0 12px 6px rgba(239, 68, 68, 0.52),
+    0 0 28px 14px rgba(239, 68, 68, 0.22);
+}
+
+.ocr-pages-view.is-datafield-mode .ocr-word-box.is-tooltip-hover {
+  background: rgba(254, 202, 202, 0.5);
+  border-color: rgba(239, 68, 68, 0.98);
+}
+
 .ocr-word-box svg {
   display: block;
   overflow: visible;
@@ -3518,13 +3533,14 @@ body.is-resizing-sidebar {
 }
 
 .ocr-word-tooltip-detail-row-value--text {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
   padding: 1px 5px;
   border: 1px solid #111827;
   border-radius: 0;
   background: #fff;
   line-height: 1.2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .ocr-word-tooltip-detail-row-value-fragment--muted {

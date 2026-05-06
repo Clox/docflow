@@ -58,6 +58,7 @@ let ocrWordTooltipIsManuallyPositioned = false;
 let ocrWordTooltipIsLocked = false;
 let ocrWordTooltipHoveredPage = null;
 let ocrWordTooltipHoveredWordIndexes = new Set();
+let ocrWordTooltipHoveredClassName = 'is-hovered';
 const mainEl = document.querySelector('.main');
 const processingIndicatorEl = document.getElementById('processing-indicator');
 const processingTextEl = document.getElementById('processing-text');
@@ -11752,16 +11753,17 @@ function clearOcrWordTooltipWordHighlights() {
     ocrWordTooltipHoveredWordIndexes.forEach((wordIndex) => {
       const wordEl = ocrWordTooltipWordElementForPage(ocrWordTooltipHoveredPage, wordIndex);
       if (wordEl instanceof HTMLElement) {
-        wordEl.classList.remove('is-hovered');
+        wordEl.classList.remove(ocrWordTooltipHoveredClassName);
       }
     });
   }
 
   ocrWordTooltipHoveredPage = null;
   ocrWordTooltipHoveredWordIndexes = new Set();
+  ocrWordTooltipHoveredClassName = 'is-hovered';
 }
 
-function setOcrWordTooltipWordHighlights(page, wordIndexes) {
+function setOcrWordTooltipWordHighlights(page, wordIndexes, className = 'is-hovered') {
   clearOcrWordTooltipWordHighlights();
 
   if (!page || !(page.wordElements instanceof Map)) {
@@ -11776,10 +11778,11 @@ function setOcrWordTooltipWordHighlights(page, wordIndexes) {
     return;
   }
 
+  ocrWordTooltipHoveredClassName = className === 'is-tooltip-hover' ? 'is-tooltip-hover' : 'is-hovered';
   nextWordIndexes.forEach((wordIndex) => {
     const wordEl = ocrWordTooltipWordElementForPage(page, wordIndex);
     if (wordEl instanceof HTMLElement) {
-      wordEl.classList.add('is-hovered');
+      wordEl.classList.add(ocrWordTooltipHoveredClassName);
     }
   });
 
@@ -12578,10 +12581,10 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
             chipEl.setAttribute('aria-label', `Öppna bbox #${wordIndex + 1}`);
             chipEl.setAttribute('title', `Öppna bbox #${wordIndex + 1}`);
             chipEl.addEventListener('mouseenter', () => {
-              setOcrWordTooltipWordHighlights(page, [wordIndex]);
+              setOcrWordTooltipWordHighlights(page, [wordIndex], 'is-tooltip-hover');
             });
             chipEl.addEventListener('focus', () => {
-              setOcrWordTooltipWordHighlights(page, [wordIndex]);
+              setOcrWordTooltipWordHighlights(page, [wordIndex], 'is-tooltip-hover');
             });
             chipEl.addEventListener('mouseleave', () => {
               clearOcrWordTooltipWordHighlights();
