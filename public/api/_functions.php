@@ -9482,6 +9482,42 @@ function bbox_overlap_length(float $leftStart, float $leftEnd, float $rightStart
 
 function bbox_main_direction(array $labelBbox, array $candidateBbox, ?int $labelLineIndex = null, ?int $candidateLineIndex = null): string
 {
+    $overlapTolerance = 2.0;
+
+    $labelX0 = (float) ($labelBbox['x0'] ?? 0.0);
+    $labelY0 = (float) ($labelBbox['y0'] ?? 0.0);
+    $labelX1 = (float) ($labelBbox['x1'] ?? 0.0);
+    $labelY1 = (float) ($labelBbox['y1'] ?? 0.0);
+    $candidateX0 = (float) ($candidateBbox['x0'] ?? 0.0);
+    $candidateY0 = (float) ($candidateBbox['y0'] ?? 0.0);
+    $candidateX1 = (float) ($candidateBbox['x1'] ?? 0.0);
+    $candidateY1 = (float) ($candidateBbox['y1'] ?? 0.0);
+
+    $overlapX = bbox_horizontal_overlap($labelBbox, $candidateBbox);
+    $overlapY = bbox_overlap_length($labelY0, $labelY1, $candidateY0, $candidateY1);
+    $candidateIsBelow = $candidateY0 >= ($labelY1 - $overlapTolerance);
+    $candidateIsAbove = $candidateY1 <= ($labelY0 + $overlapTolerance);
+    $candidateIsRight = $candidateX0 >= ($labelX1 - $overlapTolerance);
+    $candidateIsLeft = $candidateX1 <= ($labelX0 + $overlapTolerance);
+
+    if ($overlapX > $overlapTolerance) {
+        if ($candidateIsBelow) {
+            return 'down';
+        }
+        if ($candidateIsAbove) {
+            return 'up';
+        }
+    }
+
+    if ($overlapY > $overlapTolerance) {
+        if ($candidateIsRight) {
+            return 'right';
+        }
+        if ($candidateIsLeft) {
+            return 'left';
+        }
+    }
+
     $vector = bbox_gap_vector($labelBbox, $candidateBbox);
     $dx = (float) ($vector['dx'] ?? 0.0);
     $dy = (float) ($vector['dy'] ?? 0.0);
