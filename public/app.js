@@ -12923,6 +12923,7 @@ function showOcrWordTooltip(anchorEl, word, detailRows = [], matchLookup = null,
     ? detailRows.map((row) => buildOcrDataFieldMatchTooltip(row, tooltipPage, tooltipPageMatches))
     : [];
   tooltipData.push(...detailTooltipData);
+  tooltipEl.dataset.sectionCount = String(tooltipData.length);
 
   const sections = ensureOcrWordTooltipSections(tooltipData.length);
   const activeSectionCount = Math.min(tooltipData.length, sections.length);
