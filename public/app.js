@@ -11813,8 +11813,17 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   const showKeySection = ocrDataFieldMatchHasKey(row, keyWordIndexes);
   const keyWordBboxes = buildOcrWordCopyPayloadsForPage(page, keyWordIndexes);
   const valueWordBboxes = buildOcrWordCopyPayloadsForPage(page, valueWordIndexes);
-  const keyText = ocrDataFieldKeyCandidateTexts(row).join(' / ');
-  const valueText = ocrDataFieldValueCandidateTexts(row).join(' / ');
+  const keyText = typeof row?.labelText === 'string' && row.labelText.trim() !== ''
+    ? row.labelText.trim()
+    : '';
+  const valueText = typeof row?.value === 'string' && row.value.trim() !== ''
+    ? row.value.trim()
+    : '';
+  const valueMatchText = typeof row?.matchText === 'string' && row.matchText.trim() !== ''
+    ? row.matchText.trim()
+    : (typeof row?.raw === 'string' && row.raw.trim() !== ''
+      ? row.raw.trim()
+      : valueText);
   const confidenceText = ocrDataFieldConfidenceTooltip(row, { includeHint: false });
   const copyPayload = {
     fieldKey: typeof group?.fieldKey === 'string' ? group.fieldKey : '',
@@ -11919,6 +11928,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     hasKey: showKeySection,
     keyText,
     valueText,
+    valueMatchText,
     keyWordIndexes: Array.from(keyWordIndexes).sort((left, right) => left - right),
     valueWordIndexes: Array.from(valueWordIndexes).sort((left, right) => left - right),
   };
@@ -12134,6 +12144,50 @@ function bindOcrWordTooltipCopyButton(buttonEl, sectionState, options = {}) {
         sectionState[timerKey] = 0;
       }, 1200);
     }
+  });
+}
+
+function appendOcrWordTooltipValueFragments(parentEl, fullText, highlightText) {
+  if (!(parentEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const normalizedFullText = String(fullText ?? '');
+  const normalizedHighlightText = String(highlightText ?? '');
+  parentEl.replaceChildren();
+
+  if (normalizedFullText.trim() === '') {
+    parentEl.textContent = '—';
+    return;
+  }
+
+  if (normalizedHighlightText.trim() === '' || normalizedFullText === normalizedHighlightText) {
+    parentEl.textContent = normalizedFullText;
+    return;
+  }
+
+  const fullLower = normalizedFullText.toLocaleLowerCase('sv');
+  const highlightLower = normalizedHighlightText.toLocaleLowerCase('sv');
+  const highlightStart = fullLower.indexOf(highlightLower);
+  if (highlightStart < 0) {
+    parentEl.textContent = normalizedFullText;
+    return;
+  }
+
+  const highlightEnd = highlightStart + normalizedHighlightText.length;
+  const segments = [
+    [normalizedFullText.slice(0, highlightStart), true],
+    [normalizedFullText.slice(highlightStart, highlightEnd), false],
+    [normalizedFullText.slice(highlightEnd), true],
+  ].filter(([segment]) => segment !== '');
+
+  segments.forEach(([segment, muted]) => {
+    const spanEl = document.createElement('span');
+    spanEl.textContent = segment;
+    spanEl.className = muted
+      ? 'ocr-word-tooltip-detail-row-value-fragment ocr-word-tooltip-detail-row-value-fragment--muted'
+      : 'ocr-word-tooltip-detail-row-value-fragment ocr-word-tooltip-detail-row-value-fragment--highlight';
+    parentEl.appendChild(spanEl);
   });
 }
 
@@ -12458,7 +12512,7 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
 
     const detailGroups = [
       ...(showKeySection ? [{ label: 'Nyckel', value: tooltipData.keyText, wordIndexes: keyWordIndexes }] : []),
-      { label: 'Värde', value: tooltipData.valueText, wordIndexes: valueWordIndexes },
+      { label: 'Värde', value: tooltipData.valueText, fullValue: tooltipData.valueMatchText, wordIndexes: valueWordIndexes },
     ];
 
     section.detailEl.replaceChildren();
@@ -12482,9 +12536,19 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
 
       const textRowValueEl = document.createElement('span');
       textRowValueEl.className = 'ocr-word-tooltip-detail-row-value ocr-word-tooltip-detail-row-value--text';
-      textRowValueEl.textContent = typeof group.value === 'string' && group.value.trim() !== ''
-        ? group.value
-        : '—';
+      if (group.label === 'Värde') {
+        appendOcrWordTooltipValueFragments(
+          textRowValueEl,
+          typeof group.fullValue === 'string' && group.fullValue.trim() !== ''
+            ? group.fullValue
+            : group.value,
+          typeof group.value === 'string' ? group.value : ''
+        );
+      } else {
+        textRowValueEl.textContent = typeof group.value === 'string' && group.value.trim() !== ''
+          ? group.value
+          : '—';
+      }
 
       textRowEl.append(textRowLabelEl, textRowValueEl);
 
