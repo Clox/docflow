@@ -11790,6 +11790,10 @@ function setOcrWordTooltipWordHighlights(page, wordIndexes, className = 'is-hove
   ocrWordTooltipHoveredWordIndexes = nextWordIndexes;
 }
 
+function isOcrWordTooltipLocked() {
+  return ocrWordTooltipIsLocked === true;
+}
+
 function openOcrWordTooltipForWordIndex(page, wordIndex, matchLookup = null) {
   if (!page || !Array.isArray(page.words) || !Number.isInteger(wordIndex)) {
     return;
@@ -11802,7 +11806,7 @@ function openOcrWordTooltipForWordIndex(page, wordIndex, matchLookup = null) {
   }
 
   const detailRows = getOcrWordTooltipDetailRows(word, page, matchLookup);
-  showOcrWordTooltip(wordEl, word, detailRows, matchLookup);
+  showOcrWordTooltip(wordEl, word, detailRows, matchLookup, { force: true });
   setOcrWordTooltipLocked(true);
   setOcrWordTooltipWordHighlights(page, [wordIndex]);
 }
@@ -12581,15 +12585,27 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
             chipEl.setAttribute('aria-label', `Öppna bbox #${wordIndex + 1}`);
             chipEl.setAttribute('title', `Öppna bbox #${wordIndex + 1}`);
             chipEl.addEventListener('mouseenter', () => {
+              if (isOcrWordTooltipLocked()) {
+                return;
+              }
               setOcrWordTooltipWordHighlights(page, [wordIndex], 'is-tooltip-hover');
             });
             chipEl.addEventListener('focus', () => {
+              if (isOcrWordTooltipLocked()) {
+                return;
+              }
               setOcrWordTooltipWordHighlights(page, [wordIndex], 'is-tooltip-hover');
             });
             chipEl.addEventListener('mouseleave', () => {
+              if (isOcrWordTooltipLocked()) {
+                return;
+              }
               clearOcrWordTooltipWordHighlights();
             });
             chipEl.addEventListener('blur', () => {
+              if (isOcrWordTooltipLocked()) {
+                return;
+              }
               clearOcrWordTooltipWordHighlights();
             });
             chipEl.addEventListener('click', (event) => {
@@ -12861,6 +12877,9 @@ function scheduleOcrWordTooltipShow(anchorEl, word, detailRows = [], matchLookup
   if (!(anchorEl instanceof HTMLElement)) {
     return;
   }
+  if (ocrWordTooltipIsLocked) {
+    return;
+  }
 
   const tooltipEl = ensureOcrWordTooltipEl();
   if (!(tooltipEl instanceof HTMLElement)) {
@@ -12876,8 +12895,11 @@ function scheduleOcrWordTooltipShow(anchorEl, word, detailRows = [], matchLookup
   }, delayMs);
 }
 
-function showOcrWordTooltip(anchorEl, word, detailRows = [], matchLookup = null) {
+function showOcrWordTooltip(anchorEl, word, detailRows = [], matchLookup = null, options = {}) {
   if (!(anchorEl instanceof HTMLElement)) {
+    return;
+  }
+  if (ocrWordTooltipIsLocked && options.force !== true) {
     return;
   }
   const tooltipEl = ensureOcrWordTooltipEl();
@@ -12970,7 +12992,7 @@ function bindOcrWordTooltip(wordEl, word, page = null, matchLookup = null, pageM
     event.preventDefault();
     event.stopPropagation();
     const detailRows = getOcrWordTooltipDetailRows(tooltipWord, page, matchLookup);
-    showOcrWordTooltip(wordEl, tooltipWord, detailRows, matchLookup);
+    showOcrWordTooltip(wordEl, tooltipWord, detailRows, matchLookup, { force: true });
     setOcrWordTooltipLocked(true);
   });
 }
