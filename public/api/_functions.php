@@ -9495,6 +9495,16 @@ function bbox_main_direction(array $labelBbox, array $candidateBbox, ?int $label
         }
     }
 
+    if ($labelLineIndex !== null && $candidateLineIndex !== null) {
+        if ($candidateLineIndex > $labelLineIndex && $dy >= 0.0) {
+            return 'down';
+        }
+
+        if ($candidateLineIndex < $labelLineIndex && $dy <= 0.0) {
+            return 'up';
+        }
+    }
+
     if (abs($dx) >= abs($dy)) {
         return $dx >= 0.0 ? 'right' : 'left';
     }
@@ -12476,6 +12486,175 @@ function collect_anchored_candidate_matches(
     return sort_extraction_field_matches_by_confidence(array_values($matchesByKey));
 }
 
+function collect_anchored_pattern_candidate_matches_from_segments(
+    array $lines,
+    array $labels,
+    array $replacementMap,
+    string $pattern,
+    bool $preferCaptureGroupValue = true,
+    array $positionSettings = [],
+    array $lineGeometries = [],
+    bool $labelsAreRegex = false
+): array {
+    $matchesByKey = [];
+
+    $hitsByKey = [];
+    foreach (array_merge(
+        find_label_hits($lines, $labels, $replacementMap, $labelsAreRegex),
+        find_document_label_hits($lines, $labels, $replacementMap, $labelsAreRegex)
+    ) as $hit) {
+        if (!is_array($hit)) {
+            continue;
+        }
+        $hitKey = implode('|', [
+            (string) ((int) ($hit['index'] ?? -1)),
+            (string) ((int) ($hit['labelStart'] ?? -1)),
+            (string) ((int) ($hit['labelEnd'] ?? -1)),
+            is_string($hit['label'] ?? null) ? (string) $hit['label'] : '',
+        ]);
+        $hitsByKey[$hitKey] = $hit;
+    }
+
+    $hits = array_values($hitsByKey);
+    foreach ($hits as $hit) {
+        $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
+        $label = is_string($hit['label'] ?? null) ? trim((string) $hit['label']) : '';
+        $matchedLabelText = matched_label_text_from_hit($hit);
+        $hitIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : -1;
+        $labelEnd = is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : 0;
+        if ($line === '' || $hitIndex < 0) {
+            continue;
+        }
+
+        $hitPageNumber = matching_line_page_number($lineGeometries, $hitIndex);
+        foreach ($lines as $candidateLineIndex => $candidateLine) {
+            if (!is_int($candidateLineIndex) || $candidateLineIndex < 0) {
+                continue;
+            }
+            if ($hitPageNumber !== null) {
+                $candidatePageNumber = matching_line_page_number($lineGeometries, $candidateLineIndex);
+                if ($candidatePageNumber !== null && $candidatePageNumber !== $hitPageNumber) {
+                    continue;
+                }
+            }
+
+            $resolvedCandidateLine = is_string($candidateLine) ? (string) $candidateLine : '';
+            if ($resolvedCandidateLine === '') {
+                continue;
+            }
+
+            $lineGeometry = is_array($lineGeometries[$candidateLineIndex] ?? null) ? $lineGeometries[$candidateLineIndex] : null;
+            $segmentCandidates = [];
+            if ($lineGeometry !== null && is_array($lineGeometry['segments'] ?? null)) {
+                foreach ($lineGeometry['segments'] as $segment) {
+                    if (!is_array($segment)) {
+                        continue;
+                    }
+
+                    $segmentText = is_string($segment['text'] ?? null) ? trim((string) $segment['text']) : '';
+                    $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+                    if ($segmentText === '' || $segmentStart < 0) {
+                        continue;
+                    }
+
+                    $segmentMatches = extraction_field_pattern_candidates_from_text(
+                        $segmentText,
+                        $pattern,
+                        true,
+                        $segmentStart,
+                        $preferCaptureGroupValue
+                    );
+                    if ($segmentMatches === []) {
+                        continue;
+                    }
+
+                    foreach ($segmentMatches as $segmentMatch) {
+                        if (!is_array($segmentMatch)) {
+                            continue;
+                        }
+                        $segmentCandidates[] = $segmentMatch;
+                    }
+                }
+            }
+
+            $candidates = $segmentCandidates !== []
+                ? $segmentCandidates
+                : extraction_field_pattern_candidates_from_text($resolvedCandidateLine, $pattern, true, 0, $preferCaptureGroupValue);
+            if (!is_array($candidates) || $candidates === []) {
+                continue;
+            }
+
+            foreach ($candidates as $candidate) {
+                if (!is_array($candidate)) {
+                    continue;
+                }
+
+                $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+                $value = $candidate['value'] ?? null;
+                $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
+                if ($candidateLineIndex === $hitIndex && $start < $labelEnd) {
+                    continue;
+                }
+                if ($start < 0 || $value === null) {
+                    continue;
+                }
+
+                $spanText = is_string($candidate['spanText'] ?? null)
+                    ? (string) $candidate['spanText']
+                    : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                $confidenceComponents = candidate_confidence_components(
+                    $hit,
+                    $resolvedCandidateLine,
+                    $start,
+                    $candidateLineIndex,
+                    $candidateLineIndex === $hitIndex ? 'line' : 'nearby',
+                    $positionSettings,
+                    $lineGeometries,
+                    $spanText
+                );
+
+                add_extraction_field_match(
+                    $matchesByKey,
+                    $candidateLineIndex,
+                    $start,
+                    $value,
+                    $raw,
+                    is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
+                    $candidateLineIndex === $hitIndex ? 'line' : 'nearby',
+                    candidate_confidence_score($confidenceComponents),
+                    is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
+                    $label !== '' ? $label : null,
+                    null,
+                    is_numeric($confidenceComponents['noisePenalty'] ?? null) ? (float) $confidenceComponents['noisePenalty'] : null,
+                    is_numeric($confidenceComponents['positionPenalty'] ?? null) ? (float) $confidenceComponents['positionPenalty'] : null,
+                    is_string($confidenceComponents['positionPenaltyAxis'] ?? null) ? (string) $confidenceComponents['positionPenaltyAxis'] : null,
+                    is_string($confidenceComponents['mainDirection'] ?? null) ? (string) $confidenceComponents['mainDirection'] : null,
+                    is_numeric($confidenceComponents['positionDiff'] ?? null) ? (float) $confidenceComponents['positionDiff'] : null,
+                    is_numeric($confidenceComponents['positionNormalizedDiff'] ?? null) ? (float) $confidenceComponents['positionNormalizedDiff'] : null,
+                    is_string($confidenceComponents['betweenText'] ?? null) ? (string) $confidenceComponents['betweenText'] : null,
+                    is_string($confidenceComponents['noiseText'] ?? null) ? (string) $confidenceComponents['noiseText'] : null,
+                    $matchedLabelText,
+                    $hitIndex,
+                    is_array($confidenceComponents['noiseSegments'] ?? null) ? $confidenceComponents['noiseSegments'] : null,
+                    is_numeric($confidenceComponents['trailingDelimiterPenalty'] ?? null) ? (float) $confidenceComponents['trailingDelimiterPenalty'] : null,
+                    null,
+                    null,
+                    null,
+                    is_numeric($confidenceComponents['verticalDistancePenalty'] ?? null) ? (float) $confidenceComponents['verticalDistancePenalty'] : null,
+                    is_numeric($confidenceComponents['verticalDistance'] ?? null) ? (float) $confidenceComponents['verticalDistance'] : null,
+                    is_numeric($confidenceComponents['verticalNormalizedDistance'] ?? null) ? (float) $confidenceComponents['verticalNormalizedDistance'] : null,
+                    is_string($confidenceComponents['invalidReason'] ?? null) ? (string) $confidenceComponents['invalidReason'] : null,
+                    is_array($confidenceComponents['labelBbox'] ?? null) ? $confidenceComponents['labelBbox'] : null,
+                    is_array($confidenceComponents['valueBbox'] ?? null) ? $confidenceComponents['valueBbox'] : null,
+                    is_numeric($confidenceComponents['pageNumber'] ?? null) ? (int) $confidenceComponents['pageNumber'] : null
+                );
+            }
+        }
+    }
+
+    return sort_extraction_field_matches(array_values($matchesByKey));
+}
+
 function apply_cross_matching_key_penalties(array $results, array $positionSettings = []): array
 {
     $settings = normalize_matching_position_adjustment_settings($positionSettings);
@@ -13224,6 +13403,7 @@ function extract_configured_rule_set_field_matches(
         $runtimeRuleSet['searchTerms'] ?? null,
         normalize_extraction_field_is_regex($runtimeRuleSet['isRegex'] ?? false)
     );
+    $labelsAreRegex = normalize_extraction_field_is_regex($runtimeRuleSet['isRegex'] ?? false);
     $valuePattern = is_string($runtimeRuleSet['valuePattern'] ?? null) ? trim((string) $runtimeRuleSet['valuePattern']) : '';
 
     $preferCaptureGroupValue = $type === 'date' || $normalizationType !== 'replacements';
@@ -13268,14 +13448,15 @@ function extract_configured_rule_set_field_matches(
     }
 
     if (in_array($type, ['regex', 'date'], true)) {
-        return annotate_extraction_field_matches_with_scope(extract_generic_text_field_matches(
+        return annotate_extraction_field_matches_with_scope(collect_anchored_pattern_candidate_matches_from_segments(
             $lines,
             $searchTerms,
-            $valuePattern,
             $replacementMap,
+            $valuePattern,
+            $preferCaptureGroupValue,
             $positionSettings,
             $lineGeometries,
-            $preferCaptureGroupValue
+            $labelsAreRegex
         ), $scopeDebug);
     }
 
