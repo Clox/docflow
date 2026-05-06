@@ -12893,7 +12893,7 @@ function extract_unlabeled_pattern_field_result(array $lines, string $pattern, b
 
             return [
                 'value' => $value,
-                'confidence' => 0.55,
+                'confidence' => 1.0,
                 'lineIndex' => is_int($lineIndex) ? $lineIndex : null,
                 'source' => 'pattern',
                 'raw' => is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null,
@@ -12953,7 +12953,7 @@ function extract_unlabeled_pattern_field_matches(array $lines, string $pattern, 
                 raw: $raw,
                 matchText: is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
                 source: 'pattern',
-                confidence: 0.55,
+                confidence: 1.0,
                 matchType: is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern',
                 labelBbox: $candidateBbox,
                 valueBbox: $candidateBbox,

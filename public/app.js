@@ -11796,6 +11796,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   const matchIndex = Number.isInteger(row?.matchIndex) ? row.matchIndex + 1 : 1;
   const keyWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'key', pageMatches);
   const valueWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'value', pageMatches);
+  const showKeySection = ocrDataFieldMatchHasKey(row, keyWordIndexes);
   const keyWordBboxes = buildOcrWordCopyPayloadsForPage(page, keyWordIndexes);
   const valueWordBboxes = buildOcrWordCopyPayloadsForPage(page, valueWordIndexes);
   const keyText = ocrDataFieldKeyCandidateTexts(row).join(' / ');
@@ -11806,14 +11807,17 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     fieldName: typeof group?.name === 'string' ? group.name : '',
     matchIndex,
     value: typeof row?.value === 'string' ? row.value : '',
-    keyBBoxIndexes: Array.from(keyWordIndexes).sort((left, right) => left - right).map((wordIndex) => wordIndex + 1),
     valueBBoxIndexes: Array.from(valueWordIndexes).sort((left, right) => left - right).map((wordIndex) => wordIndex + 1),
   };
 
-  if (typeof row?.labelText === 'string' && row.labelText.trim() !== '') {
+  if (showKeySection) {
+    copyPayload.keyBBoxIndexes = Array.from(keyWordIndexes).sort((left, right) => left - right).map((wordIndex) => wordIndex + 1);
+  }
+
+  if (showKeySection && typeof row?.labelText === 'string' && row.labelText.trim() !== '') {
     copyPayload.labelText = row.labelText;
   }
-  if (typeof row?.searchTerm === 'string' && row.searchTerm.trim() !== '') {
+  if (showKeySection && typeof row?.searchTerm === 'string' && row.searchTerm.trim() !== '') {
     copyPayload.searchTerm = row.searchTerm;
   }
   if (confidenceValue !== null) {
@@ -11834,7 +11838,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
       copyPayload[key] = numericValue;
     }
   });
-  if (row?.keyBbox) {
+  if (showKeySection && row?.keyBbox) {
     copyPayload.keyBbox = row.keyBbox;
   }
   if (row?.valueBbox) {
@@ -11846,9 +11850,11 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
 
   const bboxCopyPayload = {
     ...copyPayload,
-    keyBBoxes: keyWordBboxes,
     valueBBoxes: valueWordBboxes,
   };
+  if (showKeySection) {
+    bboxCopyPayload.keyBBoxes = keyWordBboxes;
+  }
   const metaRows = [];
   String(confidenceText || '')
     .split('\n')
@@ -11882,7 +11888,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   return {
     indexLabel: `Träff #${matchIndex}`,
     text: [
-      `Nyckel-BBoxar: ${formatOcrWordIndexList(keyWordIndexes)}`,
+      ...(showKeySection ? [`Nyckel-BBoxar: ${formatOcrWordIndexList(keyWordIndexes)}`] : []),
       `Värde-BBoxar: ${formatOcrWordIndexList(valueWordIndexes)}`,
     ].join('\n'),
     metaRows,
@@ -11890,6 +11896,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     copyTitle: 'Kopiera träff som JSON',
     bboxCopyText: `${JSON.stringify(bboxCopyPayload, null, 2)}\n`,
     bboxCopyTitle: 'Kopiera träff med alla bboxar som JSON',
+    hasKey: showKeySection,
     keyText,
     valueText,
     keyWordIndexes: Array.from(keyWordIndexes).sort((left, right) => left - right),
@@ -12424,9 +12431,10 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
     const matchLookup = section.state.tooltipMatchLookup;
     const keyWordIndexes = new Set(section.state.keyWordIndexes);
     const valueWordIndexes = new Set(section.state.valueWordIndexes);
+    const showKeySection = tooltipData?.hasKey === true || keyWordIndexes.size > 0 || String(tooltipData.keyText || '').trim() !== '';
 
     const detailGroups = [
-      { label: 'Nyckel', value: tooltipData.keyText, wordIndexes: keyWordIndexes },
+      ...(showKeySection ? [{ label: 'Nyckel', value: tooltipData.keyText, wordIndexes: keyWordIndexes }] : []),
       { label: 'Värde', value: tooltipData.valueText, wordIndexes: valueWordIndexes },
     ];
 
@@ -13708,6 +13716,18 @@ function ocrDataFieldKeyCandidateTexts(row) {
   return Array.from(new Set(texts.map((text) => String(text || '').trim()).filter((text) => text !== '')));
 }
 
+function ocrDataFieldMatchHasKey(row, keyWordIndexes = null) {
+  if (row?.hasKey === true) {
+    return true;
+  }
+
+  if (ocrDataFieldKeyCandidateTexts(row).length > 0) {
+    return true;
+  }
+
+  return keyWordIndexes instanceof Set && keyWordIndexes.size > 0;
+}
+
 function ocrDataFieldValueCandidateTexts(row) {
   const texts = [
     row && typeof row.value === 'string' ? row.value : '',
@@ -14039,7 +14059,7 @@ async function refreshOcrDataFieldSearch(options = {}) {
   syncOcrDataFieldFieldSelect();
   syncOcrDataFieldHitFilterUi();
   const group = syncOcrDataFieldSelection();
-  const rows = group ? group.rows : [];
+  const rows = ocrDataFieldCurrentRows();
   if (rows.length === 0) {
     setOcrSearchButtonsEnabled(false);
     setOcrSearchStatus('0 träffar', false, true);

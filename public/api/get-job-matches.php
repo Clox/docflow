@@ -54,6 +54,23 @@ try {
         return is_string($match['positionPenaltyAxis'] ?? null)
             && in_array(trim((string) $match['positionPenaltyAxis']), ['invalid', 'invalid_bbox'], true);
     };
+    $normalizePatternConfidence = static function (?string $matchType, ?string $matchSource, $confidence, $baseConfidence = null, $finalConfidence = null): array {
+        $resolvedConfidence = isset($confidence) ? (float) $confidence : null;
+        $resolvedBaseConfidence = is_numeric($baseConfidence) ? (float) $baseConfidence : $resolvedConfidence;
+        $resolvedFinalConfidence = is_numeric($finalConfidence) ? (float) $finalConfidence : $resolvedBaseConfidence;
+
+        if ($matchType === 'pattern' && $matchSource === 'pattern') {
+            $resolvedConfidence = 1.0;
+            $resolvedBaseConfidence = 1.0;
+            $resolvedFinalConfidence = 1.0;
+        }
+
+        return [
+            'confidence' => $resolvedConfidence,
+            'baseConfidence' => $resolvedBaseConfidence,
+            'finalConfidence' => $resolvedFinalConfidence,
+        ];
+    };
 
     $fields = [];
     $allFieldKeys = array_values(array_unique(array_merge(array_keys($fieldValues), array_keys($fieldMeta))));
@@ -91,19 +108,27 @@ try {
                         $matchType = 'pattern';
                     }
                 }
-                $confidence = isset($match['confidence']) ? (float) $match['confidence'] : null;
                 $matchSource = is_string($match['source'] ?? null) ? trim((string) $match['source']) : '';
-                if ($matchType === 'pattern' && $matchSource === 'pattern') {
-                    $confidence = 1.0;
-                }
+                $labelText = is_string($match['labelText'] ?? null) ? trim((string) $match['labelText']) : '';
+                $searchTerm = is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : '';
+                $hasKey = $labelText !== '' || $searchTerm !== '';
+                $normalizedConfidence = $normalizePatternConfidence(
+                    $matchType !== '' ? $matchType : null,
+                    $matchSource !== '' ? $matchSource : null,
+                    $match['confidence'] ?? null,
+                    $match['baseConfidence'] ?? null,
+                    $match['finalConfidence'] ?? null
+                );
+                $confidence = $normalizedConfidence['confidence'];
                 $score = is_numeric($match['score'] ?? null) ? (float) $match['score'] : null;
 
                 $candidateRows[] = [
                     'value' => $candidateValue,
                     'source' => is_string($match['source'] ?? null) ? (string) $match['source'] : '',
-                    'labelText' => is_string($match['labelText'] ?? null) ? trim((string) $match['labelText']) : '',
+                    'labelText' => $labelText,
                     'between' => is_string($match['between'] ?? null) ? (string) $match['between'] : '',
-                    'searchTerm' => is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : '',
+                    'searchTerm' => $searchTerm,
+                    'hasKey' => $hasKey,
                     'scopeType' => is_string($match['scopeType'] ?? null) ? trim((string) $match['scopeType']) : '',
                     'scopeText' => is_string($match['scopeText'] ?? null) ? trim((string) $match['scopeText']) : '',
                     'scopeIsRegex' => ($match['scopeIsRegex'] ?? false) === true,
@@ -114,8 +139,8 @@ try {
                         ? (string) $match['matchText']
                         : (is_string($match['raw'] ?? null) ? (string) $match['raw'] : ''),
                     'confidence' => $confidence,
-                    'baseConfidence' => is_numeric($match['baseConfidence'] ?? null) ? (float) $match['baseConfidence'] : $confidence,
-                    'finalConfidence' => is_numeric($match['finalConfidence'] ?? null) ? (float) $match['finalConfidence'] : $confidence,
+                    'baseConfidence' => $normalizedConfidence['baseConfidence'],
+                    'finalConfidence' => $normalizedConfidence['finalConfidence'],
                     'noisePenalty' => is_numeric($match['noisePenalty'] ?? null) ? (float) $match['noisePenalty'] : null,
                     'trailingDelimiterPenalty' => is_numeric($match['trailingDelimiterPenalty'] ?? null) ? (float) $match['trailingDelimiterPenalty'] : null,
                     'otherMatchKeyPenalty' => is_numeric($match['otherMatchKeyPenalty'] ?? null) ? (float) $match['otherMatchKeyPenalty'] : null,
@@ -126,7 +151,7 @@ try {
                     'positionPenaltyAxis' => is_string($match['positionPenaltyAxis'] ?? null) ? trim((string) $match['positionPenaltyAxis']) : '',
                     'mainDirection' => is_string($match['mainDirection'] ?? null) ? trim((string) $match['mainDirection']) : '',
                     'invalidReason' => is_string($match['invalidReason'] ?? null) ? trim((string) $match['invalidReason']) : '',
-                    'labelBbox' => is_array($match['labelBbox'] ?? null) ? $match['labelBbox'] : null,
+                    'labelBbox' => $hasKey && is_array($match['labelBbox'] ?? null) ? $match['labelBbox'] : null,
                     'valueBbox' => is_array($match['valueBbox'] ?? null) ? $match['valueBbox'] : null,
                     'pageNumber' => is_int($match['pageNumber'] ?? null) ? (int) $match['pageNumber'] : null,
                     'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : '',
@@ -170,9 +195,6 @@ try {
             }
 
             foreach ($values as $index => $candidateValue) {
-                $fallbackConfidence = $index === 0
-                    ? (isset($firstMatch['confidence']) ? (float) $firstMatch['confidence'] : (isset($legacyField['confidence']) ? (float) $legacyField['confidence'] : null))
-                    : null;
                 $fallbackMatchType = $index === 0 && is_string($firstMatch['matchType'] ?? null)
                     ? trim((string) $firstMatch['matchType'])
                     : '';
@@ -187,9 +209,23 @@ try {
                 $fallbackSource = $index === 0 && is_string($firstMatch['source'] ?? null)
                     ? trim((string) $firstMatch['source'])
                     : ($index === 0 && is_string($legacyField['source'] ?? null) ? trim((string) $legacyField['source']) : '');
-                if ($fallbackMatchType === 'pattern' && $fallbackSource === 'pattern') {
-                    $fallbackConfidence = 1.0;
-                }
+                $fallbackLabelText = $index === 0 && is_string($firstMatch['labelText'] ?? null)
+                    ? trim((string) $firstMatch['labelText'])
+                    : '';
+                $fallbackSearchTerm = $index === 0 && is_string($firstMatch['searchTerm'] ?? null)
+                    ? trim((string) $firstMatch['searchTerm'])
+                    : '';
+                $fallbackHasKey = $fallbackLabelText !== '' || $fallbackSearchTerm !== '';
+                $fallbackNormalizedConfidence = $normalizePatternConfidence(
+                    $fallbackMatchType !== '' ? $fallbackMatchType : null,
+                    $fallbackSource !== '' ? $fallbackSource : null,
+                    $index === 0
+                        ? (isset($firstMatch['confidence']) ? (float) $firstMatch['confidence'] : (isset($legacyField['confidence']) ? (float) $legacyField['confidence'] : null))
+                        : null,
+                    $index === 0 && is_numeric($firstMatch['baseConfidence'] ?? null) ? (float) $firstMatch['baseConfidence'] : null,
+                    $index === 0 && is_numeric($firstMatch['finalConfidence'] ?? null) ? (float) $firstMatch['finalConfidence'] : null
+                );
+                $fallbackConfidence = $fallbackNormalizedConfidence['confidence'];
                 $fallbackScore = $index === 0 && is_numeric($firstMatch['score'] ?? null)
                     ? (float) $firstMatch['score']
                     : null;
@@ -199,15 +235,12 @@ try {
                     'source' => $index === 0 && is_string($firstMatch['source'] ?? null)
                         ? (string) $firstMatch['source']
                         : ($index === 0 && is_string($legacyField['source'] ?? null) ? (string) $legacyField['source'] : ''),
-                    'labelText' => $index === 0 && is_string($firstMatch['labelText'] ?? null)
-                        ? trim((string) $firstMatch['labelText'])
-                        : '',
+                    'labelText' => $fallbackLabelText,
                     'between' => $index === 0 && is_string($firstMatch['between'] ?? null)
                         ? (string) $firstMatch['between']
                         : '',
-                    'searchTerm' => $index === 0 && is_string($firstMatch['searchTerm'] ?? null)
-                        ? trim((string) $firstMatch['searchTerm'])
-                        : '',
+                    'searchTerm' => $fallbackSearchTerm,
+                    'hasKey' => $fallbackHasKey,
                     'scopeType' => $index === 0 && is_string($firstMatch['scopeType'] ?? null)
                         ? trim((string) $firstMatch['scopeType'])
                         : '',
@@ -232,8 +265,8 @@ try {
                                 ? (string) $legacyField['matchText']
                                 : ($index === 0 && is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''))),
                     'confidence' => $fallbackConfidence,
-                    'baseConfidence' => $index === 0 && is_numeric($firstMatch['baseConfidence'] ?? null) ? (float) $firstMatch['baseConfidence'] : $fallbackConfidence,
-                    'finalConfidence' => $index === 0 && is_numeric($firstMatch['finalConfidence'] ?? null) ? (float) $firstMatch['finalConfidence'] : $fallbackConfidence,
+                    'baseConfidence' => $fallbackNormalizedConfidence['baseConfidence'],
+                    'finalConfidence' => $fallbackNormalizedConfidence['finalConfidence'],
                     'noisePenalty' => $index === 0 && is_numeric($firstMatch['noisePenalty'] ?? null) ? (float) $firstMatch['noisePenalty'] : null,
                     'trailingDelimiterPenalty' => $index === 0 && is_numeric($firstMatch['trailingDelimiterPenalty'] ?? null) ? (float) $firstMatch['trailingDelimiterPenalty'] : null,
                     'otherMatchKeyPenalty' => $index === 0 && is_numeric($firstMatch['otherMatchKeyPenalty'] ?? null) ? (float) $firstMatch['otherMatchKeyPenalty'] : null,
@@ -244,7 +277,7 @@ try {
                     'positionPenaltyAxis' => $index === 0 && is_string($firstMatch['positionPenaltyAxis'] ?? null) ? trim((string) $firstMatch['positionPenaltyAxis']) : '',
                     'mainDirection' => $index === 0 && is_string($firstMatch['mainDirection'] ?? null) ? trim((string) $firstMatch['mainDirection']) : '',
                     'invalidReason' => $index === 0 && is_string($firstMatch['invalidReason'] ?? null) ? trim((string) $firstMatch['invalidReason']) : '',
-                    'labelBbox' => $index === 0 && is_array($firstMatch['labelBbox'] ?? null) ? $firstMatch['labelBbox'] : null,
+                    'labelBbox' => $fallbackHasKey && $index === 0 && is_array($firstMatch['labelBbox'] ?? null) ? $firstMatch['labelBbox'] : null,
                     'valueBbox' => $index === 0 && is_array($firstMatch['valueBbox'] ?? null) ? $firstMatch['valueBbox'] : null,
                     'pageNumber' => $index === 0 && is_int($firstMatch['pageNumber'] ?? null) ? (int) $firstMatch['pageNumber'] : null,
                     'noiseText' => $index === 0 && is_string($firstMatch['noiseText'] ?? null) ? (string) $firstMatch['noiseText'] : '',
@@ -327,9 +360,15 @@ try {
                     : (is_string($legacyField['matchText'] ?? null)
                         ? (string) $legacyField['matchText']
                         : (is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''))),
-            'confidence' => isset($firstMatch['confidence'])
-                ? (float) $firstMatch['confidence']
-                : (isset($legacyField['confidence']) ? (float) $legacyField['confidence'] : null),
+            'confidence' => $normalizePatternConfidence(
+                is_string($firstMatch['matchType'] ?? null) ? trim((string) $firstMatch['matchType']) : null,
+                is_string($firstMatch['source'] ?? null) ? trim((string) $firstMatch['source']) : null,
+                isset($firstMatch['confidence'])
+                    ? (float) $firstMatch['confidence']
+                    : (isset($legacyField['confidence']) ? (float) $legacyField['confidence'] : null),
+                is_numeric($firstMatch['baseConfidence'] ?? null) ? (float) $firstMatch['baseConfidence'] : null,
+                is_numeric($firstMatch['finalConfidence'] ?? null) ? (float) $firstMatch['finalConfidence'] : null
+            )['confidence'],
         ];
     }
 
