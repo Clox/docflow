@@ -7808,6 +7808,12 @@ function findJobById(jobId) {
   return {
     ...snapshot,
     ...processingJob,
+    analysis: snapshot.analysis && typeof snapshot.analysis === 'object'
+      ? snapshot.analysis
+      : processingJob.analysis,
+    senderSummary: snapshot.senderSummary && typeof snapshot.senderSummary === 'object'
+      ? snapshot.senderSummary
+      : processingJob.senderSummary,
     matchedClientDirName: snapshot.matchedClientDirName,
     matchedSenderId: snapshot.matchedSenderId,
   };
@@ -15229,7 +15235,9 @@ function applyJobEvents(events) {
       }
     }
 
-    syncUnarchivedJobAutoProposalChange(findJobById(jobId), job);
+    if (listKey !== 'processingJobs') {
+      syncUnarchivedJobAutoProposalChange(findJobById(jobId), job);
+    }
     removeJobFromAllLists(nextState, jobId);
     if (listKey === 'readyJobs') {
       const preferredIndex = (() => {
