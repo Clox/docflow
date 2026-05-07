@@ -80,7 +80,10 @@ try {
         }
         cleanup_unarchived_jobs_after_field_removal($config, $removedFieldKeys);
     }
-    $result = persist_active_archiving_rules_change($config, $nextRules, ['reason' => 'rules']);
+    $result = persist_active_archiving_rules_change($config, $nextRules, [
+        'reason' => 'rules',
+        'reprocessImmediately' => false,
+    ]);
     $stored = is_array($result['stored'] ?? null) ? $result['stored'] : $state;
     $activeRules = load_active_archiving_rules();
     json_response([

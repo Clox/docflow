@@ -3877,7 +3877,6 @@ function persist_active_archiving_rules_change(
         'reprocessedCount' => 0,
     ];
     if ($reviewRelevantChanged) {
-        $reprocessedJobs = reprocess_unarchived_jobs_for_active_archiving_rules($config, $previousActiveRules, $normalizedNextRules);
         restart_archiving_update_session(
             $config,
             $previousActiveRules,
@@ -3889,7 +3888,12 @@ function persist_active_archiving_rules_change(
                 'templateChanges' => $templateChanges,
             ]
         );
-        advance_archiving_update_session($config, 20);
+        if (($options['reprocessImmediately'] ?? false) === true) {
+            $reprocessedJobs = reprocess_unarchived_jobs_for_active_archiving_rules($config, $previousActiveRules, $normalizedNextRules);
+            advance_archiving_update_session($config, 20);
+        } else {
+            trigger_reanalyze_all_documents_worker();
+        }
     }
 
     maybe_queue_archiving_rules_update_event($config);
@@ -3931,6 +3935,35 @@ function bump_active_archiving_rules_version(array $config, string $reason = 'ma
             'reprocessedJobIds' => [],
             'reprocessedCount' => 0,
         ],
+    ];
+}
+
+function reanalyze_all_documents(array $config): array
+{
+    ensure_job_dispatcher_running($config);
+
+    $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false);
+
+    $activeRules = load_active_archiving_rules();
+    $activeVersion = active_archiving_rules_version();
+    $currentState = load_archiving_rules_review_state();
+    $currentSession = is_array($currentState['updateSession'] ?? null)
+        ? $currentState['updateSession']
+        : empty_archiving_update_session();
+
+    restart_archiving_update_session($config, $activeRules, $activeRules, $activeVersion, [
+        'reason' => is_string($currentSession['reason'] ?? null) ? (string) $currentSession['reason'] : 'manual-reanalysis',
+        'changedSections' => is_array($currentSession['changedSections'] ?? null) ? $currentSession['changedSections'] : [],
+        'templateChanges' => is_array($currentSession['templateChanges'] ?? null) ? $currentSession['templateChanges'] : [],
+        'ignoreDismissed' => false,
+    ]);
+    collect_archiving_update_review($config, 500);
+
+    return [
+        'ok' => true,
+        'archivingRules' => build_archiving_rules_state_payload($config),
+        'reprocessedJobs' => $reprocessedJobs,
+        'lastEventId' => latest_job_event_id(),
     ];
 }
 
@@ -16986,6 +17019,21 @@ function run_processing_worker(array $config): void
 function trigger_processing_worker(): void
 {
     $scriptPath = PROJECT_ROOT . 'scripts/process-jobs.php';
+    if (!is_file($scriptPath)) {
+        return;
+    }
+
+    $command = escapeshellarg(PHP_BINARY)
+        . ' '
+        . escapeshellarg($scriptPath)
+        . ' > /dev/null 2>&1 &';
+
+    exec($command);
+}
+
+function trigger_reanalyze_all_documents_worker(): void
+{
+    $scriptPath = PROJECT_ROOT . 'scripts/reanalyze-all-documents.php';
     if (!is_file($scriptPath)) {
         return;
     }

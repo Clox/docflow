@@ -31,7 +31,10 @@ try {
     $state = load_archiving_rules_state();
     $nextRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
     $nextRules['archiveFolders'] = $archiveStructure['archiveFolders'];
-    $result = persist_active_archiving_rules_change($config, $nextRules, ['reason' => 'rules']);
+    $result = persist_active_archiving_rules_change($config, $nextRules, [
+        'reason' => 'rules',
+        'reprocessImmediately' => false,
+    ]);
     $stored = is_array($result['stored'] ?? null) ? $result['stored'] : $state;
     $activeRules = load_active_archiving_rules();
     json_response([
