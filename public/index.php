@@ -736,7 +736,6 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           </svg>
         </button>
         <div id="labels-add-menu" class="split-button-menu hidden" role="menu" aria-label="Etikettåtgärder">
-          <button id="labels-add-row-menu-create" type="button" role="menuitem">Skapa ny etikett</button>
           <button id="labels-import-row" type="button" role="menuitem">Importera från JSON</button>
         </div>
       </div>
@@ -777,7 +776,6 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           </svg>
         </button>
         <div id="extraction-fields-add-menu" class="split-button-menu hidden" role="menu" aria-label="Datafältsåtgärder">
-          <button id="extraction-fields-add-row-menu-create" type="button" role="menuitem">Skapa nytt datafält</button>
           <button id="extraction-fields-import-row" type="button" role="menuitem">Importera från JSON</button>
         </div>
       </div>

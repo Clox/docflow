@@ -259,7 +259,6 @@ let systemLabelEditorEl = null;
 let labelsAddRowEl = null;
 let labelsAddMenuToggleEl = null;
 let labelsAddMenuEl = null;
-let labelsAddMenuCreateEl = null;
 let labelsAddMenuHome = null;
 let labelsAddMenuOpenRaf = 0;
 let labelsAddMenuRepositionHandler = null;
@@ -271,7 +270,6 @@ let systemExtractionFieldsEditorEl = null;
 let extractionFieldsAddRowEl = null;
 let extractionFieldsAddMenuToggleEl = null;
 let extractionFieldsAddMenuEl = null;
-let extractionFieldsAddMenuCreateEl = null;
 let extractionFieldsAddMenuHome = null;
 let extractionFieldsAddMenuOpenRaf = 0;
 let extractionFieldsAddMenuRepositionHandler = null;
@@ -15738,7 +15736,6 @@ function bindSettingsPanelRefs(tabId) {
     labelsAddRowEl = document.getElementById('labels-add-row');
     labelsAddMenuToggleEl = document.getElementById('labels-add-menu-toggle');
     labelsAddMenuEl = document.getElementById('labels-add-menu');
-    labelsAddMenuCreateEl = document.getElementById('labels-add-row-menu-create');
     labelsImportRowEl = document.getElementById('labels-import-row');
     labelsCancelEl = document.getElementById('labels-cancel');
     labelsApplyEl = document.getElementById('labels-apply');
@@ -15751,10 +15748,6 @@ function bindSettingsPanelRefs(tabId) {
     labelsAddMenuToggleEl.addEventListener('click', (event) => {
       event.stopPropagation();
       toggleLabelsAddMenu();
-    });
-    labelsAddMenuCreateEl.addEventListener('click', () => {
-      closeLabelsAddMenu();
-      labelsAddRowEl.click();
     });
     labelsImportRowEl.addEventListener('click', async () => {
       closeLabelsAddMenu();
@@ -15789,7 +15782,6 @@ function bindSettingsPanelRefs(tabId) {
     extractionFieldsAddRowEl = document.getElementById('extraction-fields-add-row');
     extractionFieldsAddMenuToggleEl = document.getElementById('extraction-fields-add-menu-toggle');
     extractionFieldsAddMenuEl = document.getElementById('extraction-fields-add-menu');
-    extractionFieldsAddMenuCreateEl = document.getElementById('extraction-fields-add-row-menu-create');
     extractionFieldsImportRowEl = document.getElementById('extraction-fields-import-row');
     extractionFieldsCancelEl = document.getElementById('extraction-fields-cancel');
     extractionFieldsApplyEl = document.getElementById('extraction-fields-apply');
@@ -15818,10 +15810,6 @@ function bindSettingsPanelRefs(tabId) {
     extractionFieldsAddMenuToggleEl.addEventListener('click', (event) => {
       event.stopPropagation();
       toggleExtractionFieldsAddMenu();
-    });
-    extractionFieldsAddMenuCreateEl.addEventListener('click', () => {
-      closeExtractionFieldsAddMenu();
-      extractionFieldsAddRowEl.click();
     });
     extractionFieldsImportRowEl.addEventListener('click', async () => {
       closeExtractionFieldsAddMenu();
