@@ -2918,7 +2918,8 @@ body.is-resizing-sidebar {
 
 .ocr-view,
 .ocr-highlight-view,
-.meta-view {
+.meta-view,
+.error-view {
   position: absolute;
   inset: 0;
   margin: 0;
@@ -2928,6 +2929,11 @@ body.is-resizing-sidebar {
   word-break: break-word;
   background: #fafafa;
   font: 14px/1.45 monospace;
+}
+
+.error-view {
+  color: #991b1b;
+  background: #fff5f5;
 }
 
 .ocr-pages-view {

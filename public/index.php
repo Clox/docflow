@@ -221,6 +221,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
               <option value="ocr">OCR</option>
               <option value="matches">Matchningar</option>
               <option value="meta">Meta</option>
+              <option value="error" hidden disabled>Fel</option>
               <option value="review" hidden disabled>Granskning</option>
             </select>
           </div>
@@ -360,6 +361,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         ></textarea>
         <div id="matches-view" class="matches-view hidden"></div>
         <pre id="meta-view" class="meta-view hidden"></pre>
+        <pre id="error-view" class="error-view hidden" aria-live="polite"></pre>
         <section id="archived-review-panel" class="archived-review-panel hidden"></section>
       </div>
     </main>

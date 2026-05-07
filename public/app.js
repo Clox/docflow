@@ -18,11 +18,13 @@ const ocrShowPageImageEl = document.getElementById('ocr-show-page-image');
 const ocrPageImageOpacityEl = document.getElementById('ocr-page-image-opacity');
 const matchesViewEl = document.getElementById('matches-view');
 const metaViewEl = document.getElementById('meta-view');
+const errorViewEl = document.getElementById('error-view');
 const viewModeEl = document.getElementById('view-mode');
 const pdfViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="pdf"]') : null;
 const ocrViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="ocr"]') : null;
 const matchesViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="matches"]') : null;
 const metaViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="meta"]') : null;
+const errorViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="error"]') : null;
 const reviewViewOptionEl = viewModeEl ? viewModeEl.querySelector('option[value="review"]') : null;
 const ocrSearchBarEl = document.getElementById('ocr-search-bar');
 const ocrSearchModeToggleEl = document.getElementById('ocr-search-mode-toggle');
@@ -538,7 +540,7 @@ const loadingSettingsPanels = new Set();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_ARCHIVE_STRUCTURE_OPTION_VALUE = '__edit_archive_structure__';
-const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta', 'review']);
+const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta', 'error', 'review']);
 const SETTINGS_DIALOG_MIN_WIDTH_PX = 720;
 const SETTINGS_DIALOG_MIN_HEIGHT_PX = 520;
 const SETTINGS_DIALOG_VIEWPORT_MARGIN_PX = 12;
@@ -3251,6 +3253,27 @@ function syncReviewViewModeAvailability(job, options = {}) {
   return available;
 }
 
+function syncErrorViewModeAvailability(job, options = {}) {
+  const allowFallback = options.allowFallback !== false;
+  const available = job && job.status === 'failed' && typeof job.error === 'string' && job.error.trim() !== '';
+
+  if (errorViewOptionEl instanceof HTMLOptionElement) {
+    errorViewOptionEl.hidden = !available;
+    errorViewOptionEl.disabled = !available;
+  }
+
+  if (!available && currentViewMode === 'error' && allowFallback) {
+    setViewMode('pdf');
+    return false;
+  }
+
+  if (available && currentViewMode === 'error') {
+    viewModeEl.value = 'error';
+  }
+
+  return available;
+}
+
 function syncPrimaryViewModeAvailability(job, options = {}) {
   if (viewModeEl instanceof HTMLSelectElement) {
     viewModeEl.value = currentViewMode;
@@ -3262,6 +3285,8 @@ function syncPrimaryViewModeAvailability(job, options = {}) {
 function setViewerJob(jobId) {
   if (currentViewMode === 'review') {
     setViewerReview(jobId);
+  } else if (currentViewMode === 'error') {
+    setViewerError(jobId);
   } else if (currentViewMode === 'ocr') {
     setViewerOcr(jobId);
   } else if (currentViewMode === 'matches') {
@@ -3270,6 +3295,28 @@ function setViewerJob(jobId) {
     setViewerMeta(jobId);
   } else {
     setViewerPdf(jobId);
+  }
+}
+
+function setViewerError(jobId) {
+  setOcrSearchVisible(false);
+  setOcrSourceTabsVisible(false);
+  setOcrControlsVisible(false);
+  setOcrPageImageToggleVisible(false);
+  archivedReviewPanelEl.classList.add('hidden');
+  ocrPagesViewEl.classList.add('hidden');
+  pdfStackEl.classList.add('hidden');
+  ocrHighlightViewEl.classList.add('hidden');
+  ocrViewEl.classList.add('hidden');
+  matchesViewEl.classList.add('hidden');
+  metaViewEl.classList.add('hidden');
+  if (errorViewEl instanceof HTMLElement) {
+    errorViewEl.classList.remove('hidden');
+    const job = findJobById(jobId);
+    const errorText = job && job.status === 'failed' && typeof job.error === 'string' && job.error.trim() !== ''
+      ? job.error.trim()
+      : 'Inget felmeddelande tillgängligt.';
+    errorViewEl.textContent = errorText;
   }
 }
 
@@ -3348,6 +3395,7 @@ function setViewerPdf(jobId) {
   syncOcrHighlightPresentation();
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
+  errorViewEl.classList.add('hidden');
   pdfStackEl.classList.remove('hidden');
   updatePdfFrameWindow(jobId);
 }
@@ -3376,6 +3424,7 @@ async function setViewerOcr(jobId) {
   ocrHighlightViewEl.classList.add('hidden');
   ocrViewEl.classList.add('hidden');
   syncOcrHighlightPresentation();
+  errorViewEl.classList.add('hidden');
   const restoreSelectionScroll = () => {
     if (!isOcrDataFieldMode()) {
       return;
@@ -4733,6 +4782,7 @@ async function setViewerMeta(jobId) {
   ocrViewEl.classList.add('hidden');
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.remove('hidden');
+  errorViewEl.classList.add('hidden');
 
   if (!jobId) {
     loadedMetaJobId = '';
@@ -4780,6 +4830,7 @@ async function setViewerReview(jobId) {
   ocrViewEl.classList.add('hidden');
   matchesViewEl.classList.add('hidden');
   metaViewEl.classList.add('hidden');
+  errorViewEl.classList.add('hidden');
   archivedReviewPanelEl.classList.remove('hidden');
 
   if (!jobId) {
@@ -7600,13 +7651,7 @@ function updateFailedJobListItem(li, job) {
 
   li.dataset.jobId = job.id;
   li._nameEl.textContent = job.originalFilename;
-
-  if (job.error) {
-    const error = ensureJobListItemSecondaryNode(li, 'job-error');
-    error.textContent = job.error;
-  } else {
-    removeJobListItemSecondaryNode(li);
-  }
+  removeJobListItemSecondaryNode(li);
 
   removeJobListItemSpinnerNode(li);
 }
@@ -7617,9 +7662,14 @@ function displayedReviewJobsForReadyMode() {
 
 function renderJobList(processingJobs, readyJobs, failedJobs) {
   const displayedReadyJobs = buildDisplayedReadyJobs(processingJobs, readyJobs);
+  const displayedFailedJobs = Array.isArray(failedJobs)
+    ? sortJobsForList('failedJobs', failedJobs).map((job, index) => ({
+        ...job,
+        _displayOrder: Number.MAX_SAFE_INTEGER - 1000 + index
+      }))
+    : [];
   const displayedArchivedJobs = Array.isArray(state.archivedJobs) ? state.archivedJobs : [];
   const displayedReviewJobs = displayedReviewJobsForReadyMode();
-  const safeFailedJobs = Array.isArray(failedJobs) ? failedJobs : [];
   const desiredNodes = [];
   const activeKeys = new Set();
   const safeProcessingJobs = Array.isArray(processingJobs) ? processingJobs : [];
@@ -7636,9 +7686,9 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
   }
 
   if (
-    ((isReadyMode || isAllMode) && displayedReadyJobs.length === 0 && displayedReviewJobs.length === 0 && safeProcessingJobs.length === 0 && displayedArchivedJobs.length === 0 && safeFailedJobs.length === 0)
+    ((isReadyMode || isAllMode) && displayedReadyJobs.length === 0 && displayedFailedJobs.length === 0 && displayedReviewJobs.length === 0 && safeProcessingJobs.length === 0 && displayedArchivedJobs.length === 0)
     || (isArchivedReviewMode && displayedReviewJobs.length === 0)
-    || (isProcessingMode && safeProcessingJobs.length === 0 && safeFailedJobs.length === 0)
+    || (isProcessingMode && safeProcessingJobs.length === 0)
     || (isArchivedMode && displayedArchivedJobs.length === 0)
   ) {
     const messageNode = ensureJobListMessageNode();
@@ -7679,6 +7729,16 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
         });
       }
 
+      if (displayedFailedJobs.length > 0) {
+        displayedFailedJobs.forEach((job) => {
+          const key = `all:failed:${job.id}`;
+          const li = ensureJobListItemNode(key);
+          updateFailedJobListItem(li, job);
+          desiredNodes.push(li);
+          activeKeys.add(key);
+        });
+      }
+
       if (displayedArchivedJobs.length > 0) {
         const labelNode = ensureJobListSectionLabelNode('Arkiverade jobb', 'label:all:archived');
         desiredNodes.push(labelNode);
@@ -7691,24 +7751,18 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
           activeKeys.add(key);
         });
       }
-
-      if (safeFailedJobs.length > 0) {
-        const labelNode = ensureJobListSectionLabelNode('Misslyckade jobb', 'label:all:failed');
-        desiredNodes.push(labelNode);
-        activeKeys.add('label:all:failed');
-        safeFailedJobs.forEach((job) => {
-          const key = `all:failed:${job.id}`;
-          const li = ensureJobListItemNode(key);
-          updateFailedJobListItem(li, job);
-          desiredNodes.push(li);
-          activeKeys.add(key);
-        });
-      }
     } else if (isReadyMode) {
       displayedReadyJobs.forEach((job) => {
         const key = `ready:${job.id}`;
         const li = ensureJobListItemNode(key);
         updateReadyJobListItem(li, job);
+        desiredNodes.push(li);
+        activeKeys.add(key);
+      });
+      displayedFailedJobs.forEach((job) => {
+        const key = `ready:failed:${job.id}`;
+        const li = ensureJobListItemNode(key);
+        updateFailedJobListItem(li, job);
         desiredNodes.push(li);
         activeKeys.add(key);
       });
@@ -7738,22 +7792,6 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
         const key = `archived:${job.id}`;
         const li = ensureJobListItemNode(key);
         updateArchivedJobListItem(li, job);
-        desiredNodes.push(li);
-        activeKeys.add(key);
-      });
-    }
-
-    if (isProcessingMode && safeFailedJobs.length > 0) {
-      if (safeProcessingJobs.length > 0) {
-        const labelNode = ensureJobListSectionLabelNode('Misslyckade jobb', 'label:failed');
-        desiredNodes.push(labelNode);
-        activeKeys.add('label:failed');
-      }
-
-      safeFailedJobs.forEach((job) => {
-        const key = `failed:${job.id}`;
-        const li = ensureJobListItemNode(key);
-        updateFailedJobListItem(li, job);
         desiredNodes.push(li);
         activeKeys.add(key);
       });
@@ -7858,7 +7896,8 @@ function jobsForCurrentListMode() {
 
 function displayedJobsForCurrentListMode() {
   if (currentJobListMode === 'ready') {
-    return buildDisplayedReadyJobs(state.processingJobs, state.readyJobs);
+    return buildDisplayedReadyJobs(state.processingJobs, state.readyJobs)
+      .concat(sortJobsForList('failedJobs', Array.isArray(state.failedJobs) ? state.failedJobs : []));
   }
   if (currentJobListMode === 'archived-review') {
     return displayedArchivedReviewJobsForReadyMode();
@@ -7867,8 +7906,8 @@ function displayedJobsForCurrentListMode() {
     return []
       .concat(Array.isArray(state.processingJobs) ? state.processingJobs : [])
       .concat(buildDisplayedReadyJobs([], state.readyJobs))
-      .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
-      .concat(Array.isArray(state.failedJobs) ? state.failedJobs : []);
+      .concat(sortJobsForList('failedJobs', Array.isArray(state.failedJobs) ? state.failedJobs : []))
+      .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs : []);
   }
   return jobsForCurrentListMode();
 }
@@ -10388,6 +10427,7 @@ function buildDisplayedReadyJobs(processingJobs, readyJobs) {
     }
     return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
   });
+
   return displayed;
 }
 
@@ -10415,8 +10455,7 @@ function notifyFailedJobs(failedJobs) {
     return;
   }
 
-  const lines = freshFailures.map((failure) => `${failure.filename}: ${failure.error}`);
-  alert('Ett eller flera jobb misslyckades.\n\n' + lines.join('\n\n'));
+  console.error('[Docflow] Failed jobs detected', freshFailures);
 }
 
 function setOcrSearchVisible(visible) {
@@ -14829,9 +14868,8 @@ function applySelectedJobId(jobId, options = {}) {
   const selectedJob = findJobById(jobId);
   selectedJobId = selectedJob ? selectedJob.id : '';
   syncReviewViewModeAvailability(selectedJob);
-  syncPrimaryViewModeAvailability(selectedJob);
+  syncErrorViewModeAvailability(selectedJob);
   renderJobList(state.processingJobs, state.readyJobs, state.failedJobs);
-  setViewerJob(selectedJobId);
   selectedJobStateSig = jobStateSignature(selectedJob);
   setClientForJob(selectedJob);
   setSenderForJob(selectedJob);
@@ -14842,6 +14880,11 @@ function applySelectedJobId(jobId, options = {}) {
       renderArchivedReviewPanel();
     });
   }
+  if (selectedJob && selectedJob.status === 'failed' && typeof selectedJob.error === 'string' && selectedJob.error.trim() !== '' && currentViewMode !== 'error') {
+    setViewMode('error', { syncHash });
+    return;
+  }
+  setViewerJob(selectedJobId);
   if (syncHash) {
     updateHashState();
   }
@@ -14900,10 +14943,7 @@ function refreshSelection() {
     const shouldRefreshViewer = nextJobStateSig !== selectedJobStateSig;
     selectedJobId = currentSelection.id;
     syncReviewViewModeAvailability(currentSelection);
-    syncPrimaryViewModeAvailability(currentSelection);
-    if (shouldRefreshViewer) {
-      setViewerJob(currentSelection.id);
-    }
+    syncErrorViewModeAvailability(currentSelection);
     selectedJobStateSig = nextJobStateSig;
     setClientForJob(currentSelection);
     setSenderForJob(currentSelection);
@@ -14916,6 +14956,14 @@ function refreshSelection() {
       loadArchivedReview(currentSelection.id, shouldRefreshViewer).catch(() => {
         renderArchivedReviewPanel();
       });
+    }
+    if (currentSelection && currentSelection.status === 'failed' && typeof currentSelection.error === 'string' && currentSelection.error.trim() !== '' && currentViewMode !== 'error') {
+      setViewMode('error', { syncHash: false });
+      updateHashState();
+      return;
+    }
+    if (shouldRefreshViewer) {
+      setViewerJob(currentSelection.id);
     }
     updateHashState();
     return;
