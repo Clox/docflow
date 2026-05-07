@@ -6603,8 +6603,9 @@ function build_grid_text_lines_from_debug_words(array $words): array
 
     $charWidth = median_float($wordWidths, 18.0);
     $lineHeight = median_float($lineHeights, 40.0);
+    $blankLineGapFactor = .55;//0.4 - 0.7 is fine during testing
+    $extraLayoutBreakGapFactor = 1.3;
     $rows = ocr_layout_group_words_into_rows($normalized);
-    $rowTops = [];
 
     if ($rows === []) {
         return [];
@@ -6612,16 +6613,31 @@ function build_grid_text_lines_from_debug_words(array $words): array
 
     $grid = [];
     $gridSegments = [];
+    $gridMeta = [];
     foreach ($rows as $rowWords) {
         $wordTop = min(array_map(static fn(array $word): float => (float) ($word['y0'] ?? 0.0), $rowWords));
+        $wordBottom = max(array_map(static fn(array $word): float => (float) ($word['y1'] ?? 0.0), $rowWords));
         $candidateRow = (int) round($wordTop / max($lineHeight, 1.0));
-        while (isset($rowTops[$candidateRow]) && abs($rowTops[$candidateRow] - $wordTop) > ($lineHeight * 0.35)) {
+        while (isset($gridMeta[$candidateRow]) && abs(((float) $gridMeta[$candidateRow]['top']) - $wordTop) > ($lineHeight * 0.35)) {
             $candidateRow++;
         }
         if (!isset($grid[$candidateRow])) {
             $grid[$candidateRow] = '';
             $gridSegments[$candidateRow] = [];
-            $rowTops[$candidateRow] = $wordTop;
+            $gridMeta[$candidateRow] = [
+                'slot' => $candidateRow,
+                'top' => $wordTop,
+                'bottom' => $wordBottom,
+                'height' => max(1.0, $wordBottom - $wordTop),
+            ];
+        } else {
+            $gridMeta[$candidateRow]['slot'] = $candidateRow;
+            $gridMeta[$candidateRow]['top'] = min((float) $gridMeta[$candidateRow]['top'], $wordTop);
+            $gridMeta[$candidateRow]['bottom'] = max((float) $gridMeta[$candidateRow]['bottom'], $wordBottom);
+            $gridMeta[$candidateRow]['height'] = max(
+                1.0,
+                (float) $gridMeta[$candidateRow]['bottom'] - (float) $gridMeta[$candidateRow]['top']
+            );
         }
         $buffer = '';
         $cursor = 0;
@@ -6653,15 +6669,39 @@ function build_grid_text_lines_from_debug_words(array $words): array
         }
         $grid[$candidateRow] = $buffer;
         $gridSegments[$candidateRow] = $segments;
+        $gridMeta[$candidateRow] = [
+            'slot' => $candidateRow,
+            'top' => isset($gridMeta[$candidateRow]['top']) ? min((float) $gridMeta[$candidateRow]['top'], $wordTop) : $wordTop,
+            'bottom' => isset($gridMeta[$candidateRow]['bottom']) ? max((float) $gridMeta[$candidateRow]['bottom'], $wordBottom) : $wordBottom,
+            'height' => max(
+                1.0,
+                (isset($gridMeta[$candidateRow]['bottom']) ? max((float) $gridMeta[$candidateRow]['bottom'], $wordBottom) : $wordBottom)
+                - (isset($gridMeta[$candidateRow]['top']) ? min((float) $gridMeta[$candidateRow]['top'], $wordTop) : $wordTop)
+            ),
+        ];
     }
 
     $pageLines = [];
-    $previousRow = null;
+    $previousMeta = null;
     ksort($grid, SORT_NUMERIC);
     foreach ($grid as $rowIndex => $buffer) {
-        if ($previousRow !== null) {
-            $gap = max(0, $rowIndex - $previousRow - 1);
-            for ($i = 0; $i < $gap; $i++) {
+        $currentMeta = is_array($gridMeta[$rowIndex] ?? null) ? $gridMeta[$rowIndex] : null;
+        if ($previousMeta !== null && $currentMeta !== null) {
+            $previousSlot = (int) ($previousMeta['slot'] ?? $rowIndex);
+            $currentSlot = (int) ($currentMeta['slot'] ?? $rowIndex);
+            $previousBottom = (float) ($previousMeta['bottom'] ?? $previousMeta['top'] ?? 0.0);
+            $currentTop = (float) ($currentMeta['top'] ?? $currentMeta['bottom'] ?? 0.0);
+            $previousHeight = max(1.0, (float) ($previousMeta['height'] ?? ($previousBottom - (float) ($previousMeta['top'] ?? $previousBottom))));
+            $gap = max(0.0, $currentTop - $previousBottom);
+            $emptySlots = max(0, $currentSlot - $previousSlot - 1);
+            $blankLinesToInsert = 0;
+            if ($emptySlots > 0 && $gap >= ($previousHeight * $blankLineGapFactor)) {
+                $blankLinesToInsert = 1;
+                if ($emptySlots > 1 && $gap >= ($previousHeight * $extraLayoutBreakGapFactor)) {
+                    $blankLinesToInsert = $emptySlots;
+                }
+            }
+            for ($i = 0; $i < $blankLinesToInsert; $i++) {
                 $pageLines[] = [
                     'text' => '',
                     'segments' => [],
@@ -6675,7 +6715,7 @@ function build_grid_text_lines_from_debug_words(array $words): array
                 static fn($segment): bool => is_array($segment)
             )),
         ];
-        $previousRow = $rowIndex;
+        $previousMeta = $currentMeta;
     }
 
     return $pageLines;
@@ -9341,25 +9381,6 @@ function build_matching_line_geometries_for_job(array $job, string $ocrText = ''
         $wordLines = build_grid_text_lines_from_debug_words(
             is_array($page['words'] ?? null) ? $page['words'] : []
         );
-        $pageText = is_string($page['text'] ?? null) ? rtrim((string) $page['text'], "\r\n") : '';
-        $renderedWordText = $wordLines !== []
-            ? implode("\n", array_map(
-                static fn(array $line): string => is_string($line['text'] ?? null) ? (string) $line['text'] : '',
-                $wordLines
-            ))
-            : '';
-
-        if ($pageText !== '' && $renderedWordText !== '' && $pageText !== $renderedWordText) {
-            foreach (ocr_text_lines($pageText) as $textLine) {
-                $lineEntries[] = [
-                    'text' => is_string($textLine) ? $textLine : '',
-                    'segments' => [],
-                    'pageNumber' => $pageNumber,
-                ];
-            }
-            continue;
-        }
-
         if ($wordLines !== []) {
             foreach ($wordLines as $line) {
                 $lineEntries[] = [
@@ -9371,6 +9392,7 @@ function build_matching_line_geometries_for_job(array $job, string $ocrText = ''
             continue;
         }
 
+        $pageText = is_string($page['text'] ?? null) ? rtrim((string) $page['text'], "\r\n") : '';
         foreach (ocr_text_lines($pageText) as $textLine) {
             $lineEntries[] = [
                 'text' => is_string($textLine) ? $textLine : '',
