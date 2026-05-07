@@ -878,13 +878,21 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-backup">
     <h3>Säkerhetskopiering</h3>
-    <p>Exportera eller importera hela konfigurationen. Exporten innehåller huvudmän, avsändare, etiketter, datafält, arkivstruktur, textigenkänning och textmatchning. Sökvägar och jobb ingår inte.</p>
-    <p>Varje export sparas också automatiskt lokalt. Vid import och återställning skapas alltid en backup av nuvarande konfiguration innan något skrivs över.</p>
+<p>Här sparas versioner av din konfiguration. Du kan när som helst återställa en tidigare version.</p>
+<p>Ingår: huvudmän, avsändare, etiketter, datafält, arkivstruktur samt inställningar för textigenkänning och textmatchning.</p>
+<p>Ingår inte: sökvägar och data kopplad till specifika dokument.</p>
+<p>Skapa säkerhetskopia sparar nuvarande version. Import lägger till en version från fil. Återställ ersätter nuvarande konfiguration.</p>
     <input id="settings-backup-file" type="file" accept=".json,application/json" hidden>
     <div class="settings-section-actions backup-section-actions">
-      <button id="settings-backup-export" type="button">Exportera konfiguration</button>
-      <button id="settings-backup-import" type="button">Importera konfiguration</button>
+      <span id="settings-backup-export-shell" class="settings-backup-export-shell" title="">
+        <button id="settings-backup-export" type="button" aria-busy="false">
+          <span class="spinner settings-backup-export-spinner hidden" aria-hidden="true"></span>
+          <span class="settings-backup-export-label">Skapa säkerhetskopia</span>
+        </button>
+      </span>
+      <button id="settings-backup-import" type="button">Importera säkerhetskopia</button>
     </div>
+    <div id="settings-backup-status" class="settings-backup-status" aria-live="polite"></div>
     <div class="settings-backup-history">
       <div class="settings-backup-history-title">Tidigare säkerhetskopior</div>
       <div id="settings-backup-list" class="settings-backup-list" aria-live="polite"></div>

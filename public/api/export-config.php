@@ -5,17 +5,13 @@ require_once __DIR__ . '/_bootstrap.php';
 
 try {
     $payload = build_configuration_export_payload();
-    $backupPath = write_configuration_backup($payload);
-    $text = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if (!is_string($text)) {
-        throw new RuntimeException('Could not encode configuration export.');
-    }
+    $backupResult = write_configuration_backup_if_changed($payload);
 
     json_response([
         'ok' => true,
-        'filename' => configuration_export_filename(is_string($payload['exportedAt'] ?? null) ? (string) $payload['exportedAt'] : null),
-        'text' => $text,
-        'backupFile' => basename($backupPath),
+        'backupFile' => is_string($backupResult['backupFile'] ?? null) ? $backupResult['backupFile'] : null,
+        'created' => ($backupResult['created'] ?? false) === true,
+        'snapshotType' => 'manual',
     ]);
 } catch (Throwable $e) {
     json_response([

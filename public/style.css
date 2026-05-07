@@ -4404,6 +4404,49 @@ body.is-resizing-sidebar {
   margin-top: 18px;
 }
 
+.settings-backup-export-shell {
+  display: inline-flex;
+  min-width: 0;
+}
+
+#settings-backup-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-backup-export-spinner {
+  width: 12px;
+  height: 12px;
+}
+
+#settings-backup-export.is-loading {
+  cursor: progress;
+}
+
+#settings-backup-export:disabled {
+  pointer-events: none;
+}
+
+#settings-backup-export.is-loading .settings-backup-export-label {
+  opacity: 0.82;
+}
+
+.settings-backup-status {
+  min-height: 18px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.settings-backup-status[data-tone="success"] {
+  color: #166534;
+}
+
+.settings-backup-status[data-tone="error"] {
+  color: #b91c1c;
+}
+
 .settings-backup-history-title {
   font-size: 14px;
   font-weight: 700;
@@ -4491,6 +4534,19 @@ body.is-resizing-sidebar {
   justify-content: flex-end;
   align-items: center;
   flex: 0 0 auto;
+}
+
+.settings-backup-row-restore-prompt {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-backup-row-restore-question {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .settings-backup-row-button {

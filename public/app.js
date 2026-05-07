@@ -296,14 +296,25 @@ let systemChromeExtensionPageEl = null;
 let systemChromeExtensionDirectoryEl = null;
 let systemChromeExtensionCopyPageEl = null;
 let systemChromeExtensionCopyDirectoryEl = null;
+let settingsBackupExportShellEl = null;
 let settingsBackupExportEl = null;
 let settingsBackupImportEl = null;
 let settingsBackupFileEl = null;
+let settingsBackupStatusEl = null;
 let settingsBackupListEl = null;
 let settingsBackupItems = [];
 let settingsBackupListLoading = false;
 let settingsBackupListError = '';
 let settingsBackupBusy = false;
+let settingsBackupCreateLoading = false;
+let settingsBackupCreateCanCreate = true;
+let settingsBackupCreateDisabledReason = '';
+let settingsBackupCreateRequestToken = 0;
+let settingsBackupStatusMessage = '';
+let settingsBackupStatusTone = 'info';
+let settingsBackupHighlightedFilename = '';
+let settingsBackupHighlightTimer = null;
+let settingsBackupRestorePendingFilename = '';
 let inputInboxPathEl = null;
 let outputBasePathEl = null;
 let pathsCancelEl = null;
@@ -10511,6 +10522,127 @@ function formatConfigurationBackupDateTime(value) {
   });
 }
 
+function formatConfigurationBackupKind(kind) {
+  switch (typeof kind === 'string' ? kind.trim() : '') {
+    case 'pre-import':
+    case 'pre_restore':
+      return 'Före återställning';
+    case 'imported':
+      return 'Importerad';
+    default:
+      return 'Säkerhetskopia';
+  }
+}
+
+function renderConfigurationBackupStatus() {
+  if (!(settingsBackupStatusEl instanceof HTMLElement)) {
+    return;
+  }
+
+  settingsBackupStatusEl.textContent = settingsBackupStatusMessage;
+  settingsBackupStatusEl.dataset.tone = settingsBackupStatusTone;
+  settingsBackupStatusEl.classList.toggle('hidden', settingsBackupStatusMessage === '');
+}
+
+function setConfigurationBackupStatus(message, tone = 'info') {
+  settingsBackupStatusMessage = typeof message === 'string' ? message : '';
+  settingsBackupStatusTone = tone === 'success' ? 'success' : tone === 'error' ? 'error' : 'info';
+  renderConfigurationBackupStatus();
+}
+
+function renderConfigurationBackupCreateState() {
+  if (!(settingsBackupExportEl instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const loading = settingsBackupCreateLoading === true;
+  const canCreate = settingsBackupCreateCanCreate === true;
+  const disabled = settingsBackupBusy === true || loading || !canCreate;
+
+  settingsBackupExportEl.disabled = disabled;
+  settingsBackupExportEl.classList.toggle('is-loading', loading);
+  settingsBackupExportEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+
+  const spinnerEl = settingsBackupExportEl.querySelector('.settings-backup-export-spinner');
+  if (spinnerEl instanceof HTMLElement) {
+    spinnerEl.classList.toggle('hidden', !loading);
+  }
+
+  if (settingsBackupExportShellEl instanceof HTMLElement) {
+    let title = '';
+    if (loading) {
+      title = 'Kontrollerar senaste säkerhetskopian...';
+    } else if (!canCreate && settingsBackupBusy !== true) {
+      title = settingsBackupCreateDisabledReason || 'Ingen förändring sedan senaste säkerhetskopian';
+    }
+    settingsBackupExportShellEl.title = title;
+  }
+}
+
+async function refreshConfigurationBackupCreateState() {
+  if (!(settingsBackupExportEl instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const requestToken = ++settingsBackupCreateRequestToken;
+  settingsBackupCreateLoading = true;
+  settingsBackupCreateCanCreate = false;
+  settingsBackupCreateDisabledReason = '';
+  renderConfigurationBackupCreateState();
+
+  try {
+    const response = await fetch('/api/get-config-backup-state.php', { cache: 'no-store' });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true || typeof payload.canCreate !== 'boolean') {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte kontrollera säkerhetskopian.');
+    }
+    if (requestToken !== settingsBackupCreateRequestToken) {
+      return;
+    }
+
+    settingsBackupCreateCanCreate = payload.canCreate === true;
+    settingsBackupCreateDisabledReason = payload.canCreate === false
+      ? (typeof payload.disabledReason === 'string' && payload.disabledReason.trim() !== ''
+        ? payload.disabledReason.trim()
+        : 'Ingen förändring sedan senaste säkerhetskopian')
+      : '';
+  } catch (error) {
+    if (requestToken !== settingsBackupCreateRequestToken) {
+      return;
+    }
+
+    settingsBackupCreateCanCreate = true;
+    settingsBackupCreateDisabledReason = '';
+  } finally {
+    if (requestToken !== settingsBackupCreateRequestToken) {
+      return;
+    }
+
+    settingsBackupCreateLoading = false;
+    renderConfigurationBackupCreateState();
+  }
+}
+
+function highlightConfigurationBackup(filename) {
+  const normalizedFilename = typeof filename === 'string' ? filename.trim() : '';
+  if (normalizedFilename === '') {
+    return;
+  }
+
+  if (settingsBackupHighlightTimer !== null) {
+    window.clearTimeout(settingsBackupHighlightTimer);
+    settingsBackupHighlightTimer = null;
+  }
+
+  settingsBackupHighlightedFilename = normalizedFilename;
+  renderConfigurationBackups();
+  settingsBackupHighlightTimer = window.setTimeout(() => {
+    settingsBackupHighlightTimer = null;
+    settingsBackupHighlightedFilename = '';
+    renderConfigurationBackups();
+  }, 1800);
+}
+
 function renderConfigurationBackups(items = settingsBackupItems) {
   if (!(settingsBackupListEl instanceof HTMLElement)) {
     return;
@@ -10519,6 +10651,7 @@ function renderConfigurationBackups(items = settingsBackupItems) {
   const normalizedItems = Array.isArray(items) ? items : [];
   settingsBackupItems = normalizedItems;
   settingsBackupListEl.replaceChildren();
+  renderConfigurationBackupStatus();
 
   if (settingsBackupListLoading) {
     const loading = document.createElement('div');
@@ -10560,12 +10693,12 @@ function renderConfigurationBackups(items = settingsBackupItems) {
 
     const title = document.createElement('div');
     title.className = 'settings-backup-row-title';
-    title.textContent = formatConfigurationBackupDateTime(item.exportedAt || item.modifiedAt || '');
+    title.textContent = formatConfigurationBackupDateTime(item.snapshotAt || item.exportedAt || item.modifiedAt || '');
     titleRow.appendChild(title);
 
     const kind = document.createElement('span');
     kind.className = 'settings-backup-row-kind';
-    kind.textContent = item.kind === 'pre-import' ? 'Före import' : 'Export';
+    kind.textContent = formatConfigurationBackupKind(item.kind);
     titleRow.appendChild(kind);
 
     const meta = document.createElement('div');
@@ -10591,15 +10724,45 @@ function renderConfigurationBackups(items = settingsBackupItems) {
     const actions = document.createElement('div');
     actions.className = 'settings-backup-row-actions';
 
-    const restoreButton = document.createElement('button');
-    restoreButton.type = 'button';
-    restoreButton.className = 'settings-backup-row-button settings-backup-row-button-primary';
-    restoreButton.textContent = 'Återställ';
-    restoreButton.disabled = settingsBackupBusy;
-    restoreButton.addEventListener('click', () => {
-      restoreConfigurationBackup(item.filename);
-    });
-    actions.appendChild(restoreButton);
+    if (settingsBackupRestorePendingFilename === item.filename) {
+      const restorePrompt = document.createElement('div');
+      restorePrompt.className = 'settings-backup-row-restore-prompt';
+
+      const restoreQuestion = document.createElement('span');
+      restoreQuestion.className = 'settings-backup-row-restore-question';
+      restoreQuestion.textContent = 'Är du säker?';
+
+      const restoreConfirmButton = document.createElement('button');
+      restoreConfirmButton.type = 'button';
+      restoreConfirmButton.className = 'settings-backup-row-button settings-backup-row-button-primary';
+      restoreConfirmButton.textContent = 'Ja';
+      restoreConfirmButton.disabled = settingsBackupBusy;
+      restoreConfirmButton.addEventListener('click', () => {
+        restoreConfigurationBackup(item.filename, { confirmed: true });
+      });
+
+      const restoreCancelButton = document.createElement('button');
+      restoreCancelButton.type = 'button';
+      restoreCancelButton.className = 'settings-backup-row-button';
+      restoreCancelButton.textContent = 'Avbryt';
+      restoreCancelButton.disabled = settingsBackupBusy;
+      restoreCancelButton.addEventListener('click', () => {
+        clearConfigurationBackupRestorePrompt();
+      });
+
+      restorePrompt.append(restoreQuestion, restoreConfirmButton, restoreCancelButton);
+      actions.appendChild(restorePrompt);
+    } else {
+      const restoreButton = document.createElement('button');
+      restoreButton.type = 'button';
+      restoreButton.className = 'settings-backup-row-button settings-backup-row-button-primary';
+      restoreButton.textContent = 'Återställ';
+      restoreButton.disabled = settingsBackupBusy;
+      restoreButton.addEventListener('click', () => {
+        restoreConfigurationBackup(item.filename);
+      });
+      actions.appendChild(restoreButton);
+    }
 
     const downloadButton = document.createElement('button');
     downloadButton.type = 'button';
@@ -10631,10 +10794,16 @@ function renderConfigurationBackups(items = settingsBackupItems) {
     deleteButton.appendChild(deleteIcon);
     actions.appendChild(deleteButton);
 
+    row.classList.toggle('settings-highlight-target', settingsBackupHighlightedFilename === item.filename);
     row.appendChild(main);
     row.appendChild(actions);
     settingsBackupListEl.appendChild(row);
   });
+}
+
+function clearConfigurationBackupRestorePrompt() {
+  settingsBackupRestorePendingFilename = '';
+  renderConfigurationBackups();
 }
 
 function setBackupListLoading(loading) {
@@ -10644,12 +10813,21 @@ function setBackupListLoading(loading) {
 
 function setBackupUiBusy(busy) {
   settingsBackupBusy = busy === true;
+  if (settingsBackupBusy) {
+    settingsBackupRestorePendingFilename = '';
+    if (settingsBackupHighlightTimer !== null) {
+      window.clearTimeout(settingsBackupHighlightTimer);
+      settingsBackupHighlightTimer = null;
+    }
+    settingsBackupHighlightedFilename = '';
+  }
   if (settingsBackupExportEl instanceof HTMLButtonElement) {
     settingsBackupExportEl.disabled = settingsBackupBusy;
   }
   if (settingsBackupImportEl instanceof HTMLButtonElement) {
     settingsBackupImportEl.disabled = settingsBackupBusy;
   }
+  renderConfigurationBackupCreateState();
   renderConfigurationBackups();
 }
 
@@ -10680,12 +10858,18 @@ async function exportConfigurationBackup() {
   try {
     const response = await fetch('/api/export-config.php', { cache: 'no-store' });
     const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok !== true || typeof payload.text !== 'string') {
+    if (!response.ok || !payload || payload.ok !== true) {
       throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte exportera konfigurationen.');
     }
 
     await loadConfigurationBackups();
-    window.alert('Konfiguration sparad.');
+    await refreshConfigurationBackupCreateState();
+    if (payload.created === true && typeof payload.backupFile === 'string' && payload.backupFile.trim() !== '') {
+      setConfigurationBackupStatus('Säkerhetskopia skapad.', 'success');
+      highlightConfigurationBackup(payload.backupFile);
+    } else {
+      setConfigurationBackupStatus('', 'info');
+    }
   } finally {
     setBackupUiBusy(false);
   }
@@ -10693,13 +10877,6 @@ async function exportConfigurationBackup() {
 
 async function importConfigurationBackup(file) {
   if (!(file instanceof File) || settingsBackupBusy) {
-    return;
-  }
-
-  const confirmed = window.confirm(
-    'Detta ersätter nuvarande konfiguration. En automatisk backup skapas innan importen. Fortsätta?'
-  );
-  if (!confirmed) {
     return;
   }
 
@@ -10718,7 +10895,14 @@ async function importConfigurationBackup(file) {
       throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte importera konfigurationen.');
     }
 
-    window.location.reload();
+    await loadConfigurationBackups();
+    await refreshConfigurationBackupCreateState();
+    if (payload.created === true && typeof payload.backupFile === 'string' && payload.backupFile.trim() !== '') {
+      setConfigurationBackupStatus('Importerad som säkerhetskopia.', 'success');
+      highlightConfigurationBackup(payload.backupFile);
+    } else {
+      setConfigurationBackupStatus('', 'info');
+    }
   } finally {
     if (settingsBackupFileEl instanceof HTMLInputElement) {
       settingsBackupFileEl.value = '';
@@ -10727,17 +10911,19 @@ async function importConfigurationBackup(file) {
   }
 }
 
-async function restoreConfigurationBackup(filename) {
+async function restoreConfigurationBackup(filename, options = {}) {
   const normalizedFilename = typeof filename === 'string' ? filename.trim() : '';
   if (normalizedFilename === '' || settingsBackupBusy) {
     return;
   }
 
-  const confirmed = window.confirm('Detta ersätter nuvarande konfiguration med vald säkerhetskopia. Fortsätta?');
-  if (!confirmed) {
+  if (options.confirmed !== true) {
+    settingsBackupRestorePendingFilename = normalizedFilename;
+    renderConfigurationBackups();
     return;
   }
 
+  settingsBackupRestorePendingFilename = '';
   setBackupUiBusy(true);
   try {
     const response = await fetch('/api/restore-config-backup.php', {
@@ -10786,6 +10972,7 @@ async function deleteConfigurationBackup(filename) {
     }
 
     await loadConfigurationBackups();
+    await refreshConfigurationBackupCreateState();
   } catch (error) {
     alert(error instanceof Error ? error.message : 'Kunde inte ta bort säkerhetskopian.');
   } finally {
@@ -15986,9 +16173,11 @@ function bindSettingsPanelRefs(tabId) {
     }
     renderSystemChromeExtensionStatus();
   } else if (tabId === 'backup') {
+    settingsBackupExportShellEl = document.getElementById('settings-backup-export-shell');
     settingsBackupExportEl = document.getElementById('settings-backup-export');
     settingsBackupImportEl = document.getElementById('settings-backup-import');
     settingsBackupFileEl = document.getElementById('settings-backup-file');
+    settingsBackupStatusEl = document.getElementById('settings-backup-status');
     settingsBackupListEl = document.getElementById('settings-backup-list');
     if (settingsBackupExportEl instanceof HTMLButtonElement) {
       settingsBackupExportEl.addEventListener('click', async () => {
@@ -16032,7 +16221,7 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
 
   const reload = options.reload === true;
   if (tabId === 'backup' && loadedSettingsPanels.has(tabId) && !reload) {
-    await loadConfigurationBackups();
+    await Promise.all([loadConfigurationBackups(), refreshConfigurationBackupCreateState()]);
     return true;
   }
   if (loadedSettingsPanels.has(tabId) && !reload) {
@@ -16067,7 +16256,7 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
     } else if (tabId === 'extensions') {
       await loadSystemSettings();
     } else if (tabId === 'backup') {
-      await loadConfigurationBackups();
+      await Promise.all([loadConfigurationBackups(), refreshConfigurationBackupCreateState()]);
     }
 
     loadedSettingsPanels.add(tabId);
@@ -18187,7 +18376,6 @@ async function importSingleLabelFromJson() {
 
     renderLabelsEditor();
     updateSettingsActionButtons();
-    await saveLabels();
     revealImportedLabelInEditor(imported);
   } catch (error) {
     labelsDraft = previousLabelsDraft.map(sanitizeLabel);
@@ -18472,7 +18660,6 @@ async function importSingleExtractionFieldFromJson() {
     renderExtractionFieldsEditor();
     renderSystemExtractionFieldsEditor();
     updateSettingsActionButtons();
-    await saveExtractionFields();
     revealImportedExtractionFieldInEditor(imported);
   } catch (error) {
     extractionFieldsDraft = previousExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
@@ -24909,6 +25096,7 @@ async function saveClientsSettings() {
   clientsBaselineJson = normalizedClientsJson(clientsDraft);
   renderClientsEditor();
   updateSettingsActionButtons();
+  await refreshConfigurationBackupCreateState();
   await fetchState({ refreshClients: true });
 }
 
@@ -24938,6 +25126,7 @@ async function saveSendersSettings() {
   renderSendersEditor();
   setSendersPanelTab();
   updateSettingsActionButtons();
+  await refreshConfigurationBackupCreateState();
   await fetchState({ refreshSenders: true });
 }
 
@@ -24974,6 +25163,7 @@ async function saveMatchingSettings() {
   renderMatchingEditor();
   watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
+  await refreshConfigurationBackupCreateState();
 }
 
 async function saveArchiveStructure() {
@@ -25017,6 +25207,7 @@ async function saveArchiveStructure() {
   renderArchiveStructureEditor();
   watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
+  await refreshConfigurationBackupCreateState();
 }
 
 async function saveLabels() {
@@ -25061,6 +25252,7 @@ async function saveLabels() {
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
+  await refreshConfigurationBackupCreateState();
 }
 
 async function saveExtractionFields() {
@@ -25099,6 +25291,7 @@ async function saveExtractionFields() {
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
+  await refreshConfigurationBackupCreateState();
 }
 
 async function savePathSettings() {
@@ -25126,6 +25319,7 @@ async function savePathSettings() {
   inputInboxPathEl.value = inboxPathBaselineValue;
   outputBasePathEl.value = pathsBaselineValue;
   updateSettingsActionButtons();
+  await refreshConfigurationBackupCreateState();
 }
 
 async function saveOcrProcessingSettings() {
@@ -25174,6 +25368,7 @@ async function saveOcrProcessingSettings() {
   renderOcrProcessingCommand();
   watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
+  await refreshConfigurationBackupCreateState();
 }
 
 async function resetAllJobs() {

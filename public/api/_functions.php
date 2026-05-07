@@ -414,7 +414,7 @@ function ensure_configuration_backup_directory(): void
 
 function is_configuration_backup_filename(string $filename): bool
 {
-    return preg_match('/^(?:docflow-config|pre-import)-\d{8}_\d{6}\.json$/', $filename) === 1;
+    return preg_match('/^(?:docflow-config|manual|imported|pre-restore|pre-import)-\d{8}_\d{6}\.json$/', $filename) === 1;
 }
 
 function normalize_configuration_backup_filename(string $filename): ?string
@@ -444,6 +444,45 @@ function configuration_backup_summary(array $payload): array
     ];
 }
 
+function normalize_configuration_snapshot_type(mixed $type): string
+{
+    $normalized = trim(strtolower(is_string($type) ? $type : ''));
+    if ($normalized === 'pre-import') {
+        return 'pre_restore';
+    }
+    return in_array($normalized, ['manual', 'pre_restore', 'imported'], true) ? $normalized : '';
+}
+
+function configuration_snapshot_type_label(string $snapshotType): string
+{
+    return match (normalize_configuration_snapshot_type($snapshotType)) {
+        'pre_restore' => 'Före återställning',
+        'imported' => 'Importerad',
+        default => 'Säkerhetskopia',
+    };
+}
+
+function configuration_snapshot_type_prefix(string $snapshotType): string
+{
+    return match (normalize_configuration_snapshot_type($snapshotType)) {
+        'pre_restore' => 'pre-restore',
+        'imported' => 'imported',
+        default => 'manual',
+    };
+}
+
+function configuration_snapshot_payload(array $payload, string $snapshotType, ?string $snapshotAt = null): array
+{
+    $normalizedType = normalize_configuration_snapshot_type($snapshotType);
+    if ($normalizedType === '') {
+        $normalizedType = 'manual';
+    }
+    $normalizedPayload = $payload;
+    $normalizedPayload['snapshotType'] = $normalizedType;
+    $normalizedPayload['snapshotAt'] = is_string($snapshotAt) && trim($snapshotAt) !== '' ? trim($snapshotAt) : now_iso();
+    return $normalizedPayload;
+}
+
 function configuration_backup_entry_from_path(string $path): ?array
 {
     if (!is_file($path)) {
@@ -460,8 +499,14 @@ function configuration_backup_entry_from_path(string $path): ?array
     }
 
     $filename = basename($path);
+    $snapshotType = normalize_configuration_snapshot_type($payload['snapshotType'] ?? null);
+    if ($snapshotType === '') {
+        $snapshotType = str_starts_with($filename, 'pre-import-') ? 'pre_restore' : 'manual';
+    }
+    $snapshotAt = is_string($payload['snapshotAt'] ?? null) ? trim((string) $payload['snapshotAt']) : '';
     $exportedAt = is_string($payload['exportedAt'] ?? null) ? trim((string) $payload['exportedAt']) : '';
-    $exportedAtTimestamp = $exportedAt !== '' ? strtotime($exportedAt) : false;
+    $timestampSource = $snapshotAt !== '' ? $snapshotAt : ($exportedAt !== '' ? $exportedAt : '');
+    $exportedAtTimestamp = $timestampSource !== '' ? strtotime($timestampSource) : false;
     $modifiedAtTimestamp = filemtime($path);
     $sortTimestamp = $exportedAtTimestamp !== false
         ? $exportedAtTimestamp
@@ -469,7 +514,9 @@ function configuration_backup_entry_from_path(string $path): ?array
 
     return [
         'filename' => $filename,
-        'kind' => str_starts_with($filename, 'pre-import-') ? 'pre-import' : 'export',
+        'kind' => $snapshotType !== '' ? $snapshotType : 'manual',
+        'snapshotType' => $snapshotType !== '' ? $snapshotType : 'manual',
+        'snapshotAt' => $snapshotAt !== '' ? $snapshotAt : null,
         'exportedAt' => $exportedAt !== '' ? $exportedAt : null,
         'version' => isset($payload['version']) && is_numeric($payload['version']) ? (int) $payload['version'] : 0,
         'summary' => configuration_backup_summary($payload),
@@ -580,24 +627,109 @@ function build_configuration_export_payload(): array
 
 function write_configuration_backup(array $payload): string
 {
-    return write_configuration_backup_to_prefix($payload, 'docflow-config');
+    return write_configuration_snapshot_to_prefix($payload, 'manual');
 }
 
 function write_configuration_backup_to_prefix(array $payload, string $prefix): string
 {
+    $normalizedPrefix = trim(strtolower($prefix));
+    $snapshotType = match ($normalizedPrefix) {
+        'pre-import', 'pre-restore' => 'pre_restore',
+        'imported' => 'imported',
+        default => 'manual',
+    };
+    return write_configuration_snapshot_to_prefix($payload, $snapshotType);
+}
+
+function write_configuration_snapshot_to_prefix(array $payload, string $snapshotType): string
+{
     ensure_configuration_backup_directory();
+    $normalizedType = normalize_configuration_snapshot_type($snapshotType);
+    if ($normalizedType === '') {
+        $normalizedType = 'manual';
+    }
+    $snapshotPayload = configuration_snapshot_payload($payload, $normalizedType);
+    $snapshotAt = is_string($snapshotPayload['snapshotAt'] ?? null) ? (string) $snapshotPayload['snapshotAt'] : null;
     $backupPath = configuration_backup_directory() . DIRECTORY_SEPARATOR . configuration_backup_filename(
-        is_string($payload['exportedAt'] ?? null) ? (string) $payload['exportedAt'] : null,
-        $prefix
+        $snapshotAt,
+        configuration_snapshot_type_prefix($normalizedType)
     );
-    write_json_file($backupPath, $payload);
+    write_json_file($backupPath, $snapshotPayload);
     prune_configuration_backups(50);
     return $backupPath;
 }
 
 function create_configuration_pre_import_backup(): string
 {
-    return write_configuration_backup_to_prefix(build_configuration_export_payload(), 'pre-import');
+    return create_configuration_pre_restore_backup();
+}
+
+function create_configuration_pre_restore_backup(): string
+{
+    return write_configuration_snapshot_to_prefix(build_configuration_export_payload(), 'pre_restore');
+}
+
+function configuration_backup_payload_fingerprint(array $payload): string
+{
+    $normalized = $payload;
+    unset($normalized['exportedAt'], $normalized['snapshotAt'], $normalized['snapshotType']);
+    $encoded = json_encode($normalized, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return is_string($encoded) ? sha1($encoded) : sha1('');
+}
+
+function latest_configuration_backup_entry(): ?array
+{
+    $entries = list_configuration_backups();
+    if (!is_array($entries) || $entries === []) {
+        return null;
+    }
+
+    $latest = $entries[0];
+    return is_array($latest) ? $latest : null;
+}
+
+function write_configuration_backup_if_changed(array $payload): array
+{
+    return write_configuration_snapshot_if_changed($payload, 'manual');
+}
+
+function write_configuration_snapshot_if_changed(array $payload, string $snapshotType): array
+{
+    foreach (list_configuration_backups() as $entry) {
+        if (!is_array($entry) || !is_string($entry['filename'] ?? null)) {
+            continue;
+        }
+        $entryPath = configuration_backup_path((string) $entry['filename']);
+        if ($entryPath === null || !is_file($entryPath)) {
+            continue;
+        }
+        $entryPayload = load_json_file($entryPath);
+        if (
+            is_array($entryPayload)
+            && configuration_backup_payload_fingerprint($entryPayload) === configuration_backup_payload_fingerprint($payload)
+        ) {
+            return [
+                'created' => false,
+                'backupPath' => $entryPath,
+                'backupFile' => basename($entryPath),
+            ];
+        }
+    }
+
+    $backupPath = write_configuration_snapshot_to_prefix($payload, $snapshotType);
+    return [
+        'created' => true,
+        'backupPath' => $backupPath,
+        'backupFile' => basename($backupPath),
+    ];
+}
+
+function store_imported_configuration_snapshot(array $payload): array
+{
+    validate_configuration_import_payload($payload);
+    $result = write_configuration_snapshot_if_changed($payload, 'imported');
+    $result['snapshotType'] = 'imported';
+    return $result;
 }
 
 function normalize_export_client_rows(array $rows): array
@@ -713,7 +845,7 @@ function apply_configuration_import_payload(array $payload): array
 {
     validate_configuration_import_payload($payload);
 
-    $backupPath = create_configuration_pre_import_backup();
+    $backupPath = create_configuration_pre_restore_backup();
 
     $currentConfig = load_config();
     $currentMatching = load_matching_settings_payload();

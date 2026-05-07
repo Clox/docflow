@@ -21,38 +21,12 @@ if (!is_array($payload)) {
 }
 
 try {
-    $result = apply_configuration_import_payload($payload);
+    $result = store_imported_configuration_snapshot($payload);
     json_response([
         'ok' => true,
+        'created' => ($result['created'] ?? false) === true,
         'backupFile' => is_string($result['backupFile'] ?? null) ? $result['backupFile'] : null,
-        'clients' => is_array($result['clients'] ?? null) ? $result['clients'] : [],
-        'senders' => is_array($result['senders'] ?? null) ? $result['senders'] : [],
-        'labels' => is_array($result['labels'] ?? null) ? $result['labels'] : [],
-        'systemLabels' => is_array($result['systemLabels'] ?? null) ? $result['systemLabels'] : system_labels_template(),
-        'archiveStructure' => is_array($result['archiveStructure'] ?? null)
-            ? $result['archiveStructure']
-            : ['archiveFolders' => []],
-        'dataFields' => is_array($result['dataFields'] ?? null)
-            ? $result['dataFields']
-            : ['fields' => [], 'predefinedFields' => [], 'systemFields' => []],
-        'matching' => is_array($result['matching'] ?? null) ? $result['matching'] : [],
-        'ocr' => is_array($result['ocr'] ?? null)
-            ? $result['ocr']
-            : [
-                'ocrSkipExistingText' => true,
-                'ocrOptimizeLevel' => 1,
-                'ocrTextExtractionMethod' => 'layout',
-                'ocrPdfTextSubstitutions' => [],
-            ],
-        'system' => is_array($result['system'] ?? null)
-            ? $result['system']
-            : [
-                'stateUpdateTransport' => 'polling',
-                'chromeExtensionSuppressMissingNotice' => false,
-            ],
-        'reprocessedJobs' => is_array($result['reprocessedJobs'] ?? null)
-            ? $result['reprocessedJobs']
-            : ['reprocessedJobIds' => [], 'reprocessedCount' => 0, 'mode' => 'full'],
+        'snapshotType' => is_string($result['snapshotType'] ?? null) ? $result['snapshotType'] : 'imported',
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 400);
