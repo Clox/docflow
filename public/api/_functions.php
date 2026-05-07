@@ -6782,6 +6782,11 @@ function source_char_supports_swedish_diacritic_transfer(string $sourceChar, str
     };
 }
 
+function is_noise_character(string $char): bool
+{
+    return preg_match('/[\p{L}\p{N}]/u', $char) !== 1;
+}
+
 function normalize_text_for_diacritic_match(string $text): string
 {
     $normalized = [];
@@ -6881,73 +6886,90 @@ function transfer_swedish_diacritics_token(string $sourceText, string $truthText
         return $sourceText;
     }
 
+    $sourceLower = array_map('lowercase_text', $sourceChars);
+    $truthLower = array_map('lowercase_text', $truthChars);
     $sourceFolded = array_map('fold_char_for_diacritic_match', $sourceChars);
     $truthFolded = array_map('fold_char_for_diacritic_match', $truthChars);
+    $memo = [];
 
-    $dp = array_fill(0, $sourceCount + 1, array_fill(0, $truthCount + 1, 0));
-    for ($i = 0; $i <= $sourceCount; $i++) {
-        $dp[$i][0] = $i;
-    }
-    for ($j = 0; $j <= $truthCount; $j++) {
-        $dp[0][$j] = $j;
-    }
-
-    for ($i = 1; $i <= $sourceCount; $i++) {
-        for ($j = 1; $j <= $truthCount; $j++) {
-            $cost = $sourceFolded[$i - 1] === $truthFolded[$j - 1] ? 0 : 1;
-            $dp[$i][$j] = min(
-                $dp[$i - 1][$j] + 1,
-                $dp[$i][$j - 1] + 1,
-                $dp[$i - 1][$j - 1] + $cost
-            );
+    $solve = function (int $sourceIndex, int $truthIndex, bool $matchedAnySource) use (
+        &$solve,
+        &$memo,
+        $sourceChars,
+        $truthChars,
+        $sourceLower,
+        $truthLower,
+        $sourceFolded,
+        $truthFolded
+    ): ?array {
+        $memoKey = $sourceIndex . '|' . $truthIndex . '|' . ($matchedAnySource ? '1' : '0');
+        if (array_key_exists($memoKey, $memo)) {
+            return $memo[$memoKey];
         }
-    }
 
-    $result = [];
-    $i = $sourceCount;
-    $j = $truthCount;
-    while ($i > 0 || $j > 0) {
-        if (
-            $i > 0
-            && $j > 0
-            && $dp[$i][$j] === $dp[$i - 1][$j - 1] + ($sourceFolded[$i - 1] === $truthFolded[$j - 1] ? 0 : 1)
-        ) {
-            $sourceChar = $sourceChars[$i - 1];
-            $truthChar = $truthChars[$j - 1];
-            if (
-                $sourceFolded[$i - 1] === $truthFolded[$j - 1]
+        $sourceCount = count($sourceChars);
+        $truthCount = count($truthChars);
+        if ($sourceIndex >= $sourceCount && $truthIndex >= $truthCount) {
+            return $memo[$memoKey] = ['score' => 0.0, 'text' => ''];
+        }
+
+        $best = null;
+
+        if ($sourceIndex < $sourceCount && $truthIndex < $truthCount) {
+            $sourceChar = $sourceChars[$sourceIndex];
+            $truthChar = $truthChars[$truthIndex];
+            $exactMatch = $sourceLower[$sourceIndex] === $truthLower[$truthIndex];
+            $diacriticMatch = !$exactMatch
                 && is_swedish_diacritic_char($truthChar)
-                && source_char_supports_swedish_diacritic_transfer($sourceChar, $truthChar)
-            ) {
-                $result[] = $truthChar;
-            } else {
-                $result[] = $sourceChar;
+                && $sourceFolded[$sourceIndex] === $truthFolded[$truthIndex]
+                && source_char_supports_swedish_diacritic_transfer($sourceChar, $truthChar);
+
+            if ($exactMatch || $diacriticMatch) {
+                $tail = $solve($sourceIndex + 1, $truthIndex + 1, true);
+                if ($tail !== null) {
+                    $candidate = [
+                        'score' => (float) $tail['score'] + ($diacriticMatch ? 0.05 : 0.0),
+                        'text' => ($diacriticMatch ? $truthChar : $sourceChar) . (string) $tail['text'],
+                    ];
+                    $best = $candidate;
+                }
             }
-            $i--;
-            $j--;
-            continue;
         }
 
-        if ($i > 0 && $dp[$i][$j] === $dp[$i - 1][$j] + 1) {
-            $result[] = $sourceChars[$i - 1];
-            $i--;
-            continue;
+        if ($matchedAnySource && $truthIndex < $truthCount && is_swedish_diacritic_char($truthChars[$truthIndex])) {
+            $tail = $solve($sourceIndex, $truthIndex + 1, $matchedAnySource);
+            if ($tail !== null) {
+                $candidate = [
+                    'score' => (float) $tail['score'] + 0.10,
+                    'text' => $truthChars[$truthIndex] . (string) $tail['text'],
+                ];
+                if ($best === null || $candidate['score'] < $best['score']) {
+                    $best = $candidate;
+                }
+            }
         }
 
-        if ($j > 0 && $dp[$i][$j] === $dp[$i][$j - 1] + 1) {
-            $j--;
-            continue;
+        if (
+            $sourceIndex < $sourceCount
+            && is_noise_character($sourceChars[$sourceIndex])
+        ) {
+            $tail = $solve($sourceIndex + 1, $truthIndex, $matchedAnySource);
+            if ($tail !== null) {
+                $candidate = [
+                    'score' => (float) $tail['score'] + 0.15,
+                    'text' => $sourceChars[$sourceIndex] . (string) $tail['text'],
+                ];
+                if ($best === null || $candidate['score'] < $best['score']) {
+                    $best = $candidate;
+                }
+            }
         }
 
-        if ($i > 0) {
-            $result[] = $sourceChars[$i - 1];
-            $i--;
-        } elseif ($j > 0) {
-            $j--;
-        }
-    }
+        return $memo[$memoKey] = $best;
+    };
 
-    return implode('', array_reverse($result));
+    $result = $solve(0, 0, false);
+    return is_array($result) && is_string($result['text'] ?? null) ? (string) $result['text'] : $sourceText;
 }
 
 function build_debug_word_from_fragments(array $fragments, string $text, ?array $fallbackBbox = null, ?float $fallbackScore = null): ?array
@@ -7216,7 +7238,8 @@ function apply_tesseract_swedish_truth_to_segments(array $segments, array $tesse
                 continue;
             }
 
-            if (!texts_are_diacritic_compatible($segmentText, $candidateText)) {
+            $adjustedCandidateText = transfer_swedish_diacritics($segmentText, $candidateText);
+            if ($adjustedCandidateText === $segmentText && $segmentText !== $candidateText) {
                 continue;
             }
 

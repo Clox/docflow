@@ -487,6 +487,16 @@ def _fold_char_for_diacritic_match(char: str) -> str:
     return lower
 
 
+def _source_char_supports_swedish_diacritic_transfer(source_char: str, truth_char: str) -> bool:
+    source_lower = _lowercase_text(source_char)
+    truth_lower = _lowercase_text(truth_char)
+    if truth_lower in {'å', 'ä'}:
+        return source_lower in {'à', 'á', 'â', 'ã', 'ä', 'å', 'ā', 'ă', 'ą'}
+    if truth_lower == 'ö':
+        return source_lower in {'ò', 'ó', 'ô', 'õ', 'ö', 'ō', 'ŏ', 'ő'}
+    return False
+
+
 def _normalize_text_for_diacritic_match(text: str) -> str:
     return ''.join(
         _fold_char_for_diacritic_match(char)
@@ -531,6 +541,10 @@ def _texts_are_diacritic_compatible(left: str, right: str) -> bool:
     return distance <= max(1, math.floor(max_len * 0.2))
 
 
+def _is_noise_character(char: str) -> bool:
+    return not char.isalnum()
+
+
 def _transfer_swedish_diacritics_token(source_text: str, truth_text: str) -> str:
     # Preserve lone invoice-style "à" tokens from RapidOCR.
     # This avoids Tesseract turning "à 2,21 kr" into "å 2,21 kr" while
@@ -543,59 +557,57 @@ def _transfer_swedish_diacritics_token(source_text: str, truth_text: str) -> str
     if not source_chars or not truth_chars:
         return source_text
 
+    source_lower = [_lowercase_text(char) for char in source_chars]
+    truth_lower = [_lowercase_text(char) for char in truth_chars]
     source_folded = [_fold_char_for_diacritic_match(char) for char in source_chars]
     truth_folded = [_fold_char_for_diacritic_match(char) for char in truth_chars]
 
-    dp = [[0] * (len(truth_chars) + 1) for _ in range(len(source_chars) + 1)]
-    for row in range(len(source_chars) + 1):
-        dp[row][0] = row
-    for col in range(len(truth_chars) + 1):
-        dp[0][col] = col
+    from functools import lru_cache
 
-    for row in range(1, len(source_chars) + 1):
-        for col in range(1, len(truth_chars) + 1):
-            cost = 0 if source_folded[row - 1] == truth_folded[col - 1] else 1
-            dp[row][col] = min(
-                dp[row - 1][col] + 1,
-                dp[row][col - 1] + 1,
-                dp[row - 1][col - 1] + cost,
-            )
+    @lru_cache(maxsize=None)
+    def solve(source_index: int, truth_index: int, matched_any_source: bool) -> tuple[float, str] | None:
+        if source_index >= len(source_chars) and truth_index >= len(truth_chars):
+            return 0.0, ''
 
-    result: list[str] = []
-    row = len(source_chars)
-    col = len(truth_chars)
-    while row > 0 or col > 0:
-        diagonal_cost = None
-        if row > 0 and col > 0:
-            diagonal_cost = dp[row - 1][col - 1] + (0 if source_folded[row - 1] == truth_folded[col - 1] else 1)
-        if diagonal_cost is not None and dp[row][col] == diagonal_cost:
-            source_char = source_chars[row - 1]
-            truth_char = truth_chars[col - 1]
-            if (
-                source_folded[row - 1] == truth_folded[col - 1]
+        best: tuple[float, str] | None = None
+
+        if source_index < len(source_chars) and truth_index < len(truth_chars):
+            source_char = source_chars[source_index]
+            truth_char = truth_chars[truth_index]
+            exact_match = source_lower[source_index] == truth_lower[truth_index]
+            diacritic_match = (
+                not exact_match
                 and _is_swedish_diacritic_char(truth_char)
-            ):
-                result.append(truth_char)
-            else:
-                result.append(source_char)
-            row -= 1
-            col -= 1
-            continue
-        if row > 0 and dp[row][col] == dp[row - 1][col] + 1:
-            result.append(source_chars[row - 1])
-            row -= 1
-            continue
-        if col > 0 and dp[row][col] == dp[row][col - 1] + 1:
-            col -= 1
-            continue
-        if row > 0:
-            result.append(source_chars[row - 1])
-            row -= 1
-        elif col > 0:
-            col -= 1
+                and source_folded[source_index] == truth_folded[truth_index]
+                and _source_char_supports_swedish_diacritic_transfer(source_char, truth_char)
+            )
+            if exact_match or diacritic_match:
+                tail = solve(source_index + 1, truth_index + 1, True)
+                if tail is not None:
+                    score = tail[0] + (0.05 if diacritic_match else 0.0)
+                    text = (truth_char if diacritic_match else source_char) + tail[1]
+                    best = (score, text)
 
-    result.reverse()
-    return ''.join(result)
+        if matched_any_source and truth_index < len(truth_chars) and _is_swedish_diacritic_char(truth_chars[truth_index]):
+            tail = solve(source_index, truth_index + 1, matched_any_source)
+            if tail is not None:
+                score = tail[0] + 0.10
+                text = truth_chars[truth_index] + tail[1]
+                if best is None or score < best[0]:
+                    best = (score, text)
+
+        if source_index < len(source_chars) and _is_noise_character(source_chars[source_index]):
+            tail = solve(source_index + 1, truth_index, matched_any_source)
+            if tail is not None:
+                score = tail[0] + 0.15
+                text = source_chars[source_index] + tail[1]
+                if best is None or score < best[0]:
+                    best = (score, text)
+
+        return best
+
+    result = solve(0, 0, False)
+    return result[1] if result is not None else source_text
 
 
 def _transfer_swedish_diacritics(source_text: str, truth_text: str) -> str:
@@ -826,7 +838,8 @@ def _apply_tesseract_swedish_truth_to_segments(
             distance_ratio = _bbox_center_distance_ratio(segment_bbox, candidate_bbox)
             if iou < 0.08 and distance_ratio > 0.9:
                 continue
-            if not _texts_are_diacritic_compatible(segment_text, candidate_text):
+            adjusted_candidate_text = _transfer_swedish_diacritics(segment_text, candidate_text)
+            if adjusted_candidate_text == segment_text and segment_text != candidate_text:
                 continue
 
             candidate_score = float(candidate.get('score')) if isinstance(candidate.get('score'), (int, float)) else 0.0
@@ -1453,7 +1466,8 @@ def _segment_and_span_match_score(
     span_text = ''.join(str(entry.get('text') or '') for entry in span_entries).strip()
     if span_text == '':
         return None
-    if not _texts_are_diacritic_compatible(segment_text, span_text):
+    adjusted_span_text = _transfer_swedish_diacritics(segment_text, span_text)
+    if adjusted_span_text == segment_text and segment_text != span_text:
         return None
 
     span_bbox = _build_debug_word_from_fragments(span_entries, span_text)
