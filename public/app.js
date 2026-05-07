@@ -6519,6 +6519,62 @@ function applyArchivingRulesPayloadFromResponse(payload, options = {}) {
   });
 }
 
+function applyArchiveFoldersPayloadToState(payload) {
+  if (!payload || !Array.isArray(payload.archiveFolders)) {
+    return false;
+  }
+
+  state = {
+    ...state,
+    archiveFolders: payload.archiveFolders.map((folder, index) => sanitizeArchiveFolder(folder, index)),
+  };
+  renderFolderSelect(state.archiveFolders);
+  return true;
+}
+
+function selectedJobProposalSyncContext() {
+  const job = findJobById(selectedJobId);
+  if (!job || typeof job.id !== 'string' || job.id.trim() === '') {
+    return null;
+  }
+
+  return {
+    jobId: job.id,
+    currentFolder: effectiveFolderId(job),
+    currentFilename: String(displayedFilenameForJob(job) || '').trim(),
+    proposed: proposedArchivingResultForJob(job),
+  };
+}
+
+function refreshSelectedJobProposalUi(previousContext = null, options = {}) {
+  const currentJob = findJobById(selectedJobId);
+  if (!currentJob) {
+    return;
+  }
+
+  if (
+    previousContext
+    && typeof previousContext.jobId === 'string'
+    && previousContext.jobId === currentJob.id
+  ) {
+    syncCurrentActionValuesFromProposalChange(
+      currentJob.id,
+      typeof previousContext.currentFolder === 'string' ? previousContext.currentFolder : '',
+      typeof previousContext.currentFilename === 'string' ? previousContext.currentFilename : '',
+      previousContext.proposed,
+      proposedArchivingResultForJob(currentJob),
+      { syncFolder: options.syncFolder === true }
+    );
+  }
+
+  if (options.syncLabels === true) {
+    setLabelsForJob(currentJob);
+  }
+  syncFilenameField(currentJob);
+  updateArchiveAction(currentJob);
+  updateSelectedJobResetActions(currentJob);
+}
+
 function findReviewLabelName(payload, labelId) {
   const normalized = typeof labelId === 'string' ? labelId.trim() : '';
   if (!normalized) {
@@ -24989,17 +25045,15 @@ async function loadArchiveStructure() {
     throw new Error('Ogiltigt svar för arkivstruktur');
   }
 
+  const previousProposalContext = selectedJobProposalSyncContext();
   archiveFoldersDraft = payload.archiveFolders.map((folder, index) => sanitizeArchiveFolder(folder, index));
   archiveStructureBaselineJson = normalizedArchiveStructureJson();
+  applyArchiveFoldersPayloadToState(payload);
   applyArchivingRulesPayloadFromResponse(payload, {
     forceRender: true,
     expectedLocalRevision: requestLocalRevision
   });
-  const selectedJob = findJobById(selectedJobId);
-  if (selectedJob) {
-    syncFilenameField(selectedJob);
-    updateArchiveAction(selectedJob);
-  }
+  refreshSelectedJobProposalUi(previousProposalContext, { syncFolder: true });
   renderArchiveStructureEditor();
   updateSettingsActionButtons();
 }
@@ -25025,6 +25079,7 @@ async function loadLabels(options = {}) {
     throw new Error('Ogiltigt svar för etiketter');
   }
 
+  const previousProposalContext = selectedJobProposalSyncContext();
   labelsDraft = payload.labels.map(sanitizeLabel);
   systemLabelsDraft = sanitizeSystemLabels(payload.systemLabels);
   labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
@@ -25033,11 +25088,7 @@ async function loadLabels(options = {}) {
     forceRender: true,
     expectedLocalRevision: requestLocalRevision
   });
-  const selectedJob = findJobById(selectedJobId);
-  if (selectedJob) {
-    setLabelsForJob(selectedJob);
-    syncFilenameField(selectedJob);
-  }
+  refreshSelectedJobProposalUi(previousProposalContext, { syncLabels: true });
   renderLabelsEditor();
   if (archiveStructureListEl) {
     renderArchiveStructureEditor();
@@ -25057,6 +25108,7 @@ async function loadExtractionFields() {
     throw new Error('Ogiltigt svar för datafält');
   }
 
+  const previousProposalContext = selectedJobProposalSyncContext();
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
   predefinedExtractionFieldsDraft = payload.predefinedFields.map((field, index) => sanitizeExtractionField(field, index));
   systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
@@ -25065,6 +25117,7 @@ async function loadExtractionFields() {
     forceRender: true,
     expectedLocalRevision: requestLocalRevision
   });
+  refreshSelectedJobProposalUi(previousProposalContext);
   renderExtractionFieldsEditor();
   renderSystemExtractionFieldsEditor();
   if (archiveStructureListEl) {
@@ -25196,14 +25249,12 @@ async function saveArchiveStructure() {
     throw new Error(message);
   }
 
+  const previousProposalContext = selectedJobProposalSyncContext();
   archiveFoldersDraft = payload.archiveFolders.map((folder, index) => sanitizeArchiveFolder(folder, index));
   archiveStructureBaselineJson = normalizedArchiveStructureJson();
-  const selectedJob = findJobById(selectedJobId);
-  if (selectedJob) {
-    syncFilenameField(selectedJob);
-    updateArchiveAction(selectedJob);
-  }
+  applyArchiveFoldersPayloadToState(payload);
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
+  refreshSelectedJobProposalUi(previousProposalContext, { syncFolder: true });
   renderArchiveStructureEditor();
   watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
@@ -25237,19 +25288,16 @@ async function saveLabels() {
     throw new Error(message);
   }
 
+  const previousProposalContext = selectedJobProposalSyncContext();
   labelsDraft = payload.labels.map(sanitizeLabel);
   systemLabelsDraft = sanitizeSystemLabels(payload.systemLabels);
   labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
-  const selectedJob = findJobById(selectedJobId);
-  if (selectedJob) {
-    setLabelsForJob(selectedJob);
-    syncFilenameField(selectedJob);
-  }
   renderLabelsEditor();
   if (archiveStructureListEl) {
     renderArchiveStructureEditor();
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
+  refreshSelectedJobProposalUi(previousProposalContext, { syncLabels: true });
   watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
@@ -25279,6 +25327,7 @@ async function saveExtractionFields() {
     throw new Error(message);
   }
 
+  const previousProposalContext = selectedJobProposalSyncContext();
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
   predefinedExtractionFieldsDraft = payload.predefinedFields.map((field, index) => sanitizeExtractionField(field, index));
   systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
@@ -25289,6 +25338,7 @@ async function saveExtractionFields() {
     renderArchiveStructureEditor();
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
+  refreshSelectedJobProposalUi(previousProposalContext);
   watchReprocessedJobIdsFromPayload(payload);
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
