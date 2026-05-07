@@ -3316,8 +3316,8 @@ body.is-resizing-sidebar {
 }
 
 .ocr-word-tooltip-section.is-detail {
-  border-color: #cbd5e1;
-  background: #fbfbfb;
+  border-color: #111827;
+  background: #fff;
 }
 
 .ocr-word-tooltip-column--primary > .ocr-word-tooltip-section,
@@ -3371,6 +3371,7 @@ body.is-resizing-sidebar {
 
 .ocr-word-tooltip-copy {
   display: inline-flex;
+  position: relative;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
@@ -3386,6 +3387,7 @@ body.is-resizing-sidebar {
   font-weight: 400;
   line-height: 1;
   cursor: pointer;
+  overflow: visible;
 }
 
 .ocr-word-tooltip-copy:hover {
@@ -3416,6 +3418,41 @@ body.is-resizing-sidebar {
   border-color: #fecaca;
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.ocr-word-tooltip-copy-icon {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ocr-word-tooltip-copy-icon--plain {
+  display: inline-block;
+  line-height: 1;
+  transform: translateY(-0.02em);
+}
+
+.ocr-word-tooltip-copy-icon--square {
+  position: absolute;
+  top: 0.9ch;
+  left: 0.95ch;
+  width: 2.0ch;
+  height: 2.1ch;
+  background: #fbfbfb;
+}
+
+.ocr-word-tooltip-copy-icon--square-glyph {
+  position: relative;
+  top: -0.6ch;
+  display: inline-block;
+  line-height: 1;
+}
+
+.ocr-word-tooltip-copy-icon--copy {
+  position: relative;
+  left: -.9ch;
+  display: inline-block;
+  line-height: 1;
 }
 
 .ocr-word-tooltip-text {

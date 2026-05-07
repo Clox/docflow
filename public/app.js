@@ -12077,7 +12077,30 @@ function syncOcrWordTooltipCopyButton(buttonEl, sectionState, options = {}) {
   const title = String(sectionState?.[titleKey] || defaultTitle || '');
 
   buttonEl.disabled = text === '';
-  buttonEl.textContent = label;
+  buttonEl.replaceChildren();
+  if (label === '▣⧉') {
+    const squareEl = document.createElement('span');
+    squareEl.className = 'ocr-word-tooltip-copy-icon ocr-word-tooltip-copy-icon--square';
+    squareEl.setAttribute('aria-hidden', 'true');
+
+    const squareGlyphEl = document.createElement('span');
+    squareGlyphEl.className = 'ocr-word-tooltip-copy-icon ocr-word-tooltip-copy-icon--square-glyph';
+    squareGlyphEl.textContent = '▦';
+    squareGlyphEl.setAttribute('aria-hidden', 'true');
+
+    const copyGlyphEl = document.createElement('span');
+    copyGlyphEl.className = 'ocr-word-tooltip-copy-icon ocr-word-tooltip-copy-icon--copy';
+    copyGlyphEl.textContent = '⧉';
+    copyGlyphEl.setAttribute('aria-hidden', 'true');
+
+    buttonEl.append(squareGlyphEl, squareEl, copyGlyphEl);
+  } else {
+    const labelEl = document.createElement('span');
+    labelEl.className = 'ocr-word-tooltip-copy-icon ocr-word-tooltip-copy-icon--plain';
+    labelEl.textContent = label;
+    labelEl.setAttribute('aria-hidden', 'true');
+    buttonEl.appendChild(labelEl);
+  }
   buttonEl.classList.remove('is-copied', 'is-copy-failed');
   buttonEl.setAttribute('aria-label', title);
   buttonEl.setAttribute('title', title);
