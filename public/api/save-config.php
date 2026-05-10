@@ -23,6 +23,7 @@ if (!is_array($payload)) {
 if (
     !array_key_exists('inboxDirectory', $payload)
     && !array_key_exists('outputBaseDirectory', $payload)
+    && !array_key_exists('ocrDebugExportDirectory', $payload)
     && !array_key_exists('ocrSkipExistingText', $payload)
     && !array_key_exists('ocrOptimizeLevel', $payload)
     && !array_key_exists('ocrTextExtractionMethod', $payload)
@@ -36,6 +37,7 @@ if (
 
 $nextOutputBaseDirectory = null;
 $nextInboxDirectory = null;
+$nextOcrDebugExportDirectory = null;
 if (array_key_exists('inboxDirectory', $payload)) {
     if (!is_string($payload['inboxDirectory'])) {
         json_response(['error' => 'Inbox path must be a string'], 400);
@@ -95,6 +97,21 @@ if (array_key_exists('outputBaseDirectory', $payload)) {
     }
 
     $nextOutputBaseDirectory = $outputBaseDirectory;
+}
+
+if (array_key_exists('ocrDebugExportDirectory', $payload)) {
+    if (!is_string($payload['ocrDebugExportDirectory'])) {
+        json_response(['error' => 'OCR debug export path must be a string'], 400);
+        exit;
+    }
+
+    $ocrDebugExportDirectory = trim((string) $payload['ocrDebugExportDirectory']);
+    if ($ocrDebugExportDirectory === '') {
+        json_response(['error' => 'OCR debug export path is required'], 400);
+        exit;
+    }
+
+    $nextOcrDebugExportDirectory = $ocrDebugExportDirectory;
 }
 
 $nextOcrSkipExistingText = null;
@@ -175,6 +192,9 @@ try {
     if ($nextOutputBaseDirectory !== null) {
         $config['outputBaseDirectory'] = $nextOutputBaseDirectory;
     }
+    if ($nextOcrDebugExportDirectory !== null) {
+        $config['ocrDebugExportDirectory'] = $nextOcrDebugExportDirectory;
+    }
     if ($nextOcrSkipExistingText !== null) {
         $config['ocrSkipExistingText'] = $nextOcrSkipExistingText;
     }
@@ -220,6 +240,7 @@ try {
         'ok' => true,
         'inboxDirectory' => $config['inboxDirectory'] ?? '',
         'outputBaseDirectory' => $config['outputBaseDirectory'] ?? '',
+        'ocrDebugExportDirectory' => $config['ocrDebugExportDirectory'] ?? 'debug_exports/',
         'ocrSkipExistingText' => (bool) ($config['ocrSkipExistingText'] ?? true),
         'ocrOptimizeLevel' => (int) ($config['ocrOptimizeLevel'] ?? 1),
         'ocrTextExtractionMethod' => is_string($config['ocrTextExtractionMethod'] ?? null) ? (string) $config['ocrTextExtractionMethod'] : 'layout',

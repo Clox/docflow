@@ -69,9 +69,11 @@ const jobListMenuWrapEl = document.getElementById('job-list-menu-wrap');
 const jobListMenuButtonEl = document.getElementById('job-list-menu-button');
 const jobListMenuEl = document.getElementById('job-list-menu');
 const jobListReanalyzeAllActionEl = document.getElementById('job-list-reanalyze-all-action');
+const jobListExportOcrDebugActionEl = document.getElementById('job-list-export-ocr-debug-action');
 const selectedJobActionsMenuWrapEl = document.getElementById('selected-job-actions-menu-wrap');
 const selectedJobActionsMenuButtonEl = document.getElementById('selected-job-actions-menu-button');
 const selectedJobActionsMenuEl = document.getElementById('selected-job-actions-menu');
+const selectedJobReprocessActionEl = document.getElementById('selected-job-reprocess-action');
 const selectedJobDeleteActionEl = document.getElementById('selected-job-delete-action');
 const sidebarEl = document.querySelector('.sidebar');
 const sidebarSplitterEl = document.getElementById('sidebar-splitter');
@@ -118,7 +120,6 @@ const selectedJobSenderLinkedInfoEl = document.getElementById('selected-job-send
 const selectedJobSenderUnknownSectionEl = document.getElementById('selected-job-sender-unknown-section');
 const selectedJobSenderUnknownInfoEl = document.getElementById('selected-job-sender-unknown-info');
 const selectedJobStatusEl = document.getElementById('selected-job-status');
-let selectedJobReprocessEl = document.getElementById('selected-job-reprocess');
 const dismissArchivedUpdateActionEl = document.getElementById('dismiss-archived-update-action');
 const selectedJobActionsWarningEl = document.getElementById('selected-job-actions-warning');
 const selectedJobActionsWarningReprocessEl = document.getElementById('selected-job-actions-warning-reprocess');
@@ -137,22 +138,53 @@ const settingsPanelTemplateIds = {
   backup: 'settings-template-backup'
 };
 
+function isLocalDevelopmentHost() {
+  return ['localhost', '127.0.0.1'].includes(window.location.hostname);
+}
+
 function developmentUiEnabled() {
-  const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-  if (!isLocalHost) {
+  if (!isLocalDevelopmentHost()) {
     return false;
   }
   return window.localStorage.getItem('docflowShowDevControls') === '1';
 }
 
 function reprocessUiEnabled() {
-  return window.localStorage.getItem('docflowShowDevControls') === '1';
+  return isLocalDevelopmentHost() && window.localStorage.getItem('docflowShowDevControls') === '1';
+}
+
+function syncDeveloperUiState() {
+  syncJobListMenuActionsVisibility();
+  if (selectedJobReprocessActionEl instanceof HTMLElement) {
+    selectedJobReprocessActionEl.classList.toggle('hidden', !reprocessUiEnabled());
+  }
+  if (selectedJobId) {
+    renderSelectedJobPanel();
+  } else {
+    updateSelectedJobActionsMenu(null);
+  }
+}
+
+function setDevelopmentUiEnabled(enabled) {
+  if (!isLocalDevelopmentHost()) {
+    return false;
+  }
+
+  if (enabled) {
+    window.localStorage.setItem('docflowShowDevControls', '1');
+  } else {
+    window.localStorage.removeItem('docflowShowDevControls');
+  }
+
+  syncDeveloperUiState();
+  return true;
 }
 
 function bindSelectedJobReprocessButton(buttonEl) {
   if (!(buttonEl instanceof HTMLButtonElement) || buttonEl.dataset.bound === '1') {
     return buttonEl;
   }
+
   buttonEl.dataset.bound = '1';
   buttonEl.addEventListener('click', async (event) => {
     if (event.ctrlKey || event.metaKey) {
@@ -162,33 +194,6 @@ function bindSelectedJobReprocessButton(buttonEl) {
     await handleSelectedJobReprocess('post-ocr');
   });
   return buttonEl;
-}
-
-function syncSelectedJobReprocessButton() {
-  const existing = document.getElementById('selected-job-reprocess');
-  if (reprocessUiEnabled()) {
-    if (existing instanceof HTMLButtonElement) {
-      selectedJobReprocessEl = bindSelectedJobReprocessButton(existing);
-      return selectedJobReprocessEl;
-    }
-    if (!(archiveActionEl instanceof HTMLButtonElement) || !(archiveActionEl.parentNode instanceof Node)) {
-      selectedJobReprocessEl = null;
-      return null;
-    }
-    const buttonEl = document.createElement('button');
-    buttonEl.id = 'selected-job-reprocess';
-    buttonEl.type = 'button';
-    buttonEl.disabled = true;
-    buttonEl.textContent = 'Analysera igen';
-    archiveActionEl.parentNode.insertBefore(buttonEl, archiveActionEl);
-    selectedJobReprocessEl = bindSelectedJobReprocessButton(buttonEl);
-    return selectedJobReprocessEl;
-  }
-  if (existing instanceof HTMLElement) {
-    existing.remove();
-  }
-  selectedJobReprocessEl = null;
-  return null;
 }
 
 let clientsListEl = null;
@@ -290,6 +295,7 @@ let labelsViewCustomEl = null;
 let labelsViewSystemEl = null;
 let settingsResetJobsEl = null;
 let systemStateTransportEl = null;
+let systemDevModeEl = null;
 let systemChromeExtensionStatusEl = null;
 let systemChromeExtensionTestEl = null;
 let systemChromeExtensionSuppressMissingEl = null;
@@ -319,8 +325,32 @@ let settingsBackupHighlightTimer = null;
 let settingsBackupRestorePendingFilename = '';
 let inputInboxPathEl = null;
 let outputBasePathEl = null;
+let ocrDebugExportDirectoryEl = null;
 let pathsCancelEl = null;
 let pathsApplyEl = null;
+let ocrDebugExportDialogOverlayEl = null;
+let ocrDebugExportDialogEl = null;
+let ocrDebugExportFilterSelectEl = null;
+let ocrDebugExportCreateShellEl = null;
+let ocrDebugExportCreateButtonEl = null;
+let ocrDebugExportCreateSpinnerEl = null;
+let ocrDebugExportCreateLabelEl = null;
+let ocrDebugExportStatusEl = null;
+let ocrDebugExportListEl = null;
+let ocrDebugExportItems = [];
+let ocrDebugExportListLoading = false;
+let ocrDebugExportListError = '';
+let ocrDebugExportBusy = false;
+let ocrDebugExportCreateLoading = false;
+let ocrDebugExportCreateCanCreate = true;
+let ocrDebugExportCreateDisabledReason = '';
+let ocrDebugExportCreateRequestToken = 0;
+let ocrDebugExportListRequestToken = 0;
+let ocrDebugExportHighlightedFolderName = '';
+let ocrDebugExportHighlightTimer = null;
+let ocrDebugExportStatusMessage = '';
+let ocrDebugExportStatusTone = 'info';
+let ocrDebugExportCurrentFilter = 'ready';
 
 let state = {
   processingJobs: [],
@@ -478,6 +508,7 @@ let matchingBaselineJson = normalizedMatchingJson(
   matchingDataFieldAcceptanceThresholdDraft
 );
 let pathsBaselineValue = '';
+let ocrDebugExportDirectoryBaselineValue = 'debug_exports/';
 let inboxPathBaselineValue = '';
 let archiveStructureBaselineJson = JSON.stringify({
   archiveFolders: [],
@@ -602,6 +633,8 @@ let jobLabelsOverlayMutating = false;
 let jobLabelsSummaryRenderFrame = null;
 let jobExtractionFieldInlineEditState = null;
 let appNoticesOverflowOpen = false;
+let transientAppNotice = null;
+let transientAppNoticeTimer = 0;
 let topbarExpandedMetricsFrame = null;
 const APP_NOTICES_COLLAPSED_MAX_HEIGHT = 76;
 const uiTextMeasureCanvas = document.createElement('canvas');
@@ -4915,6 +4948,12 @@ function toggleJobListMenu(forceOpen = null) {
   jobListMenuEl.classList.toggle('hidden', !nextOpen);
 }
 
+function syncJobListMenuActionsVisibility() {
+  if (jobListExportOcrDebugActionEl instanceof HTMLElement) {
+    jobListExportOcrDebugActionEl.classList.toggle('hidden', !developmentUiEnabled());
+  }
+}
+
 function toggleOcrMenu(forceOpen = null) {
   if (!(ocrMenuButtonEl instanceof HTMLButtonElement) || !(ocrMenuEl instanceof HTMLElement)) {
     return;
@@ -5187,6 +5226,21 @@ function updateSelectedJobActionsMenu(job) {
     selectedJobDeleteActionEl.title = hasJob ? 'Tar bort dokumentet från Docflow.' : 'Markera ett jobb först.';
   }
 
+  if (selectedJobReprocessActionEl instanceof HTMLButtonElement) {
+    const canReprocess = hasJob
+      && job.status !== 'processing'
+      && job.archived !== true
+      && (job.hasReviewPdf || job.hasSourcePdf);
+    selectedJobReprocessActionEl.disabled = !canReprocess;
+    selectedJobReprocessActionEl.title = !hasJob
+      ? 'Markera ett jobb först.'
+      : (job.status === 'processing'
+        ? 'Jobbet bearbetas redan.'
+        : (job.archived === true
+          ? 'Arkiverade jobb kan inte köras om här.'
+          : 'Det finns varken review.pdf eller source.pdf att köra om från.'));
+  }
+
   if (!hasJob) {
     closeSelectedJobActionsMenu();
   }
@@ -5211,6 +5265,44 @@ function setJobListMode(mode, options = {}) {
   const selectedJob = findJobById(selectedJobId);
   updateArchiveAction(selectedJob);
   updateSelectedJobResetActions(selectedJob);
+}
+
+function jobListModeLabel(mode) {
+  switch (VALID_JOB_LIST_MODES.has(mode) ? mode : 'ready') {
+    case 'archived-review':
+      return 'Arkiverade att granska';
+    case 'processing':
+      return 'Bearbetas';
+    case 'archived':
+      return 'Arkiverade';
+    case 'all':
+      return 'Alla';
+    case 'ready':
+    default:
+      return 'Att granska';
+  }
+}
+
+function jobsForListMode(mode) {
+  const nextMode = VALID_JOB_LIST_MODES.has(mode) ? mode : 'ready';
+  if (nextMode === 'all') {
+    return []
+      .concat(Array.isArray(state.processingJobs) ? state.processingJobs : [])
+      .concat(buildDisplayedReadyJobs([], state.readyJobs))
+      .concat(sortJobsForList('failedJobs', Array.isArray(state.failedJobs) ? state.failedJobs : []))
+      .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs : []);
+  }
+  if (nextMode === 'processing') {
+    return Array.isArray(state.processingJobs) ? state.processingJobs : [];
+  }
+  if (nextMode === 'archived-review') {
+    return displayedArchivedReviewJobsForReadyMode();
+  }
+  if (nextMode === 'archived') {
+    return Array.isArray(state.archivedJobs) ? state.archivedJobs : [];
+  }
+  return buildDisplayedReadyJobs(state.processingJobs, state.readyJobs)
+    .concat(sortJobsForList('failedJobs', Array.isArray(state.failedJobs) ? state.failedJobs : []));
 }
 
 async function openArchivingReviewSettingsDirect() {
@@ -6220,6 +6312,12 @@ function measureCollapsedAppNoticeLayout(notices) {
 
 function collectAppNoticeDescriptors() {
   const notices = [];
+  if (transientAppNotice && typeof transientAppNotice === 'object' && typeof transientAppNotice.text === 'string' && transientAppNotice.text.trim() !== '') {
+    notices.push({
+      kind: transientAppNotice.kind || 'info',
+      text: transientAppNotice.text,
+    });
+  }
   const pendingPayeeLookups = currentSenderPayeeLookupRemainingCount();
   const pendingOrganizationLookups = currentSenderOrganizationLookupRemainingCount();
   const showSwedbankLoginNotice =
@@ -6317,6 +6415,584 @@ function collectAppNoticeDescriptors() {
   }
 
   return notices;
+}
+
+function showTransientAppNotice(text, kind = 'info', timeoutMs = 7000) {
+  if (transientAppNoticeTimer) {
+    window.clearTimeout(transientAppNoticeTimer);
+    transientAppNoticeTimer = 0;
+  }
+
+  const normalizedText = typeof text === 'string' ? text.trim() : '';
+  if (normalizedText === '') {
+    transientAppNotice = null;
+    renderAppNotices();
+    return;
+  }
+
+  transientAppNotice = {
+    kind: kind === 'warning' || kind === 'error' ? kind : 'info',
+    text: normalizedText,
+  };
+  renderAppNotices();
+  transientAppNoticeTimer = window.setTimeout(() => {
+    transientAppNotice = null;
+    transientAppNoticeTimer = 0;
+    renderAppNotices();
+  }, Math.max(1500, Number.isFinite(timeoutMs) ? timeoutMs : 7000));
+}
+
+function ocrDebugExportSelectedFilterMode() {
+  return VALID_JOB_LIST_MODES.has(ocrDebugExportCurrentFilter) ? ocrDebugExportCurrentFilter : currentJobListMode;
+}
+
+function ocrDebugExportJobIdsForMode(mode) {
+  const jobs = jobsForListMode(mode);
+  const seen = new Set();
+  const jobIds = [];
+  jobs.forEach((job) => {
+    if (!job || typeof job.id !== 'string') {
+      return;
+    }
+    const jobId = job.id.trim();
+    if (jobId === '' || seen.has(jobId)) {
+      return;
+    }
+    seen.add(jobId);
+    jobIds.push(jobId);
+  });
+  return jobIds;
+}
+
+function formatOcrDebugExportDateTime(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return 'Okänt datum';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString('sv-SE', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function setOcrDebugExportStatus(message, tone = 'info') {
+  ocrDebugExportStatusMessage = typeof message === 'string' ? message.trim() : '';
+  ocrDebugExportStatusTone = tone === 'success' || tone === 'error' ? tone : 'info';
+  renderOcrDebugExportStatus();
+}
+
+function renderOcrDebugExportStatus() {
+  if (!(ocrDebugExportStatusEl instanceof HTMLElement)) {
+    return;
+  }
+
+  ocrDebugExportStatusEl.textContent = ocrDebugExportStatusMessage;
+  ocrDebugExportStatusEl.dataset.tone = ocrDebugExportStatusTone;
+  ocrDebugExportStatusEl.classList.toggle('hidden', ocrDebugExportStatusMessage === '');
+}
+
+function renderOcrDebugExportCreateState() {
+  if (!(ocrDebugExportCreateButtonEl instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const loading = ocrDebugExportCreateLoading === true;
+  const canCreate = ocrDebugExportCreateCanCreate === true;
+  const disabled = ocrDebugExportBusy === true || loading || !canCreate;
+
+  ocrDebugExportCreateButtonEl.disabled = disabled;
+  ocrDebugExportCreateButtonEl.classList.toggle('is-loading', loading);
+  ocrDebugExportCreateButtonEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+
+  if (ocrDebugExportCreateSpinnerEl instanceof HTMLElement) {
+    ocrDebugExportCreateSpinnerEl.classList.toggle('hidden', !loading);
+  }
+  if (ocrDebugExportCreateLabelEl instanceof HTMLElement) {
+    ocrDebugExportCreateLabelEl.textContent = loading ? 'Kontrollerar...' : 'Skapa export';
+  }
+  if (ocrDebugExportCreateShellEl instanceof HTMLElement) {
+    let title = '';
+    if (loading) {
+      title = 'Kontrollerar exportkandidater...';
+    } else if (!canCreate) {
+      title = ocrDebugExportCreateDisabledReason || 'Inga dokument i den här filtreringen.';
+    }
+    ocrDebugExportCreateShellEl.title = title;
+  }
+  if (ocrDebugExportFilterSelectEl instanceof HTMLSelectElement) {
+    ocrDebugExportFilterSelectEl.disabled = ocrDebugExportBusy === true || loading;
+  }
+}
+
+function renderOcrDebugExportList(items = ocrDebugExportItems) {
+  if (!(ocrDebugExportListEl instanceof HTMLElement)) {
+    return;
+  }
+
+  const normalizedItems = Array.isArray(items) ? items : [];
+  ocrDebugExportItems = normalizedItems;
+  ocrDebugExportListEl.replaceChildren();
+  renderOcrDebugExportStatus();
+
+  if (ocrDebugExportListLoading) {
+    const loading = document.createElement('div');
+    loading.className = 'settings-backup-empty';
+    loading.textContent = 'Läser OCR-debugexporter...';
+    ocrDebugExportListEl.appendChild(loading);
+    return;
+  }
+
+  if (ocrDebugExportListError !== '') {
+    const error = document.createElement('div');
+    error.className = 'settings-backup-empty settings-backup-empty--error';
+    error.textContent = ocrDebugExportListError;
+    ocrDebugExportListEl.appendChild(error);
+    return;
+  }
+
+  if (normalizedItems.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'settings-backup-empty';
+    empty.textContent = 'Inga OCR-debugexporter ännu.';
+    ocrDebugExportListEl.appendChild(empty);
+    return;
+  }
+
+  normalizedItems.forEach((item) => {
+    if (!item || typeof item.folderName !== 'string' || typeof item.exportDirectory !== 'string') {
+      return;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'settings-backup-row';
+
+    const main = document.createElement('div');
+    main.className = 'settings-backup-row-main';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'settings-backup-row-title-row';
+
+    const title = document.createElement('div');
+    title.className = 'settings-backup-row-title';
+    title.textContent = formatOcrDebugExportDateTime(item.exportedAt || '');
+    titleRow.appendChild(title);
+
+    const kind = document.createElement('span');
+    kind.className = 'settings-backup-row-kind';
+    kind.textContent = typeof item.filterLabel === 'string' && item.filterLabel.trim() !== ''
+      ? item.filterLabel
+      : jobListModeLabel(item.filter);
+    titleRow.appendChild(kind);
+
+    const meta = document.createElement('div');
+    meta.className = 'settings-backup-row-meta';
+    meta.textContent = `${Number.isFinite(Number(item.jobCount)) ? Number(item.jobCount) : 0} dokument`;
+
+    const filename = document.createElement('div');
+    filename.id = `ocr-debug-export-path-${item.folderName}`;
+    filename.className = 'settings-backup-row-filename';
+    filename.textContent = item.exportDirectory;
+
+    main.append(titleRow, meta, filename);
+
+    const actions = document.createElement('div');
+    actions.className = 'settings-backup-row-actions';
+
+    const downloadButton = document.createElement('button');
+    downloadButton.type = 'button';
+    downloadButton.className = 'icon-button settings-backup-row-icon-button';
+    downloadButton.title = 'Ladda ner zip';
+    downloadButton.setAttribute('aria-label', 'Ladda ner zip');
+    downloadButton.disabled = ocrDebugExportBusy || ocrDebugExportCreateLoading;
+    downloadButton.addEventListener('click', () => {
+      downloadOcrDebugExport(item.folderName);
+    });
+    const downloadIcon = document.createElement('span');
+    downloadIcon.className = 'settings-backup-row-icon settings-backup-row-icon-download';
+    downloadIcon.setAttribute('aria-hidden', 'true');
+    downloadButton.appendChild(downloadIcon);
+    actions.appendChild(downloadButton);
+
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.className = 'settings-backup-row-button';
+    copyButton.textContent = 'Kopiera sökväg';
+    copyButton.disabled = ocrDebugExportBusy || ocrDebugExportCreateLoading;
+    copyButton.addEventListener('click', async () => {
+      const copied = await copyTextToClipboard(item.exportDirectory);
+      if (!copied) {
+        alert('Kunde inte kopiera sökvägen.');
+        return;
+      }
+      const originalLabel = copyButton.textContent || 'Kopiera sökväg';
+      copyButton.textContent = 'Kopierad';
+      window.setTimeout(() => {
+        copyButton.textContent = originalLabel;
+      }, 1200);
+    });
+    actions.appendChild(copyButton);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'icon-button settings-backup-row-icon-button settings-backup-row-icon-button-danger';
+    deleteButton.title = 'Ta bort export';
+    deleteButton.setAttribute('aria-label', 'Ta bort export');
+    deleteButton.disabled = ocrDebugExportBusy || ocrDebugExportCreateLoading;
+    deleteButton.addEventListener('click', () => {
+      deleteOcrDebugExport(item.folderName);
+    });
+    const deleteIcon = document.createElement('span');
+    deleteIcon.className = 'settings-backup-row-icon settings-backup-row-icon-trash';
+    deleteIcon.setAttribute('aria-hidden', 'true');
+    deleteButton.appendChild(deleteIcon);
+    actions.appendChild(deleteButton);
+
+    row.classList.toggle('settings-highlight-target', ocrDebugExportHighlightedFolderName === item.folderName);
+    row.append(main, actions);
+    ocrDebugExportListEl.appendChild(row);
+  });
+}
+
+function highlightOcrDebugExport(folderName) {
+  const normalizedFolderName = typeof folderName === 'string' ? folderName.trim() : '';
+  if (normalizedFolderName === '') {
+    return;
+  }
+
+  if (ocrDebugExportHighlightTimer !== null) {
+    window.clearTimeout(ocrDebugExportHighlightTimer);
+    ocrDebugExportHighlightTimer = null;
+  }
+
+  ocrDebugExportHighlightedFolderName = normalizedFolderName;
+  renderOcrDebugExportList();
+  ocrDebugExportHighlightTimer = window.setTimeout(() => {
+    ocrDebugExportHighlightTimer = null;
+    ocrDebugExportHighlightedFolderName = '';
+    renderOcrDebugExportList();
+  }, 1800);
+}
+
+function setOcrDebugExportBusy(busy) {
+  ocrDebugExportBusy = busy === true;
+  if (ocrDebugExportBusy) {
+    if (ocrDebugExportHighlightTimer !== null) {
+      window.clearTimeout(ocrDebugExportHighlightTimer);
+      ocrDebugExportHighlightTimer = null;
+    }
+    ocrDebugExportHighlightedFolderName = '';
+  }
+  renderOcrDebugExportCreateState();
+  renderOcrDebugExportList();
+}
+
+async function loadOcrDebugExports() {
+  const requestToken = ++ocrDebugExportListRequestToken;
+  ocrDebugExportListError = '';
+  ocrDebugExportListLoading = true;
+  renderOcrDebugExportList();
+
+  try {
+    const response = await fetch('/api/list-ocr-debug-exports.php', { cache: 'no-store' });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.exports)) {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte läsa OCR-debugexporter.');
+    }
+    if (requestToken !== ocrDebugExportListRequestToken) {
+      return;
+    }
+    ocrDebugExportListLoading = false;
+    renderOcrDebugExportList(payload.exports);
+  } catch (error) {
+    if (requestToken !== ocrDebugExportListRequestToken) {
+      return;
+    }
+    ocrDebugExportListError = error instanceof Error ? error.message : 'Kunde inte läsa OCR-debugexporter.';
+    ocrDebugExportListLoading = false;
+    renderOcrDebugExportList([]);
+  }
+}
+
+function updateOcrDebugExportCreateAvailability() {
+  const selectedFilter = ocrDebugExportSelectedFilterMode();
+  const jobCount = ocrDebugExportJobIdsForMode(selectedFilter).length;
+  ocrDebugExportCreateCanCreate = jobCount > 0;
+  ocrDebugExportCreateDisabledReason = jobCount > 0
+    ? ''
+    : 'Inga dokument i den här filtreringen.';
+  renderOcrDebugExportCreateState();
+}
+
+async function createOcrDebugExport() {
+  if (ocrDebugExportBusy || ocrDebugExportCreateLoading) {
+    return;
+  }
+
+  const selectedFilter = ocrDebugExportSelectedFilterMode();
+  const jobIds = ocrDebugExportJobIdsForMode(selectedFilter);
+  if (jobIds.length === 0) {
+    setOcrDebugExportStatus('Inga dokument att exportera för den valda filtreringen.', 'warning');
+    updateOcrDebugExportCreateAvailability();
+    return;
+  }
+
+  const requestToken = ++ocrDebugExportCreateRequestToken;
+  ocrDebugExportCreateLoading = true;
+  renderOcrDebugExportCreateState();
+  setOcrDebugExportStatus('', 'info');
+
+  try {
+    const response = await fetch('/api/export-ocr-debug.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        jobIds,
+        scope: selectedFilter,
+      })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true || typeof payload.exportDirectory !== 'string') {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte exportera OCR-debugdata.');
+    }
+    if (requestToken !== ocrDebugExportCreateRequestToken) {
+      return;
+    }
+
+    const skippedCount = Number.isInteger(payload.skippedCount) ? payload.skippedCount : 0;
+    setOcrDebugExportStatus(
+      `Export skapad för ${jobIds.length} dokument${skippedCount > 0 ? `, ${skippedCount} hoppades över` : ''} (${jobListModeLabel(selectedFilter)}).`,
+      'success'
+    );
+    await loadOcrDebugExports();
+    if (typeof payload.folderName === 'string' && payload.folderName.trim() !== '') {
+      highlightOcrDebugExport(payload.folderName.trim());
+    }
+  } catch (error) {
+    if (requestToken !== ocrDebugExportCreateRequestToken) {
+      return;
+    }
+    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Kunde inte exportera OCR-debugdata.', 'error');
+  } finally {
+    if (requestToken === ocrDebugExportCreateRequestToken) {
+      ocrDebugExportCreateLoading = false;
+      renderOcrDebugExportCreateState();
+    }
+  }
+}
+
+async function deleteOcrDebugExport(folderName) {
+  const normalizedFolderName = typeof folderName === 'string' ? folderName.trim() : '';
+  if (normalizedFolderName === '' || ocrDebugExportBusy) {
+    return;
+  }
+
+  const confirmed = window.confirm('Ta bort vald OCR-debugexport?');
+  if (!confirmed) {
+    return;
+  }
+
+  setOcrDebugExportBusy(true);
+  try {
+    const response = await fetch('/api/delete-ocr-debug-export.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ folderName: normalizedFolderName }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte ta bort OCR-debugexporten.');
+    }
+
+    await loadOcrDebugExports();
+    updateOcrDebugExportCreateAvailability();
+  } catch (error) {
+    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Kunde inte ta bort OCR-debugexporten.', 'error');
+  } finally {
+    setOcrDebugExportBusy(false);
+  }
+}
+
+function downloadOcrDebugExport(folderName) {
+  const normalizedFolderName = typeof folderName === 'string' ? folderName.trim() : '';
+  if (normalizedFolderName === '') {
+    return;
+  }
+
+  const link = document.createElement('a');
+  link.href = '/api/download-ocr-debug-export.php?folderName=' + encodeURIComponent(normalizedFolderName);
+  link.download = `${normalizedFolderName}.zip`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function openOcrDebugExportDialog() {
+  if (ocrDebugExportDialogOverlayEl instanceof HTMLElement) {
+    ocrDebugExportDialogOverlayEl.remove();
+    ocrDebugExportDialogOverlayEl = null;
+  }
+  ocrDebugExportCreateRequestToken += 1;
+  ocrDebugExportCreateLoading = false;
+  ocrDebugExportBusy = false;
+  ocrDebugExportHighlightedFolderName = '';
+  if (ocrDebugExportHighlightTimer !== null) {
+    window.clearTimeout(ocrDebugExportHighlightTimer);
+    ocrDebugExportHighlightTimer = null;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'settings-dialog label-import-dialog ocr-debug-export-dialog';
+
+  const title = document.createElement('h3');
+  title.textContent = 'OCR-debugexport';
+
+  const body = document.createElement('div');
+  body.className = 'label-import-dialog-body';
+
+  const description = document.createElement('p');
+  description.textContent = 'Exportera merged_objects.json och merged_objects.txt för den aktuella jobbfiltreringen, eller välj ett annat scope innan export.';
+
+  const controls = document.createElement('div');
+  controls.className = 'ocr-debug-export-controls';
+
+  const filterField = document.createElement('div');
+  filterField.className = 'ocr-debug-export-filter-field';
+  const filterLabel = document.createElement('label');
+  filterLabel.className = 'settings-label';
+  filterLabel.setAttribute('for', 'ocr-debug-export-filter');
+  filterLabel.textContent = 'Filter';
+  const filterSelect = document.createElement('select');
+  filterSelect.id = 'ocr-debug-export-filter';
+  filterSelect.className = 'ocr-debug-export-filter-select';
+  const filterOptions = [
+    'ready',
+    'archived-review',
+    'processing',
+    'archived',
+    'all',
+  ];
+  filterOptions.forEach((mode) => {
+    const option = document.createElement('option');
+    option.value = mode;
+    option.textContent = jobListModeLabel(mode);
+    filterSelect.appendChild(option);
+  });
+  filterField.append(filterLabel, filterSelect);
+
+  const createShell = document.createElement('span');
+  createShell.className = 'settings-backup-export-shell';
+  const createButton = document.createElement('button');
+  createButton.type = 'button';
+  createButton.id = 'ocr-debug-export-create';
+  createButton.setAttribute('aria-busy', 'false');
+  const createSpinner = document.createElement('span');
+  createSpinner.className = 'spinner settings-backup-export-spinner hidden';
+  createSpinner.setAttribute('aria-hidden', 'true');
+  const createLabel = document.createElement('span');
+  createLabel.className = 'settings-backup-export-label';
+  createLabel.textContent = 'Skapa export';
+  createButton.append(createSpinner, createLabel);
+  createShell.appendChild(createButton);
+
+  controls.append(filterField, createShell);
+
+  const status = document.createElement('div');
+  status.id = 'ocr-debug-export-status';
+  status.className = 'settings-backup-status';
+  status.setAttribute('aria-live', 'polite');
+
+  const history = document.createElement('div');
+  history.className = 'settings-backup-history';
+  const historyTitle = document.createElement('div');
+  historyTitle.className = 'settings-backup-history-title';
+  historyTitle.textContent = 'Exporter';
+  const list = document.createElement('div');
+  list.id = 'ocr-debug-export-list';
+  list.className = 'settings-backup-list';
+  list.setAttribute('aria-live', 'polite');
+  history.append(historyTitle, list);
+
+  const actions = document.createElement('div');
+  actions.className = 'panel-actions';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.textContent = 'Stäng';
+  actions.appendChild(closeButton);
+
+  body.append(description, controls, status, history);
+  dialog.append(title, body, actions);
+  overlay.appendChild(dialog);
+
+  const finish = () => {
+    document.removeEventListener('keydown', onKeyDown, true);
+    overlay.remove();
+    if (ocrDebugExportDialogOverlayEl === overlay) {
+      ocrDebugExportDialogOverlayEl = null;
+    }
+  };
+
+  const onKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      finish();
+    }
+  };
+
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      finish();
+    }
+  });
+  closeButton.addEventListener('click', finish);
+  filterSelect.addEventListener('change', () => {
+    ocrDebugExportCurrentFilter = VALID_JOB_LIST_MODES.has(filterSelect.value) ? filterSelect.value : 'ready';
+    updateOcrDebugExportCreateAvailability();
+  });
+  createButton.addEventListener('click', async () => {
+    await createOcrDebugExport();
+  });
+  document.addEventListener('keydown', onKeyDown, true);
+  document.body.appendChild(overlay);
+
+  ocrDebugExportDialogOverlayEl = overlay;
+  ocrDebugExportDialogEl = dialog;
+  ocrDebugExportFilterSelectEl = filterSelect;
+  ocrDebugExportCreateShellEl = createShell;
+  ocrDebugExportCreateButtonEl = createButton;
+  ocrDebugExportCreateSpinnerEl = createSpinner;
+  ocrDebugExportCreateLabelEl = createLabel;
+  ocrDebugExportStatusEl = status;
+  ocrDebugExportListEl = list;
+
+  ocrDebugExportCurrentFilter = VALID_JOB_LIST_MODES.has(currentJobListMode) ? currentJobListMode : 'ready';
+  filterSelect.value = ocrDebugExportCurrentFilter;
+  ocrDebugExportItems = [];
+  ocrDebugExportListError = '';
+  ocrDebugExportListLoading = true;
+  setOcrDebugExportStatus('', 'info');
+  bindSettingsCommandCopyButtons(dialog);
+  updateOcrDebugExportCreateAvailability();
+  renderOcrDebugExportList([]);
+  closeButton.focus();
+  void loadOcrDebugExports();
 }
 
 function renderAppNotices() {
@@ -7798,6 +8474,14 @@ function renderJobList(processingJobs, readyJobs, failedJobs) {
     }
   }
 
+  const shouldShowEmptyMessage = desiredNodes.some((node) => node instanceof HTMLElement && node.classList.contains('job-message'));
+  if (!shouldShowEmptyMessage) {
+    Array.from(jobListEl.querySelectorAll('.job-message')).forEach((node) => {
+      node.remove();
+    });
+    jobListNodeByKey.delete('message:empty');
+  }
+
   desiredNodes.forEach((node) => {
     jobListEl.appendChild(node);
   });
@@ -7875,41 +8559,11 @@ function jobStateSignature(job) {
 }
 
 function jobsForCurrentListMode() {
-  if (currentJobListMode === 'all') {
-    return []
-      .concat(Array.isArray(state.processingJobs) ? state.processingJobs : [])
-      .concat(Array.isArray(state.readyJobs) ? state.readyJobs : [])
-      .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs : [])
-      .concat(Array.isArray(state.failedJobs) ? state.failedJobs : []);
-  }
-  if (currentJobListMode === 'processing') {
-    return Array.isArray(state.processingJobs) ? state.processingJobs : [];
-  }
-  if (currentJobListMode === 'archived-review') {
-    return displayedArchivedReviewJobsForReadyMode();
-  }
-  if (currentJobListMode === 'archived') {
-    return Array.isArray(state.archivedJobs) ? state.archivedJobs : [];
-  }
-  return displayedJobsForCurrentListMode();
+  return jobsForListMode(currentJobListMode);
 }
 
 function displayedJobsForCurrentListMode() {
-  if (currentJobListMode === 'ready') {
-    return buildDisplayedReadyJobs(state.processingJobs, state.readyJobs)
-      .concat(sortJobsForList('failedJobs', Array.isArray(state.failedJobs) ? state.failedJobs : []));
-  }
-  if (currentJobListMode === 'archived-review') {
-    return displayedArchivedReviewJobsForReadyMode();
-  }
-  if (currentJobListMode === 'all') {
-    return []
-      .concat(Array.isArray(state.processingJobs) ? state.processingJobs : [])
-      .concat(buildDisplayedReadyJobs([], state.readyJobs))
-      .concat(sortJobsForList('failedJobs', Array.isArray(state.failedJobs) ? state.failedJobs : []))
-      .concat(Array.isArray(state.archivedJobs) ? state.archivedJobs : []);
-  }
-  return jobsForCurrentListMode();
+  return jobsForListMode(currentJobListMode);
 }
 
 function isJobVisibleInCurrentList(jobId) {
@@ -10280,7 +10934,6 @@ function applySelectedFilenameValue(value) {
 }
 
 function renderSelectedJobPanel() {
-  const reprocessButtonEl = syncSelectedJobReprocessButton();
   const selectedJob = findJobById(selectedJobId);
   if (!selectedJob) {
     syncReviewViewModeAvailability(null, { allowFallback: false });
@@ -10292,10 +10945,6 @@ function renderSelectedJobPanel() {
     renderSelectedJobSenderSection(null);
     syncSelectedJobActionsWarning(null);
     setLabelsForJob(null);
-    if (reprocessButtonEl instanceof HTMLButtonElement) {
-      reprocessButtonEl.disabled = true;
-      reprocessButtonEl.title = 'Markera ett jobb först.';
-    }
     syncFilenameField(null);
     syncOcrMenuState(null);
     updateArchiveAction(null);
@@ -10335,18 +10984,6 @@ function renderSelectedJobPanel() {
   renderSelectedJobClientSection(selectedJob);
   renderSelectedJobSenderSection(selectedJob);
   syncSelectedJobActionsWarning(selectedJob);
-  if (reprocessButtonEl instanceof HTMLButtonElement) {
-    reprocessButtonEl.disabled = selectedJob.status === 'processing'
-      || selectedJob.archived === true
-      || (!selectedJob.hasReviewPdf && !selectedJob.hasSourcePdf);
-    reprocessButtonEl.title = reprocessButtonEl.disabled
-      ? (selectedJob.status === 'processing'
-        ? 'Jobbet bearbetas redan.'
-        : (selectedJob.archived === true
-          ? 'Arkiverade jobb kan inte köras om här.'
-          : 'Det finns varken review.pdf eller source.pdf att köra om från.'))
-      : 'Klicka för att analysera igen från review.pdf. Håll Ctrl nedtryckt för att tvinga en helomkörning från source.pdf.';
-  }
   syncFilenameField(selectedJob);
   syncOcrMenuState(selectedJob);
   updateArchiveAction(selectedJob);
@@ -16155,6 +16792,7 @@ function bindSettingsPanelRefs(tabId) {
   } else if (tabId === 'paths') {
     inputInboxPathEl = document.getElementById('input-inbox-path');
     outputBasePathEl = document.getElementById('output-base-path');
+    ocrDebugExportDirectoryEl = document.getElementById('ocr-debug-export-directory');
     pathsCancelEl = document.getElementById('paths-cancel');
     pathsApplyEl = document.getElementById('paths-apply');
     inputInboxPathEl.addEventListener('input', () => {
@@ -16163,9 +16801,17 @@ function bindSettingsPanelRefs(tabId) {
     outputBasePathEl.addEventListener('input', () => {
       updateSettingsActionButtons();
     });
+    if (ocrDebugExportDirectoryEl instanceof HTMLInputElement) {
+      ocrDebugExportDirectoryEl.addEventListener('input', () => {
+        updateSettingsActionButtons();
+      });
+    }
     pathsCancelEl.addEventListener('click', () => {
       inputInboxPathEl.value = inboxPathBaselineValue;
       outputBasePathEl.value = pathsBaselineValue;
+      if (ocrDebugExportDirectoryEl instanceof HTMLInputElement) {
+        ocrDebugExportDirectoryEl.value = ocrDebugExportDirectoryBaselineValue;
+      }
       updateSettingsActionButtons();
     });
     pathsApplyEl.addEventListener('click', async () => {
@@ -16176,8 +16822,19 @@ function bindSettingsPanelRefs(tabId) {
       }
     });
   } else if (tabId === 'system') {
+    systemDevModeEl = document.getElementById('system-dev-mode');
     systemStateTransportEl = document.getElementById('system-state-transport');
     settingsResetJobsEl = document.getElementById('settings-reset-jobs');
+    if (systemDevModeEl instanceof HTMLInputElement) {
+      systemDevModeEl.checked = developmentUiEnabled();
+      systemDevModeEl.disabled = !isLocalDevelopmentHost();
+      systemDevModeEl.addEventListener('change', () => {
+        const nextEnabled = systemDevModeEl.checked === true;
+        if (!setDevelopmentUiEnabled(nextEnabled)) {
+          systemDevModeEl.checked = developmentUiEnabled();
+        }
+      });
+    }
     systemStateTransportEl.value = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
     systemStateTransportEl.addEventListener('change', async () => {
       const previousTransport = sanitizeStateUpdateTransport(stateUpdateTransport, 'polling');
@@ -16670,11 +17327,12 @@ function isOcrProcessingDirty() {
 }
 
 function isPathsDirty() {
-  if (!outputBasePathEl || !inputInboxPathEl) {
+  if (!outputBasePathEl || !inputInboxPathEl || !(ocrDebugExportDirectoryEl instanceof HTMLInputElement)) {
     return false;
   }
   return normalizedPathValue(outputBasePathEl.value) !== pathsBaselineValue
-    || normalizedPathValue(inputInboxPathEl.value) !== inboxPathBaselineValue;
+    || normalizedPathValue(inputInboxPathEl.value) !== inboxPathBaselineValue
+    || normalizedPathValue(ocrDebugExportDirectoryEl.value) !== ocrDebugExportDirectoryBaselineValue;
 }
 
 function isSettingsTabDirty(tabId) {
@@ -25028,8 +25686,16 @@ async function loadPathSettings() {
 
   inputInboxPathEl.value = payload.inboxDirectory;
   outputBasePathEl.value = payload.outputBaseDirectory;
+  if (ocrDebugExportDirectoryEl instanceof HTMLInputElement) {
+    ocrDebugExportDirectoryEl.value = typeof payload.ocrDebugExportDirectory === 'string'
+      ? payload.ocrDebugExportDirectory
+      : 'debug_exports/';
+  }
   inboxPathBaselineValue = normalizedPathValue(payload.inboxDirectory);
   pathsBaselineValue = normalizedPathValue(payload.outputBaseDirectory);
+  ocrDebugExportDirectoryBaselineValue = normalizedPathValue(
+    typeof payload.ocrDebugExportDirectory === 'string' ? payload.ocrDebugExportDirectory : 'debug_exports/'
+  );
   updateSettingsActionButtons();
 }
 
@@ -25408,7 +26074,8 @@ async function savePathSettings() {
     },
     body: JSON.stringify({
       inboxDirectory: inputInboxPathEl.value,
-      outputBaseDirectory: outputBasePathEl.value
+      outputBaseDirectory: outputBasePathEl.value,
+      ocrDebugExportDirectory: ocrDebugExportDirectoryEl instanceof HTMLInputElement ? ocrDebugExportDirectoryEl.value : 'debug_exports/'
     })
   });
 
@@ -25422,8 +26089,12 @@ async function savePathSettings() {
 
   inboxPathBaselineValue = normalizedPathValue(inputInboxPathEl.value);
   pathsBaselineValue = normalizedPathValue(outputBasePathEl.value);
+  ocrDebugExportDirectoryBaselineValue = normalizedPathValue(ocrDebugExportDirectoryEl instanceof HTMLInputElement ? ocrDebugExportDirectoryEl.value : 'debug_exports/');
   inputInboxPathEl.value = inboxPathBaselineValue;
   outputBasePathEl.value = pathsBaselineValue;
+  if (ocrDebugExportDirectoryEl instanceof HTMLInputElement) {
+    ocrDebugExportDirectoryEl.value = ocrDebugExportDirectoryBaselineValue;
+  }
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -25644,6 +26315,8 @@ if (jobListMenuButtonEl instanceof HTMLButtonElement) {
     toggleJobListMenu();
   });
 }
+syncJobListMenuActionsVisibility();
+syncDeveloperUiState();
 
 if (ocrMenuButtonEl instanceof HTMLButtonElement) {
   ocrMenuButtonEl.addEventListener('click', (event) => {
@@ -25675,6 +26348,17 @@ if (jobListReanalyzeAllActionEl instanceof HTMLButtonElement) {
   });
 }
 
+if (jobListExportOcrDebugActionEl instanceof HTMLButtonElement) {
+  jobListExportOcrDebugActionEl.addEventListener('click', async () => {
+    closeJobListMenu();
+    try {
+      openOcrDebugExportDialog();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Kunde inte öppna OCR-debugexporten.');
+    }
+  });
+}
+
 if (ocrDownloadActionEl instanceof HTMLButtonElement) {
   ocrDownloadActionEl.addEventListener('click', async () => {
     closeOcrMenu();
@@ -25692,6 +26376,17 @@ if (ocrDownloadActionEl instanceof HTMLButtonElement) {
 if (selectedJobDeleteActionEl instanceof HTMLButtonElement) {
   selectedJobDeleteActionEl.addEventListener('click', async () => {
     await deleteSelectedJob();
+  });
+}
+
+if (selectedJobReprocessActionEl instanceof HTMLButtonElement) {
+  selectedJobReprocessActionEl.addEventListener('click', async (event) => {
+    closeSelectedJobActionsMenu();
+    if (event.ctrlKey || event.metaKey) {
+      await handleSelectedJobReprocess('full', { forceOcr: true });
+      return;
+    }
+    await handleSelectedJobReprocess('post-ocr');
   });
 }
 

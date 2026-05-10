@@ -44,6 +44,14 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                   role="menuitem"
                   title="Kör om analysen för alla dokument med aktuell logik och aktuella regler. Arkiverade dokument ändras inte automatiskt, men nya förslag kan visas om analysen nu ger ett annat resultat."
                 >Kör om analys för alla dokument</button>
+                <!-- Developer-only export for OCR diffing in tools like Meld. -->
+                <button
+                  id="job-list-export-ocr-debug-action"
+                  class="hidden"
+                  type="button"
+                  role="menuitem"
+                  title="Öppnar OCR-debugexporter för aktuell dokumentfiltrering."
+                >OCR-debugexport...</button>
               </div>
             </div>
           </div>
@@ -117,6 +125,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                   title="Fler alternativ"
                 >⋮</button>
                 <div id="selected-job-actions-menu" class="selected-job-actions-menu hidden" role="menu" aria-label="Fler åtgärder för dokument">
+                  <button id="selected-job-reprocess-action" type="button" role="menuitem" class="hidden">Analysera igen</button>
                   <button id="selected-job-delete-action" class="selected-job-actions-menu-item-danger" type="button" role="menuitem">Ta bort dokument…</button>
                 </div>
               </div>
@@ -810,6 +819,16 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       autocorrect="off"
       autocapitalize="off"
     >
+    <label class="settings-label" for="ocr-debug-export-directory">OCR-debugexporter</label>
+    <input
+      id="ocr-debug-export-directory"
+      type="text"
+      placeholder="debug_exports/"
+      spellcheck="false"
+      autocorrect="off"
+      autocapitalize="off"
+    >
+    <p>Relativ sökväg tolkas mot projektroten. Exporten skapar en ny tidsstämplad mapp per körning.</p>
     <div class="panel-actions">
       <button id="paths-cancel" class="button-danger" type="button">Avbryt</button>
       <button id="paths-apply" class="button-success" type="button">Spara</button>
@@ -818,6 +837,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-system">
     <h3>System</h3>
+    <label class="settings-checkbox" for="system-dev-mode">
+      <input id="system-dev-mode" type="checkbox">
+      <span>Utvecklarläge</span>
+    </label>
+    <p>Visar extra menyer och verktyg i gränssnittet. Gäller bara på localhost.</p>
     <label class="settings-label" for="system-state-transport">Uppdateringsmetod</label>
     <select id="system-state-transport" class="settings-select">
       <option value="polling">Polling</option>

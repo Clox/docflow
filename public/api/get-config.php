@@ -12,6 +12,7 @@ try {
         'inboxDirectory' => $config['inboxDirectory'],
         'jobsDirectory' => $config['jobsDirectory'],
         'outputBaseDirectory' => $config['outputBaseDirectory'],
+        'ocrDebugExportDirectory' => $config['ocrDebugExportDirectory'] ?? 'debug_exports/',
         'ocrSkipExistingText' => (bool) $config['ocrSkipExistingText'],
         'ocrOptimizeLevel' => (int) $config['ocrOptimizeLevel'],
         'stateUpdateTransport' => (string) $config['stateUpdateTransport'],

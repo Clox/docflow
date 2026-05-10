@@ -83,6 +83,7 @@ function load_config(): array
     $inboxDirectory = $config['inboxDirectory'] ?? '';
     $jobsDirectory = $config['jobsDirectory'] ?? '';
     $outputBaseDirectory = $config['outputBaseDirectory'] ?? '';
+    $ocrDebugExportDirectory = $config['ocrDebugExportDirectory'] ?? 'debug_exports/';
     $ocrSkipExistingText = $config['ocrSkipExistingText'] ?? true;
     $ocrOptimizeLevel = $config['ocrOptimizeLevel'] ?? 1;
     $stateUpdateTransport = $config['stateUpdateTransport'] ?? 'polling';
@@ -100,6 +101,13 @@ function load_config(): array
     }
     if (!is_string($outputBaseDirectory)) {
         $outputBaseDirectory = '';
+    }
+    if (!is_string($ocrDebugExportDirectory)) {
+        $ocrDebugExportDirectory = 'debug_exports/';
+    }
+    $ocrDebugExportDirectory = trim($ocrDebugExportDirectory);
+    if ($ocrDebugExportDirectory === '') {
+        $ocrDebugExportDirectory = 'debug_exports/';
     }
     if (!is_bool($ocrSkipExistingText)) {
         $ocrSkipExistingText = filter_var($ocrSkipExistingText, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
@@ -139,6 +147,7 @@ function load_config(): array
         'inboxDirectory' => $inboxDirectory,
         'jobsDirectory' => $jobsDirectory,
         'outputBaseDirectory' => trim($outputBaseDirectory),
+        'ocrDebugExportDirectory' => $ocrDebugExportDirectory,
         'ocrSkipExistingText' => $ocrSkipExistingText,
         'ocrOptimizeLevel' => $ocrOptimizeLevel,
         'stateUpdateTransport' => $stateUpdateTransport,
@@ -5947,6 +5956,371 @@ function ensure_merged_objects_text_from_storage(string $jobDir, ?string $jobId 
     }
 
     return $pages;
+}
+
+function ocr_debug_export_directory_config_value(array $config): string
+{
+    $path = trim((string) ($config['ocrDebugExportDirectory'] ?? 'debug_exports/'));
+    return $path !== '' ? $path : 'debug_exports/';
+}
+
+function ocr_debug_export_base_directory(array $config): string
+{
+    $configured = ocr_debug_export_directory_config_value($config);
+    $normalized = str_replace('\\', '/', $configured);
+    if ($normalized !== '' && ($normalized[0] === '/' || preg_match('/^[A-Za-z]:\//', $normalized) === 1)) {
+        return rtrim(normalized_realpath($configured) ?? $configured, DIRECTORY_SEPARATOR);
+    }
+
+    $projectRoot = normalized_realpath(PROJECT_ROOT) ?? rtrim(PROJECT_ROOT, DIRECTORY_SEPARATOR);
+    return rtrim($projectRoot . DIRECTORY_SEPARATOR . $configured, DIRECTORY_SEPARATOR);
+}
+
+function ocr_debug_export_scope_slug(string $scope): string
+{
+    $normalized = strtolower(trim($scope));
+    $normalized = preg_replace('/[^a-z0-9_-]+/i', '-', $normalized);
+    $normalized = is_string($normalized) ? trim($normalized, '-_') : '';
+    return $normalized !== '' ? $normalized : 'jobs';
+}
+
+function create_ocr_debug_export_directory(array $config, string $scope): string
+{
+    $baseDirectory = ocr_debug_export_base_directory($config);
+    ensure_directory($baseDirectory);
+
+    $timestamp = date('Ymd_His');
+    $scopeSlug = ocr_debug_export_scope_slug($scope);
+    $exportDirectory = $baseDirectory . DIRECTORY_SEPARATOR . $timestamp . '-' . $scopeSlug;
+    $suffix = 2;
+    while (is_dir($exportDirectory)) {
+        $exportDirectory = $baseDirectory . DIRECTORY_SEPARATOR . $timestamp . '-' . $scopeSlug . '-' . str_pad((string) $suffix, 2, '0', STR_PAD_LEFT);
+        $suffix++;
+    }
+
+    ensure_directory($exportDirectory);
+    return $exportDirectory;
+}
+
+function ocr_debug_export_document_for_job(string $jobId): ?array
+{
+    $pages = stored_merged_objects_pages($jobId);
+    if ($pages === []) {
+        $pages = fallback_merged_objects_pages_from_job_debug($jobId);
+    }
+    if ($pages === []) {
+        return null;
+    }
+
+    return [
+        'engine' => 'merged_objects',
+        'pages' => $pages,
+    ];
+}
+
+function ocr_debug_export_scope_label(string $scope): string
+{
+    return match (ocr_debug_export_scope_slug($scope)) {
+        'ready' => 'Att granska',
+        'archived-review' => 'Arkiverade att granska',
+        'processing' => 'Bearbetas',
+        'archived' => 'Arkiverade',
+        'all' => 'Alla',
+        default => 'Jobb',
+    };
+}
+
+function ocr_debug_export_normalize_folder_name(string $folderName): ?string
+{
+    $basename = basename(trim($folderName));
+    if ($basename === '' || preg_match('/^[A-Za-z0-9._-]+$/', $basename) !== 1) {
+        return null;
+    }
+
+    return $basename;
+}
+
+function ocr_debug_export_directory_path_from_name(array $config, string $folderName): ?string
+{
+    $normalizedFolderName = ocr_debug_export_normalize_folder_name($folderName);
+    if ($normalizedFolderName === null) {
+        return null;
+    }
+
+    $baseDirectory = ocr_debug_export_base_directory($config);
+    $resolvedBaseDirectory = normalized_realpath($baseDirectory) ?? $baseDirectory;
+    $directory = $baseDirectory . DIRECTORY_SEPARATOR . $normalizedFolderName;
+    $resolved = normalized_realpath($directory);
+    if ($resolved !== null && path_is_within_directory($resolved, $resolvedBaseDirectory)) {
+        return $resolved;
+    }
+
+    return is_dir($directory) ? $directory : null;
+}
+
+function ocr_debug_export_manifest_path(string $exportDirectory): string
+{
+    return rtrim($exportDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'manifest.json';
+}
+
+function ocr_debug_export_manifest_payload(
+    string $exportDirectory,
+    string $scope,
+    array $jobIds,
+    array $createdFiles,
+    array $skippedJobIds = []
+): array {
+    $folderName = basename(rtrim($exportDirectory, DIRECTORY_SEPARATOR));
+    $jobIds = array_values(array_filter(
+        array_map(static fn ($jobId) => is_string($jobId) ? trim($jobId) : '', $jobIds),
+        static fn (string $jobId): bool => $jobId !== '' && is_valid_job_id($jobId)
+    ));
+    $createdFiles = array_values(array_filter(
+        array_map(static fn ($file) => is_string($file) ? trim($file) : '', $createdFiles),
+        static fn (string $file): bool => $file !== ''
+    ));
+    $skippedJobIds = array_values(array_filter(
+        array_map(static fn ($jobId) => is_string($jobId) ? trim($jobId) : '', $skippedJobIds),
+        static fn (string $jobId): bool => $jobId !== '' && is_valid_job_id($jobId)
+    ));
+    $exportedAt = gmdate(DATE_ATOM, filemtime($exportDirectory) ?: time());
+
+    return [
+        'format' => 'docflow_ocr_debug_export',
+        'version' => 1,
+        'exportedAt' => $exportedAt,
+        'filter' => ocr_debug_export_scope_slug($scope),
+        'filterLabel' => ocr_debug_export_scope_label($scope),
+        'jobCount' => count($jobIds),
+        'jobIds' => $jobIds,
+        'createdFiles' => $createdFiles,
+        'skippedJobIds' => $skippedJobIds,
+        'folderName' => $folderName,
+        'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
+    ];
+}
+
+function ocr_debug_export_manifest_from_directory(string $exportDirectory): ?array
+{
+    $manifestPath = ocr_debug_export_manifest_path($exportDirectory);
+    if (is_file($manifestPath)) {
+        $manifest = load_json_file($manifestPath);
+        if (is_array($manifest) && ($manifest['format'] ?? null) === 'docflow_ocr_debug_export') {
+            $manifest['folderName'] = is_string($manifest['folderName'] ?? null)
+                ? (string) $manifest['folderName']
+                : basename(rtrim($exportDirectory, DIRECTORY_SEPARATOR));
+            $manifest['exportDirectory'] = normalized_realpath($exportDirectory) ?? $exportDirectory;
+            $manifest['sortTimestamp'] = filemtime($manifestPath) ?: (filemtime($exportDirectory) ?: 0);
+            $manifest['legacy'] = false;
+            return $manifest;
+        }
+    }
+
+    $folderName = basename(rtrim($exportDirectory, DIRECTORY_SEPARATOR));
+    $legacyTimestamp = null;
+    $legacyScope = 'jobs';
+    if (preg_match('/^(\d{8}_\d{6})-([A-Za-z0-9._-]+)$/', $folderName, $matches) === 1) {
+        $legacyTimestamp = DateTimeImmutable::createFromFormat('Ymd_His', $matches[1]) ?: null;
+        $legacyScope = $matches[2];
+    }
+
+    $jobIds = [];
+    $createdFiles = [];
+    $jsonPaths = glob(rtrim($exportDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*.json') ?: [];
+    foreach ($jsonPaths as $path) {
+        if (!is_string($path)) {
+            continue;
+        }
+        $basename = basename($path);
+        if ($basename === 'manifest.json') {
+            continue;
+        }
+        if (preg_match('/^([A-Za-z0-9_-]+)\.json$/', $basename, $matches) === 1) {
+            $jobIds[] = $matches[1];
+        }
+        $createdFiles[] = $basename;
+    }
+    $txtPaths = glob(rtrim($exportDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*.txt') ?: [];
+    foreach ($txtPaths as $path) {
+        if (!is_string($path)) {
+            continue;
+        }
+        $createdFiles[] = basename($path);
+    }
+    $jobIds = array_values(array_unique(array_filter($jobIds, static fn (string $jobId): bool => is_valid_job_id($jobId))));
+    sort($createdFiles, SORT_NATURAL);
+    $sortTimestamp = $legacyTimestamp instanceof DateTimeImmutable
+        ? $legacyTimestamp->getTimestamp()
+        : (filemtime($exportDirectory) ?: 0);
+
+    return [
+        'format' => 'docflow_ocr_debug_export',
+        'version' => 1,
+        'exportedAt' => $legacyTimestamp instanceof DateTimeImmutable ? $legacyTimestamp->format(DATE_ATOM) : gmdate(DATE_ATOM, $sortTimestamp),
+        'filter' => ocr_debug_export_scope_slug($legacyScope),
+        'filterLabel' => ocr_debug_export_scope_label($legacyScope),
+        'jobCount' => count($jobIds),
+        'jobIds' => $jobIds,
+        'createdFiles' => $createdFiles,
+        'skippedJobIds' => [],
+        'folderName' => $folderName,
+        'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
+        'sortTimestamp' => $sortTimestamp,
+        'legacy' => true,
+    ];
+}
+
+function list_ocr_debug_exports(array $config): array
+{
+    $baseDirectory = ocr_debug_export_base_directory($config);
+    ensure_directory($baseDirectory);
+    $baseDirectory = normalized_realpath($baseDirectory) ?? $baseDirectory;
+
+    $paths = glob($baseDirectory . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR);
+    if (!is_array($paths)) {
+        return [];
+    }
+
+    $entries = [];
+    foreach ($paths as $path) {
+        if (!is_string($path)) {
+            continue;
+        }
+        $realPath = normalized_realpath($path);
+        if ($realPath === null || !path_is_within_directory($realPath, $baseDirectory)) {
+            continue;
+        }
+        $entry = ocr_debug_export_manifest_from_directory($realPath);
+        if ($entry === null) {
+          continue;
+        }
+        $entries[] = $entry;
+    }
+
+    usort(
+        $entries,
+        static function (array $left, array $right): int {
+            $rightSort = (int) ($right['sortTimestamp'] ?? 0);
+            $leftSort = (int) ($left['sortTimestamp'] ?? 0);
+            if ($rightSort === $leftSort) {
+                return strcmp((string) ($right['folderName'] ?? ''), (string) ($left['folderName'] ?? ''));
+            }
+            return $rightSort <=> $leftSort;
+        }
+    );
+
+    return array_map(static function (array $entry): array {
+        $createdFiles = array_values(array_filter(
+            array_map(static fn ($file) => is_string($file) ? trim($file) : '', $entry['createdFiles'] ?? []),
+            static fn (string $file): bool => $file !== ''
+        ));
+        $jobIds = array_values(array_filter(
+            array_map(static fn ($jobId) => is_string($jobId) ? trim($jobId) : '', $entry['jobIds'] ?? []),
+            static fn (string $jobId): bool => $jobId !== '' && is_valid_job_id($jobId)
+        ));
+        $exportDirectory = is_string($entry['exportDirectory'] ?? null) ? (string) $entry['exportDirectory'] : '';
+        $folderName = is_string($entry['folderName'] ?? null) ? (string) $entry['folderName'] : basename($exportDirectory);
+        $sortTimestamp = isset($entry['sortTimestamp']) && is_numeric($entry['sortTimestamp'])
+            ? (int) $entry['sortTimestamp']
+            : (filemtime($exportDirectory) ?: 0);
+
+        return [
+            'folderName' => $folderName,
+            'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
+            'exportedAt' => is_string($entry['exportedAt'] ?? null) ? (string) $entry['exportedAt'] : null,
+            'filter' => is_string($entry['filter'] ?? null) ? (string) $entry['filter'] : 'jobs',
+            'filterLabel' => is_string($entry['filterLabel'] ?? null) ? (string) $entry['filterLabel'] : ocr_debug_export_scope_label((string) ($entry['filter'] ?? 'jobs')),
+            'jobCount' => isset($entry['jobCount']) && is_numeric($entry['jobCount']) ? (int) $entry['jobCount'] : count($jobIds),
+            'jobIds' => $jobIds,
+            'createdFiles' => $createdFiles,
+            'fileCount' => count($createdFiles),
+            'skippedJobIds' => array_values(array_filter(
+                array_map(static fn ($jobId) => is_string($jobId) ? trim($jobId) : '', $entry['skippedJobIds'] ?? []),
+                static fn (string $jobId): bool => $jobId !== '' && is_valid_job_id($jobId)
+            )),
+            'sortTimestamp' => $sortTimestamp,
+            'legacy' => ($entry['legacy'] ?? false) === true,
+        ];
+    }, $entries);
+}
+
+function export_ocr_debug_data(array $config, array $jobIds, string $scope = ''): array
+{
+    $jobsDirectory = is_string($config['jobsDirectory'] ?? null) ? trim((string) $config['jobsDirectory']) : '';
+    if ($jobsDirectory === '' || !is_dir($jobsDirectory)) {
+        throw new RuntimeException('Jobbkatalogen är inte tillgänglig.');
+    }
+
+    $normalizedJobIds = [];
+    foreach ($jobIds as $jobId) {
+        if (!is_string($jobId)) {
+            continue;
+        }
+        $normalizedJobId = trim($jobId);
+        if ($normalizedJobId === '' || !is_valid_job_id($normalizedJobId)) {
+            continue;
+        }
+        $normalizedJobIds[$normalizedJobId] = true;
+    }
+    $normalizedJobIds = array_keys($normalizedJobIds);
+    if ($normalizedJobIds === []) {
+        throw new RuntimeException('Inga jobb valda för export.');
+    }
+
+    $exportDirectory = create_ocr_debug_export_directory($config, $scope);
+    ensure_directory($exportDirectory . DIRECTORY_SEPARATOR . 'text');
+    ensure_directory($exportDirectory . DIRECTORY_SEPARATOR . 'merged_objects');
+    $exportedJobIds = [];
+    $skippedJobIds = [];
+    $createdFiles = [];
+
+    foreach ($normalizedJobIds as $jobId) {
+        $jobDir = rtrim($jobsDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $jobId;
+        $jobPath = $jobDir . '/job.json';
+        if (!is_dir($jobDir) || !is_file($jobPath)) {
+            $skippedJobIds[] = $jobId;
+            continue;
+        }
+
+        $document = ocr_debug_export_document_for_job($jobId);
+        if ($document === null) {
+            $skippedJobIds[] = $jobId;
+            continue;
+        }
+
+        $pages = is_array($document['pages'] ?? null) ? $document['pages'] : [];
+        if ($pages === []) {
+            $skippedJobIds[] = $jobId;
+            continue;
+        }
+
+        $mergedObjectsPath = $exportDirectory . DIRECTORY_SEPARATOR . 'merged_objects' . DIRECTORY_SEPARATOR . $jobId . '.json';
+        write_json_file($mergedObjectsPath, $document);
+        $createdFiles[] = 'merged_objects/' . $jobId . '.json';
+
+        $mergedTextPages = ensure_merged_objects_text_from_storage($jobDir, $jobId);
+        $mergedText = build_merged_objects_txt_from_pages($mergedTextPages !== [] ? $mergedTextPages : $pages);
+        $textPath = $exportDirectory . DIRECTORY_SEPARATOR . 'text' . DIRECTORY_SEPARATOR . $jobId . '.txt';
+        file_put_contents($textPath, $mergedText === '' ? '' : $mergedText . "\n");
+        $createdFiles[] = 'text/' . $jobId . '.txt';
+        $exportedJobIds[] = $jobId;
+    }
+
+    $manifest = ocr_debug_export_manifest_payload($exportDirectory, $scope, $exportedJobIds, array_merge(['manifest.json'], $createdFiles), $skippedJobIds);
+    write_json_file(ocr_debug_export_manifest_path($exportDirectory), $manifest);
+    $createdFiles[] = 'manifest.json';
+
+    return [
+        'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
+        'folderName' => basename($exportDirectory),
+        'exportedJobIds' => $exportedJobIds,
+        'skippedJobIds' => $skippedJobIds,
+        'createdFiles' => $createdFiles,
+        'exportedCount' => count($exportedJobIds),
+        'skippedCount' => count($skippedJobIds),
+        'scope' => $scope,
+        'scopeLabel' => ocr_debug_export_scope_label($scope),
+    ];
 }
 
 function last_ocrmypdf_error(): ?string
