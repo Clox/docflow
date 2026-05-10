@@ -920,7 +920,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     </div>
     <div id="settings-backup-status" class="settings-backup-status" aria-live="polite"></div>
     <div class="settings-backup-history">
-      <div class="settings-backup-history-title">Tidigare säkerhetskopior</div>
+      <div class="settings-backup-history-title">Säkerhetskopior</div>
       <div id="settings-backup-list" class="settings-backup-list" aria-live="polite"></div>
     </div>
   </template>
