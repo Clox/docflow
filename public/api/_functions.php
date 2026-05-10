@@ -7678,6 +7678,246 @@ function apply_tesseract_swedish_truth_to_segments(array $segments, array $tesse
     return $segments;
 }
 
+function debug_word_line_bbox(array $words): ?array
+{
+    $bbox = null;
+    foreach ($words as $word) {
+        if (!is_array($word)) {
+            continue;
+        }
+        $wordBbox = normalize_debug_word_bbox($word['bbox'] ?? null);
+        if ($wordBbox === null) {
+            continue;
+        }
+        if ($bbox === null) {
+            $bbox = $wordBbox;
+            continue;
+        }
+        $bbox = [
+            'x0' => min($bbox['x0'], $wordBbox['x0']),
+            'y0' => min($bbox['y0'], $wordBbox['y0']),
+            'x1' => max($bbox['x1'], $wordBbox['x1']),
+            'y1' => max($bbox['y1'], $wordBbox['y1']),
+        ];
+    }
+
+    return $bbox;
+}
+
+function debug_words_average_score(array $words): ?float
+{
+    $scores = [];
+    foreach ($words as $word) {
+        if (!is_array($word)) {
+            continue;
+        }
+        $score = $word['score'] ?? null;
+        if (is_int($score) || is_float($score) || (is_string($score) && is_numeric($score))) {
+            $scores[] = max(0.0, min(1.0, (float) $score));
+        }
+    }
+
+    return $scores === [] ? null : array_sum($scores) / count($scores);
+}
+
+function debug_line_y_overlap_ratio(array $left, array $right): float
+{
+    $overlap = max(0.0, min((float) $left['y1'], (float) $right['y1']) - max((float) $left['y0'], (float) $right['y0']));
+    $height = min(
+        max(1.0, (float) $left['y1'] - (float) $left['y0']),
+        max(1.0, (float) $right['y1'] - (float) $right['y0'])
+    );
+    return $overlap / $height;
+}
+
+function debug_line_x_overlap_ratio(array $left, array $right): float
+{
+    $overlap = max(0.0, min((float) $left['x1'], (float) $right['x1']) - max((float) $left['x0'], (float) $right['x0']));
+    $width = min(
+        max(1.0, (float) $left['x1'] - (float) $left['x0']),
+        max(1.0, (float) $right['x1'] - (float) $right['x0'])
+    );
+    return $overlap / $width;
+}
+
+function normalize_line_text_for_duplicate_check(string $text): string
+{
+    return normalize_text_for_diacritic_match($text);
+}
+
+function debug_line_texts_are_duplicates(string $left, string $right): bool
+{
+    $normalizedLeft = normalize_line_text_for_duplicate_check($left);
+    $normalizedRight = normalize_line_text_for_duplicate_check($right);
+    if ($normalizedLeft === '' || $normalizedRight === '') {
+        return false;
+    }
+    if ($normalizedLeft === $normalizedRight) {
+        return true;
+    }
+
+    $leftLength = utf8_strlen_safe($normalizedLeft);
+    $rightLength = utf8_strlen_safe($normalizedRight);
+    $maxLength = max($leftLength, $rightLength);
+    $minLength = min($leftLength, $rightLength);
+    if ($maxLength < 12 || $minLength < (int) floor($maxLength * 0.78)) {
+        return false;
+    }
+
+    return utf8_levenshtein_distance($normalizedLeft, $normalizedRight) <= max(2, (int) floor($maxLength * 0.12));
+}
+
+function tesseract_line_is_covered_by_rapidocr(array $tesseractLine, array $rapidocrLines): bool
+{
+    $lineBbox = normalize_debug_word_bbox($tesseractLine['bbox'] ?? null);
+    if ($lineBbox === null) {
+        return true;
+    }
+
+    foreach ($rapidocrLines as $rapidocrLine) {
+        if (!is_array($rapidocrLine)) {
+            continue;
+        }
+
+        $rapidocrText = is_string($rapidocrLine['text'] ?? null) ? (string) $rapidocrLine['text'] : '';
+        $tesseractText = is_string($tesseractLine['text'] ?? null) ? (string) $tesseractLine['text'] : '';
+        if (debug_line_texts_are_duplicates($tesseractText, $rapidocrText)) {
+            return true;
+        }
+
+        $rapidocrBbox = normalize_debug_word_bbox($rapidocrLine['bbox'] ?? null);
+        if ($rapidocrBbox === null) {
+            continue;
+        }
+
+        $yOverlap = debug_line_y_overlap_ratio($lineBbox, $rapidocrBbox);
+        $xOverlap = debug_line_x_overlap_ratio($lineBbox, $rapidocrBbox);
+        if (($yOverlap >= 0.50 && $xOverlap >= 0.10) || bbox_iou($lineBbox, $rapidocrBbox) >= 0.05) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function tesseract_only_line_is_usable(array $line): bool
+{
+    $text = is_string($line['text'] ?? null) ? trim((string) $line['text']) : '';
+    if ($text === '' || utf8_strlen_safe($text) < 4 || preg_match('/[\p{L}\p{N}]/u', $text) !== 1) {
+        return false;
+    }
+
+    $bbox = normalize_debug_word_bbox($line['bbox'] ?? null);
+    if ($bbox === null || bbox_area($bbox) <= 4.0) {
+        return false;
+    }
+
+    $score = $line['score'] ?? null;
+    if ((is_int($score) || is_float($score)) && (float) $score < 0.45) {
+        return false;
+    }
+
+    return true;
+}
+
+function build_tesseract_line_candidates(array $tesseractWords): array
+{
+    $flatWords = [];
+    foreach ($tesseractWords as $word) {
+        if (!is_array($word)) {
+            continue;
+        }
+        $text = is_string($word['text'] ?? null) ? trim((string) $word['text']) : '';
+        $bbox = normalize_debug_word_bbox($word['bbox'] ?? null);
+        if ($text === '' || $bbox === null) {
+            continue;
+        }
+        $flatWords[] = [
+            'text' => $text,
+            'x0' => $bbox['x0'],
+            'y0' => $bbox['y0'],
+            'x1' => $bbox['x1'],
+            'y1' => $bbox['y1'],
+            'bbox' => $bbox,
+            'score' => $word['score'] ?? null,
+            'engine' => $word['engine'] ?? 'tesseract',
+            'index' => $word['index'] ?? null,
+        ];
+    }
+
+    $rows = ocr_layout_group_words_into_rows($flatWords);
+    $lines = [];
+    foreach ($rows as $rowWords) {
+        $words = [];
+        foreach ($rowWords as $word) {
+            $wordBbox = normalize_debug_word_bbox($word['bbox'] ?? null);
+            if ($wordBbox === null) {
+                continue;
+            }
+            $words[] = [
+                'engine' => 'tesseract',
+                'source' => 'tesseract_only',
+                'index' => is_int($word['index'] ?? null) ? (int) $word['index'] : null,
+                'text' => (string) ($word['text'] ?? ''),
+                'bbox' => $wordBbox,
+                'score' => $word['score'] ?? null,
+            ];
+        }
+        if ($words === []) {
+            continue;
+        }
+        $text = implode(' ', array_map(static fn(array $word): string => (string) ($word['text'] ?? ''), $words));
+        $lines[] = [
+            'text' => trim($text),
+            'bbox' => debug_word_line_bbox($words),
+            'score' => debug_words_average_score($words),
+            'words' => $words,
+        ];
+    }
+
+    return $lines;
+}
+
+function append_tesseract_only_missing_lines(array $mergedWords, array $rapidocrLines, array $tesseractWords): array
+{
+    if ($tesseractWords === []) {
+        return $mergedWords;
+    }
+
+    $addedAny = false;
+    foreach (build_tesseract_line_candidates($tesseractWords) as $line) {
+        if (!tesseract_only_line_is_usable($line) || tesseract_line_is_covered_by_rapidocr($line, $rapidocrLines)) {
+            continue;
+        }
+
+        foreach (is_array($line['words'] ?? null) ? $line['words'] : [] as $word) {
+            if (is_array($word)) {
+                $mergedWords[] = $word;
+                $addedAny = true;
+            }
+        }
+    }
+
+    if (!$addedAny) {
+        return $mergedWords;
+    }
+
+    usort($mergedWords, static function (array $left, array $right): int {
+        $leftBbox = normalize_debug_word_bbox($left['bbox'] ?? null);
+        $rightBbox = normalize_debug_word_bbox($right['bbox'] ?? null);
+        if ($leftBbox === null || $rightBbox === null) {
+            return 0;
+        }
+        $yCompare = $leftBbox['y0'] <=> $rightBbox['y0'];
+        if (abs((float) $leftBbox['y0'] - (float) $rightBbox['y0']) > 6.0 && $yCompare !== 0) {
+            return $yCompare;
+        }
+        return $leftBbox['x0'] <=> $rightBbox['x0'];
+    });
+
+    return $mergedWords;
+}
+
 function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload, int $pageNumber, array $tesseractPayload = []): array
 {
     $pageWidth = is_numeric($rapidocrPayload['pageWidth'] ?? null) ? (float) $rapidocrPayload['pageWidth'] : null;
@@ -7686,16 +7926,29 @@ function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload,
     $tesseractWords = normalize_debug_words_for_merge($tesseractPayload, 'tesseract');
 
     $mergedWords = [];
+    $rapidocrLines = [];
     foreach (is_array($rapidocrPayload['lines'] ?? null) ? $rapidocrPayload['lines'] : [] as $line) {
         if (!is_array($line)) {
             continue;
         }
         $segments = merge_rapidocr_line_into_segments($line);
         $segments = apply_tesseract_swedish_truth_to_segments($segments, $tesseractWords);
+        $lineText = implode(' ', array_values(array_filter(array_map(
+            static fn(array $segment): string => is_string($segment['text'] ?? null) ? trim((string) $segment['text']) : '',
+            $segments
+        ), static fn(string $text): bool => $text !== '')));
+        $lineBbox = debug_word_line_bbox($segments) ?? normalize_debug_word_bbox($line['bbox'] ?? null);
+        if ($lineText !== '' && $lineBbox !== null) {
+            $rapidocrLines[] = [
+                'text' => $lineText,
+                'bbox' => $lineBbox,
+            ];
+        }
         foreach ($segments as $segment) {
             $mergedWords[] = $segment;
         }
     }
+    $mergedWords = append_tesseract_only_missing_lines($mergedWords, $rapidocrLines, $tesseractWords);
 
     $pageText = render_grid_text_from_debug_payload([
         'pageWidth' => $pageWidth,

@@ -858,6 +858,226 @@ def _apply_tesseract_swedish_truth_to_segments(
     return adjusted
 
 
+def _line_bbox_from_debug_words(words: list[dict[str, Any]]) -> dict[str, float] | None:
+    bbox: dict[str, float] | None = None
+    for word in words:
+        word_bbox = _normalize_bbox(word.get('bbox'))
+        if word_bbox is None:
+            continue
+        if bbox is None:
+            bbox = dict(word_bbox)
+        else:
+            bbox = {
+                'x0': min(bbox['x0'], word_bbox['x0']),
+                'y0': min(bbox['y0'], word_bbox['y0']),
+                'x1': max(bbox['x1'], word_bbox['x1']),
+                'y1': max(bbox['y1'], word_bbox['y1']),
+            }
+    return bbox
+
+
+def _average_debug_word_score(words: list[dict[str, Any]]) -> float | None:
+    scores = [
+        max(0.0, min(1.0, float(word['score'])))
+        for word in words
+        if isinstance(word.get('score'), (int, float))
+    ]
+    return sum(scores) / len(scores) if scores else None
+
+
+def _line_overlap_ratio(
+    left: dict[str, float],
+    right: dict[str, float],
+    axis: str,
+) -> float:
+    start_key = f'{axis}0'
+    end_key = f'{axis}1'
+    overlap = max(0.0, min(left[end_key], right[end_key]) - max(left[start_key], right[start_key]))
+    size = min(max(1.0, left[end_key] - left[start_key]), max(1.0, right[end_key] - right[start_key]))
+    return overlap / size
+
+
+def _debug_line_texts_are_duplicates(left: str, right: str) -> bool:
+    normalized_left = _normalize_text_for_diacritic_match(left)
+    normalized_right = _normalize_text_for_diacritic_match(right)
+    if normalized_left == '' or normalized_right == '':
+        return False
+    if normalized_left == normalized_right:
+        return True
+
+    max_len = max(len(normalized_left), len(normalized_right))
+    min_len = min(len(normalized_left), len(normalized_right))
+    if max_len < 12 or min_len < math.floor(max_len * 0.78):
+        return False
+
+    return _utf8_levenshtein_distance(normalized_left, normalized_right) <= max(2, math.floor(max_len * 0.12))
+
+
+def _group_debug_words_into_rows(words: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+    normalized_words = []
+    for word in words:
+        text = str(word.get('text') or '').strip()
+        bbox = _normalize_bbox(word.get('bbox'))
+        if text == '' or bbox is None:
+            continue
+        normalized_words.append({**word, 'text': text, 'bbox': bbox})
+
+    for word in sorted(normalized_words, key=lambda item: (item['bbox']['y0'], item['bbox']['x0'])):
+        bbox = word['bbox']
+        center_y = (bbox['y0'] + bbox['y1']) / 2.0
+        height = max(1.0, bbox['y1'] - bbox['y0'])
+        best_index: int | None = None
+        best_distance: float | None = None
+        for index, row in enumerate(rows):
+            row_height = max(1.0, float(row['max_y']) - float(row['min_y']))
+            threshold = max(8.0, min(height, row_height) * 0.65)
+            distance = abs(center_y - float(row['center_y']))
+            if distance <= threshold and (best_distance is None or distance < best_distance):
+                best_index = index
+                best_distance = distance
+
+        if best_index is None:
+            rows.append({
+                'center_y': center_y,
+                'min_y': bbox['y0'],
+                'max_y': bbox['y1'],
+                'words': [word],
+            })
+            continue
+
+        row = rows[best_index]
+        row_words = row['words']
+        row_words.append(word)
+        row['center_y'] = ((float(row['center_y']) * (len(row_words) - 1)) + center_y) / len(row_words)
+        row['min_y'] = min(float(row['min_y']), bbox['y0'])
+        row['max_y'] = max(float(row['max_y']), bbox['y1'])
+
+    sorted_rows = sorted(rows, key=lambda row: (float(row['center_y']), float(row['min_y'])))
+    return [
+        sorted(row['words'], key=lambda word: (word['bbox']['x0'], word['bbox']['y0']))
+        for row in sorted_rows
+        if row['words']
+    ]
+
+
+def _build_tesseract_line_candidates(tesseract_words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    lines: list[dict[str, Any]] = []
+    for row_words in _group_debug_words_into_rows(tesseract_words):
+        words: list[dict[str, Any]] = []
+        for word in row_words:
+            bbox = _normalize_bbox(word.get('bbox'))
+            text = str(word.get('text') or '').strip()
+            if text == '' or bbox is None:
+                continue
+            words.append({
+                'engine': 'tesseract',
+                'source': 'tesseract_only',
+                'index': word.get('index'),
+                'text': text,
+                'bbox': bbox,
+                'score': word.get('score'),
+            })
+        if not words:
+            continue
+        lines.append({
+            'text': ' '.join(str(word.get('text') or '') for word in words).strip(),
+            'bbox': _line_bbox_from_debug_words(words),
+            'score': _average_debug_word_score(words),
+            'words': words,
+        })
+    return lines
+
+
+def _tesseract_only_line_is_usable(line: dict[str, Any]) -> bool:
+    text = str(line.get('text') or '').strip()
+    if len(text) < 4 or not re.search(r'[\w\d]', text, flags=re.UNICODE):
+        return False
+
+    bbox = _normalize_bbox(line.get('bbox'))
+    if bbox is None or _bbox_area(bbox) <= 4.0:
+        return False
+
+    score = line.get('score')
+    if isinstance(score, (int, float)) and float(score) < 0.45:
+        return False
+
+    return True
+
+
+def _tesseract_line_is_covered_by_rapidocr(
+    tesseract_line: dict[str, Any],
+    rapidocr_lines: list[dict[str, Any]],
+) -> bool:
+    tesseract_bbox = _normalize_bbox(tesseract_line.get('bbox'))
+    if tesseract_bbox is None:
+        return True
+
+    tesseract_text = str(tesseract_line.get('text') or '')
+    for rapidocr_line in rapidocr_lines:
+        rapidocr_text = str(rapidocr_line.get('text') or '')
+        if _debug_line_texts_are_duplicates(tesseract_text, rapidocr_text):
+            return True
+
+        rapidocr_bbox = _normalize_bbox(rapidocr_line.get('bbox'))
+        if rapidocr_bbox is None:
+            continue
+
+        y_overlap = _line_overlap_ratio(tesseract_bbox, rapidocr_bbox, 'y')
+        x_overlap = _line_overlap_ratio(tesseract_bbox, rapidocr_bbox, 'x')
+        if (y_overlap >= 0.50 and x_overlap >= 0.10) or _bbox_iou(tesseract_bbox, rapidocr_bbox) >= 0.05:
+            return True
+
+    return False
+
+
+def _append_tesseract_only_missing_lines(
+    merged_words: list[dict[str, Any]],
+    rapidocr_lines: list[dict[str, Any]],
+    tesseract_words: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    adjusted = [dict(word) for word in merged_words]
+    added_any = False
+    for line in _build_tesseract_line_candidates(tesseract_words):
+        if not _tesseract_only_line_is_usable(line):
+            continue
+        if _tesseract_line_is_covered_by_rapidocr(line, rapidocr_lines):
+            continue
+        added_words = [dict(word) for word in line.get('words') or [] if isinstance(word, dict)]
+        if added_words:
+            adjusted.extend(added_words)
+            added_any = True
+
+    if not added_any:
+        return adjusted
+
+    return sorted(
+        adjusted,
+        key=lambda word: (
+            (_normalize_bbox(word.get('bbox')) or {'y0': 0.0})['y0'],
+            (_normalize_bbox(word.get('bbox')) or {'x0': 0.0})['x0'],
+        ),
+    )
+
+
+def _build_merged_lines_from_words(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    lines: list[dict[str, Any]] = []
+    for index, row_words in enumerate(_group_debug_words_into_rows(words)):
+        line_words = [dict(word) for word in row_words]
+        text = ' '.join(str(word.get('text') or '') for word in line_words if str(word.get('text') or '').strip() != '')
+        if text.strip() == '':
+            continue
+        scores = [float(word['score']) for word in line_words if isinstance(word.get('score'), (int, float))]
+        lines.append({
+            'index': index,
+            'text': text,
+            'bbox': _line_bbox_from_debug_words(line_words),
+            'score': (sum(scores) / len(scores)) if scores else None,
+            'words': line_words,
+        })
+    return lines
+
+
 def _build_merged_objects_payload_from_page(
     rapidocr_payload: dict[str, Any],
     page_number: int,
@@ -866,23 +1086,33 @@ def _build_merged_objects_payload_from_page(
     tesseract_words = _normalize_debug_words_for_merge(tesseract_payload or {}, 'tesseract')
     merged_lines: list[dict[str, Any]] = []
     merged_words: list[dict[str, Any]] = []
+    rapidocr_line_geometries: list[dict[str, Any]] = []
     for line_index, line in enumerate(rapidocr_payload.get('lines') or []):
         if not isinstance(line, dict):
             continue
         segments = _merge_rapidocr_line_into_segments(line)
         segments = _apply_tesseract_swedish_truth_to_segments(segments, tesseract_words)
-        line_bbox = _normalize_bbox(line.get('bbox'))
+        line_bbox = _line_bbox_from_debug_words(segments) or _normalize_bbox(line.get('bbox'))
         line_score = float(line['score']) if isinstance(line.get('score'), (int, float)) else None
         if line_score is not None:
             line_score = max(0.0, min(1.0, line_score))
+        line_text = ' '.join(str(segment.get('text') or '') for segment in segments if str(segment.get('text') or '').strip() != '')
+        if line_text.strip() != '' and line_bbox is not None:
+            rapidocr_line_geometries.append({
+                'text': line_text,
+                'bbox': line_bbox,
+            })
         merged_lines.append({
             'index': line_index,
-            'text': ' '.join(str(segment.get('text') or '') for segment in segments if str(segment.get('text') or '').strip() != ''),
+            'text': line_text,
             'bbox': line_bbox,
             'score': line_score,
             'words': [dict(segment) for segment in segments],
         })
         merged_words.extend(dict(segment) for segment in segments)
+
+    merged_words = _append_tesseract_only_missing_lines(merged_words, rapidocr_line_geometries, tesseract_words)
+    merged_lines = _build_merged_lines_from_words(merged_words)
 
     page_text = '\n'.join(
         line['text']
