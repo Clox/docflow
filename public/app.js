@@ -69,11 +69,13 @@ const jobListMenuWrapEl = document.getElementById('job-list-menu-wrap');
 const jobListMenuButtonEl = document.getElementById('job-list-menu-button');
 const jobListMenuEl = document.getElementById('job-list-menu');
 const jobListReanalyzeAllActionEl = document.getElementById('job-list-reanalyze-all-action');
+const jobListRerunOcrAllActionEl = document.getElementById('job-list-rerun-ocr-all-action');
 const jobListExportOcrDebugActionEl = document.getElementById('job-list-export-ocr-debug-action');
 const selectedJobActionsMenuWrapEl = document.getElementById('selected-job-actions-menu-wrap');
 const selectedJobActionsMenuButtonEl = document.getElementById('selected-job-actions-menu-button');
 const selectedJobActionsMenuEl = document.getElementById('selected-job-actions-menu');
 const selectedJobReprocessActionEl = document.getElementById('selected-job-reprocess-action');
+const selectedJobRerunOcrActionEl = document.getElementById('selected-job-rerun-ocr-action');
 const selectedJobDeleteActionEl = document.getElementById('selected-job-delete-action');
 const sidebarEl = document.querySelector('.sidebar');
 const sidebarSplitterEl = document.getElementById('sidebar-splitter');
@@ -158,6 +160,9 @@ function syncDeveloperUiState() {
   if (selectedJobReprocessActionEl instanceof HTMLElement) {
     selectedJobReprocessActionEl.classList.toggle('hidden', !reprocessUiEnabled());
   }
+  if (selectedJobRerunOcrActionEl instanceof HTMLElement) {
+    selectedJobRerunOcrActionEl.classList.toggle('hidden', !reprocessUiEnabled());
+  }
   if (selectedJobId) {
     renderSelectedJobPanel();
   } else {
@@ -186,11 +191,7 @@ function bindSelectedJobReprocessButton(buttonEl) {
   }
 
   buttonEl.dataset.bound = '1';
-  buttonEl.addEventListener('click', async (event) => {
-    if (event.ctrlKey || event.metaKey) {
-      await handleSelectedJobReprocess('full', { forceOcr: true });
-      return;
-    }
+  buttonEl.addEventListener('click', async () => {
     await handleSelectedJobReprocess('post-ocr');
   });
   return buttonEl;
@@ -5230,15 +5231,38 @@ function updateSelectedJobActionsMenu(job) {
     const canReprocess = hasJob
       && job.status !== 'processing'
       && job.archived !== true
-      && (job.hasReviewPdf || job.hasSourcePdf);
+      && job.hasReviewPdf;
     selectedJobReprocessActionEl.disabled = !canReprocess;
-    selectedJobReprocessActionEl.title = !hasJob
-      ? 'Markera ett jobb först.'
-      : (job.status === 'processing'
-        ? 'Jobbet bearbetas redan.'
-        : (job.archived === true
-          ? 'Arkiverade jobb kan inte köras om här.'
-          : 'Det finns varken review.pdf eller source.pdf att köra om från.'));
+    if (!hasJob) {
+      selectedJobReprocessActionEl.title = 'Markera ett jobb först.';
+    } else if (job.status === 'processing') {
+      selectedJobReprocessActionEl.title = 'Jobbet bearbetas redan.';
+    } else if (job.archived === true) {
+      selectedJobReprocessActionEl.title = 'Arkiverade jobb kan inte köras om här.';
+    } else if (!job.hasReviewPdf) {
+      selectedJobReprocessActionEl.title = 'review.pdf saknas för dokumentet.';
+    } else {
+      selectedJobReprocessActionEl.title = 'Kör analysen igen med nuvarande regler utan att köra textigenkänning på nytt.';
+    }
+  }
+
+  if (selectedJobRerunOcrActionEl instanceof HTMLButtonElement) {
+    const canRerunOcr = hasJob
+      && job.status !== 'processing'
+      && job.archived !== true
+      && job.hasSourcePdf;
+    selectedJobRerunOcrActionEl.disabled = !canRerunOcr;
+    if (!hasJob) {
+      selectedJobRerunOcrActionEl.title = 'Markera ett jobb först.';
+    } else if (job.status === 'processing') {
+      selectedJobRerunOcrActionEl.title = 'Jobbet bearbetas redan.';
+    } else if (job.archived === true) {
+      selectedJobRerunOcrActionEl.title = 'Arkiverade jobb kan inte köras om här.';
+    } else if (!job.hasSourcePdf) {
+      selectedJobRerunOcrActionEl.title = 'source.pdf saknas för dokumentet.';
+    } else {
+      selectedJobRerunOcrActionEl.title = 'Kör textigenkänning från källfilen igen och analysera därefter dokumentet med nuvarande regler.';
+    }
   }
 
   if (!hasJob) {
@@ -8091,17 +8115,59 @@ async function restartArchivingUpdateReview(ignoreDismissed = false) {
   await fetchState({ force: true, refreshArchiveStructure: true });
 }
 
-async function reanalyzeAllDocuments() {
+function displayedReprocessJobIds(mode = 'post-ocr') {
+  const normalizedMode = mode === 'full' ? 'full' : 'post-ocr';
+  const seen = new Set();
+  const jobIds = [];
+  displayedJobsForCurrentListMode().forEach((job) => {
+    if (!job || typeof job.id !== 'string') {
+      return;
+    }
+    const jobId = job.id.trim();
+    if (
+      jobId === ''
+      || seen.has(jobId)
+      || job.status === 'processing'
+      || job.archived === true
+    ) {
+      return;
+    }
+    if (normalizedMode === 'full') {
+      if (job.hasSourcePdf !== true) {
+        return;
+      }
+    } else if (job.hasReviewPdf !== true) {
+      return;
+    }
+    seen.add(jobId);
+    jobIds.push(jobId);
+  });
+  return jobIds;
+}
+
+async function reanalyzeDisplayedDocuments(mode = 'post-ocr', options = {}) {
+  const normalizedMode = mode === 'full' ? 'full' : 'post-ocr';
+  const jobIds = displayedReprocessJobIds(normalizedMode);
+  if (jobIds.length < 1) {
+    throw new Error(normalizedMode === 'full'
+      ? 'Det finns inga synliga dokument i listan med source.pdf att köra textigenkänning på.'
+      : 'Det finns inga synliga dokument i listan med review.pdf att analysera om.');
+  }
+
   const response = await fetch('/api/reanalyze-all-documents.php', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: '{}'
+    body: JSON.stringify({
+      jobIds,
+      mode: normalizedMode,
+      forceOcr: options.forceOcr === true,
+    })
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.ok !== true) {
-    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte köra om analysen för alla dokument.');
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte köra om dokumenten i listan.');
   }
 
   applyArchivingRulesPayloadFromResponse(payload, { forceRender: true });
@@ -10408,11 +10474,11 @@ function syncSelectedJobActionsWarning(job) {
     const reprocessDisabled = !job
       || job.status === 'processing'
       || job.archived === true
-      || (!job.hasReviewPdf && !job.hasSourcePdf);
+      || !job.hasReviewPdf;
     reprocessButtonEl.disabled = reprocessDisabled;
     reprocessButtonEl.title = reprocessDisabled
       ? 'Jobbet kan inte analyseras om just nu.'
-      : 'Analysera om dokumentet';
+      : 'Kör analysen igen med nuvarande regler utan att köra textigenkänning på nytt.';
   }
   requestAnimationFrame(() => {
     if (!(selectedJobActionsWarningEl instanceof HTMLElement) || !(textEl instanceof HTMLElement)) {
@@ -26339,11 +26405,25 @@ if (jobListReanalyzeAllActionEl instanceof HTMLButtonElement) {
     closeJobListMenu();
     jobListReanalyzeAllActionEl.disabled = true;
     try {
-      await reanalyzeAllDocuments();
+      await reanalyzeDisplayedDocuments('post-ocr');
     } catch (error) {
-      alert(error.message || 'Kunde inte köra om analysen för alla dokument.');
+      alert(error.message || 'Kunde inte köra om analysen för dokumenten i listan.');
     } finally {
       jobListReanalyzeAllActionEl.disabled = false;
+    }
+  });
+}
+
+if (jobListRerunOcrAllActionEl instanceof HTMLButtonElement) {
+  jobListRerunOcrAllActionEl.addEventListener('click', async () => {
+    closeJobListMenu();
+    jobListRerunOcrAllActionEl.disabled = true;
+    try {
+      await reanalyzeDisplayedDocuments('full', { forceOcr: true });
+    } catch (error) {
+      alert(error.message || 'Kunde inte köra om textigenkänning och analys för dokumenten i listan.');
+    } finally {
+      jobListRerunOcrAllActionEl.disabled = false;
     }
   });
 }
@@ -26380,13 +26460,16 @@ if (selectedJobDeleteActionEl instanceof HTMLButtonElement) {
 }
 
 if (selectedJobReprocessActionEl instanceof HTMLButtonElement) {
-  selectedJobReprocessActionEl.addEventListener('click', async (event) => {
+  selectedJobReprocessActionEl.addEventListener('click', async () => {
     closeSelectedJobActionsMenu();
-    if (event.ctrlKey || event.metaKey) {
-      await handleSelectedJobReprocess('full', { forceOcr: true });
-      return;
-    }
     await handleSelectedJobReprocess('post-ocr');
+  });
+}
+
+if (selectedJobRerunOcrActionEl instanceof HTMLButtonElement) {
+  selectedJobRerunOcrActionEl.addEventListener('click', async () => {
+    closeSelectedJobActionsMenu();
+    await handleSelectedJobReprocess('full', { forceOcr: true });
   });
 }
 

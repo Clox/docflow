@@ -42,8 +42,14 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                   id="job-list-reanalyze-all-action"
                   type="button"
                   role="menuitem"
-                  title="Kör om analysen för alla dokument med aktuell logik och aktuella regler. Arkiverade dokument ändras inte automatiskt, men nya förslag kan visas om analysen nu ger ett annat resultat."
-                >Kör om analys för alla dokument</button>
+                  title="Kör analysen igen för alla dokument som visas i listan med nuvarande regler utan att köra textigenkänning på nytt."
+                >Analysera om dokumenten i listan</button>
+                <button
+                  id="job-list-rerun-ocr-all-action"
+                  type="button"
+                  role="menuitem"
+                  title="Kör textigenkänning från källfilerna igen och analysera därefter alla dokument som visas i listan med nuvarande regler."
+                >Kör om textigenkänning och analys för dokumenten i listan</button>
                 <!-- Developer-only export for OCR diffing in tools like Meld. -->
                 <button
                   id="job-list-export-ocr-debug-action"
@@ -125,7 +131,8 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                   title="Fler alternativ"
                 >⋮</button>
                 <div id="selected-job-actions-menu" class="selected-job-actions-menu hidden" role="menu" aria-label="Fler åtgärder för dokument">
-                  <button id="selected-job-reprocess-action" type="button" role="menuitem" class="hidden">Analysera igen</button>
+                  <button id="selected-job-reprocess-action" type="button" role="menuitem" class="hidden" title="Kör analysen igen med nuvarande regler utan att köra textigenkänning på nytt.">Analysera om</button>
+                  <button id="selected-job-rerun-ocr-action" type="button" role="menuitem" class="hidden" title="Kör textigenkänning från källfilen igen och analysera därefter dokumentet med nuvarande regler.">Kör om textigenkänning och analys</button>
                   <button id="selected-job-delete-action" class="selected-job-actions-menu-item-danger" type="button" role="menuitem">Ta bort dokument…</button>
                 </div>
               </div>

@@ -4079,11 +4079,13 @@ function bump_active_archiving_rules_version(array $config, string $reason = 'ma
     ];
 }
 
-function reanalyze_all_documents(array $config): array
+function reanalyze_all_documents(array $config, ?array $jobIds = null, string $mode = 'post-ocr', bool $forceOcr = false): array
 {
     ensure_job_dispatcher_running($config);
 
-    $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false);
+    $reprocessedJobs = is_array($jobIds)
+        ? reprocess_job_ids_for_analysis_change($config, $jobIds, $mode, $forceOcr)
+        : reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false);
 
     $activeRules = load_active_archiving_rules();
     $activeVersion = active_archiving_rules_version();
@@ -16937,6 +16939,62 @@ function reprocess_unarchived_jobs_for_analysis_change(
     return [
         'reprocessedJobIds' => $jobIds,
         'reprocessedCount' => count($jobIds),
+        'mode' => $normalizedMode,
+    ];
+}
+
+function reprocess_job_ids_for_analysis_change(
+    array $config,
+    array $jobIds,
+    string $mode = 'post-ocr',
+    bool $forceOcr = false
+): array {
+    $normalizedMode = trim($mode);
+    if ($normalizedMode !== 'full' && $normalizedMode !== 'post-ocr') {
+        $normalizedMode = 'post-ocr';
+    }
+
+    $jobsDir = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR);
+    $seen = [];
+    $processedJobIds = [];
+    $skippedJobIds = [];
+
+    foreach ($jobIds as $jobId) {
+        if (!is_string($jobId)) {
+            continue;
+        }
+        $normalizedJobId = trim($jobId);
+        if ($normalizedJobId === '' || !is_valid_job_id($normalizedJobId) || isset($seen[$normalizedJobId])) {
+            continue;
+        }
+        $seen[$normalizedJobId] = true;
+
+        $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $normalizedJobId;
+        $job = is_dir($jobDir) ? load_json_file($jobDir . '/job.json') : null;
+        if (!is_array($job) || ($job['archived'] ?? false) === true || ($job['status'] ?? '') === 'processing') {
+            $skippedJobIds[] = $normalizedJobId;
+            continue;
+        }
+
+        if ($normalizedMode === 'full') {
+            if (!is_file($jobDir . '/source.pdf')) {
+                $skippedJobIds[] = $normalizedJobId;
+                continue;
+            }
+        } elseif (job_review_pdf_path($config, $normalizedJobId, $job) === null) {
+            $skippedJobIds[] = $normalizedJobId;
+            continue;
+        }
+
+        reprocess_job_by_id($config, $normalizedJobId, $normalizedMode, $forceOcr);
+        $processedJobIds[] = $normalizedJobId;
+    }
+
+    return [
+        'reprocessedJobIds' => $processedJobIds,
+        'reprocessedCount' => count($processedJobIds),
+        'skippedJobIds' => $skippedJobIds,
+        'skippedCount' => count($skippedJobIds),
         'mode' => $normalizedMode,
     ];
 }

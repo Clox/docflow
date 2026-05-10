@@ -930,7 +930,7 @@ body.is-resizing-sidebar {
   top: calc(100% + 6px);
   right: 0;
   z-index: 40;
-  min-width: 190px;
+  min-width: 300px;
   padding: 6px;
   border: 1px solid #d7dee8;
   border-radius: 8px;
