@@ -766,7 +766,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-data-fields">
     <h3>Datafält</h3>
-    <p>Definiera egna datafält med typstyrd extrahering. Regex ger full manuell kontroll, medan Datum och Belopp matchas och normaliseras automatiskt.</p>
+    <p>Definiera egna datafält genom att kombinera hur värdet hittas med hur värdet tolkas och normaliseras.</p>
     <div class="archive-subtabs">
       <button id="extraction-fields-tab-custom" class="archive-subtab active" type="button" data-extraction-fields-tab="fields">Datafält</button>
       <button id="extraction-fields-tab-system" class="archive-subtab" type="button" data-extraction-fields-tab="system">Systemdatafält</button>

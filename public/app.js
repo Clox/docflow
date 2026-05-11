@@ -9860,7 +9860,11 @@ function extractionFieldTypeByKey(fieldKey) {
   }
 
   const firstRuleSet = Array.isArray(match.ruleSets) ? match.ruleSets[0] : null;
-  return sanitizeExtractionFieldType(firstRuleSet && typeof firstRuleSet === 'object' ? firstRuleSet.type : '', match);
+  return sanitizeExtractionFieldValueType(
+    firstRuleSet && typeof firstRuleSet === 'object' ? firstRuleSet.valueType : '',
+    match,
+    firstRuleSet
+  );
 }
 
 function normalizeFilenameIdentifierDigits(value) {
@@ -19683,10 +19687,12 @@ function defaultExtractionField() {
 function defaultExtractionFieldRuleSet() {
   return {
     type: 'regex',
+    valueType: 'text',
     useSearchText: true,
     requiresSearchTerms: true,
     searchTerms: [{ text: '', isRegex: false }],
     isRegex: false,
+    useValuePattern: false,
     valuePattern: '',
     normalizationType: 'none',
     normalizationChars: '',
@@ -19785,6 +19791,37 @@ function sanitizeExtractionFieldType(value, legacyField = null) {
   return 'regex';
 }
 
+function sanitizeExtractionFieldValueType(value, legacyField = null, legacyRuleSet = null) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'text' || normalized === 'date' || normalized === 'amount') {
+    return normalized;
+  }
+  const legacy = legacyField && typeof legacyField === 'object' ? legacyField : {};
+  const legacyRule = legacyRuleSet && typeof legacyRuleSet === 'object' ? legacyRuleSet : {};
+  const legacyType = sanitizeExtractionFieldType(
+    Object.prototype.hasOwnProperty.call(legacyRule, 'type') ? legacyRule.type : legacy.type,
+    legacyField
+  );
+  if (legacyType === 'date') {
+    return 'date';
+  }
+  if (legacyType === 'amount') {
+    return 'amount';
+  }
+  return 'text';
+}
+
+function legacyExtractionFieldTypeForValueType(valueType) {
+  const normalized = sanitizeExtractionFieldValueType(valueType);
+  if (normalized === 'date') {
+    return 'date';
+  }
+  if (normalized === 'amount') {
+    return 'amount';
+  }
+  return 'regex';
+}
+
 function sanitizeExtractionFieldPosition(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return normalized === 'second' || normalized === 'last' ? normalized : 'first';
@@ -19875,45 +19912,44 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
     legacyIsRegex
   );
   const type = sanitizeExtractionFieldType(hasExplicitRuleSet ? input.type : legacy.type, legacy);
+  const valueType = sanitizeExtractionFieldValueType(
+    hasExplicitRuleSet ? input.valueType : legacy.valueType,
+    legacy,
+    hasExplicitRuleSet ? input : null
+  );
   const scope = sanitizeExtractionFieldRuleScope(hasExplicitRuleSet ? input.scope : legacy.scope);
   const useSearchText = hasExplicitRuleSet
     ? input.useSearchText !== false && input.requiresSearchTerms !== false
     : searchTerms.length > 0;
-  const isDateType = type === 'date';
-  const valuePattern = isDateType
-    ? undefined
-    : (
-      typeof input.valuePattern === 'string'
-        ? input.valuePattern
-        : (typeof input.searchString === 'string' ? input.searchString : '')
-    );
-  const normalizationType = isDateType
-    ? undefined
-    : sanitizeExtractionFieldNormalizationType(
-      hasExplicitRuleSet ? input.normalizationType : legacy.normalizationType
-    );
-  const normalizationReplacements = isDateType
-    ? undefined
-    : sanitizeExtractionFieldNormalizationReplacementsInput(
-      hasExplicitRuleSet ? input.normalizationReplacements : legacy.normalizationReplacements
-    );
+  const valuePattern = typeof input.valuePattern === 'string'
+    ? input.valuePattern
+    : (typeof input.searchString === 'string' ? input.searchString : '');
+  const useValuePattern = hasExplicitRuleSet && Object.prototype.hasOwnProperty.call(input, 'useValuePattern')
+    ? input.useValuePattern === true
+    : String(valuePattern || '').trim() !== '';
+  const normalizationType = sanitizeExtractionFieldNormalizationType(
+    hasExplicitRuleSet ? input.normalizationType : legacy.normalizationType
+  );
+  const normalizationReplacements = sanitizeExtractionFieldNormalizationReplacementsInput(
+    hasExplicitRuleSet ? input.normalizationReplacements : legacy.normalizationReplacements
+  );
 
   return {
-    type,
+    type: legacyExtractionFieldTypeForValueType(valueType || type),
+    valueType,
     useSearchText,
     requiresSearchTerms: useSearchText,
     searchTerms,
     isRegex: false,
+    useValuePattern,
     valuePattern,
     normalizationType,
-    normalizationChars: isDateType
-      ? undefined
-      : (typeof (hasExplicitRuleSet ? input.normalizationChars : legacy.normalizationChars) === 'string'
+    normalizationChars: typeof (hasExplicitRuleSet ? input.normalizationChars : legacy.normalizationChars) === 'string'
         ? (hasExplicitRuleSet ? input.normalizationChars : legacy.normalizationChars)
-        : ''),
+        : '',
     normalizationReplacements,
     datePosition: sanitizeExtractionFieldPosition(hasExplicitRuleSet ? input.datePosition : legacy.datePosition),
-    amountPosition: isDateType ? undefined : sanitizeExtractionFieldPosition(hasExplicitRuleSet ? input.amountPosition : legacy.amountPosition),
+    amountPosition: sanitizeExtractionFieldPosition(hasExplicitRuleSet ? input.amountPosition : legacy.amountPosition),
     scope,
   };
 }
@@ -19989,14 +20025,13 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
   return {
     key: normalizedKey,
     name,
-    type: sanitizeExtractionFieldType(
-      typeof input.type === 'string'
-        ? input.type
-        : (Array.isArray(input.ruleSets) && input.ruleSets[0] && typeof input.ruleSets[0].type === 'string'
-          ? input.ruleSets[0].type
-          : ''),
-      input
-    ),
+    type: legacyExtractionFieldTypeForValueType(sanitizeExtractionFieldValueType(
+      typeof input.valueType === 'string'
+        ? input.valueType
+        : '',
+      input,
+      Array.isArray(input.ruleSets) ? input.ruleSets[0] : { type: input.type }
+    )),
     ruleSets: sanitizeExtractionFieldRuleSets(input.ruleSets, input),
     extractor,
     predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
@@ -22195,20 +22230,19 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const ruleSetActions = document.createElement('div');
       ruleSetActions.className = 'tree-node-actions';
 
-      const typeSelect = document.createElement('select');
-      typeSelect.className = 'extraction-field-type-select';
+      const valueTypeSelect = document.createElement('select');
+      valueTypeSelect.className = 'extraction-field-type-select';
       [
-        ['regex', 'Regex'],
+        ['text', 'Text'],
         ['date', 'Datum'],
         ['amount', 'Belopp'],
       ].forEach(([value, label]) => {
         const option = document.createElement('option');
         option.value = value;
         option.textContent = label;
-        typeSelect.appendChild(option);
+        valueTypeSelect.appendChild(option);
       });
-      typeSelect.value = sanitizeExtractionFieldType(ruleSet.type, collection[index]);
-      ruleFields.appendChild(createFloatingField('Typ', typeSelect));
+      valueTypeSelect.value = sanitizeExtractionFieldValueType(ruleSet.valueType, collection[index], ruleSet);
 
       const requiresSearchTermsLabel = document.createElement('label');
       requiresSearchTermsLabel.className = 'extraction-field-rule-set-toggle';
@@ -22216,14 +22250,19 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       requiresSearchTermsCheckbox.type = 'checkbox';
       requiresSearchTermsCheckbox.checked = ruleSet.useSearchText !== false && ruleSet.requiresSearchTerms !== false;
       const requiresSearchTermsText = document.createElement('span');
-      requiresSearchTermsText.textContent = 'Använd söktext';
+      requiresSearchTermsText.textContent = 'Använd söktext...';
       requiresSearchTermsLabel.appendChild(requiresSearchTermsCheckbox);
       requiresSearchTermsLabel.appendChild(requiresSearchTermsText);
 
       const toggleField = document.createElement('div');
       toggleField.className = 'floating-input-group extraction-field-rule-set-toggle-field';
       toggleField.appendChild(requiresSearchTermsLabel);
-      ruleFields.appendChild(toggleField);
+      const optionalControls = document.createElement('div');
+      optionalControls.className = 'extraction-field-rule-set-options';
+      const searchOptionBlock = document.createElement('div');
+      searchOptionBlock.className = 'extraction-field-rule-set-option';
+      searchOptionBlock.appendChild(toggleField);
+      ruleFields.appendChild(optionalControls);
 
       const searchTermsField = document.createElement('div');
       searchTermsField.className = 'floating-input-group extraction-field-aliases-field';
@@ -22242,12 +22281,10 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const renderSearchTermRows = (focusIndex = null, selectionStart = null, selectionEnd = null) => {
         searchTermsList.innerHTML = '';
         const nonEmptyCount = searchTermValues.filter((value) => String(value && value.text ? value.text : '').trim() !== '').length;
-        const currentType = sanitizeExtractionFieldType(typeSelect.value, collection[index]);
-
         searchTermValues.forEach((searchTermValue, searchTermIndex) => {
           const searchTermRow = document.createElement('div');
           searchTermRow.className = 'extraction-field-alias-row';
-          const supportsRegexSearchText = currentType === 'regex';
+          const supportsRegexSearchText = true;
           const accessoryCount = searchTermIndex > 0 ? (supportsRegexSearchText ? 2 : 1) : (supportsRegexSearchText ? 1 : 0);
 
           const searchTermInput = document.createElement('input');
@@ -22340,7 +22377,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       renderSearchTermRows();
       searchTermsField.appendChild(searchTermsLabel);
       searchTermsField.appendChild(searchTermsList);
-      ruleFields.appendChild(searchTermsField);
+      searchOptionBlock.appendChild(searchTermsField);
+      optionalControls.appendChild(searchOptionBlock);
 
       const initialScope = sanitizeExtractionFieldRuleScope(ruleSet.scope);
       const scopeToggleLabel = document.createElement('label');
@@ -22349,14 +22387,16 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       scopeCheckbox.type = 'checkbox';
       scopeCheckbox.checked = initialScope !== null;
       const scopeToggleText = document.createElement('span');
-      scopeToggleText.textContent = 'Begränsa till text efter';
+      scopeToggleText.textContent = 'Begränsa till text efter...';
       scopeToggleLabel.appendChild(scopeCheckbox);
       scopeToggleLabel.appendChild(scopeToggleText);
 
       const scopeToggleField = document.createElement('div');
       scopeToggleField.className = 'floating-input-group extraction-field-rule-set-toggle-field';
       scopeToggleField.appendChild(scopeToggleLabel);
-      ruleFields.appendChild(scopeToggleField);
+      const scopeOptionBlock = document.createElement('div');
+      scopeOptionBlock.className = 'extraction-field-rule-set-option';
+      scopeOptionBlock.appendChild(scopeToggleField);
 
       const scopeInput = document.createElement('input');
       scopeInput.type = 'text';
@@ -22374,18 +22414,43 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       scopeRegexButton.setAttribute('aria-label', 'Regex');
       const scopeInputWrap = createInlineInputWithAccessories(scopeInput, [scopeRegexButton], 'extraction-field-alias-input-wrap');
       const scopeField = createFloatingField('Begränsa till text efter', scopeInputWrap);
-      ruleFields.appendChild(scopeField);
+      scopeOptionBlock.appendChild(scopeField);
+      optionalControls.appendChild(scopeOptionBlock);
 
       const valuePatternInput = document.createElement('input');
       valuePatternInput.type = 'text';
-      valuePatternInput.placeholder = 'Ex: "\\d{6}[- ]?\\d{4}"';
+      valuePatternInput.placeholder = 'Ex: ansökt om ekonomiskt bistånd för {DATUM}';
       valuePatternInput.value = ruleSet.valuePattern || '';
       valuePatternInput.addEventListener('input', () => {
         collection[index].ruleSets[ruleSetIndex].valuePattern = valuePatternInput.value;
         updateSettingsActionButtons();
       });
-      const valuePatternField = createFloatingField('Värdemönster (regex)', valuePatternInput);
-      ruleFields.appendChild(valuePatternField);
+      const useValuePatternLabel = document.createElement('label');
+      useValuePatternLabel.className = 'extraction-field-rule-set-toggle';
+      const useValuePatternCheckbox = document.createElement('input');
+      useValuePatternCheckbox.type = 'checkbox';
+      useValuePatternCheckbox.checked = ruleSet.useValuePattern === true || String(ruleSet.valuePattern || '').trim() !== '';
+      const useValuePatternText = document.createElement('span');
+      useValuePatternText.textContent = 'Använd värdemönster...';
+      useValuePatternLabel.appendChild(useValuePatternCheckbox);
+      useValuePatternLabel.appendChild(useValuePatternText);
+
+      const useValuePatternField = document.createElement('div');
+      useValuePatternField.className = 'floating-input-group extraction-field-rule-set-toggle-field';
+      useValuePatternField.appendChild(useValuePatternLabel);
+      const valuePatternOptionBlock = document.createElement('div');
+      valuePatternOptionBlock.className = 'extraction-field-rule-set-option';
+      valuePatternOptionBlock.appendChild(useValuePatternField);
+
+      const valuePatternField = createFloatingField('Värdemönster', valuePatternInput);
+      const valuePatternHelp = document.createElement('div');
+      valuePatternHelp.className = 'input-help extraction-field-value-pattern-help';
+      valuePatternHelp.textContent = 'Du kan använda {DATUM} och {BELOPP} i värdemönster.';
+      valuePatternField.appendChild(valuePatternHelp);
+      valuePatternOptionBlock.appendChild(valuePatternField);
+      optionalControls.appendChild(valuePatternOptionBlock);
+
+      ruleFields.appendChild(createFloatingField('Värdetyp', valueTypeSelect));
 
       const datePositionSelect = document.createElement('select');
       [
@@ -22542,12 +22607,18 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       normalizationGroup.appendChild(normalizationCharsField);
 
       const syncRuleSetUi = () => {
-        const type = sanitizeExtractionFieldType(typeSelect.value, collection[index]);
+        const valueType = sanitizeExtractionFieldValueType(valueTypeSelect.value, collection[index], ruleSet);
+        const type = legacyExtractionFieldTypeForValueType(valueType);
         const normalizationType = sanitizeExtractionFieldNormalizationType(normalizationTypeSelect.value);
+        if (!requiresSearchTermsCheckbox.checked && !useValuePatternCheckbox.checked) {
+          requiresSearchTermsCheckbox.checked = true;
+        }
         collection[index].ruleSets[ruleSetIndex].type = type;
+        collection[index].ruleSets[ruleSetIndex].valueType = valueType;
         collection[index].type = type;
         collection[index].ruleSets[ruleSetIndex].useSearchText = requiresSearchTermsCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].requiresSearchTerms = requiresSearchTermsCheckbox.checked;
+        collection[index].ruleSets[ruleSetIndex].useValuePattern = useValuePatternCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].normalizationType = normalizationType;
         collection[index].ruleSets[ruleSetIndex].normalizationChars = normalizationCharsInput.value;
         collection[index].ruleSets[ruleSetIndex].normalizationReplacements = normalizationReplacementsValues.map((replacement) => ({
@@ -22567,10 +22638,13 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         collection[index].ruleSets[ruleSetIndex].amountPosition = sanitizeExtractionFieldPosition(amountPositionSelect.value);
         searchTermsField.hidden = !requiresSearchTermsCheckbox.checked;
         scopeField.hidden = !scopeCheckbox.checked;
-        valuePatternField.hidden = type !== 'regex';
-        datePositionField.hidden = type !== 'date';
-        amountPositionField.hidden = type !== 'amount';
-        if (type === 'date') {
+        valuePatternField.hidden = !useValuePatternCheckbox.checked;
+        searchOptionBlock.classList.toggle('is-active', requiresSearchTermsCheckbox.checked);
+        scopeOptionBlock.classList.toggle('is-active', scopeCheckbox.checked);
+        valuePatternOptionBlock.classList.toggle('is-active', useValuePatternCheckbox.checked);
+        datePositionField.hidden = valueType !== 'date';
+        amountPositionField.hidden = valueType !== 'amount';
+        if (valueType !== 'text') {
           if (normalizationGroup.parentNode) {
             normalizationGroup.remove();
           }
@@ -22601,15 +22675,16 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
             renderNormalizationReplacementRows();
           }
         }
-        if (type === 'date') {
+        if (valueType !== 'text') {
           syncNormalizationReplacementsToDraft();
         }
         renderSearchTermRows();
         updateSettingsActionButtons();
       };
 
-      typeSelect.addEventListener('change', syncRuleSetUi);
+      valueTypeSelect.addEventListener('change', syncRuleSetUi);
       requiresSearchTermsCheckbox.addEventListener('change', syncRuleSetUi);
+      useValuePatternCheckbox.addEventListener('change', syncRuleSetUi);
       scopeCheckbox.addEventListener('change', syncRuleSetUi);
       scopeInput.addEventListener('input', syncRuleSetUi);
       normalizationTypeSelect.addEventListener('change', syncRuleSetUi);
@@ -22654,8 +22729,10 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       nextRuleSets.push({
         ...defaultExtractionFieldRuleSet(),
         type: baseRuleSet.type,
+        valueType: baseRuleSet.valueType,
         useSearchText: baseRuleSet.useSearchText,
         requiresSearchTerms: baseRuleSet.requiresSearchTerms,
+        useValuePattern: baseRuleSet.useValuePattern,
         datePosition: baseRuleSet.datePosition,
         amountPosition: baseRuleSet.amountPosition,
       });
