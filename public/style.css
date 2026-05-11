@@ -6461,8 +6461,34 @@ body.is-resizing-sidebar {
   margin: 0;
 }
 
+.extraction-field-interpretation-row,
+.extraction-field-normalization-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.extraction-field-value-type-field,
+.extraction-field-date-position-field,
+.extraction-field-normalization-group > .floating-input-group:first-child {
+  width: auto;
+  min-width: 140px;
+}
+
+.extraction-field-value-type-field select,
+.extraction-field-date-position-field select,
+.extraction-field-normalization-select {
+  width: auto;
+  min-width: 140px;
+}
+
 .extraction-field-normalization-field {
-  min-width: 0;
+  min-width: 220px;
+}
+
+.extraction-field-normalization-replacements-field {
+  flex: 1 1 100%;
 }
 
 .extraction-field-normalization-select {
