@@ -2710,7 +2710,7 @@ function extraction_field_date_atom_pattern(): string
 
 function extraction_field_amount_atom_pattern(): string
 {
-    return '(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+),\\d{2}|(?:\\d{1,3}(?:,\\d{3})+|\\d+)\\.\\d{2}';
+    return '-?(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+)(?:[.,]\\d{2})?';
 }
 
 function extraction_field_date_value_pattern(string $position = 'first'): string
