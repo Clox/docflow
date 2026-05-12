@@ -7415,19 +7415,38 @@ body.is-resizing-sidebar {
   gap: 8px;
 }
 
-.settings-section-actions .split-button {
+.settings-section-actions .split-button,
+.ocr-debug-meld-split-button {
   position: relative;
   display: inline-flex;
   align-items: stretch;
   flex: 0 0 auto;
 }
 
-.settings-section-actions .split-button-main {
+.settings-section-actions .split-button-main,
+.ocr-debug-meld-split-button .split-button-main {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
 
-.settings-section-actions .split-button-toggle {
+.ocr-debug-meld-split-button button {
+  font: inherit;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.ocr-debug-meld-split-button button:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.settings-section-actions .split-button-toggle,
+.ocr-debug-meld-split-button .split-button-toggle {
   width: 30px;
   padding: 6px 0;
   border-left: 0;
@@ -7436,7 +7455,8 @@ body.is-resizing-sidebar {
   flex: 0 0 auto;
 }
 
-.settings-section-actions .split-button-toggle svg {
+.settings-section-actions .split-button-toggle svg,
+.ocr-debug-meld-split-button .split-button-toggle svg {
   width: 12px;
   height: 12px;
   display: block;
@@ -7449,7 +7469,8 @@ body.is-resizing-sidebar {
   transition: transform 0.15s ease;
 }
 
-.settings-section-actions .split-button-toggle.is-open svg {
+.settings-section-actions .split-button-toggle.is-open svg,
+.ocr-debug-meld-split-button .split-button-toggle.is-open svg {
   transform: rotate(180deg);
 }
 

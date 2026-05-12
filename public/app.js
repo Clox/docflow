@@ -6654,6 +6654,207 @@ async function copyOcrDebugExportCommand(command, buttonEl) {
   }
 }
 
+function ocrDebugExportComparisonFolders() {
+  const result = ocrDebugExportCompareResult;
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+  const leftFolderName = result.left && typeof result.left.folderName === 'string' ? result.left.folderName.trim() : '';
+  const rightFolderName = result.right && typeof result.right.folderName === 'string' ? result.right.folderName.trim() : '';
+  if (leftFolderName === '' || rightFolderName === '') {
+    return null;
+  }
+  return { leftFolderName, rightFolderName };
+}
+
+async function launchOcrDebugExportMeld(relativePath = '') {
+  const folders = ocrDebugExportComparisonFolders();
+  if (!folders) {
+    setOcrDebugExportStatus('Det finns ingen jämförelse att öppna i Meld.', 'error');
+    return false;
+  }
+
+  try {
+    const body = {
+      leftFolderName: folders.leftFolderName,
+      rightFolderName: folders.rightFolderName,
+    };
+    if (typeof relativePath === 'string' && relativePath.trim() !== '') {
+      body.relativePath = relativePath.trim();
+    }
+    const response = await fetch('/api/launch-ocr-debug-meld.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Meld kunde inte startas.');
+    }
+    setOcrDebugExportStatus('Meld startades.', 'success');
+    return true;
+  } catch (error) {
+    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Meld kunde inte startas.', 'error');
+    return false;
+  }
+}
+
+function closeOcrDebugSplitMenu(splitButton) {
+  if (!(splitButton instanceof HTMLElement)) {
+    return;
+  }
+  const toggle = splitButton._ocrDebugMenuToggle instanceof HTMLButtonElement
+    ? splitButton._ocrDebugMenuToggle
+    : splitButton.querySelector('.split-button-toggle');
+  const menu = splitButton._ocrDebugMenuEl instanceof HTMLElement
+    ? splitButton._ocrDebugMenuEl
+    : splitButton.querySelector('.split-button-menu');
+  const menuHome = splitButton._ocrDebugMenuHome;
+  if (toggle instanceof HTMLButtonElement) {
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.classList.remove('is-open');
+  }
+  if (menu instanceof HTMLElement) {
+    menu.classList.add('hidden');
+    menu.style.left = '';
+    menu.style.top = '';
+    menu.style.right = '';
+    menu.style.bottom = '';
+    menu.style.position = '';
+    menu.style.zIndex = '';
+    menu.style.visibility = '';
+    if (menuHome && menuHome.parent instanceof Node && menu.parentNode !== menuHome.parent) {
+      if (menuHome.nextSibling && menuHome.nextSibling.parentNode === menuHome.parent) {
+        menuHome.parent.insertBefore(menu, menuHome.nextSibling);
+      } else {
+        menuHome.parent.appendChild(menu);
+      }
+    }
+  }
+}
+
+function positionOcrDebugSplitMenu(splitButton) {
+  if (!(splitButton instanceof HTMLElement)) {
+    return;
+  }
+  const toggle = splitButton._ocrDebugMenuToggle instanceof HTMLElement
+    ? splitButton._ocrDebugMenuToggle
+    : splitButton.querySelector('.split-button-toggle');
+  const menu = splitButton._ocrDebugMenuEl instanceof HTMLElement
+    ? splitButton._ocrDebugMenuEl
+    : splitButton.querySelector('.split-button-menu');
+  if (!(toggle instanceof HTMLElement) || !(menu instanceof HTMLElement)) {
+    return;
+  }
+  const toggleRect = toggle.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const margin = 8;
+  const gap = 6;
+  const viewportWidth = window.innerWidth;
+  const left = Math.min(
+    Math.max(margin, toggleRect.left),
+    Math.max(margin, viewportWidth - menuRect.width - margin)
+  );
+  const top = Math.max(margin, toggleRect.top - gap - menuRect.height);
+
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+  menu.style.visibility = 'visible';
+}
+
+function createOcrDebugMeldSplitButton({ label, toggleLabel, command, relativePath = '' }) {
+  const splitButton = document.createElement('div');
+  splitButton.className = 'split-button ocr-debug-meld-split-button';
+
+  const mainButton = document.createElement('button');
+  mainButton.type = 'button';
+  mainButton.className = 'split-button-main';
+  mainButton.textContent = label;
+  mainButton.addEventListener('click', async () => {
+    mainButton.disabled = true;
+    try {
+      await launchOcrDebugExportMeld(relativePath);
+    } finally {
+      mainButton.disabled = false;
+    }
+  });
+
+  const toggleButton = document.createElement('button');
+  toggleButton.type = 'button';
+  toggleButton.className = 'split-button-toggle';
+  toggleButton.setAttribute('aria-haspopup', 'menu');
+  toggleButton.setAttribute('aria-expanded', 'false');
+  toggleButton.setAttribute('aria-label', toggleLabel);
+  toggleButton.title = toggleLabel;
+  toggleButton.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 6.5 L8 10.5 L12 6.5" /></svg>';
+
+  const menu = document.createElement('div');
+  menu.className = 'split-button-menu hidden';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', toggleLabel);
+  splitButton._ocrDebugMenuEl = menu;
+  splitButton._ocrDebugMenuToggle = toggleButton;
+
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.setAttribute('role', 'menuitem');
+  copyButton.textContent = 'Kopiera Meld-kommando';
+  copyButton.addEventListener('click', async () => {
+    closeOcrDebugSplitMenu(splitButton);
+    await copyOcrDebugExportCommand(command, copyButton);
+  });
+  menu.appendChild(copyButton);
+
+  toggleButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const nextOpen = menu.classList.contains('hidden');
+    toggleButton.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+    toggleButton.classList.toggle('is-open', nextOpen);
+    menu.classList.toggle('hidden', !nextOpen);
+    if (nextOpen) {
+      if (!splitButton._ocrDebugMenuHome && menu.parentNode instanceof Node) {
+        splitButton._ocrDebugMenuHome = {
+          parent: menu.parentNode,
+          nextSibling: menu.nextSibling,
+        };
+      }
+      if (menu.parentNode !== document.body) {
+        document.body.appendChild(menu);
+      }
+      menu.style.position = 'fixed';
+      menu.style.zIndex = '80';
+      menu.style.visibility = 'hidden';
+      menu.style.left = '0px';
+      menu.style.top = '0px';
+      menu.classList.remove('hidden');
+      positionOcrDebugSplitMenu(splitButton);
+      window.setTimeout(() => {
+        document.addEventListener('click', (outsideEvent) => {
+          if (
+            !(outsideEvent.target instanceof Node)
+            || (!splitButton.contains(outsideEvent.target) && !menu.contains(outsideEvent.target))
+          ) {
+            closeOcrDebugSplitMenu(splitButton);
+          }
+        }, { once: true });
+      }, 0);
+    } else {
+      closeOcrDebugSplitMenu(splitButton);
+    }
+  });
+  splitButton.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeOcrDebugSplitMenu(splitButton);
+      toggleButton.focus();
+    }
+  });
+
+  splitButton.append(mainButton, toggleButton, menu);
+  return splitButton;
+}
+
 function renderOcrDebugExportCompareResult() {
   if (!(ocrDebugExportCompareResultEl instanceof HTMLElement)) {
     return;
@@ -6678,13 +6879,13 @@ function renderOcrDebugExportCompareResult() {
   heading.appendChild(title);
 
   const folderCommand = typeof result.meldDirectoryCommand === 'string' ? result.meldDirectoryCommand : '';
-  const folderButton = document.createElement('button');
-  folderButton.type = 'button';
-  folderButton.className = 'settings-backup-row-button';
-  folderButton.textContent = 'Kopiera Meld-kommando för mappar';
-  folderButton.disabled = folderCommand === '';
-  folderButton.addEventListener('click', () => copyOcrDebugExportCommand(folderCommand, folderButton));
-  heading.appendChild(folderButton);
+  if (folderCommand !== '') {
+    heading.appendChild(createOcrDebugMeldSplitButton({
+      label: 'Jämför mappar',
+      toggleLabel: 'Fler Meld-åtgärder för mappar',
+      command: folderCommand,
+    }));
+  }
   ocrDebugExportCompareResultEl.appendChild(heading);
 
   const exports = document.createElement('div');
@@ -6759,12 +6960,12 @@ function renderOcrDebugExportCompareResult() {
       row.appendChild(main);
 
       if (file.status === 'changed' && typeof file.meldCommand === 'string' && file.meldCommand.trim() !== '') {
-        const copyButton = document.createElement('button');
-        copyButton.type = 'button';
-        copyButton.className = 'settings-backup-row-button';
-        copyButton.textContent = 'Kopiera Meld-kommando';
-        copyButton.addEventListener('click', () => copyOcrDebugExportCommand(file.meldCommand, copyButton));
-        row.appendChild(copyButton);
+        row.appendChild(createOcrDebugMeldSplitButton({
+          label: 'Jämför',
+          toggleLabel: 'Fler Meld-åtgärder för fil',
+          command: file.meldCommand,
+          relativePath: file.relativePath,
+        }));
       }
 
       fileList.appendChild(row);

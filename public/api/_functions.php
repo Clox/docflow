@@ -6420,6 +6420,86 @@ function compare_ocr_debug_exports(array $config, string $leftFolderName, string
     ];
 }
 
+function ocr_debug_export_safe_relative_file_path(string $relativePath): ?string
+{
+    $normalized = trim(str_replace('\\', '/', $relativePath));
+    if ($normalized === '' || str_starts_with($normalized, '/') || str_contains($normalized, "\0")) {
+        return null;
+    }
+
+    $parts = explode('/', $normalized);
+    foreach ($parts as $part) {
+        if ($part === '' || $part === '.' || $part === '..') {
+            return null;
+        }
+    }
+
+    if ($normalized === 'manifest.json') {
+        return null;
+    }
+
+    return $normalized;
+}
+
+function launch_ocr_debug_export_meld(
+    array $config,
+    string $leftFolderName,
+    string $rightFolderName,
+    ?string $relativePath = null
+): array {
+    $leftDirectory = ocr_debug_export_directory_path_from_name($config, $leftFolderName);
+    $rightDirectory = ocr_debug_export_directory_path_from_name($config, $rightFolderName);
+    if ($leftDirectory === null || !is_dir($leftDirectory)) {
+        throw new RuntimeException('Export A hittades inte.');
+    }
+    if ($rightDirectory === null || !is_dir($rightDirectory)) {
+        throw new RuntimeException('Export B hittades inte.');
+    }
+
+    $leftPath = normalized_realpath($leftDirectory) ?? $leftDirectory;
+    $rightPath = normalized_realpath($rightDirectory) ?? $rightDirectory;
+    if ($relativePath !== null && trim($relativePath) !== '') {
+        $safeRelativePath = ocr_debug_export_safe_relative_file_path($relativePath);
+        if ($safeRelativePath === null) {
+            throw new RuntimeException('Ogiltig filsökväg för jämförelse.');
+        }
+        $leftPath = normalized_realpath($leftPath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $safeRelativePath)) ?? '';
+        $rightPath = normalized_realpath($rightPath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $safeRelativePath)) ?? '';
+        if (
+            $leftPath === ''
+            || $rightPath === ''
+            || !is_file($leftPath)
+            || !is_file($rightPath)
+            || !path_is_within_directory($leftPath, $leftDirectory)
+            || !path_is_within_directory($rightPath, $rightDirectory)
+        ) {
+            throw new RuntimeException('Filen finns inte i båda exporter.');
+        }
+    }
+
+    $meldBinary = trim((string) shell_exec('command -v meld 2>/dev/null'));
+    if ($meldBinary === '') {
+        throw new RuntimeException('Meld kunde inte hittas på servern.');
+    }
+
+    $command = sprintf(
+        '%s %s %s > /dev/null 2>&1 & echo $!',
+        escapeshellarg($meldBinary),
+        escapeshellarg($leftPath),
+        escapeshellarg($rightPath)
+    );
+    exec($command, $output, $exitCode);
+    if ($exitCode !== 0) {
+        throw new RuntimeException('Meld kunde inte startas.');
+    }
+
+    return [
+        'leftPath' => $leftPath,
+        'rightPath' => $rightPath,
+        'pid' => isset($output[0]) && is_numeric(trim((string) $output[0])) ? (int) trim((string) $output[0]) : null,
+    ];
+}
+
 function export_ocr_debug_data(array $config, array $jobIds, string $scope = ''): array
 {
     $jobsDirectory = is_string($config['jobsDirectory'] ?? null) ? trim((string) $config['jobsDirectory']) : '';
