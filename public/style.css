@@ -4353,11 +4353,11 @@ body.is-resizing-sidebar {
   margin-top: 18px;
 }
 
-.ocr-debug-export-dialog .label-import-dialog-body {
+.snapshot-dialog .label-import-dialog-body {
   min-width: 0;
 }
 
-.ocr-debug-export-controls {
+.snapshot-controls {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
@@ -4366,22 +4366,22 @@ body.is-resizing-sidebar {
   margin-bottom: 12px;
 }
 
-.ocr-debug-export-filter-field {
+.snapshot-filter-field {
   display: grid;
   gap: 6px;
   min-width: 240px;
   flex: 1 1 240px;
 }
 
-.ocr-debug-export-filter-select {
+.snapshot-filter-select {
   min-width: 240px;
 }
 
-.ocr-debug-export-comment {
+.snapshot-comment {
   margin-top: 4px;
 }
 
-.ocr-debug-export-comment-button {
+.snapshot-comment-button {
   width: fit-content;
   max-width: 100%;
   padding: 2px 0;
@@ -4395,24 +4395,24 @@ body.is-resizing-sidebar {
   overflow-wrap: anywhere;
 }
 
-.ocr-debug-export-comment-button.is-placeholder {
+.snapshot-comment-button.is-placeholder {
   color: #94a3b8;
   font-style: italic;
 }
 
-.ocr-debug-export-comment-button:hover {
+.snapshot-comment-button:hover {
   color: #0f172a;
   text-decoration: underline;
 }
 
-.ocr-debug-export-comment.is-editing {
+.snapshot-comment.is-editing {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-.ocr-debug-export-comment-input {
+.snapshot-comment-input {
   flex: 1 1 260px;
   min-width: 180px;
   min-height: 34px;
@@ -4425,7 +4425,7 @@ body.is-resizing-sidebar {
   font-size: 13px;
 }
 
-.ocr-debug-export-comment-actions {
+.snapshot-comment-actions {
   display: inline-flex;
   gap: 6px;
 }
@@ -4435,7 +4435,8 @@ body.is-resizing-sidebar {
   min-width: 0;
 }
 
-#settings-backup-export {
+#settings-backup-export,
+#snapshot-create {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -4446,15 +4447,18 @@ body.is-resizing-sidebar {
   height: 12px;
 }
 
-#settings-backup-export.is-loading {
+#settings-backup-export.is-loading,
+#snapshot-create.is-loading {
   cursor: progress;
 }
 
-#settings-backup-export:disabled {
+#settings-backup-export:disabled,
+#snapshot-create:disabled {
   pointer-events: none;
 }
 
-#settings-backup-export.is-loading .settings-backup-export-label {
+#settings-backup-export.is-loading .settings-backup-export-label,
+#snapshot-create.is-loading .settings-backup-export-label {
   opacity: 0.82;
 }
 
@@ -4635,7 +4639,7 @@ body.is-resizing-sidebar {
   color: #991b1b;
 }
 
-.ocr-debug-export-selection {
+.snapshot-selection {
   display: inline-flex;
   align-items: center;
   align-self: flex-start;
@@ -4644,13 +4648,13 @@ body.is-resizing-sidebar {
   flex: 0 0 auto;
 }
 
-.ocr-debug-export-selection input {
+.snapshot-selection input {
   width: 16px;
   height: 16px;
   margin: 0;
 }
 
-.ocr-debug-export-compare-actions {
+.snapshot-compare-actions {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -4682,14 +4686,14 @@ body.is-resizing-sidebar {
   flex-wrap: wrap;
 }
 
-.ocr-debug-compare-exports {
+.ocr-debug-compare-snapshots {
   display: grid;
   gap: 4px;
   color: #475569;
   font-size: 13px;
 }
 
-.ocr-debug-compare-export {
+.ocr-debug-compare-snapshot {
   overflow-wrap: anywhere;
 }
 
@@ -4740,11 +4744,23 @@ body.is-resizing-sidebar {
   background: #f5f7ff;
 }
 
+.ocr-debug-compare-file-row--metadata {
+  display: grid;
+  align-items: start;
+  justify-content: stretch;
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
 .ocr-debug-compare-file-main {
   display: inline-flex;
   align-items: baseline;
   gap: 10px;
   min-width: 0;
+}
+
+.ocr-debug-compare-file-main--metadata {
+  margin-bottom: 6px;
 }
 
 .ocr-debug-compare-file-status {
@@ -4759,6 +4775,36 @@ body.is-resizing-sidebar {
   color: #0f172a;
   font: 12px/1.4 monospace;
   overflow-wrap: anywhere;
+}
+
+.ocr-debug-metadata-diff {
+  display: grid;
+  gap: 8px;
+  padding-left: 88px;
+}
+
+.ocr-debug-metadata-diff-section {
+  display: grid;
+  gap: 3px;
+}
+
+.ocr-debug-metadata-diff-title {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ocr-debug-metadata-diff-line {
+  color: #0f172a;
+  font: 13px/1.45 system-ui, sans-serif;
+}
+
+.ocr-debug-metadata-diff-line--added {
+  color: #166534;
+}
+
+.ocr-debug-metadata-diff-line--removed {
+  color: #991b1b;
 }
 
 .settings-inline-notice {
@@ -5203,7 +5249,7 @@ body.is-resizing-sidebar {
 
 #input-inbox-path,
 #output-base-path,
-#ocr-debug-export-directory {
+#snapshot-directory {
   width: 100%;
   font: inherit;
   padding: 7px 9px;

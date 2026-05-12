@@ -101,13 +101,13 @@ if (array_key_exists('outputBaseDirectory', $payload)) {
 
 if (array_key_exists('ocrDebugExportDirectory', $payload)) {
     if (!is_string($payload['ocrDebugExportDirectory'])) {
-        json_response(['error' => 'OCR debug export path must be a string'], 400);
+        json_response(['error' => 'Snapshot path must be a string'], 400);
         exit;
     }
 
     $ocrDebugExportDirectory = trim((string) $payload['ocrDebugExportDirectory']);
     if ($ocrDebugExportDirectory === '') {
-        json_response(['error' => 'OCR debug export path is required'], 400);
+        json_response(['error' => 'Snapshot path is required'], 400);
         exit;
     }
 

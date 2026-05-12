@@ -6548,12 +6548,12 @@ function renderOcrDebugExportCreateState() {
     ocrDebugExportCreateSpinnerEl.classList.toggle('hidden', !loading);
   }
   if (ocrDebugExportCreateLabelEl instanceof HTMLElement) {
-    ocrDebugExportCreateLabelEl.textContent = loading ? 'Kontrollerar...' : 'Skapa export';
+    ocrDebugExportCreateLabelEl.textContent = loading ? 'Kontrollerar...' : 'Skapa snapshot';
   }
   if (ocrDebugExportCreateShellEl instanceof HTMLElement) {
     let title = '';
     if (loading) {
-      title = 'Kontrollerar exportkandidater...';
+      title = 'Kontrollerar snapshotkandidater...';
     } else if (!canCreate) {
       title = ocrDebugExportCreateDisabledReason || 'Inga dokument i den här filtreringen.';
     }
@@ -6575,10 +6575,10 @@ function renderOcrDebugExportCompareState() {
       || ocrDebugExportCreateLoading
       || ocrDebugExportCompareLoading
       || selectedCount !== 2;
-    ocrDebugExportCompareButtonEl.textContent = ocrDebugExportCompareLoading ? 'Jämför...' : 'Jämför markerade';
+    ocrDebugExportCompareButtonEl.textContent = ocrDebugExportCompareLoading ? 'Jämför...' : 'Jämför snapshots';
     ocrDebugExportCompareButtonEl.title = selectedCount === 2
-      ? 'Jämför de två markerade OCR-debugexporterna.'
-      : 'Markera exakt två exporter att jämföra.';
+      ? 'Jämför de två markerade snapshotsen.'
+      : 'Markera exakt två snapshots att jämföra.';
   }
 }
 
@@ -6601,6 +6601,7 @@ function ocrDebugExportComparisonSummary(counts) {
   const changedCount = Number(counts && counts.changed || 0);
   const onlyInACount = Number(counts && counts.onlyInA || 0);
   const onlyInBCount = Number(counts && counts.onlyInB || 0);
+  const metadataCount = Number(counts && counts.metadataChanged || 0);
   const missingCount = onlyInACount + onlyInBCount;
   const parts = [];
 
@@ -6610,25 +6611,28 @@ function ocrDebugExportComparisonSummary(counts) {
   if (missingCount > 0) {
     parts.push(missingCount === 1 ? '1 saknad fil' : `${missingCount} saknade filer`);
   }
+  if (metadataCount > 0) {
+    parts.push(metadataCount === 1 ? '1 metadataändring' : `${metadataCount} metadataändringar`);
+  }
   if (parts.length === 0) {
     return 'Jämförelse klar: inga skillnader hittades.';
   }
   if (parts.length === 1) {
     return `Jämförelse klar: ${parts[0]}.`;
   }
-  return `Jämförelse klar: ${parts[0]} och ${parts[1]}.`;
+  return `Jämförelse klar: ${parts.slice(0, -1).join(', ')} och ${parts[parts.length - 1]}.`;
 }
 
-function ocrDebugExportComparisonTitle(exportInfo, fallback) {
-  if (!exportInfo || typeof exportInfo !== 'object') {
+function ocrDebugExportComparisonTitle(snapshotInfo, fallback) {
+  if (!snapshotInfo || typeof snapshotInfo !== 'object') {
     return fallback;
   }
-  const folderName = typeof exportInfo.folderName === 'string' ? exportInfo.folderName : fallback;
-  const filterLabel = typeof exportInfo.filterLabel === 'string' && exportInfo.filterLabel.trim() !== ''
-    ? exportInfo.filterLabel.trim()
+  const folderName = typeof snapshotInfo.folderName === 'string' ? snapshotInfo.folderName : fallback;
+  const filterLabel = typeof snapshotInfo.filterLabel === 'string' && snapshotInfo.filterLabel.trim() !== ''
+    ? snapshotInfo.filterLabel.trim()
     : '';
-  const exportedAt = typeof exportInfo.exportedAt === 'string' && exportInfo.exportedAt.trim() !== ''
-    ? formatOcrDebugExportDateTime(exportInfo.exportedAt)
+  const exportedAt = typeof snapshotInfo.exportedAt === 'string' && snapshotInfo.exportedAt.trim() !== ''
+    ? formatOcrDebugExportDateTime(snapshotInfo.exportedAt)
     : '';
   return [folderName, filterLabel, exportedAt].filter(Boolean).join(' · ');
 }
@@ -6689,14 +6693,14 @@ async function saveOcrDebugExportComment(folderName, comment) {
 
 function createOcrDebugExportCommentEditor(item) {
   const wrapper = document.createElement('div');
-  wrapper.className = 'ocr-debug-export-comment';
+  wrapper.className = 'snapshot-comment';
   const initialComment = typeof item.comment === 'string' ? item.comment : '';
 
   const renderDisplay = (comment) => {
     wrapper.replaceChildren();
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'ocr-debug-export-comment-button';
+    button.className = 'snapshot-comment-button';
     button.textContent = comment.trim() !== '' ? comment : 'Lägg till kommentar...';
     button.classList.toggle('is-placeholder', comment.trim() === '');
     button.title = 'Redigera kommentar';
@@ -6709,11 +6713,11 @@ function createOcrDebugExportCommentEditor(item) {
     wrapper.classList.add('is-editing');
     const input = document.createElement('input');
     input.type = 'text';
-    input.className = 'ocr-debug-export-comment-input';
+    input.className = 'snapshot-comment-input';
     input.value = comment;
     input.placeholder = 'Lägg till kommentar...';
     const actions = document.createElement('div');
-    actions.className = 'ocr-debug-export-comment-actions';
+    actions.className = 'snapshot-comment-actions';
     const saveButton = document.createElement('button');
     saveButton.type = 'button';
     saveButton.className = 'settings-backup-row-button';
@@ -6963,6 +6967,76 @@ function createOcrDebugMeldSplitButton({ label, toggleLabel, command, relativePa
   return splitButton;
 }
 
+function appendOcrDebugMetadataLines(sectionEl, lines, className) {
+  lines.forEach((line) => {
+    const item = document.createElement('div');
+    item.className = className;
+    item.textContent = line;
+    sectionEl.appendChild(item);
+  });
+}
+
+function createOcrDebugMetadataDiffRow(diff) {
+  const row = document.createElement('div');
+  row.className = 'ocr-debug-compare-file-row ocr-debug-compare-file-row--metadata';
+
+  const main = document.createElement('div');
+  main.className = 'ocr-debug-compare-file-main ocr-debug-compare-file-main--metadata';
+  const status = document.createElement('span');
+  status.className = 'ocr-debug-compare-file-status';
+  status.textContent = '≠ metadata';
+  const path = document.createElement('span');
+  path.className = 'ocr-debug-compare-file-path';
+  path.textContent = `dokument/${diff && typeof diff.jobId === 'string' ? diff.jobId : ''}`;
+  main.append(status, path);
+  row.appendChild(main);
+
+  const details = document.createElement('div');
+  details.className = 'ocr-debug-metadata-diff';
+
+  const dataFields = Array.isArray(diff && diff.dataFields) ? diff.dataFields : [];
+  if (dataFields.length > 0) {
+    const section = document.createElement('div');
+    section.className = 'ocr-debug-metadata-diff-section';
+    const title = document.createElement('div');
+    title.className = 'ocr-debug-metadata-diff-title';
+    title.textContent = 'Datafält:';
+    section.appendChild(title);
+    dataFields.forEach((field) => {
+      const name = field && typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : String(field && field.key || '');
+      const changed = Array.isArray(field && field.changed) ? field.changed : [];
+      changed.forEach((item) => {
+        const from = item && typeof item.from === 'string' ? item.from : '';
+        const to = item && typeof item.to === 'string' ? item.to : '';
+        appendOcrDebugMetadataLines(section, [`${name}: ${from} → ${to}`], 'ocr-debug-metadata-diff-line');
+      });
+      const added = Array.isArray(field && field.added) ? field.added : [];
+      appendOcrDebugMetadataLines(section, added.map((value) => `+ ${name} = ${value}`), 'ocr-debug-metadata-diff-line ocr-debug-metadata-diff-line--added');
+      const removed = Array.isArray(field && field.removed) ? field.removed : [];
+      appendOcrDebugMetadataLines(section, removed.map((value) => `− ${name} = ${value}`), 'ocr-debug-metadata-diff-line ocr-debug-metadata-diff-line--removed');
+    });
+    details.appendChild(section);
+  }
+
+  const labelDiff = diff && typeof diff.labels === 'object' ? diff.labels : {};
+  const addedLabels = Array.isArray(labelDiff.added) ? labelDiff.added : [];
+  const removedLabels = Array.isArray(labelDiff.removed) ? labelDiff.removed : [];
+  if (addedLabels.length > 0 || removedLabels.length > 0) {
+    const section = document.createElement('div');
+    section.className = 'ocr-debug-metadata-diff-section';
+    const title = document.createElement('div');
+    title.className = 'ocr-debug-metadata-diff-title';
+    title.textContent = 'Etiketter:';
+    section.appendChild(title);
+    appendOcrDebugMetadataLines(section, addedLabels.map((name) => `+ ${name}`), 'ocr-debug-metadata-diff-line ocr-debug-metadata-diff-line--added');
+    appendOcrDebugMetadataLines(section, removedLabels.map((name) => `− ${name}`), 'ocr-debug-metadata-diff-line ocr-debug-metadata-diff-line--removed');
+    details.appendChild(section);
+  }
+
+  row.appendChild(details);
+  return row;
+}
+
 function renderOcrDebugExportCompareResult() {
   if (!(ocrDebugExportCompareResultEl instanceof HTMLElement)) {
     return;
@@ -6996,16 +7070,16 @@ function renderOcrDebugExportCompareResult() {
   }
   ocrDebugExportCompareResultEl.appendChild(heading);
 
-  const exports = document.createElement('div');
-  exports.className = 'ocr-debug-compare-exports';
+  const snapshots = document.createElement('div');
+  snapshots.className = 'ocr-debug-compare-snapshots';
   const left = document.createElement('div');
-  left.className = 'ocr-debug-compare-export';
-  left.textContent = `Export A: ${ocrDebugExportComparisonTitle(result.left, 'Export A')}`;
+  left.className = 'ocr-debug-compare-snapshot';
+  left.textContent = `Snapshot A: ${ocrDebugExportComparisonTitle(result.left, 'Snapshot A')}`;
   const right = document.createElement('div');
-  right.className = 'ocr-debug-compare-export';
-  right.textContent = `Export B: ${ocrDebugExportComparisonTitle(result.right, 'Export B')}`;
-  exports.append(left, right);
-  ocrDebugExportCompareResultEl.appendChild(exports);
+  right.className = 'ocr-debug-compare-snapshot';
+  right.textContent = `Snapshot B: ${ocrDebugExportComparisonTitle(result.right, 'Snapshot B')}`;
+  snapshots.append(left, right);
+  ocrDebugExportCompareResultEl.appendChild(snapshots);
 
   const counts = result.counts && typeof result.counts === 'object' ? result.counts : {};
   const countList = document.createElement('div');
@@ -7015,6 +7089,7 @@ function renderOcrDebugExportCompareResult() {
     ['Ändrade', counts.changed],
     ['Endast i A', counts.onlyInA],
     ['Endast i B', counts.onlyInB],
+    ['Metadata', result.metadataChanged],
   ].forEach(([label, value]) => {
     const item = document.createElement('span');
     item.className = 'ocr-debug-compare-count';
@@ -7040,15 +7115,19 @@ function renderOcrDebugExportCompareResult() {
   const showIdentical = showIdenticalCheckbox.checked;
   const files = Array.isArray(result.files) ? result.files : [];
   const visibleFiles = files.filter((file) => showIdentical || (file && file.status !== 'identical'));
+  const metadataDiffs = Array.isArray(result.metadataDiffs) ? result.metadataDiffs : [];
 
   const fileList = document.createElement('div');
   fileList.className = 'ocr-debug-compare-file-list';
-  if (visibleFiles.length === 0) {
+  if (visibleFiles.length === 0 && metadataDiffs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'settings-backup-empty';
     empty.textContent = showIdentical ? 'Inga filer att visa.' : 'Inga ändrade eller saknade filer.';
     fileList.appendChild(empty);
   } else {
+    metadataDiffs.forEach((diff) => {
+      fileList.appendChild(createOcrDebugMetadataDiffRow(diff));
+    });
     visibleFiles.forEach((file) => {
       if (!file || typeof file.relativePath !== 'string') {
         return;
@@ -7100,7 +7179,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
   if (ocrDebugExportListLoading) {
     const loading = document.createElement('div');
     loading.className = 'settings-backup-empty';
-    loading.textContent = 'Läser OCR-debugexporter...';
+    loading.textContent = 'Läser snapshots...';
     ocrDebugExportListEl.appendChild(loading);
     return;
   }
@@ -7116,7 +7195,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
   if (normalizedItems.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'settings-backup-empty';
-    empty.textContent = 'Inga OCR-debugexporter ännu.';
+    empty.textContent = 'Inga snapshots ännu.';
     ocrDebugExportListEl.appendChild(empty);
     return;
   }
@@ -7130,7 +7209,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
     row.className = 'settings-backup-row';
 
     const selection = document.createElement('label');
-    selection.className = 'ocr-debug-export-selection';
+    selection.className = 'snapshot-selection';
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.checked = ocrDebugExportSelectedFolderNames.includes(item.folderName);
@@ -7138,7 +7217,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
       || ocrDebugExportCreateLoading
       || ocrDebugExportCompareLoading
       || (!checkbox.checked && ocrDebugExportSelectedFolderNames.length >= 2);
-    checkbox.setAttribute('aria-label', 'Markera export för jämförelse');
+    checkbox.setAttribute('aria-label', 'Markera snapshot för jämförelse');
     checkbox.addEventListener('change', () => {
       const selected = new Set(ocrDebugExportSelectedFolderNames);
       if (checkbox.checked) {
@@ -7180,7 +7259,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
     meta.textContent = `${Number.isFinite(Number(item.jobCount)) ? Number(item.jobCount) : 0} dokument`;
 
     const filename = document.createElement('div');
-    filename.id = `ocr-debug-export-path-${item.folderName}`;
+    filename.id = `snapshot-path-${item.folderName}`;
     filename.className = 'settings-backup-row-filename';
     filename.textContent = item.exportDirectory;
 
@@ -7228,8 +7307,8 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
     const deleteButton = document.createElement('button');
     deleteButton.type = 'button';
     deleteButton.className = 'icon-button settings-backup-row-icon-button settings-backup-row-icon-button-danger';
-    deleteButton.title = 'Ta bort export';
-    deleteButton.setAttribute('aria-label', 'Ta bort export');
+    deleteButton.title = 'Ta bort snapshot';
+    deleteButton.setAttribute('aria-label', 'Ta bort snapshot');
     deleteButton.disabled = ocrDebugExportBusy || ocrDebugExportCreateLoading || ocrDebugExportCompareLoading;
     deleteButton.addEventListener('click', () => {
       deleteOcrDebugExport(item.folderName);
@@ -7290,7 +7369,7 @@ async function loadOcrDebugExports() {
     const response = await fetch('/api/list-ocr-debug-exports.php', { cache: 'no-store' });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.exports)) {
-      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte läsa OCR-debugexporter.');
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte läsa snapshots.');
     }
     if (requestToken !== ocrDebugExportListRequestToken) {
       return;
@@ -7301,7 +7380,7 @@ async function loadOcrDebugExports() {
     if (requestToken !== ocrDebugExportListRequestToken) {
       return;
     }
-    ocrDebugExportListError = error instanceof Error ? error.message : 'Kunde inte läsa OCR-debugexporter.';
+    ocrDebugExportListError = error instanceof Error ? error.message : 'Kunde inte läsa snapshots.';
     ocrDebugExportListLoading = false;
     renderOcrDebugExportList([]);
   }
@@ -7325,7 +7404,7 @@ async function createOcrDebugExport() {
   const selectedFilter = ocrDebugExportSelectedFilterMode();
   const jobIds = ocrDebugExportJobIdsForMode(selectedFilter);
   if (jobIds.length === 0) {
-    setOcrDebugExportStatus('Inga dokument att exportera för den valda filtreringen.', 'warning');
+    setOcrDebugExportStatus('Inga dokument att skapa snapshot för den valda filtreringen.', 'warning');
     updateOcrDebugExportCreateAvailability();
     return;
   }
@@ -7348,7 +7427,7 @@ async function createOcrDebugExport() {
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload || payload.ok !== true || typeof payload.exportDirectory !== 'string') {
-      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte exportera OCR-debugdata.');
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte skapa snapshot.');
     }
     if (requestToken !== ocrDebugExportCreateRequestToken) {
       return;
@@ -7356,7 +7435,7 @@ async function createOcrDebugExport() {
 
     const skippedCount = Number.isInteger(payload.skippedCount) ? payload.skippedCount : 0;
     setOcrDebugExportStatus(
-      `Export skapad för ${jobIds.length} dokument${skippedCount > 0 ? `, ${skippedCount} hoppades över` : ''} (${jobListModeLabel(selectedFilter)}).`,
+      `Snapshot skapad för ${jobIds.length} dokument${skippedCount > 0 ? `, ${skippedCount} hoppades över` : ''} (${jobListModeLabel(selectedFilter)}).`,
       'success'
     );
     await loadOcrDebugExports();
@@ -7367,7 +7446,7 @@ async function createOcrDebugExport() {
     if (requestToken !== ocrDebugExportCreateRequestToken) {
       return;
     }
-    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Kunde inte exportera OCR-debugdata.', 'error');
+    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Kunde inte skapa snapshot.', 'error');
   } finally {
     if (requestToken === ocrDebugExportCreateRequestToken) {
       ocrDebugExportCreateLoading = false;
@@ -7382,7 +7461,7 @@ async function deleteOcrDebugExport(folderName) {
     return;
   }
 
-  const confirmed = window.confirm('Ta bort vald OCR-debugexport?');
+  const confirmed = window.confirm('Ta bort vald snapshot?');
   if (!confirmed) {
     return;
   }
@@ -7398,13 +7477,13 @@ async function deleteOcrDebugExport(folderName) {
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte ta bort OCR-debugexporten.');
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte ta bort snapshoten.');
     }
 
     await loadOcrDebugExports();
     updateOcrDebugExportCreateAvailability();
   } catch (error) {
-    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Kunde inte ta bort OCR-debugexporten.', 'error');
+    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Kunde inte ta bort snapshoten.', 'error');
   } finally {
     setOcrDebugExportBusy(false);
   }
@@ -7429,7 +7508,7 @@ async function compareSelectedOcrDebugExports() {
     return;
   }
   if (ocrDebugExportSelectedFolderNames.length !== 2) {
-    setOcrDebugExportStatus('Markera exakt två exporter att jämföra.', 'error');
+    setOcrDebugExportStatus('Markera exakt två snapshots att jämföra.', 'error');
     return;
   }
 
@@ -7454,7 +7533,7 @@ async function compareSelectedOcrDebugExports() {
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload || payload.ok !== true || !payload.comparison) {
-      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte jämföra OCR-debugexporterna.');
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte jämföra snapshots.');
     }
     if (requestToken !== ocrDebugExportCompareRequestToken) {
       return;
@@ -7463,13 +7542,14 @@ async function compareSelectedOcrDebugExports() {
     const counts = payload.comparison.counts && typeof payload.comparison.counts === 'object'
       ? payload.comparison.counts
       : {};
+    counts.metadataChanged = Number(payload.comparison.metadataChanged || 0);
     setOcrDebugExportStatus(ocrDebugExportComparisonSummary(counts), 'success');
     renderOcrDebugExportCompareResult();
   } catch (error) {
     if (requestToken !== ocrDebugExportCompareRequestToken) {
       return;
     }
-    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Kunde inte jämföra OCR-debugexporterna.', 'error');
+    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Kunde inte jämföra snapshots.', 'error');
   } finally {
     if (requestToken === ocrDebugExportCompareRequestToken) {
       ocrDebugExportCompareLoading = false;
@@ -7502,29 +7582,29 @@ function openOcrDebugExportDialog() {
   overlay.className = 'modal-overlay';
 
   const dialog = document.createElement('div');
-  dialog.className = 'settings-dialog label-import-dialog ocr-debug-export-dialog';
+  dialog.className = 'settings-dialog label-import-dialog snapshot-dialog';
 
   const title = document.createElement('h3');
-  title.textContent = 'OCR-debugexport';
+  title.textContent = 'Snapshots';
 
   const body = document.createElement('div');
   body.className = 'label-import-dialog-body';
 
   const description = document.createElement('p');
-  description.textContent = 'Exportera merged_objects.json och merged_objects.txt för den aktuella jobbfiltreringen, eller välj ett annat scope innan export.';
+  description.textContent = 'Skapa snapshots av text, sammanslagna OCR-objekt och automatiska dokumentförslag för den aktuella jobbfiltreringen, eller välj ett annat filter först.';
 
   const controls = document.createElement('div');
-  controls.className = 'ocr-debug-export-controls';
+  controls.className = 'snapshot-controls';
 
   const filterField = document.createElement('div');
-  filterField.className = 'ocr-debug-export-filter-field';
+  filterField.className = 'snapshot-filter-field';
   const filterLabel = document.createElement('label');
   filterLabel.className = 'settings-label';
-  filterLabel.setAttribute('for', 'ocr-debug-export-filter');
+  filterLabel.setAttribute('for', 'snapshot-filter');
   filterLabel.textContent = 'Filter';
   const filterSelect = document.createElement('select');
-  filterSelect.id = 'ocr-debug-export-filter';
-  filterSelect.className = 'ocr-debug-export-filter-select';
+  filterSelect.id = 'snapshot-filter';
+  filterSelect.className = 'snapshot-filter-select';
   const filterOptions = [
     'ready',
     'archived-review',
@@ -7544,44 +7624,44 @@ function openOcrDebugExportDialog() {
   createShell.className = 'settings-backup-export-shell';
   const createButton = document.createElement('button');
   createButton.type = 'button';
-  createButton.id = 'ocr-debug-export-create';
+  createButton.id = 'snapshot-create';
   createButton.setAttribute('aria-busy', 'false');
   const createSpinner = document.createElement('span');
   createSpinner.className = 'spinner settings-backup-export-spinner hidden';
   createSpinner.setAttribute('aria-hidden', 'true');
   const createLabel = document.createElement('span');
   createLabel.className = 'settings-backup-export-label';
-  createLabel.textContent = 'Skapa export';
+  createLabel.textContent = 'Skapa snapshot';
   createButton.append(createSpinner, createLabel);
   createShell.appendChild(createButton);
 
   controls.append(filterField, createShell);
 
   const status = document.createElement('div');
-  status.id = 'ocr-debug-export-status';
+  status.id = 'snapshot-status';
   status.className = 'settings-backup-status';
   status.setAttribute('aria-live', 'polite');
 
   const compareActions = document.createElement('div');
-  compareActions.className = 'ocr-debug-export-compare-actions';
+  compareActions.className = 'snapshot-compare-actions';
   const compareButton = document.createElement('button');
   compareButton.type = 'button';
   compareButton.className = 'settings-backup-row-button';
-  compareButton.textContent = 'Jämför markerade';
+  compareButton.textContent = 'Jämför snapshots';
   compareButton.disabled = true;
   compareActions.appendChild(compareButton);
 
   const compareResult = document.createElement('div');
-  compareResult.id = 'ocr-debug-export-compare-result';
+  compareResult.id = 'snapshot-compare-result';
   compareResult.className = 'ocr-debug-compare-result hidden';
 
   const history = document.createElement('div');
   history.className = 'settings-backup-history';
   const historyTitle = document.createElement('div');
   historyTitle.className = 'settings-backup-history-title';
-  historyTitle.textContent = 'Exporter';
+  historyTitle.textContent = 'Snapshots';
   const list = document.createElement('div');
-  list.id = 'ocr-debug-export-list';
+  list.id = 'snapshot-list';
   list.className = 'settings-backup-list';
   list.setAttribute('aria-live', 'polite');
   history.append(historyTitle, list);
@@ -12303,7 +12383,7 @@ async function loadConfigurationBackups() {
   }
 }
 
-async function exportConfigurationBackup() {
+async function createConfigurationBackup() {
   if (settingsBackupBusy) {
     return;
   }
@@ -12313,7 +12393,7 @@ async function exportConfigurationBackup() {
     const response = await fetch('/api/export-config.php', { cache: 'no-store' });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte exportera konfigurationen.');
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte skapa säkerhetskopian.');
     }
 
     await loadConfigurationBackups();
@@ -17508,7 +17588,7 @@ function bindSettingsPanelRefs(tabId) {
   } else if (tabId === 'paths') {
     inputInboxPathEl = document.getElementById('input-inbox-path');
     outputBasePathEl = document.getElementById('output-base-path');
-    ocrDebugExportDirectoryEl = document.getElementById('ocr-debug-export-directory');
+    ocrDebugExportDirectoryEl = document.getElementById('snapshot-directory');
     pathsCancelEl = document.getElementById('paths-cancel');
     pathsApplyEl = document.getElementById('paths-apply');
     inputInboxPathEl.addEventListener('input', () => {
@@ -17667,9 +17747,9 @@ function bindSettingsPanelRefs(tabId) {
     if (settingsBackupExportEl instanceof HTMLButtonElement) {
       settingsBackupExportEl.addEventListener('click', async () => {
         try {
-          await exportConfigurationBackup();
+          await createConfigurationBackup();
         } catch (error) {
-          alert(error instanceof Error ? error.message : 'Kunde inte exportera konfigurationen.');
+          alert(error instanceof Error ? error.message : 'Kunde inte skapa säkerhetskopian.');
         }
       });
     }
@@ -27173,7 +27253,7 @@ if (jobListExportOcrDebugActionEl instanceof HTMLButtonElement) {
     try {
       openOcrDebugExportDialog();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Kunde inte öppna OCR-debugexporten.');
+      alert(error instanceof Error ? error.message : 'Kunde inte öppna snapshoten.');
     }
   });
 }

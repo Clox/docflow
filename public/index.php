@@ -50,14 +50,14 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                   role="menuitem"
                   title="Kör textigenkänning från källfilerna igen och analysera därefter alla dokument som visas i listan med nuvarande regler."
                 >Kör om textigenkänning och analys för dokumenten i listan</button>
-                <!-- Developer-only export for OCR diffing in tools like Meld. -->
+                <!-- Developer-only snapshots for comparing saved analysis versions. -->
                 <button
                   id="job-list-export-ocr-debug-action"
                   class="hidden"
                   type="button"
                   role="menuitem"
-                  title="Öppnar OCR-debugexporter för aktuell dokumentfiltrering."
-                >OCR-debugexport...</button>
+                  title="Öppnar Snapshots för aktuell dokumentfiltrering."
+                >Snapshots...</button>
               </div>
             </div>
           </div>
@@ -826,16 +826,16 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       autocorrect="off"
       autocapitalize="off"
     >
-    <label class="settings-label" for="ocr-debug-export-directory">OCR-debugexporter</label>
+    <label class="settings-label" for="snapshot-directory">Snapshots</label>
     <input
-      id="ocr-debug-export-directory"
+      id="snapshot-directory"
       type="text"
       placeholder="debug_exports/"
       spellcheck="false"
       autocorrect="off"
       autocapitalize="off"
     >
-    <p>Relativ sökväg tolkas mot projektroten. Exporten skapar en ny tidsstämplad mapp per körning.</p>
+    <p>Relativ sökväg tolkas mot projektroten. En snapshot skapas som en ny tidsstämplad mapp per körning.</p>
     <div class="panel-actions">
       <button id="paths-cancel" class="button-danger" type="button">Avbryt</button>
       <button id="paths-apply" class="button-success" type="button">Spara</button>

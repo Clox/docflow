@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_bootstrap.php';
 
-// Developer/admin-only export endpoint for OCR diffing and text comparison.
+// Developer/admin-only snapshot endpoint for analysis comparison.
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(['error' => 'Method not allowed'], 405);
     exit;

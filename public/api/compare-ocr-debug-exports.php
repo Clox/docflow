@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_bootstrap.php';
 
-// Developer/admin-only compare endpoint for existing OCR debug exports.
+// Developer/admin-only compare endpoint for existing snapshots.
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(['error' => 'Method not allowed'], 405);
     exit;
@@ -24,7 +24,7 @@ if (!is_array($payload)) {
 $leftFolderName = is_string($payload['leftFolderName'] ?? null) ? trim((string) $payload['leftFolderName']) : '';
 $rightFolderName = is_string($payload['rightFolderName'] ?? null) ? trim((string) $payload['rightFolderName']) : '';
 if ($leftFolderName === '' || $rightFolderName === '') {
-    json_response(['error' => 'Välj två exporter att jämföra.'], 400);
+    json_response(['error' => 'Välj två snapshots att jämföra.'], 400);
     exit;
 }
 

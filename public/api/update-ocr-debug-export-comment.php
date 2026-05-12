@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_bootstrap.php';
 
-// Developer/admin-only metadata endpoint for OCR debug exports.
+// Developer/admin-only metadata endpoint for snapshots.
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(['error' => 'Method not allowed'], 405);
     exit;
@@ -24,7 +24,7 @@ if (!is_array($payload)) {
 $folderName = is_string($payload['folderName'] ?? null) ? trim((string) $payload['folderName']) : '';
 $comment = is_string($payload['comment'] ?? null) ? (string) $payload['comment'] : '';
 if ($folderName === '') {
-    json_response(['error' => 'Export folder not found'], 404);
+    json_response(['error' => 'Snapshot folder not found'], 404);
     exit;
 }
 

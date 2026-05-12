@@ -28,7 +28,7 @@ function ocr_debug_export_add_directory_to_zip(ZipArchive $zip, string $baseDire
     }
 }
 
-// Developer/admin-only download endpoint for OCR debug exports.
+// Developer/admin-only download endpoint for snapshots.
 $folderName = isset($_GET['folderName']) && is_string($_GET['folderName'])
     ? trim((string) $_GET['folderName'])
     : (isset($_GET['filename']) && is_string($_GET['filename']) ? trim((string) $_GET['filename']) : '');
@@ -76,7 +76,7 @@ try {
         }
     }
 
-    $downloadName = 'ocr-debug-export-' . basename($exportDirectory) . '.zip';
+    $downloadName = 'snapshot-' . basename($exportDirectory) . '.zip';
     header('Content-Type: application/zip');
     header('Content-Disposition: attachment; filename="' . $downloadName . '"');
     header('Content-Length: ' . (string) filesize($zipPath));

@@ -6124,7 +6124,7 @@ function ocr_debug_export_manifest_payload(
     $exportedAt = gmdate(DATE_ATOM, filemtime($exportDirectory) ?: time());
 
     return [
-        'format' => 'docflow_ocr_debug_export',
+        'format' => 'docflow_snapshot',
         'version' => 1,
         'exportedAt' => $exportedAt,
         'filter' => ocr_debug_export_scope_slug($scope),
@@ -6132,6 +6132,7 @@ function ocr_debug_export_manifest_payload(
         'jobCount' => count($jobIds),
         'jobIds' => $jobIds,
         'createdFiles' => $createdFiles,
+        'layers' => ['text', 'merged_objects', 'document_metadata'],
         'skippedJobIds' => $skippedJobIds,
         'folderName' => $folderName,
         'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
@@ -6144,7 +6145,7 @@ function ocr_debug_export_manifest_from_directory(string $exportDirectory): ?arr
     $manifestPath = ocr_debug_export_manifest_path($exportDirectory);
     if (is_file($manifestPath)) {
         $manifest = load_json_file($manifestPath);
-        if (is_array($manifest) && ($manifest['format'] ?? null) === 'docflow_ocr_debug_export') {
+        if (is_array($manifest) && in_array($manifest['format'] ?? null, ['docflow_snapshot', 'docflow_debug_export', 'docflow_ocr_debug_export'], true)) {
             $manifest['folderName'] = is_string($manifest['folderName'] ?? null)
                 ? (string) $manifest['folderName']
                 : basename(rtrim($exportDirectory, DIRECTORY_SEPARATOR));
@@ -6152,6 +6153,7 @@ function ocr_debug_export_manifest_from_directory(string $exportDirectory): ?arr
             $manifest['sortTimestamp'] = filemtime($manifestPath) ?: (filemtime($exportDirectory) ?: 0);
             $manifest['legacy'] = false;
             $manifest['comment'] = is_string($manifest['comment'] ?? null) ? (string) $manifest['comment'] : '';
+            $manifest['layers'] = is_array($manifest['layers'] ?? null) ? array_values($manifest['layers']) : ['text', 'merged_objects'];
             return $manifest;
         }
     }
@@ -6194,7 +6196,7 @@ function ocr_debug_export_manifest_from_directory(string $exportDirectory): ?arr
         : (filemtime($exportDirectory) ?: 0);
 
     return [
-        'format' => 'docflow_ocr_debug_export',
+        'format' => 'docflow_snapshot',
         'version' => 1,
         'exportedAt' => $legacyTimestamp instanceof DateTimeImmutable ? $legacyTimestamp->format(DATE_ATOM) : gmdate(DATE_ATOM, $sortTimestamp),
         'filter' => ocr_debug_export_scope_slug($legacyScope),
@@ -6202,6 +6204,7 @@ function ocr_debug_export_manifest_from_directory(string $exportDirectory): ?arr
         'jobCount' => count($jobIds),
         'jobIds' => $jobIds,
         'createdFiles' => $createdFiles,
+        'layers' => ['text', 'merged_objects'],
         'skippedJobIds' => [],
         'folderName' => $folderName,
         'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
@@ -6275,6 +6278,10 @@ function list_ocr_debug_exports(array $config): array
             'jobCount' => isset($entry['jobCount']) && is_numeric($entry['jobCount']) ? (int) $entry['jobCount'] : count($jobIds),
             'jobIds' => $jobIds,
             'createdFiles' => $createdFiles,
+            'layers' => array_values(array_filter(
+                array_map(static fn ($layer) => is_string($layer) ? trim($layer) : '', $entry['layers'] ?? []),
+                static fn (string $layer): bool => $layer !== ''
+            )),
             'fileCount' => count($createdFiles),
             'skippedJobIds' => array_values(array_filter(
                 array_map(static fn ($jobId) => is_string($jobId) ? trim($jobId) : '', $entry['skippedJobIds'] ?? []),
@@ -6299,13 +6306,102 @@ function update_ocr_debug_export_comment(array $config, string $folderName, stri
         $manifest = ocr_debug_export_manifest_from_directory($exportDirectory);
     }
     if (!is_array($manifest)) {
-        throw new RuntimeException('Kunde inte läsa exportens manifest.');
+        throw new RuntimeException('Kunde inte läsa snapshotens manifest.');
     }
 
     $manifest['comment'] = trim($comment);
     write_json_file($manifestPath, $manifest);
 
     return ocr_debug_export_manifest_from_directory($exportDirectory) ?? $manifest;
+}
+
+function debug_export_string_list(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $items = [];
+    foreach ($value as $item) {
+        if (is_string($item) || is_numeric($item)) {
+            $text = trim((string) $item);
+            if ($text !== '') {
+                $items[] = $text;
+            }
+        }
+    }
+
+    return array_values(array_unique($items));
+}
+
+function debug_export_label_name_map(array $extractedData): array
+{
+    $map = [];
+    foreach (['systemLabelMatches', 'labelMatches'] as $key) {
+        $matches = is_array($extractedData[$key] ?? null) ? $extractedData[$key] : [];
+        foreach ($matches as $match) {
+            if (!is_array($match)) {
+                continue;
+            }
+            $id = is_string($match['id'] ?? null) ? trim((string) $match['id']) : '';
+            $name = is_string($match['name'] ?? null) ? trim((string) $match['name']) : '';
+            if ($id !== '') {
+                $map[$id] = $name !== '' ? $name : $id;
+            }
+        }
+    }
+    return $map;
+}
+
+function debug_export_document_metadata_for_job(string $jobId, string $jobDir): array
+{
+    $extractedPath = rtrim($jobDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'extracted.json';
+    $jobPath = rtrim($jobDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'job.json';
+    $extractedData = load_json_file($extractedPath);
+    if (!is_array($extractedData)) {
+        $jobData = load_json_file($jobPath);
+        $analysis = is_array($jobData['analysis'] ?? null) ? $jobData['analysis'] : [];
+        $extractedData = $analysis;
+    }
+
+    $labelNameMap = debug_export_label_name_map($extractedData);
+    $labels = [];
+    foreach (debug_export_string_list($extractedData['labels'] ?? []) as $labelId) {
+        $labels[] = [
+            'id' => $labelId,
+            'name' => $labelNameMap[$labelId] ?? $labelId,
+        ];
+    }
+    usort($labels, static fn (array $left, array $right): int => strnatcasecmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? '')));
+
+    $fields = [];
+    $extractionFields = is_array($extractedData['extractionFields'] ?? null) ? $extractedData['extractionFields'] : [];
+    $fieldMeta = is_array($extractedData['extractionFieldMeta'] ?? null) ? $extractedData['extractionFieldMeta'] : [];
+    foreach ($extractionFields as $fieldKey => $values) {
+        if (!is_string($fieldKey) && !is_numeric($fieldKey)) {
+            continue;
+        }
+        $normalizedKey = trim((string) $fieldKey);
+        if ($normalizedKey === '') {
+            continue;
+        }
+        $meta = is_array($fieldMeta[$normalizedKey] ?? null) ? $fieldMeta[$normalizedKey] : [];
+        $name = is_string($meta['name'] ?? null) && trim((string) $meta['name']) !== ''
+            ? trim((string) $meta['name'])
+            : $normalizedKey;
+        $fields[] = [
+            'key' => $normalizedKey,
+            'name' => $name,
+            'values' => debug_export_string_list($values),
+        ];
+    }
+    usort($fields, static fn (array $left, array $right): int => strnatcasecmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? '')));
+
+    return [
+        'jobId' => $jobId,
+        'labels' => $labels,
+        'dataFields' => $fields,
+    ];
 }
 
 function ocr_debug_export_relative_files(string $exportDirectory): array
@@ -6331,7 +6427,7 @@ function ocr_debug_export_relative_files(string $exportDirectory): array
             continue;
         }
         $relativePath = str_replace(DIRECTORY_SEPARATOR, '/', $relativePath);
-        if ($relativePath === 'manifest.json') {
+        if ($relativePath === 'manifest.json' || str_starts_with($relativePath, 'document_metadata/')) {
             continue;
         }
         $files[$relativePath] = $path;
@@ -6353,6 +6449,155 @@ function ocr_debug_export_meld_command(string $leftPath, string $rightPath): str
     return 'meld ' . $quote($leftPath) . ' ' . $quote($rightPath);
 }
 
+function debug_export_metadata_files(string $exportDirectory): array
+{
+    $metadataDirectory = rtrim($exportDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'document_metadata';
+    if (!is_dir($metadataDirectory)) {
+        return [];
+    }
+
+    $files = [];
+    $paths = glob($metadataDirectory . DIRECTORY_SEPARATOR . '*.json') ?: [];
+    foreach ($paths as $path) {
+        if (!is_string($path)) {
+            continue;
+        }
+        $basename = basename($path);
+        if (preg_match('/^([A-Za-z0-9_-]+)\.json$/', $basename, $matches) === 1) {
+            $files[$matches[1]] = $path;
+        }
+    }
+    ksort($files, SORT_NATURAL);
+    return $files;
+}
+
+function debug_export_label_diff(array $leftLabels, array $rightLabels): array
+{
+    $normalize = static function (array $labels): array {
+        $map = [];
+        foreach ($labels as $label) {
+            if (!is_array($label)) {
+                continue;
+            }
+            $id = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+            $name = is_string($label['name'] ?? null) ? trim((string) $label['name']) : '';
+            if ($id !== '') {
+                $map[$id] = $name !== '' ? $name : $id;
+            }
+        }
+        ksort($map, SORT_NATURAL);
+        return $map;
+    };
+
+    $left = $normalize($leftLabels);
+    $right = $normalize($rightLabels);
+    $added = [];
+    $removed = [];
+    foreach ($right as $id => $name) {
+        if (!array_key_exists($id, $left)) {
+            $added[] = $name;
+        }
+    }
+    foreach ($left as $id => $name) {
+        if (!array_key_exists($id, $right)) {
+            $removed[] = $name;
+        }
+    }
+    sort($added, SORT_NATURAL | SORT_FLAG_CASE);
+    sort($removed, SORT_NATURAL | SORT_FLAG_CASE);
+    return ['added' => $added, 'removed' => $removed];
+}
+
+function debug_export_data_field_diff(array $leftFields, array $rightFields): array
+{
+    $normalize = static function (array $fields): array {
+        $map = [];
+        foreach ($fields as $field) {
+            if (!is_array($field)) {
+                continue;
+            }
+            $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+            if ($key === '') {
+                continue;
+            }
+            $name = is_string($field['name'] ?? null) && trim((string) $field['name']) !== ''
+                ? trim((string) $field['name'])
+                : $key;
+            $values = debug_export_string_list($field['values'] ?? []);
+            sort($values, SORT_NATURAL);
+            $map[$key] = ['key' => $key, 'name' => $name, 'values' => $values];
+        }
+        ksort($map, SORT_NATURAL);
+        return $map;
+    };
+
+    $left = $normalize($leftFields);
+    $right = $normalize($rightFields);
+    $keys = array_values(array_unique(array_merge(array_keys($left), array_keys($right))));
+    sort($keys, SORT_NATURAL);
+    $diffs = [];
+    foreach ($keys as $key) {
+        $leftField = $left[$key] ?? null;
+        $rightField = $right[$key] ?? null;
+        $name = is_array($rightField) ? (string) $rightField['name'] : (is_array($leftField) ? (string) $leftField['name'] : $key);
+        $leftValues = is_array($leftField) ? $leftField['values'] : [];
+        $rightValues = is_array($rightField) ? $rightField['values'] : [];
+        $added = array_values(array_diff($rightValues, $leftValues));
+        $removed = array_values(array_diff($leftValues, $rightValues));
+        if ($added === [] && $removed === []) {
+            continue;
+        }
+        $changed = [];
+        if (count($leftValues) === 1 && count($rightValues) === 1 && count($added) === 1 && count($removed) === 1) {
+            $changed[] = ['from' => $leftValues[0], 'to' => $rightValues[0]];
+            $added = [];
+            $removed = [];
+        }
+        $diffs[] = [
+            'key' => $key,
+            'name' => $name,
+            'added' => $added,
+            'removed' => $removed,
+            'changed' => $changed,
+        ];
+    }
+    return $diffs;
+}
+
+function compare_debug_export_document_metadata(string $leftDirectory, string $rightDirectory): array
+{
+    $leftFiles = debug_export_metadata_files($leftDirectory);
+    $rightFiles = debug_export_metadata_files($rightDirectory);
+    $jobIds = array_values(array_unique(array_merge(array_keys($leftFiles), array_keys($rightFiles))));
+    sort($jobIds, SORT_NATURAL);
+
+    $diffs = [];
+    foreach ($jobIds as $jobId) {
+        $left = isset($leftFiles[$jobId]) ? load_json_file($leftFiles[$jobId]) : null;
+        $right = isset($rightFiles[$jobId]) ? load_json_file($rightFiles[$jobId]) : null;
+        $left = is_array($left) ? $left : ['jobId' => $jobId, 'labels' => [], 'dataFields' => []];
+        $right = is_array($right) ? $right : ['jobId' => $jobId, 'labels' => [], 'dataFields' => []];
+        $labelDiff = debug_export_label_diff(
+            is_array($left['labels'] ?? null) ? $left['labels'] : [],
+            is_array($right['labels'] ?? null) ? $right['labels'] : []
+        );
+        $fieldDiff = debug_export_data_field_diff(
+            is_array($left['dataFields'] ?? null) ? $left['dataFields'] : [],
+            is_array($right['dataFields'] ?? null) ? $right['dataFields'] : []
+        );
+        if (($labelDiff['added'] ?? []) === [] && ($labelDiff['removed'] ?? []) === [] && $fieldDiff === []) {
+            continue;
+        }
+        $diffs[] = [
+            'jobId' => $jobId,
+            'status' => 'metadataChanged',
+            'labels' => $labelDiff,
+            'dataFields' => $fieldDiff,
+        ];
+    }
+    return $diffs;
+}
+
 function compare_ocr_debug_exports(array $config, string $leftFolderName, string $rightFolderName): array
 {
     $leftDirectory = ocr_debug_export_directory_path_from_name($config, $leftFolderName);
@@ -6364,13 +6609,14 @@ function compare_ocr_debug_exports(array $config, string $leftFolderName, string
         throw new RuntimeException('Export B hittades inte.');
     }
     if ($leftDirectory === $rightDirectory) {
-        throw new RuntimeException('Välj två olika exporter att jämföra.');
+        throw new RuntimeException('Välj två olika snapshots att jämföra.');
     }
 
     $leftDirectory = normalized_realpath($leftDirectory) ?? $leftDirectory;
     $rightDirectory = normalized_realpath($rightDirectory) ?? $rightDirectory;
     $leftFiles = ocr_debug_export_relative_files($leftDirectory);
     $rightFiles = ocr_debug_export_relative_files($rightDirectory);
+    $metadataDiffs = compare_debug_export_document_metadata($leftDirectory, $rightDirectory);
     $relativeFiles = array_values(array_unique(array_merge(array_keys($leftFiles), array_keys($rightFiles))));
     sort($relativeFiles, SORT_NATURAL);
 
@@ -6442,6 +6688,8 @@ function compare_ocr_debug_exports(array $config, string $leftFolderName, string
         ],
         'counts' => $counts,
         'files' => $files,
+        'metadataDiffs' => $metadataDiffs,
+        'metadataChanged' => count($metadataDiffs),
         'meldDirectoryCommand' => ocr_debug_export_meld_command($leftDirectory, $rightDirectory),
     ];
 }
@@ -6499,7 +6747,7 @@ function launch_ocr_debug_export_meld(
             || !path_is_within_directory($leftPath, $leftDirectory)
             || !path_is_within_directory($rightPath, $rightDirectory)
         ) {
-            throw new RuntimeException('Filen finns inte i båda exporter.');
+            throw new RuntimeException('Filen finns inte i båda snapshots.');
         }
     }
 
@@ -6552,6 +6800,7 @@ function export_ocr_debug_data(array $config, array $jobIds, string $scope = '')
     $exportDirectory = create_ocr_debug_export_directory($config, $scope);
     ensure_directory($exportDirectory . DIRECTORY_SEPARATOR . 'text');
     ensure_directory($exportDirectory . DIRECTORY_SEPARATOR . 'merged_objects');
+    ensure_directory($exportDirectory . DIRECTORY_SEPARATOR . 'document_metadata');
     $exportedJobIds = [];
     $skippedJobIds = [];
     $createdFiles = [];
@@ -6585,6 +6834,11 @@ function export_ocr_debug_data(array $config, array $jobIds, string $scope = '')
         $textPath = $exportDirectory . DIRECTORY_SEPARATOR . 'text' . DIRECTORY_SEPARATOR . $jobId . '.txt';
         file_put_contents($textPath, $mergedText === '' ? '' : $mergedText . "\n");
         $createdFiles[] = 'text/' . $jobId . '.txt';
+
+        $metadata = debug_export_document_metadata_for_job($jobId, $jobDir);
+        $metadataPath = $exportDirectory . DIRECTORY_SEPARATOR . 'document_metadata' . DIRECTORY_SEPARATOR . $jobId . '.json';
+        write_json_file($metadataPath, $metadata);
+        $createdFiles[] = 'document_metadata/' . $jobId . '.json';
         $exportedJobIds[] = $jobId;
     }
 
