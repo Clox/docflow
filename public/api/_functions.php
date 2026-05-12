@@ -6282,6 +6282,144 @@ function list_ocr_debug_exports(array $config): array
     }, $entries);
 }
 
+function ocr_debug_export_relative_files(string $exportDirectory): array
+{
+    $exportDirectory = rtrim($exportDirectory, DIRECTORY_SEPARATOR);
+    if (!is_dir($exportDirectory)) {
+        return [];
+    }
+
+    $files = [];
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($exportDirectory, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::LEAVES_ONLY
+    );
+
+    foreach ($iterator as $item) {
+        if (!$item->isFile()) {
+            continue;
+        }
+        $path = $item->getPathname();
+        $relativePath = substr($path, strlen($exportDirectory) + 1);
+        if (!is_string($relativePath) || $relativePath === '') {
+            continue;
+        }
+        $relativePath = str_replace(DIRECTORY_SEPARATOR, '/', $relativePath);
+        if ($relativePath === 'manifest.json') {
+            continue;
+        }
+        $files[$relativePath] = $path;
+    }
+
+    ksort($files, SORT_NATURAL);
+    return $files;
+}
+
+function ocr_debug_export_meld_command(string $leftPath, string $rightPath): string
+{
+    $leftPath = normalized_realpath($leftPath) ?? $leftPath;
+    $rightPath = normalized_realpath($rightPath) ?? $rightPath;
+
+    $quote = static function (string $path): string {
+        return '"' . str_replace(['\\', '"', '$', '`'], ['\\\\', '\\"', '\\$', '\\`'], $path) . '"';
+    };
+
+    return 'meld ' . $quote($leftPath) . ' ' . $quote($rightPath);
+}
+
+function compare_ocr_debug_exports(array $config, string $leftFolderName, string $rightFolderName): array
+{
+    $leftDirectory = ocr_debug_export_directory_path_from_name($config, $leftFolderName);
+    $rightDirectory = ocr_debug_export_directory_path_from_name($config, $rightFolderName);
+    if ($leftDirectory === null || !is_dir($leftDirectory)) {
+        throw new RuntimeException('Export A hittades inte.');
+    }
+    if ($rightDirectory === null || !is_dir($rightDirectory)) {
+        throw new RuntimeException('Export B hittades inte.');
+    }
+    if ($leftDirectory === $rightDirectory) {
+        throw new RuntimeException('Välj två olika exporter att jämföra.');
+    }
+
+    $leftDirectory = normalized_realpath($leftDirectory) ?? $leftDirectory;
+    $rightDirectory = normalized_realpath($rightDirectory) ?? $rightDirectory;
+    $leftFiles = ocr_debug_export_relative_files($leftDirectory);
+    $rightFiles = ocr_debug_export_relative_files($rightDirectory);
+    $relativeFiles = array_values(array_unique(array_merge(array_keys($leftFiles), array_keys($rightFiles))));
+    sort($relativeFiles, SORT_NATURAL);
+
+    $counts = [
+        'identical' => 0,
+        'changed' => 0,
+        'onlyInA' => 0,
+        'onlyInB' => 0,
+    ];
+    $files = [];
+
+    foreach ($relativeFiles as $relativePath) {
+        $leftPath = $leftFiles[$relativePath] ?? null;
+        $rightPath = $rightFiles[$relativePath] ?? null;
+        if ($leftPath !== null && $rightPath !== null) {
+            $leftHash = hash_file('sha256', $leftPath);
+            $rightHash = hash_file('sha256', $rightPath);
+            $status = $leftHash === $rightHash ? 'identical' : 'changed';
+        } elseif ($leftPath !== null) {
+            $status = 'onlyInA';
+        } else {
+            $status = 'onlyInB';
+        }
+
+        $counts[$status]++;
+        $leftDisplayPath = is_string($leftPath) ? (normalized_realpath($leftPath) ?? $leftPath) : null;
+        $rightDisplayPath = is_string($rightPath) ? (normalized_realpath($rightPath) ?? $rightPath) : null;
+        $files[] = [
+            'relativePath' => $relativePath,
+            'status' => $status,
+            'leftPath' => $leftDisplayPath,
+            'rightPath' => $rightDisplayPath,
+            'meldCommand' => $leftDisplayPath !== null && $rightDisplayPath !== null
+                ? ocr_debug_export_meld_command($leftDisplayPath, $rightDisplayPath)
+                : null,
+        ];
+    }
+
+    usort($files, static function (array $left, array $right): int {
+        $rank = [
+            'changed' => 0,
+            'onlyInA' => 1,
+            'onlyInB' => 2,
+            'identical' => 3,
+        ];
+        $leftRank = $rank[(string) ($left['status'] ?? '')] ?? 9;
+        $rightRank = $rank[(string) ($right['status'] ?? '')] ?? 9;
+        if ($leftRank !== $rightRank) {
+            return $leftRank <=> $rightRank;
+        }
+        return strnatcmp((string) ($left['relativePath'] ?? ''), (string) ($right['relativePath'] ?? ''));
+    });
+
+    $leftManifest = ocr_debug_export_manifest_from_directory($leftDirectory);
+    $rightManifest = ocr_debug_export_manifest_from_directory($rightDirectory);
+
+    return [
+        'left' => [
+            'folderName' => basename($leftDirectory),
+            'exportDirectory' => $leftDirectory,
+            'exportedAt' => is_array($leftManifest) ? ($leftManifest['exportedAt'] ?? null) : null,
+            'filterLabel' => is_array($leftManifest) ? ($leftManifest['filterLabel'] ?? null) : null,
+        ],
+        'right' => [
+            'folderName' => basename($rightDirectory),
+            'exportDirectory' => $rightDirectory,
+            'exportedAt' => is_array($rightManifest) ? ($rightManifest['exportedAt'] ?? null) : null,
+            'filterLabel' => is_array($rightManifest) ? ($rightManifest['filterLabel'] ?? null) : null,
+        ],
+        'counts' => $counts,
+        'files' => $files,
+        'meldDirectoryCommand' => ocr_debug_export_meld_command($leftDirectory, $rightDirectory),
+    ];
+}
+
 function export_ocr_debug_data(array $config, array $jobIds, string $scope = ''): array
 {
     $jobsDirectory = is_string($config['jobsDirectory'] ?? null) ? trim((string) $config['jobsDirectory']) : '';

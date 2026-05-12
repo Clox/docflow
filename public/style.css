@@ -4582,6 +4582,132 @@ body.is-resizing-sidebar {
   color: #991b1b;
 }
 
+.ocr-debug-export-selection {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: 36px;
+  padding-top: 1px;
+  flex: 0 0 auto;
+}
+
+.ocr-debug-export-selection input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.ocr-debug-export-compare-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+
+.ocr-debug-compare-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 12px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.ocr-debug-compare-heading,
+.ocr-debug-compare-counts,
+.ocr-debug-compare-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ocr-debug-compare-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.ocr-debug-compare-exports {
+  display: grid;
+  gap: 4px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.ocr-debug-compare-export {
+  overflow-wrap: anywhere;
+}
+
+.ocr-debug-compare-counts {
+  flex-wrap: wrap;
+}
+
+.ocr-debug-compare-count {
+  padding: 3px 8px;
+  border: 1px solid #d8dee8;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ocr-debug-compare-show-identical {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  color: #334155;
+  font-size: 13px;
+}
+
+.ocr-debug-compare-file-list {
+  display: grid;
+  gap: 6px;
+}
+
+.ocr-debug-compare-file-row {
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ocr-debug-compare-file-row--changed {
+  border-color: #f1c27d;
+  background: #fffaf1;
+}
+
+.ocr-debug-compare-file-row--onlyInA,
+.ocr-debug-compare-file-row--onlyInB {
+  border-color: #c7d2fe;
+  background: #f5f7ff;
+}
+
+.ocr-debug-compare-file-main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ocr-debug-compare-file-status {
+  min-width: 78px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ocr-debug-compare-file-path {
+  color: #0f172a;
+  font: 12px/1.4 monospace;
+  overflow-wrap: anywhere;
+}
+
 .settings-inline-notice {
   display: flex;
   align-items: flex-start;
