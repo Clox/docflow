@@ -6654,6 +6654,114 @@ async function copyOcrDebugExportCommand(command, buttonEl) {
   }
 }
 
+async function saveOcrDebugExportComment(folderName, comment) {
+  const normalizedFolderName = typeof folderName === 'string' ? folderName.trim() : '';
+  if (normalizedFolderName === '') {
+    return false;
+  }
+
+  try {
+    const response = await fetch('/api/update-ocr-debug-export-comment.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        folderName: normalizedFolderName,
+        comment: typeof comment === 'string' ? comment : '',
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) {
+      throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte spara kommentaren.');
+    }
+    const savedComment = typeof payload.comment === 'string' ? payload.comment : '';
+    ocrDebugExportItems = ocrDebugExportItems.map((item) => (
+      item && item.folderName === normalizedFolderName ? { ...item, comment: savedComment } : item
+    ));
+    setOcrDebugExportStatus('Kommentaren sparades.', 'success');
+    return true;
+  } catch (error) {
+    setOcrDebugExportStatus(error instanceof Error ? error.message : 'Kunde inte spara kommentaren.', 'error');
+    return false;
+  }
+}
+
+function createOcrDebugExportCommentEditor(item) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'ocr-debug-export-comment';
+  const initialComment = typeof item.comment === 'string' ? item.comment : '';
+
+  const renderDisplay = (comment) => {
+    wrapper.replaceChildren();
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ocr-debug-export-comment-button';
+    button.textContent = comment.trim() !== '' ? comment : 'Lägg till kommentar...';
+    button.classList.toggle('is-placeholder', comment.trim() === '');
+    button.title = 'Redigera kommentar';
+    button.addEventListener('click', () => renderEditor(comment));
+    wrapper.appendChild(button);
+  };
+
+  const renderEditor = (comment) => {
+    wrapper.replaceChildren();
+    wrapper.classList.add('is-editing');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'ocr-debug-export-comment-input';
+    input.value = comment;
+    input.placeholder = 'Lägg till kommentar...';
+    const actions = document.createElement('div');
+    actions.className = 'ocr-debug-export-comment-actions';
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'settings-backup-row-button';
+    saveButton.textContent = 'Spara';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'settings-backup-row-button';
+    cancelButton.textContent = 'Avbryt';
+    actions.append(saveButton, cancelButton);
+    wrapper.append(input, actions);
+
+    const finish = (nextComment) => {
+      wrapper.classList.remove('is-editing');
+      renderDisplay(nextComment);
+    };
+    const save = async () => {
+      const nextComment = input.value.trim();
+      saveButton.disabled = true;
+      cancelButton.disabled = true;
+      const saved = await saveOcrDebugExportComment(item.folderName, nextComment);
+      if (saved) {
+        finish(nextComment);
+      } else {
+        saveButton.disabled = false;
+        cancelButton.disabled = false;
+        input.focus();
+      }
+    };
+
+    saveButton.addEventListener('click', save);
+    cancelButton.addEventListener('click', () => finish(comment));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void save();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(comment);
+      }
+    });
+    input.focus();
+    input.select();
+  };
+
+  renderDisplay(initialComment);
+  return wrapper;
+}
+
 function ocrDebugExportComparisonFolders() {
   const result = ocrDebugExportCompareResult;
   if (!result || typeof result !== 'object') {
@@ -7076,7 +7184,9 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
     filename.className = 'settings-backup-row-filename';
     filename.textContent = item.exportDirectory;
 
-    main.append(titleRow, meta, filename);
+    const comment = createOcrDebugExportCommentEditor(item);
+
+    main.append(titleRow, meta, filename, comment);
 
     const actions = document.createElement('div');
     actions.className = 'settings-backup-row-actions';

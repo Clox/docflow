@@ -6135,6 +6135,7 @@ function ocr_debug_export_manifest_payload(
         'skippedJobIds' => $skippedJobIds,
         'folderName' => $folderName,
         'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
+        'comment' => '',
     ];
 }
 
@@ -6150,6 +6151,7 @@ function ocr_debug_export_manifest_from_directory(string $exportDirectory): ?arr
             $manifest['exportDirectory'] = normalized_realpath($exportDirectory) ?? $exportDirectory;
             $manifest['sortTimestamp'] = filemtime($manifestPath) ?: (filemtime($exportDirectory) ?: 0);
             $manifest['legacy'] = false;
+            $manifest['comment'] = is_string($manifest['comment'] ?? null) ? (string) $manifest['comment'] : '';
             return $manifest;
         }
     }
@@ -6203,6 +6205,7 @@ function ocr_debug_export_manifest_from_directory(string $exportDirectory): ?arr
         'skippedJobIds' => [],
         'folderName' => $folderName,
         'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
+        'comment' => '',
         'sortTimestamp' => $sortTimestamp,
         'legacy' => true,
     ];
@@ -6265,6 +6268,7 @@ function list_ocr_debug_exports(array $config): array
         return [
             'folderName' => $folderName,
             'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
+            'comment' => is_string($entry['comment'] ?? null) ? (string) $entry['comment'] : '',
             'exportedAt' => is_string($entry['exportedAt'] ?? null) ? (string) $entry['exportedAt'] : null,
             'filter' => is_string($entry['filter'] ?? null) ? (string) $entry['filter'] : 'jobs',
             'filterLabel' => is_string($entry['filterLabel'] ?? null) ? (string) $entry['filterLabel'] : ocr_debug_export_scope_label((string) ($entry['filter'] ?? 'jobs')),
@@ -6280,6 +6284,28 @@ function list_ocr_debug_exports(array $config): array
             'legacy' => ($entry['legacy'] ?? false) === true,
         ];
     }, $entries);
+}
+
+function update_ocr_debug_export_comment(array $config, string $folderName, string $comment): array
+{
+    $exportDirectory = ocr_debug_export_directory_path_from_name($config, $folderName);
+    if ($exportDirectory === null || !is_dir($exportDirectory)) {
+        throw new RuntimeException('Export folder not found');
+    }
+
+    $manifestPath = ocr_debug_export_manifest_path($exportDirectory);
+    $manifest = is_file($manifestPath) ? load_json_file($manifestPath) : null;
+    if (!is_array($manifest)) {
+        $manifest = ocr_debug_export_manifest_from_directory($exportDirectory);
+    }
+    if (!is_array($manifest)) {
+        throw new RuntimeException('Kunde inte läsa exportens manifest.');
+    }
+
+    $manifest['comment'] = trim($comment);
+    write_json_file($manifestPath, $manifest);
+
+    return ocr_debug_export_manifest_from_directory($exportDirectory) ?? $manifest;
 }
 
 function ocr_debug_export_relative_files(string $exportDirectory): array
