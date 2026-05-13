@@ -6523,6 +6523,8 @@ body.is-resizing-sidebar {
 
 .floating-input-label .floating-input-help-toggle {
   margin-left: 1px;
+  position: relative;
+  top: -2px;
 }
 
 .floating-input-help-toggle {

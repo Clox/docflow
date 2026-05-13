@@ -2794,6 +2794,7 @@ function expand_extraction_field_value_pattern_macros(string $pattern): string
         '{BELOPP}' => '(' . extraction_field_amount_atom_pattern() . ')',
         '{KRONOR}' => '(?<docflow_kronor>' . extraction_field_split_kronor_atom_pattern() . ')',
         '{ÖREN}' => '(?<docflow_oren>' . extraction_field_split_oren_atom_pattern() . ')',
+        '{OREN}' => '(?<docflow_oren>' . extraction_field_split_oren_atom_pattern() . ')',
     ]);
 }
 
@@ -2820,14 +2821,14 @@ function normalize_extraction_field_split_amount_value(string $kronor, string $o
 function extraction_field_value_pattern_uses_semantic_amount_parts(string $pattern): bool
 {
     return (
-        str_contains($pattern, '{KRONOR}') && str_contains($pattern, '{ÖREN}')
+        str_contains($pattern, '{KRONOR}') && (str_contains($pattern, '{ÖREN}') || str_contains($pattern, '{OREN}'))
     ) || (
         preg_match('/\(\?<KRONOR>/u', $pattern) === 1
-        && preg_match('/\(\?<ÖREN>/u', $pattern) === 1
+        && preg_match('/\(\?<(?:ÖREN|OREN)>/u', $pattern) === 1
     );
 }
 
-function extraction_field_match_group_value(array $match, array $names): string
+function extraction_field_match_group(array $match, array $names): ?array
 {
     foreach ($names as $name) {
         if (!is_string($name) || $name === '' || !array_key_exists($name, $match)) {
@@ -2840,11 +2841,60 @@ function extraction_field_match_group_value(array $match, array $names): string
 
         $value = trim((string) $group[0]);
         if ($value !== '') {
-            return $value;
+            return [
+                'value' => $value,
+                'start' => is_int($group[1] ?? null) ? (int) $group[1] : -1,
+                'length' => strlen((string) $group[0]),
+            ];
         }
     }
 
-    return '';
+    return null;
+}
+
+function extraction_field_semantic_amount_value_span(array $match, string $text): ?array
+{
+    $kronorGroup = extraction_field_match_group($match, ['docflow_kronor', 'KRONOR']);
+    $orenGroup = extraction_field_match_group($match, ['docflow_oren', 'ÖREN', 'OREN']);
+    if ($kronorGroup === null || $orenGroup === null) {
+        return null;
+    }
+
+    $kronor = is_string($kronorGroup['value'] ?? null) ? (string) $kronorGroup['value'] : '';
+    $oren = is_string($orenGroup['value'] ?? null) ? (string) $orenGroup['value'] : '';
+    $combinedAmount = $kronor !== '' && $oren !== ''
+        ? normalize_extraction_field_split_amount_value($kronor, $oren)
+        : null;
+    if ($combinedAmount === null) {
+        return null;
+    }
+
+    $kronorStart = is_int($kronorGroup['start'] ?? null) ? (int) $kronorGroup['start'] : -1;
+    $orenStart = is_int($orenGroup['start'] ?? null) ? (int) $orenGroup['start'] : -1;
+    $kronorLength = is_int($kronorGroup['length'] ?? null) ? (int) $kronorGroup['length'] : 0;
+    $orenLength = is_int($orenGroup['length'] ?? null) ? (int) $orenGroup['length'] : 0;
+    if ($kronorStart < 0 || $orenStart < 0 || $kronorLength <= 0 || $orenLength <= 0) {
+        return null;
+    }
+
+    $spanStart = min($kronorStart, $orenStart);
+    $spanEnd = max($kronorStart + $kronorLength, $orenStart + $orenLength);
+    if ($spanEnd <= $spanStart) {
+        return null;
+    }
+
+    return [
+        'value' => $combinedAmount,
+        'raw' => substr($text, $spanStart, $spanEnd - $spanStart),
+        'start' => $spanStart,
+    ];
+}
+
+function extraction_field_match_has_semantic_amount_groups(array $match): bool
+{
+    $hasKronor = array_key_exists('docflow_kronor', $match) || array_key_exists('KRONOR', $match);
+    $hasOren = array_key_exists('docflow_oren', $match) || array_key_exists('ÖREN', $match) || array_key_exists('OREN', $match);
+    return $hasKronor && $hasOren;
 }
 
 function extraction_field_runtime_rule_set(array $ruleSet): array
@@ -12934,35 +12984,26 @@ function extraction_field_pattern_candidates_from_text(
 
         $value = $raw;
         $extractedRaw = $raw;
-        $usedSemanticAmountParts = false;
         if ($isRegex && $combineSplitAmountParts) {
-            $kronor = extraction_field_match_group_value($match, ['docflow_kronor', 'KRONOR']);
-            $oren = extraction_field_match_group_value($match, ['docflow_oren', 'ÖREN']);
-            $hasSemanticAmountParts = array_key_exists('docflow_kronor', $match)
-                || array_key_exists('KRONOR', $match)
-                || array_key_exists('docflow_oren', $match)
-                || array_key_exists('ÖREN', $match);
-            if ($hasSemanticAmountParts) {
-                $usedSemanticAmountParts = true;
-            }
-
-            $combinedAmount = $kronor !== '' && $oren !== ''
-                ? normalize_extraction_field_split_amount_value($kronor, $oren)
-                : null;
-            if ($combinedAmount !== null) {
-                $value = $combinedAmount;
-                $extractedRaw = $raw;
+            $semanticAmountSpan = extraction_field_semantic_amount_value_span($match, $text);
+            if ($semanticAmountSpan !== null) {
+                $value = is_string($semanticAmountSpan['value'] ?? null) ? (string) $semanticAmountSpan['value'] : null;
+                $extractedRaw = is_string($semanticAmountSpan['raw'] ?? null) ? (string) $semanticAmountSpan['raw'] : '';
+                $valueStart = is_int($semanticAmountSpan['start'] ?? null) ? (int) $semanticAmountSpan['start'] : -1;
+                if ($value === null || $extractedRaw === '' || $valueStart < 0) {
+                    continue;
+                }
                 $candidates[] = [
                     'value' => $value,
                     'raw' => $extractedRaw,
                     'matchText' => $raw,
-                    'start' => $offsetBase + $start,
-                    'spanText' => $raw,
+                    'start' => $offsetBase + $valueStart,
+                    'spanText' => $extractedRaw,
                     'matchType' => 'pattern',
                 ];
                 continue;
             }
-            if ($usedSemanticAmountParts) {
+            if (extraction_field_match_has_semantic_amount_groups($match)) {
                 continue;
             }
         }
@@ -13159,6 +13200,7 @@ function extraction_field_document_pattern_candidates_from_lines(
         $lineLength = is_array($lineEntry) && is_int($lineEntry['length'] ?? null) ? (int) $lineEntry['length'] : -1;
         $candidateStart = $lineStart >= 0 ? max(0, $start - $lineStart) : 0;
         $candidatePageNumber = matching_line_page_number($lineGeometries, $lineIndex);
+        $candidateBbox = extraction_field_document_span_bbox($lineEntries, $lineGeometries, $start, $end);
 
         $candidates[] = [
             'value' => $value,
@@ -13169,7 +13211,7 @@ function extraction_field_document_pattern_candidates_from_lines(
             'matchType' => is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern',
             'lineIndex' => $lineIndex,
             'labelBbox' => null,
-            'valueBbox' => null,
+            'valueBbox' => $candidateBbox,
             'pageNumber' => $candidatePageNumber,
         ];
     }
@@ -15388,7 +15430,16 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
         if (isset($result['finalConfidence'])) {
             $fieldMeta['finalConfidence'] = clamp_confidence((float) $result['finalConfidence']);
         }
-        if (is_array($result['matches'] ?? null)) {
+        $matchesForMeta = is_array($result['matches'] ?? null) ? $result['matches'] : null;
+        $selectionRuleSet = configured_field_selection_rule_set($result);
+        if (
+            extraction_field_rule_set_type($selectionRuleSet) === 'amount'
+            && is_array($result['candidateMatches'] ?? null)
+            && $result['candidateMatches'] !== []
+        ) {
+            $matchesForMeta = $result['candidateMatches'];
+        }
+        if (is_array($matchesForMeta)) {
             $fieldMeta['matches'] = array_values(array_map(
                 static function (array $match) use ($resolvedThreshold): array {
                     return [
@@ -15453,7 +15504,7 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         ), static fn ($segment): bool => is_array($segment))),
                     ];
                 },
-                array_values(array_filter($result['matches'], static fn ($match): bool => is_array($match)))
+                array_values(array_filter($matchesForMeta, static fn ($match): bool => is_array($match)))
             ));
         }
 

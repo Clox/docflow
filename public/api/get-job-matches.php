@@ -180,6 +180,7 @@ try {
                     'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : PHP_INT_MAX,
                     'labelLineIndex' => is_int($match['labelLineIndex'] ?? null) ? (int) $match['labelLineIndex'] : null,
                     'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : PHP_INT_MAX,
+                    'ruleSetIndex' => is_int($match['ruleSetIndex'] ?? null) ? (int) $match['ruleSetIndex'] : null,
                     'matchType' => $matchType !== '' ? $matchType : null,
                 ];
             }

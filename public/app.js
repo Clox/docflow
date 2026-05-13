@@ -16047,7 +16047,8 @@ function expandInspectionValuePatternMacros(value) {
     .replace(/\{DATUM\}/g, `(${extractionFieldDateAtomPattern()})`)
     .replace(/\{BELOPP\}/g, `(${extractionFieldAmountAtomPattern()})`)
     .replace(/\{KRONOR\}/g, `(?<docflow_kronor>(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+))`)
-    .replace(/\{ÖREN\}/g, '(?<docflow_oren>\\d{2})');
+    .replace(/\{ÖREN\}/g, '(?<docflow_oren>\\d{2})')
+    .replace(/\{OREN\}/g, '(?<docflow_oren>\\d{2})');
 }
 
 function buildInspectionMatchPattern(value, isRegex) {
@@ -16056,7 +16057,7 @@ function buildInspectionMatchPattern(value, isRegex) {
     return whitespaceFlexibleRegexPattern(expandInspectionValuePatternMacros(source));
   }
 
-  return source.split(/(\{DATUM\}|\{BELOPP\}|\{KRONOR\}|\{ÖREN\})/g).map((segment) => {
+  return source.split(/(\{DATUM\}|\{BELOPP\}|\{KRONOR\}|\{ÖREN\}|\{OREN\})/g).map((segment) => {
     if (segment === '{DATUM}') {
       return `(${extractionFieldDateAtomPattern()})`;
     }
@@ -16066,7 +16067,7 @@ function buildInspectionMatchPattern(value, isRegex) {
     if (segment === '{KRONOR}') {
       return `(?<docflow_kronor>(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+))`;
     }
-    if (segment === '{ÖREN}') {
+    if (segment === '{ÖREN}' || segment === '{OREN}') {
       return '(?<docflow_oren>\\d{2})';
     }
     return whitespaceFlexibleRegexPattern(escapeRegexPattern(segment));
@@ -23664,7 +23665,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const valuePatternLabelText = document.createElement('span');
       valuePatternLabelText.textContent = 'Värdemönster';
       const valuePatternHelpDisclosure = createFloatingHelpToggle(
-        'Du kan använda {DATUM} och {BELOPP} i värdemönster. Belopp kan även byggas med named groups: (?<KRONOR>\\d+)\\s+(?<ÖREN>\\d{2}).',
+        'Du kan använda {DATUM} och {BELOPP} i värdemönster. Belopp kan även byggas med named groups: (?<KRONOR>\\d+)\\s+(?<ÖREN>\\d{2}) eller (?<OREN>\\d{2}).',
         {
           helpId: `value-pattern-help-${typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : index}-${ruleSetIndex}`,
           buttonLabel: 'Visa hjälp för värdemönster',
