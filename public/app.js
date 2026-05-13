@@ -23647,7 +23647,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       useValuePatternLabel.className = 'extraction-field-rule-set-toggle';
       const useValuePatternCheckbox = document.createElement('input');
       useValuePatternCheckbox.type = 'checkbox';
-      useValuePatternCheckbox.checked = ruleSet.useValuePattern === true || String(ruleSet.valuePattern || '').trim() !== '';
+      useValuePatternCheckbox.checked = ruleSet.useValuePattern === true;
       const useValuePatternText = document.createElement('span');
       useValuePatternText.textContent = 'Använd värdemönster...';
       useValuePatternLabel.appendChild(useValuePatternCheckbox);
