@@ -516,7 +516,8 @@ let matchingBaselineJson = normalizedMatchingJson(
   matchingDataFieldAcceptanceThresholdDraft
 );
 let pathsBaselineValue = '';
-let ocrDebugExportDirectoryBaselineValue = 'debug_exports/';
+const DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY = 'data/debug_exports/';
+let ocrDebugExportDirectoryBaselineValue = DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY;
 let inboxPathBaselineValue = '';
 let archiveStructureBaselineJson = JSON.stringify({
   archiveFolders: [],
@@ -27156,12 +27157,12 @@ async function loadPathSettings() {
   if (ocrDebugExportDirectoryEl instanceof HTMLInputElement) {
     ocrDebugExportDirectoryEl.value = typeof payload.ocrDebugExportDirectory === 'string'
       ? payload.ocrDebugExportDirectory
-      : 'debug_exports/';
+      : DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY;
   }
   inboxPathBaselineValue = normalizedPathValue(payload.inboxDirectory);
   pathsBaselineValue = normalizedPathValue(payload.outputBaseDirectory);
   ocrDebugExportDirectoryBaselineValue = normalizedPathValue(
-    typeof payload.ocrDebugExportDirectory === 'string' ? payload.ocrDebugExportDirectory : 'debug_exports/'
+    typeof payload.ocrDebugExportDirectory === 'string' ? payload.ocrDebugExportDirectory : DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY
   );
   updateSettingsActionButtons();
 }
@@ -27542,7 +27543,7 @@ async function savePathSettings() {
     body: JSON.stringify({
       inboxDirectory: inputInboxPathEl.value,
       outputBaseDirectory: outputBasePathEl.value,
-      ocrDebugExportDirectory: ocrDebugExportDirectoryEl instanceof HTMLInputElement ? ocrDebugExportDirectoryEl.value : 'debug_exports/'
+      ocrDebugExportDirectory: ocrDebugExportDirectoryEl instanceof HTMLInputElement ? ocrDebugExportDirectoryEl.value : DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY
     })
   });
 
@@ -27556,7 +27557,7 @@ async function savePathSettings() {
 
   inboxPathBaselineValue = normalizedPathValue(inputInboxPathEl.value);
   pathsBaselineValue = normalizedPathValue(outputBasePathEl.value);
-  ocrDebugExportDirectoryBaselineValue = normalizedPathValue(ocrDebugExportDirectoryEl instanceof HTMLInputElement ? ocrDebugExportDirectoryEl.value : 'debug_exports/');
+  ocrDebugExportDirectoryBaselineValue = normalizedPathValue(ocrDebugExportDirectoryEl instanceof HTMLInputElement ? ocrDebugExportDirectoryEl.value : DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY);
   inputInboxPathEl.value = inboxPathBaselineValue;
   outputBasePathEl.value = pathsBaselineValue;
   if (ocrDebugExportDirectoryEl instanceof HTMLInputElement) {

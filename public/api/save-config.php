@@ -240,7 +240,7 @@ try {
         'ok' => true,
         'inboxDirectory' => $config['inboxDirectory'] ?? '',
         'outputBaseDirectory' => $config['outputBaseDirectory'] ?? '',
-        'ocrDebugExportDirectory' => $config['ocrDebugExportDirectory'] ?? 'debug_exports/',
+        'ocrDebugExportDirectory' => $config['ocrDebugExportDirectory'] ?? DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY,
         'ocrSkipExistingText' => (bool) ($config['ocrSkipExistingText'] ?? true),
         'ocrOptimizeLevel' => (int) ($config['ocrOptimizeLevel'] ?? 1),
         'ocrTextExtractionMethod' => is_string($config['ocrTextExtractionMethod'] ?? null) ? (string) $config['ocrTextExtractionMethod'] : 'layout',

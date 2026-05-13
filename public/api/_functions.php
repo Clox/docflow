@@ -6,6 +6,7 @@ const DOCFLOW_OCR_METADATA_KEY = 'docflow-ocr-version';
 const DOCFLOW_CHROME_EXTENSION_VERSION = '1.0.0';
 const DOCFLOW_CHROME_EXTENSION_ID = 'bgpmmblhdghhdcoeoepbelbonhdhcdkg';
 const DOCFLOW_CHROME_EXTENSION_MANIFEST_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqU9P0SMG3OD3yGoztzCpvGVjdN/kKLgsy8fpCKxlYkIUXzd8eRbFI4kOIMY8PefngWIrVG2dnioOi6naXKtxDFaLvyUkHbxqrqxVK882I4dnKNrygS1HUnWOFLZExwr8+3cJGEvv+gue3Fq6LvTKsNlJQktdmrTqGbD0SLrNopOUPmlRL9qnfHzA4MyqciFiLGZVte7327HRzzQM7LJQ2pG8N8qzt75vift/XEPh4Rvre7nwHmmfQE1UulNaeazvNbtEsmhJwG3wQcsHDKlhUijMiRdrucKLpfnzI/4+ngADIjjibKrBt5bFqJIrBM3LRkuuCAeAWrDWNVUK95WzEQIDAQAB';
+const DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY = 'data/debug_exports/';
 
 function json_response(array $payload, int $status = 200): void
 {
@@ -83,7 +84,7 @@ function load_config(): array
     $inboxDirectory = $config['inboxDirectory'] ?? '';
     $jobsDirectory = $config['jobsDirectory'] ?? '';
     $outputBaseDirectory = $config['outputBaseDirectory'] ?? '';
-    $ocrDebugExportDirectory = $config['ocrDebugExportDirectory'] ?? 'debug_exports/';
+    $ocrDebugExportDirectory = $config['ocrDebugExportDirectory'] ?? DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY;
     $ocrSkipExistingText = $config['ocrSkipExistingText'] ?? true;
     $ocrOptimizeLevel = $config['ocrOptimizeLevel'] ?? 1;
     $stateUpdateTransport = $config['stateUpdateTransport'] ?? 'polling';
@@ -103,11 +104,11 @@ function load_config(): array
         $outputBaseDirectory = '';
     }
     if (!is_string($ocrDebugExportDirectory)) {
-        $ocrDebugExportDirectory = 'debug_exports/';
+        $ocrDebugExportDirectory = DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY;
     }
     $ocrDebugExportDirectory = trim($ocrDebugExportDirectory);
     if ($ocrDebugExportDirectory === '') {
-        $ocrDebugExportDirectory = 'debug_exports/';
+        $ocrDebugExportDirectory = DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY;
     }
     if (!is_bool($ocrSkipExistingText)) {
         $ocrSkipExistingText = filter_var($ocrSkipExistingText, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
@@ -6146,8 +6147,8 @@ function ensure_merged_objects_text_from_storage(string $jobDir, ?string $jobId 
 
 function ocr_debug_export_directory_config_value(array $config): string
 {
-    $path = trim((string) ($config['ocrDebugExportDirectory'] ?? 'debug_exports/'));
-    return $path !== '' ? $path : 'debug_exports/';
+    $path = trim((string) ($config['ocrDebugExportDirectory'] ?? DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY));
+    return $path !== '' ? $path : DEFAULT_OCR_DEBUG_EXPORT_DIRECTORY;
 }
 
 function ocr_debug_export_base_directory(array $config): string

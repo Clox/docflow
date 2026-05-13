@@ -830,7 +830,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <input
       id="snapshot-directory"
       type="text"
-      placeholder="debug_exports/"
+      placeholder="data/debug_exports/"
       spellcheck="false"
       autocorrect="off"
       autocapitalize="off"
