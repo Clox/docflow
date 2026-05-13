@@ -16035,7 +16035,9 @@ function normalizeInspectionRegexPattern(value) {
 }
 
 function extractionFieldDateAtomPattern() {
-  return '(?:20\\d{2}\\s*[-.\\/ ]\\s*\\d{1,2}(?:\\s*[-.\\/ ]\\s*\\d{1,2})?|\\d{1,2}\\s+(?:jan(?:uari|uary)?|feb(?:ruari|ruary)?|mar(?:s|ch)?|apr(?:il)?|maj|may|jun(?:i|e)?|jul(?:i|y)?|aug(?:usti|ust)?|sep(?:t(?:ember)?)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\s+20\\d{2}|(?:jan(?:uari|uary)?|feb(?:ruari|ruary)?|mar(?:s|ch)?|apr(?:il)?|maj|may|jun(?:i|e)?|jul(?:i|y)?|aug(?:usti|ust)?|sep(?:t(?:ember)?)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\s+20\\d{2})';
+  const monthPattern = 'jan(?:uari|uary)?|feb(?:ruari|ruary)?|mar(?:s|ch)?|apr(?:il)?|maj|may|jun(?:i|e)?|jul(?:i|y)?|aug(?:usti|ust)?|sep(?:t(?:ember)?)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+  const numericSeparator = '(?:\\s*[-.\\/]\\s*|\\s+)';
+  return `(?:20\\d{2}${numericSeparator}\\d{1,2}(?:${numericSeparator}\\d{1,2})?|\\d{1,2}\\s+(?:${monthPattern})\\s+20\\d{2}|(?:${monthPattern})\\s+20\\d{2})`;
 }
 
 function extractionFieldAmountAtomPattern() {
@@ -16044,8 +16046,8 @@ function extractionFieldAmountAtomPattern() {
 
 function expandInspectionValuePatternMacros(value) {
   return String(value || '')
-    .replace(/\{DATUM\}/g, `(${extractionFieldDateAtomPattern()})`)
-    .replace(/\{BELOPP\}/g, `(${extractionFieldAmountAtomPattern()})`)
+    .replace(/\{DATUM\}/g, `(?:${extractionFieldDateAtomPattern()})`)
+    .replace(/\{BELOPP\}/g, `(?:${extractionFieldAmountAtomPattern()})`)
     .replace(/\{KRONOR\}/g, `(?<docflow_kronor>(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+))`)
     .replace(/\{ÖREN\}/g, '(?<docflow_oren>\\d{2})')
     .replace(/\{OREN\}/g, '(?<docflow_oren>\\d{2})');
@@ -16059,10 +16061,10 @@ function buildInspectionMatchPattern(value, isRegex) {
 
   return source.split(/(\{DATUM\}|\{BELOPP\}|\{KRONOR\}|\{ÖREN\}|\{OREN\})/g).map((segment) => {
     if (segment === '{DATUM}') {
-      return `(${extractionFieldDateAtomPattern()})`;
+      return `(?:${extractionFieldDateAtomPattern()})`;
     }
     if (segment === '{BELOPP}') {
-      return `(${extractionFieldAmountAtomPattern()})`;
+      return `(?:${extractionFieldAmountAtomPattern()})`;
     }
     if (segment === '{KRONOR}') {
       return `(?<docflow_kronor>(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+))`;

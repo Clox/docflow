@@ -2705,7 +2705,8 @@ function normalize_extraction_field_normalization_replacements(mixed $input): ar
 function extraction_field_date_atom_pattern(): string
 {
     $monthPattern = 'jan(?:uari|uary)?|feb(?:ruari|ruary)?|mar(?:s|ch)?|apr(?:il)?|maj|may|jun(?:i|e)?|jul(?:i|y)?|aug(?:usti|ust)?|sep(?:t(?:ember)?)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
-    return '(?:20\\d{2}\\s*[-.\\/]\\s*\\d{1,2}(?:\\s*[-.\\/]\\s*\\d{1,2})?|\\d{1,2}\\s+(?:' . $monthPattern . ')\\s+20\\d{2}|(?:' . $monthPattern . ')\\s+20\\d{2})';
+    $numericSeparator = '(?:\\s*[-.\\/]\\s*|\\s+)';
+    return '(?:20\\d{2}' . $numericSeparator . '\\d{1,2}(?:' . $numericSeparator . '\\d{1,2})?|\\d{1,2}\\s+(?:' . $monthPattern . ')\\s+20\\d{2}|(?:' . $monthPattern . ')\\s+20\\d{2})';
 }
 
 function extraction_field_amount_atom_pattern(): string
@@ -2790,8 +2791,8 @@ function expand_extraction_field_value_pattern_macros(string $pattern): string
     }
 
     return strtr($pattern, [
-        '{DATUM}' => '(' . extraction_field_date_atom_pattern() . ')',
-        '{BELOPP}' => '(' . extraction_field_amount_atom_pattern() . ')',
+        '{DATUM}' => '(?:' . extraction_field_date_atom_pattern() . ')',
+        '{BELOPP}' => '(?:' . extraction_field_amount_atom_pattern() . ')',
         '{KRONOR}' => '(?<docflow_kronor>' . extraction_field_split_kronor_atom_pattern() . ')',
         '{ÖREN}' => '(?<docflow_oren>' . extraction_field_split_oren_atom_pattern() . ')',
         '{OREN}' => '(?<docflow_oren>' . extraction_field_split_oren_atom_pattern() . ')',
@@ -2895,6 +2896,41 @@ function extraction_field_match_has_semantic_amount_groups(array $match): bool
     $hasKronor = array_key_exists('docflow_kronor', $match) || array_key_exists('KRONOR', $match);
     $hasOren = array_key_exists('docflow_oren', $match) || array_key_exists('ÖREN', $match) || array_key_exists('OREN', $match);
     return $hasKronor && $hasOren;
+}
+
+function extraction_field_concat_capture_group_value(array $match): ?string
+{
+    $captureIndexes = [];
+    foreach ($match as $key => $value) {
+        if (is_int($key) && $key > 0) {
+            $captureIndexes[] = $key;
+        }
+    }
+
+    if ($captureIndexes === []) {
+        return null;
+    }
+
+    sort($captureIndexes, SORT_NUMERIC);
+
+    $parts = [];
+    foreach ($captureIndexes as $captureIndex) {
+        $captureGroup = $match[$captureIndex] ?? null;
+        if (!is_array($captureGroup) || !is_string($captureGroup[0] ?? null)) {
+            continue;
+        }
+
+        $captureValue = (string) $captureGroup[0];
+        if ($captureValue !== '') {
+            $parts[] = $captureValue;
+        }
+    }
+
+    if ($parts === []) {
+        return null;
+    }
+
+    return implode('', $parts);
 }
 
 function extraction_field_runtime_rule_set(array $ruleSet): array
@@ -13007,19 +13043,12 @@ function extraction_field_pattern_candidates_from_text(
                 continue;
             }
         }
-        if ($isRegex && $preferCaptureGroupValue && array_key_exists(1, $match)) {
-            $captureGroup = $match[1];
-            $captureValue = is_array($captureGroup) && is_string($captureGroup[0] ?? null)
-                ? (string) $captureGroup[0]
-                : '';
-            $captureStart = is_array($captureGroup) && is_int($captureGroup[1] ?? null)
-                ? (int) $captureGroup[1]
-                : -1;
-            if ($captureValue === '' || $captureStart < 0) {
-                continue;
+        if ($isRegex && $preferCaptureGroupValue) {
+            $captureValue = extraction_field_concat_capture_group_value($match);
+            if ($captureValue !== null) {
+                $value = $captureValue;
+                $extractedRaw = $captureValue;
             }
-            $value = $captureValue;
-            $extractedRaw = $captureValue;
         }
 
         $candidates[] = [
@@ -13182,13 +13211,16 @@ function extraction_field_document_pattern_candidates_from_lines(
 
         $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null;
         $matchText = is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw;
+        $spanText = is_string($candidate['spanText'] ?? null) ? (string) $candidate['spanText'] : null;
         $value = $candidate['value'] ?? null;
         $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
         if ($value === null || $start < 0) {
             continue;
         }
 
-        $rawLength = is_string($raw) ? strlen($raw) : (is_string($matchText) ? strlen($matchText) : (is_scalar($value) ? strlen((string) $value) : 1));
+        $rawLength = is_string($spanText) && $spanText !== ''
+            ? strlen($spanText)
+            : (is_string($raw) ? strlen($raw) : (is_string($matchText) ? strlen($matchText) : (is_scalar($value) ? strlen((string) $value) : 1)));
         $end = $start + max(1, $rawLength);
         $lineIndex = extraction_field_document_line_index_for_offset($lineEntries, $start);
         if ($lineIndex === null) {
