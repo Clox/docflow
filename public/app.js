@@ -16031,7 +16031,41 @@ function escapeRegexPattern(value) {
 }
 
 function whitespaceFlexibleRegexPattern(value) {
-  return String(value || '').replace(/\s+/gu, '\\s+');
+  const chars = Array.from(String(value || ''));
+  let output = '';
+  let inCharacterClass = false;
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index];
+    if (char === '\\') {
+      if (index + 1 < chars.length) {
+        const nextChar = chars[index + 1];
+        output += /\s/u.test(nextChar) ? nextChar : `${char}${nextChar}`;
+        index += 1;
+      } else {
+        output += char;
+      }
+      continue;
+    }
+    if (char === '[' && !inCharacterClass) {
+      inCharacterClass = true;
+      output += char;
+      continue;
+    }
+    if (char === ']' && inCharacterClass) {
+      inCharacterClass = false;
+      output += char;
+      continue;
+    }
+    if (!inCharacterClass && /\s/u.test(char)) {
+      while (index + 1 < chars.length && /\s/u.test(chars[index + 1])) {
+        index += 1;
+      }
+      output += '\\s+';
+      continue;
+    }
+    output += char;
+  }
+  return output;
 }
 
 function buildOcrSearchRegex(query, useRegex) {
@@ -23134,6 +23168,10 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       renderSearchTermRows();
       searchTermsField.appendChild(searchTermsLabel);
       searchTermsField.appendChild(searchTermsList);
+      const searchTermsHelp = document.createElement('div');
+      searchTermsHelp.className = 'input-help extraction-field-match-help';
+      searchTermsHelp.textContent = 'Mellanslag matchar automatiskt flexibel whitespace i OCR-text.';
+      searchTermsField.appendChild(searchTermsHelp);
       searchOptionBlock.appendChild(searchTermsField);
       optionalControls.appendChild(searchOptionBlock);
 
@@ -23171,6 +23209,10 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       scopeRegexButton.setAttribute('aria-label', 'Regex');
       const scopeInputWrap = createInlineInputWithAccessories(scopeInput, [scopeRegexButton], 'extraction-field-alias-input-wrap');
       const scopeField = createFloatingField('Begränsa till text efter', scopeInputWrap);
+      const scopeHelp = document.createElement('div');
+      scopeHelp.className = 'input-help extraction-field-match-help';
+      scopeHelp.textContent = 'Mellanslag matchar automatiskt flexibel whitespace i OCR-text.';
+      scopeField.appendChild(scopeHelp);
       scopeOptionBlock.appendChild(scopeField);
       optionalControls.appendChild(scopeOptionBlock);
 
@@ -23202,7 +23244,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const valuePatternField = createFloatingField('Värdemönster', valuePatternInput);
       const valuePatternHelp = document.createElement('div');
       valuePatternHelp.className = 'input-help extraction-field-value-pattern-help';
-      valuePatternHelp.textContent = 'Du kan använda {DATUM} och {BELOPP} i värdemönster.';
+      valuePatternHelp.textContent = 'Du kan använda {DATUM} och {BELOPP}. Mellanslag matchar automatiskt flexibel whitespace i OCR-text.';
       valuePatternField.appendChild(valuePatternHelp);
       valuePatternOptionBlock.appendChild(valuePatternField);
       optionalControls.appendChild(valuePatternOptionBlock);
@@ -24128,7 +24170,12 @@ function renderSingleLabelEditor(container, options = {}) {
             updateSettingsActionButtons();
           },
         });
-        ruleFields.appendChild(createFloatingField('Regeltext', textInputWithRegex));
+        const ruleTextField = createFloatingField('Regeltext', textInputWithRegex);
+        const ruleTextHelp = document.createElement('div');
+        ruleTextHelp.className = 'input-help extraction-field-match-help';
+        ruleTextHelp.textContent = 'Mellanslag matchar automatiskt flexibel whitespace i OCR-text.';
+        ruleTextField.appendChild(ruleTextHelp);
+        ruleFields.appendChild(ruleTextField);
       } else {
         ruleFields.appendChild(createFloatingField('Text', textInput));
       }
@@ -27931,10 +27978,11 @@ ocrPagesViewEl.addEventListener('scroll', () => {
   updateOcrPageControls();
 });
 
-settingsModalEl.addEventListener('click', (event) => {
-  if (event.target === settingsModalEl) {
-    closeSettingsModal();
+settingsModalEl.addEventListener('mousedown', (event) => {
+  if (event.button !== 0 || event.target !== settingsModalEl) {
+    return;
   }
+  closeSettingsModal();
 });
 
 if (settingsDialogEl instanceof HTMLElement) {

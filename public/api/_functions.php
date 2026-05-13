@@ -10014,8 +10014,64 @@ function split_lines_for_matching(string $text): array
 
 function regex_pattern_with_whitespace_wildcards(string $pattern): string
 {
-    $rewritten = preg_replace('/\s+/u', '\\s+', $pattern);
-    return is_string($rewritten) ? $rewritten : $pattern;
+    $chars = utf8_chars($pattern);
+    if ($chars === []) {
+        return $pattern;
+    }
+
+    $result = '';
+    $inCharacterClass = false;
+    $count = count($chars);
+    for ($index = 0; $index < $count; $index++) {
+        $char = $chars[$index];
+
+        if ($char === '\\') {
+            $next = $index + 1 < $count ? $chars[$index + 1] : null;
+            $result .= $char;
+            if ($next !== null) {
+                $result .= $next;
+                $index++;
+            }
+            continue;
+        }
+
+        if ($char === '[' && !$inCharacterClass) {
+            $inCharacterClass = true;
+            $result .= $char;
+            continue;
+        }
+
+        if ($char === ']' && $inCharacterClass) {
+            $inCharacterClass = false;
+            $result .= $char;
+            continue;
+        }
+
+        if (!$inCharacterClass && preg_match('/\s/u', $char) === 1) {
+            while ($index + 1 < $count && preg_match('/\s/u', $chars[$index + 1]) === 1) {
+                $index++;
+            }
+            $result .= '\s+';
+            continue;
+        }
+
+        $result .= $char;
+    }
+
+    return $result;
+}
+
+function literal_pattern_with_whitespace_wildcards(string $text, string $delimiter): string
+{
+    $segments = preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($segments) || $segments === []) {
+        return preg_quote($text, $delimiter);
+    }
+
+    return implode('\s+', array_map(
+        static fn (string $segment): string => preg_quote($segment, $delimiter),
+        $segments
+    ));
 }
 
 function build_literal_space_flexible_regex(string $text, array $replacementMap, bool $useWordBoundaries): ?string
@@ -10359,6 +10415,29 @@ function find_document_label_hits(array $lines, array $labels, array $replacemen
     }
 
     return $hits;
+}
+
+function find_all_label_hits(array $lines, array $labels, array $replacementMap, bool $isRegex = false): array
+{
+    $hitsByKey = [];
+    foreach (array_merge(
+        find_label_hits($lines, $labels, $replacementMap, $isRegex),
+        find_document_label_hits($lines, $labels, $replacementMap, $isRegex)
+    ) as $hit) {
+        if (!is_array($hit)) {
+            continue;
+        }
+
+        $hitKey = implode('|', [
+            (string) ((int) ($hit['index'] ?? -1)),
+            (string) ((int) ($hit['labelStart'] ?? -1)),
+            (string) ((int) ($hit['labelEnd'] ?? -1)),
+            is_string($hit['label'] ?? null) ? (string) $hit['label'] : '',
+        ]);
+        $hitsByKey[$hitKey] = $hit;
+    }
+
+    return array_values($hitsByKey);
 }
 
 function matched_label_text_from_hit(array $hit): ?string
@@ -11485,7 +11564,7 @@ function select_best_labeled_candidate(
         'matchText' => null,
     ];
 
-    $hits = find_label_hits($lines, $labels, $replacementMap, $labelsAreRegex);
+    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex);
     foreach ($hits as $hit) {
         $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
         $pattern = is_string($hit['pattern'] ?? null) ? (string) $hit['pattern'] : '';
@@ -12750,8 +12829,8 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
     $pattern = normalize_extraction_field_regex_pattern($pattern);
 
     $delimitedPattern = $isRegex
-        ? '~' . str_replace('~', '\~', $pattern) . '~iu'
-        : '~' . preg_quote($pattern, '~') . '~iu';
+        ? '~' . str_replace('~', '\~', regex_pattern_with_whitespace_wildcards($pattern)) . '~iu'
+        : '~' . literal_pattern_with_whitespace_wildcards($pattern, '~') . '~iu';
 
     $matches = [];
     if (@preg_match_all($delimitedPattern, $text, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) < 1) {
@@ -13498,7 +13577,7 @@ function collect_labeled_candidate_matches(
 {
     $matchesByKey = [];
 
-    $hits = find_label_hits($lines, $labels, $replacementMap, $labelsAreRegex);
+    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex);
     foreach ($hits as $hit) {
         $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
         $pattern = is_string($hit['pattern'] ?? null) ? (string) $hit['pattern'] : '';
@@ -13863,24 +13942,7 @@ function collect_anchored_candidate_matches(
 ): array {
     $matchesByKey = [];
 
-    $hitsByKey = [];
-    foreach (array_merge(
-        find_label_hits($lines, $labels, $replacementMap, $labelsAreRegex),
-        find_document_label_hits($lines, $labels, $replacementMap, $labelsAreRegex)
-    ) as $hit) {
-        if (!is_array($hit)) {
-            continue;
-        }
-        $hitKey = implode('|', [
-            (string) ((int) ($hit['index'] ?? -1)),
-            (string) ((int) ($hit['labelStart'] ?? -1)),
-            (string) ((int) ($hit['labelEnd'] ?? -1)),
-            is_string($hit['label'] ?? null) ? (string) $hit['label'] : '',
-        ]);
-        $hitsByKey[$hitKey] = $hit;
-    }
-
-    $hits = array_values($hitsByKey);
+    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex);
     foreach ($hits as $hit) {
         $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
         $label = is_string($hit['label'] ?? null) ? trim((string) $hit['label']) : '';
@@ -13950,24 +14012,7 @@ function collect_anchored_pattern_candidate_matches_from_segments(
 ): array {
     $matchesByKey = [];
 
-    $hitsByKey = [];
-    foreach (array_merge(
-        find_label_hits($lines, $labels, $replacementMap, $labelsAreRegex),
-        find_document_label_hits($lines, $labels, $replacementMap, $labelsAreRegex)
-    ) as $hit) {
-        if (!is_array($hit)) {
-            continue;
-        }
-        $hitKey = implode('|', [
-            (string) ((int) ($hit['index'] ?? -1)),
-            (string) ((int) ($hit['labelStart'] ?? -1)),
-            (string) ((int) ($hit['labelEnd'] ?? -1)),
-            is_string($hit['label'] ?? null) ? (string) $hit['label'] : '',
-        ]);
-        $hitsByKey[$hitKey] = $hit;
-    }
-
-    $hits = array_values($hitsByKey);
+    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex);
     foreach ($hits as $hit) {
         $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
         $label = is_string($hit['label'] ?? null) ? trim((string) $hit['label']) : '';

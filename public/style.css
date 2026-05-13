@@ -6638,7 +6638,8 @@ body.is-resizing-sidebar {
   gap: 8px;
 }
 
-.extraction-field-value-pattern-help {
+.extraction-field-value-pattern-help,
+.extraction-field-match-help {
   margin-top: 4px;
   font-size: 12px;
   color: #666;
