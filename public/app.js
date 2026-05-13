@@ -23728,6 +23728,22 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       datePositionField.classList.add('extraction-field-date-position-field');
       interpretationRow.appendChild(datePositionField);
 
+      const amountPositionSelect = document.createElement('select');
+      [
+        ['first', 'Första beloppet'],
+        ['second', 'Andra beloppet'],
+        ['last', 'Sista beloppet'],
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        amountPositionSelect.appendChild(option);
+      });
+      amountPositionSelect.value = sanitizeExtractionFieldPosition(ruleSet.amountPosition);
+      const amountPositionField = createFloatingField('Beloppsposition', amountPositionSelect);
+      amountPositionField.classList.add('extraction-field-amount-position-field');
+      interpretationRow.appendChild(amountPositionField);
+
       const normalizationTypeSelect = document.createElement('select');
       normalizationTypeSelect.className = 'extraction-field-normalization-select';
       [
@@ -23889,7 +23905,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         searchOptionBlock.classList.toggle('is-active', requiresSearchTermsCheckbox.checked);
         scopeOptionBlock.classList.toggle('is-active', scopeCheckbox.checked);
         valuePatternOptionBlock.classList.toggle('is-active', useValuePatternCheckbox.checked);
-        datePositionField.hidden = valueType !== 'date';
+        const showPatternPositions = !useValuePatternCheckbox.checked && valueType !== 'text';
+        datePositionField.hidden = !(showPatternPositions && valueType === 'date');
+        amountPositionField.hidden = !(showPatternPositions && valueType === 'amount');
         if (valueType !== 'text') {
           if (normalizationGroup.parentNode) {
             normalizationGroup.remove();
@@ -23920,6 +23938,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         if (valueType !== 'text') {
           syncNormalizationReplacementsToDraft();
         }
+        collection[index].ruleSets[ruleSetIndex].amountPosition = sanitizeExtractionFieldPosition(amountPositionSelect.value);
         renderSearchTermRows();
         matchPatternInspector.refresh();
         updateSettingsActionButtons();
@@ -23933,6 +23952,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       normalizationTypeSelect.addEventListener('change', syncRuleSetUi);
       normalizationCharsInput.addEventListener('input', syncRuleSetUi);
       datePositionSelect.addEventListener('change', syncRuleSetUi);
+      amountPositionSelect.addEventListener('change', syncRuleSetUi);
 
       if (ruleSetIndex > 0) {
         removeRuleSetButton = createTrashButton({
