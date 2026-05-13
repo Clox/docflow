@@ -2713,6 +2713,16 @@ function extraction_field_amount_atom_pattern(): string
     return '-?(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+)(?:[.,]\\d{2})?';
 }
 
+function extraction_field_split_kronor_atom_pattern(): string
+{
+    return '(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+)';
+}
+
+function extraction_field_split_oren_atom_pattern(): string
+{
+    return '\\d{2}';
+}
+
 function extraction_field_date_value_pattern(string $position = 'first'): string
 {
     $atomPattern = extraction_field_date_atom_pattern();
@@ -2782,7 +2792,59 @@ function expand_extraction_field_value_pattern_macros(string $pattern): string
     return strtr($pattern, [
         '{DATUM}' => '(' . extraction_field_date_atom_pattern() . ')',
         '{BELOPP}' => '(' . extraction_field_amount_atom_pattern() . ')',
+        '{KRONOR}' => '(?<docflow_kronor>' . extraction_field_split_kronor_atom_pattern() . ')',
+        '{ÖREN}' => '(?<docflow_oren>' . extraction_field_split_oren_atom_pattern() . ')',
     ]);
+}
+
+function normalize_extraction_field_split_amount_value(string $kronor, string $oren): ?string
+{
+    $normalizedKronor = preg_replace('/[\\s\\x{00A0}.]+/u', '', trim($kronor));
+    if (!is_string($normalizedKronor) || preg_match('/^\\d+$/u', $normalizedKronor) !== 1) {
+        return null;
+    }
+
+    $normalizedOren = trim($oren);
+    if ($normalizedOren === '' || preg_match('/^\\d{2}$/u', $normalizedOren) !== 1) {
+        return null;
+    }
+
+    $amount = normalize_swedish_amount($normalizedKronor . ',' . $normalizedOren);
+    if (!is_float($amount)) {
+        return null;
+    }
+
+    return number_format($amount, 2, '.', '');
+}
+
+function extraction_field_value_pattern_uses_semantic_amount_parts(string $pattern): bool
+{
+    return (
+        str_contains($pattern, '{KRONOR}') && str_contains($pattern, '{ÖREN}')
+    ) || (
+        preg_match('/\(\?<KRONOR>/u', $pattern) === 1
+        && preg_match('/\(\?<ÖREN>/u', $pattern) === 1
+    );
+}
+
+function extraction_field_match_group_value(array $match, array $names): string
+{
+    foreach ($names as $name) {
+        if (!is_string($name) || $name === '' || !array_key_exists($name, $match)) {
+            continue;
+        }
+        $group = $match[$name];
+        if (!is_array($group) || !is_string($group[0] ?? null)) {
+            continue;
+        }
+
+        $value = trim((string) $group[0]);
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return '';
 }
 
 function extraction_field_runtime_rule_set(array $ruleSet): array
@@ -12819,7 +12881,14 @@ function normalize_extraction_field_regex_pattern(string $pattern): string
     return is_string($normalized) ? $normalized : $pattern;
 }
 
-function extraction_field_pattern_candidates_from_text(string $text, string $searchString, bool $isRegex, int $offsetBase = 0, bool $preferCaptureGroupValue = true): array
+function extraction_field_pattern_candidates_from_text(
+    string $text,
+    string $searchString,
+    bool $isRegex,
+    int $offsetBase = 0,
+    bool $preferCaptureGroupValue = true,
+    bool $combineSplitAmountParts = false
+): array
 {
     $pattern = trim($searchString);
     if ($pattern === '') {
@@ -12865,6 +12934,38 @@ function extraction_field_pattern_candidates_from_text(string $text, string $sea
 
         $value = $raw;
         $extractedRaw = $raw;
+        $usedSemanticAmountParts = false;
+        if ($isRegex && $combineSplitAmountParts) {
+            $kronor = extraction_field_match_group_value($match, ['docflow_kronor', 'KRONOR']);
+            $oren = extraction_field_match_group_value($match, ['docflow_oren', 'ÖREN']);
+            $hasSemanticAmountParts = array_key_exists('docflow_kronor', $match)
+                || array_key_exists('KRONOR', $match)
+                || array_key_exists('docflow_oren', $match)
+                || array_key_exists('ÖREN', $match);
+            if ($hasSemanticAmountParts) {
+                $usedSemanticAmountParts = true;
+            }
+
+            $combinedAmount = $kronor !== '' && $oren !== ''
+                ? normalize_extraction_field_split_amount_value($kronor, $oren)
+                : null;
+            if ($combinedAmount !== null) {
+                $value = $combinedAmount;
+                $extractedRaw = $raw;
+                $candidates[] = [
+                    'value' => $value,
+                    'raw' => $extractedRaw,
+                    'matchText' => $raw,
+                    'start' => $offsetBase + $start,
+                    'spanText' => $raw,
+                    'matchType' => 'pattern',
+                ];
+                continue;
+            }
+            if ($usedSemanticAmountParts) {
+                continue;
+            }
+        }
         if ($isRegex && $preferCaptureGroupValue && array_key_exists(1, $match)) {
             $captureGroup = $match[1];
             $captureValue = is_array($captureGroup) && is_string($captureGroup[0] ?? null)
@@ -12991,7 +13092,14 @@ function extraction_field_document_span_bbox(array $lineEntries, array $lineGeom
     return $bbox;
 }
 
-function extraction_field_document_pattern_candidates_from_lines(array $lines, string $searchString, bool $isRegex, array $lineGeometries = [], bool $preferCaptureGroupValue = true): array
+function extraction_field_document_pattern_candidates_from_lines(
+    array $lines,
+    string $searchString,
+    bool $isRegex,
+    array $lineGeometries = [],
+    bool $preferCaptureGroupValue = true,
+    bool $combineSplitAmountParts = false
+): array
 {
     $resolvedPattern = trim($searchString);
     if ($resolvedPattern === '') {
@@ -13013,7 +13121,14 @@ function extraction_field_document_pattern_candidates_from_lines(array $lines, s
         $documentText .= "\n";
     }
 
-    $matches = extraction_field_pattern_candidates_from_text($documentText, $resolvedPattern, $isRegex, 0, $preferCaptureGroupValue);
+    $matches = extraction_field_pattern_candidates_from_text(
+        $documentText,
+        $resolvedPattern,
+        $isRegex,
+        0,
+        $preferCaptureGroupValue,
+        $combineSplitAmountParts
+    );
     if ($matches === []) {
         return [];
     }
@@ -14008,7 +14123,8 @@ function collect_anchored_pattern_candidate_matches_from_segments(
     bool $preferCaptureGroupValue = true,
     array $positionSettings = [],
     array $lineGeometries = [],
-    bool $labelsAreRegex = false
+    bool $labelsAreRegex = false,
+    bool $combineSplitAmountParts = false
 ): array {
     $matchesByKey = [];
 
@@ -14045,7 +14161,8 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                 $pattern,
                 true,
                 0,
-                $preferCaptureGroupValue
+                $preferCaptureGroupValue,
+                $combineSplitAmountParts
             );
             if ($candidates === []) {
                 $lineGeometry = is_array($lineGeometries[$candidateLineIndex] ?? null) ? $lineGeometries[$candidateLineIndex] : null;
@@ -14066,7 +14183,8 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                             $pattern,
                             true,
                             $segmentStart,
-                            $preferCaptureGroupValue
+                            $preferCaptureGroupValue,
+                            $combineSplitAmountParts
                         );
                         if ($segmentMatches === []) {
                             continue;
@@ -14752,9 +14870,21 @@ function extract_generic_text_field_matches(
     );
 }
 
-function extract_unlabeled_pattern_field_result(array $lines, string $pattern, bool $preferCaptureGroupValue = true): array
+function extract_unlabeled_pattern_field_result(
+    array $lines,
+    string $pattern,
+    bool $preferCaptureGroupValue = true,
+    bool $combineSplitAmountParts = false
+): array
 {
-    $candidates = extraction_field_document_pattern_candidates_from_lines($lines, $pattern, true, [], $preferCaptureGroupValue);
+    $candidates = extraction_field_document_pattern_candidates_from_lines(
+        $lines,
+        $pattern,
+        true,
+        [],
+        $preferCaptureGroupValue,
+        $combineSplitAmountParts
+    );
     if ($candidates === []) {
         return empty_extraction_field_result();
     }
@@ -14777,9 +14907,22 @@ function extract_unlabeled_pattern_field_result(array $lines, string $pattern, b
     ];
 }
 
-function extract_unlabeled_pattern_field_matches(array $lines, string $pattern, bool $preferCaptureGroupValue = true, array $lineGeometries = []): array
+function extract_unlabeled_pattern_field_matches(
+    array $lines,
+    string $pattern,
+    bool $preferCaptureGroupValue = true,
+    array $lineGeometries = [],
+    bool $combineSplitAmountParts = false
+): array
 {
-    $candidates = extraction_field_document_pattern_candidates_from_lines($lines, $pattern, true, $lineGeometries, $preferCaptureGroupValue);
+    $candidates = extraction_field_document_pattern_candidates_from_lines(
+        $lines,
+        $pattern,
+        true,
+        $lineGeometries,
+        $preferCaptureGroupValue,
+        $combineSplitAmountParts
+    );
     if ($candidates === []) {
         return [];
     }
@@ -14944,6 +15087,7 @@ function extract_configured_rule_set_field_matches(
     $valuePattern = is_string($runtimeRuleSet['valuePattern'] ?? null) ? trim((string) $runtimeRuleSet['valuePattern']) : '';
     $usesValuePattern = normalize_extraction_field_use_value_pattern($runtimeRuleSet['useValuePattern'] ?? null, $valuePattern)
         && $valuePattern !== '';
+    $combineSplitAmountParts = $valueType === 'amount' && extraction_field_value_pattern_uses_semantic_amount_parts($valuePattern);
 
     $preferCaptureGroupValue = $valueType === 'date' || $valueType === 'amount' || $normalizationType !== 'replacements';
     $candidateExtractor = match ($valueType) {
@@ -14972,7 +15116,13 @@ function extract_configured_rule_set_field_matches(
     if (!$requiresSearchTerms) {
         if ($usesValuePattern || $valueType === 'date') {
             return annotate_extraction_field_matches_with_scope(
-                extract_unlabeled_pattern_field_matches($lines, $valuePattern, $preferCaptureGroupValue, $lineGeometries),
+                extract_unlabeled_pattern_field_matches(
+                    $lines,
+                    $valuePattern,
+                    $preferCaptureGroupValue,
+                    $lineGeometries,
+                    $combineSplitAmountParts
+                ),
                 $scopeDebug
             );
         }
@@ -14998,7 +15148,8 @@ function extract_configured_rule_set_field_matches(
             $preferCaptureGroupValue,
             $positionSettings,
             $lineGeometries,
-            $labelsAreRegex
+            $labelsAreRegex,
+            $combineSplitAmountParts
         ), $scopeDebug);
     }
 
