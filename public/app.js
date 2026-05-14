@@ -1671,9 +1671,12 @@ function labelDisplayName(labelId) {
   return filenameTemplateLabelNameById(normalizedId) || normalizedId;
 }
 
-function createJobLabelsSummaryChip(text, className = 'job-labels-summary-chip') {
+function createJobLabelsSummaryChip(text, className = 'job-labels-summary-chip', title = '') {
   const chipEl = document.createElement('span');
   chipEl.className = className;
+  if (typeof title === 'string' && title.trim() !== '') {
+    chipEl.title = title.trim();
+  }
   const textEl = document.createElement('span');
   textEl.className = className === 'job-labels-summary-overflow'
     ? ''
@@ -1681,6 +1684,88 @@ function createJobLabelsSummaryChip(text, className = 'job-labels-summary-chip')
   textEl.textContent = text;
   chipEl.appendChild(textEl);
   return chipEl;
+}
+
+function createJobDataFieldSummaryChip(label, value, title = '') {
+  const chipEl = document.createElement('span');
+  chipEl.className = 'job-labels-summary-chip job-labels-summary-chip--data-field';
+  if (typeof title === 'string' && title.trim() !== '') {
+    chipEl.title = title.trim();
+  }
+
+  const keyEl = document.createElement('span');
+  keyEl.className = 'job-labels-summary-data-field-key';
+  keyEl.textContent = label;
+
+  const separatorEl = document.createElement('span');
+  separatorEl.className = 'job-labels-summary-data-field-separator';
+  separatorEl.textContent = ':';
+
+  const valueEl = document.createElement('span');
+  valueEl.className = 'job-labels-summary-data-field-value';
+  valueEl.textContent = value;
+
+  chipEl.append(keyEl, separatorEl, valueEl);
+  return chipEl;
+}
+
+function jobLabelsSummaryItems(job) {
+  const items = [];
+  normalizeSelectedLabelIds(effectiveSelectedLabelIds(job))
+    .map((labelId) => labelDisplayName(labelId))
+    .filter((labelName) => labelName !== '')
+    .forEach((labelName) => {
+      items.push({
+        type: 'label',
+        text: labelName,
+        className: 'job-labels-summary-chip',
+        title: `Etikett: ${labelName}`,
+      });
+    });
+
+  extractionFieldComparisonKeysForJob(job).forEach((fieldKey) => {
+    const value = primaryExtractionFieldValueForJob(job, fieldKey);
+    if (value === '') {
+      return;
+    }
+    const name = extractionFieldDisplayNameByKey(fieldKey);
+    const label = name !== '' ? name : fieldKey;
+    items.push({
+      type: 'data-field',
+      text: `${label}: ${value}`,
+      label,
+      value,
+      className: 'job-labels-summary-chip job-labels-summary-chip--data-field',
+      title: `Datafält: ${label} = ${value}`,
+    });
+  });
+
+  return items;
+}
+
+function jobLabelsSummaryTooltip(job) {
+  const items = jobLabelsSummaryItems(job);
+  if (items.length < 1) {
+    return '';
+  }
+
+  const labels = items
+    .filter((item) => item.type === 'label')
+    .map((item) => item.text);
+  const fields = items
+    .filter((item) => item.type === 'data-field')
+    .map((item) => `${item.label}: ${item.value}`);
+  const lines = [];
+  if (labels.length > 0) {
+    lines.push('Etiketter:', ...labels.map((label) => `- ${label}`));
+  }
+  if (fields.length > 0) {
+    if (lines.length > 0) {
+      lines.push('');
+    }
+    lines.push('Datafält:', ...fields.map((field) => `- ${field}`));
+  }
+  return lines.join('\n');
 }
 
 function measureUiTextWidth(text, font) {
@@ -1741,13 +1826,11 @@ function syncJobLabelsExpandedWidth(job = findJobById(selectedJobId)) {
   }
 
   const baseWidth = controlRowEl.offsetWidth || jobLabelsFieldEl.offsetWidth || 0;
-  const labelNames = normalizeSelectedLabelIds(effectiveSelectedLabelIds(job))
-    .map((labelId) => labelDisplayName(labelId))
-    .filter((labelName) => labelName !== '');
+  const summaryItems = jobLabelsSummaryItems(job);
   const chipFont = `11px ${window.getComputedStyle(jobLabelsFieldEl).fontFamily}`;
-  const chipWidths = labelNames.length > 0
-    ? labelNames.map((labelName) => Math.ceil(measureUiTextWidth(labelName, chipFont) + 24))
-    : [Math.ceil(measureUiTextWidth('Inga etiketter', window.getComputedStyle(jobLabelsFieldEl).font) + 20)];
+  const chipWidths = summaryItems.length > 0
+    ? summaryItems.map((item) => Math.ceil(measureUiTextWidth(item.text, chipFont) + (item.type === 'data-field' ? 50 : 24)))
+    : [Math.ceil(measureUiTextWidth('Inga etiketter eller datafält', window.getComputedStyle(jobLabelsFieldEl).font) + 20)];
   const chipsTotalWidth = chipWidths.reduce((sum, width) => sum + width, 0) + Math.max(0, chipWidths.length - 1) * 6 + 18;
   const resetWidth = resetLabelsActionEl instanceof HTMLButtonElement && !resetLabelsActionEl.hidden
     ? (resetLabelsActionEl.offsetWidth || 28) + 6
@@ -1785,48 +1868,57 @@ function normalizedAppNoticeText(text) {
     : '';
 }
 
-function renderJobLabelsSummary(labelIds) {
+function renderJobLabelsSummary(job) {
   if (!(jobLabelsSummaryEl instanceof HTMLElement)) {
     return;
   }
 
   const summaryExpanded = jobLabelsOverlayOpen;
-  const labels = normalizeSelectedLabelIds(labelIds)
-    .map((labelId) => labelDisplayName(labelId))
-    .filter((labelName) => labelName !== '');
+  const summaryItems = jobLabelsSummaryItems(job);
+  const tooltip = jobLabelsSummaryTooltip(job);
+  const summaryButtonEl = jobLabelsSummaryEl.closest('.job-labels-field');
+  if (summaryButtonEl instanceof HTMLElement) {
+    summaryButtonEl.title = tooltip;
+  }
 
   jobLabelsSummaryEl.replaceChildren();
-  jobLabelsSummaryEl.classList.toggle('is-empty', labels.length < 1);
+  jobLabelsSummaryEl.classList.toggle('is-empty', summaryItems.length < 1);
 
-  if (labels.length < 1) {
-    jobLabelsSummaryEl.textContent = 'Inga etiketter';
+  if (summaryItems.length < 1) {
+    jobLabelsSummaryEl.textContent = 'Inga etiketter eller datafält';
     return;
   }
 
   if (summaryExpanded) {
-    labels.forEach((labelName) => {
-      jobLabelsSummaryEl.appendChild(createJobLabelsSummaryChip(labelName));
+    summaryItems.forEach((item) => {
+      jobLabelsSummaryEl.appendChild(item.type === 'data-field'
+        ? createJobDataFieldSummaryChip(item.label, item.value, item.title)
+        : createJobLabelsSummaryChip(item.text, item.className, item.title));
     });
     return;
   }
 
   const renderVisibleCount = (visibleCount) => {
     jobLabelsSummaryEl.replaceChildren();
-    labels.slice(0, visibleCount).forEach((labelName) => {
-      jobLabelsSummaryEl.appendChild(createJobLabelsSummaryChip(labelName));
+    const visibleItems = summaryItems.slice(0, Math.max(0, visibleCount));
+    visibleItems.forEach((item) => {
+      jobLabelsSummaryEl.appendChild(item.type === 'data-field'
+        ? createJobDataFieldSummaryChip(item.label, item.value, item.title)
+        : createJobLabelsSummaryChip(item.text, item.className, item.title));
     });
-    if (visibleCount < labels.length) {
-      jobLabelsSummaryEl.appendChild(createJobLabelsSummaryChip(`+${labels.length - visibleCount}`, 'job-labels-summary-overflow'));
+    const hiddenCount = Math.max(0, summaryItems.length - visibleItems.length);
+    if (hiddenCount > 0) {
+      jobLabelsSummaryEl.appendChild(createJobLabelsSummaryChip(`+${hiddenCount}`, 'job-labels-summary-overflow'));
     }
   };
 
-  renderVisibleCount(labels.length);
+  renderVisibleCount(summaryItems.length);
   const maxWidth = jobLabelsSummaryEl.clientWidth;
   if (!(maxWidth > 0)) {
     return;
   }
 
-  let visibleCount = labels.length;
+  let visibleCount = summaryItems.length;
   while (visibleCount > 0 && jobLabelsSummaryEl.scrollWidth > maxWidth + 1) {
     visibleCount -= 1;
     renderVisibleCount(visibleCount);
@@ -1842,7 +1934,7 @@ function scheduleJobLabelsSummaryRender(job = findJobById(selectedJobId)) {
   }
   jobLabelsSummaryRenderFrame = window.requestAnimationFrame(() => {
     jobLabelsSummaryRenderFrame = null;
-    renderJobLabelsSummary(effectiveSelectedLabelIds(job));
+    renderJobLabelsSummary(job);
     syncJobLabelsExpandedWidth(job);
   });
 }
@@ -2958,7 +3050,7 @@ function setLabelsForJob(job) {
   if (!job) {
     closeJobLabelsOverlay();
     jobLabelsFieldEl.disabled = true;
-    renderJobLabelsSummary([]);
+    renderJobLabelsSummary(null);
     if (jobLabelsSelectedEl instanceof HTMLElement) {
       jobLabelsSelectedEl.replaceChildren();
       jobLabelsSelectedEl.classList.add('is-empty');

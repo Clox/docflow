@@ -2213,6 +2213,35 @@ body.is-resizing-sidebar {
   color: #1d4ed8;
 }
 
+.job-labels-summary-chip--data-field {
+  gap: 4px;
+  background: #eaf7ee;
+  border-color: #95d2aa;
+  color: #245238;
+}
+
+.job-labels-summary-data-field-key {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.job-labels-summary-data-field-separator {
+  color: #5d9270;
+}
+
+.job-labels-summary-data-field-value {
+  max-width: 160px;
+  overflow: hidden;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: #d8efdf;
+  color: #17432b;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
 .job-labels-field-hint {
   position: absolute;
   left: 0;
