@@ -7280,6 +7280,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
 
     const row = document.createElement('div');
     row.className = 'settings-backup-row';
+    row.dataset.snapshotFolderName = item.folderName;
 
     const selection = document.createElement('label');
     selection.className = 'snapshot-selection';
@@ -7413,8 +7414,14 @@ function highlightOcrDebugExport(folderName) {
   renderOcrDebugExportList();
   ocrDebugExportHighlightTimer = window.setTimeout(() => {
     ocrDebugExportHighlightTimer = null;
+    if (ocrDebugExportListEl instanceof HTMLElement) {
+      const highlightedRow = Array.from(ocrDebugExportListEl.querySelectorAll('.settings-backup-row'))
+        .find((row) => row instanceof HTMLElement && row.dataset.snapshotFolderName === normalizedFolderName);
+      if (highlightedRow instanceof HTMLElement) {
+        highlightedRow.classList.remove('settings-highlight-target');
+      }
+    }
     ocrDebugExportHighlightedFolderName = '';
-    renderOcrDebugExportList();
   }, 1800);
 }
 
@@ -7524,6 +7531,7 @@ async function createOcrDebugExport() {
     if (requestToken === ocrDebugExportCreateRequestToken) {
       ocrDebugExportCreateLoading = false;
       renderOcrDebugExportCreateState();
+      renderOcrDebugExportList();
     }
   }
 }
@@ -7740,7 +7748,7 @@ function openOcrDebugExportDialog() {
   history.append(historyTitle, list);
 
   const actions = document.createElement('div');
-  actions.className = 'panel-actions';
+  actions.className = 'panel-actions snapshot-dialog-footer';
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
   closeButton.textContent = 'Stäng';

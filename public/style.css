@@ -4384,6 +4384,7 @@ body.is-resizing-sidebar {
 
 .snapshot-dialog .label-import-dialog-body {
   min-width: 0;
+  overflow: hidden;
 }
 
 .snapshot-controls {
@@ -4393,6 +4394,25 @@ body.is-resizing-sidebar {
   align-items: flex-end;
   margin-top: 12px;
   margin-bottom: 12px;
+}
+
+.snapshot-dialog .settings-backup-history {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.snapshot-dialog .settings-backup-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.snapshot-dialog-footer {
+  flex: 0 0 auto;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
 }
 
 .snapshot-filter-field {
