@@ -2264,6 +2264,32 @@ function normalize_filename_template_candidate_parts(mixed $input, int $depth = 
     ));
 }
 
+function filename_template_date_format_default(): string
+{
+    return 'YYYY-MM-DD';
+}
+
+function filename_template_date_formats(): array
+{
+    return [
+        'YYYY-MM-DD',
+        'YYYY-MM',
+        'YYYY',
+        'MMM-YYYY',
+        'MMMM YYYY',
+        'DD MMM YYYY',
+    ];
+}
+
+function normalize_filename_template_date_format(mixed $value, string $fallback = ''): string
+{
+    $normalized = is_string($value) ? trim($value) : '';
+    if (in_array($normalized, filename_template_date_formats(), true)) {
+        return $normalized;
+    }
+    return $fallback;
+}
+
 function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
 {
     if (!is_array($input) || $depth > 6) {
@@ -2274,17 +2300,26 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
     $prefixParts = normalize_filename_template_parts($input['prefixParts'] ?? [], $depth + 1);
     $suffixParts = normalize_filename_template_parts($input['suffixParts'] ?? [], $depth + 1);
     if ($type === 'dataField' || $type === 'systemField') {
-        $key = is_string($input['key'] ?? null) ? trim((string) $input['key']) : '';
+        $key = is_string($input['key'] ?? null)
+            ? trim((string) $input['key'])
+            : ($type === 'dataField' && is_string($input['fieldKey'] ?? null)
+                ? trim((string) $input['fieldKey'])
+                : ($type === 'systemField' && is_string($input['systemFieldKey'] ?? null) ? trim((string) $input['systemFieldKey']) : ''));
         if ($key === '') {
             return null;
         }
 
-        return [
+        $normalized = [
             'type' => $type,
             'key' => $key,
             'prefixParts' => $prefixParts,
             'suffixParts' => $suffixParts,
         ];
+        $dateFormat = normalize_filename_template_date_format($input['dateFormat'] ?? null);
+        if ($dateFormat !== '') {
+            $normalized['dateFormat'] = $dateFormat;
+        }
+        return $normalized;
     }
 
     if ($type === 'folder') {
@@ -4390,6 +4425,10 @@ function filename_template_part_review_label(array $part, array $nameMaps): stri
         $key = is_string($part['key'] ?? null) ? trim((string) $part['key']) : '';
         $resolved = $nameMaps[$type][$key] ?? $key;
         $label = $resolved !== '' ? $resolved : ($type === 'systemField' ? 'Systemdatafält' : 'Datafält');
+        $dateFormat = normalize_filename_template_date_format($part['dateFormat'] ?? null);
+        if ($dateFormat !== '') {
+            $label .= ':' . $dateFormat;
+        }
     } elseif ($type === 'folder') {
         $label = 'Mapp (legacy)';
     } elseif ($type === 'labels') {
@@ -15741,6 +15780,74 @@ function partition_archiving_field_values(array $values, array $rules): array
     ];
 }
 
+function parse_filename_template_date_value(mixed $value): ?array
+{
+    $text = is_scalar($value) || $value === null ? trim((string) $value) : '';
+    if ($text === '') {
+        return null;
+    }
+    if (preg_match('/^(\d{4})(?:[-\/.](\d{1,2})(?:[-\/.](\d{1,2}))?)?$/u', $text, $matches) !== 1) {
+        return null;
+    }
+
+    $year = (int) $matches[1];
+    $month = isset($matches[2]) && $matches[2] !== '' ? (int) $matches[2] : null;
+    $day = isset($matches[3]) && $matches[3] !== '' ? (int) $matches[3] : null;
+    if ($year < 2000 || $year > 2099) {
+        return null;
+    }
+    if ($month !== null && ($month < 1 || $month > 12)) {
+        return null;
+    }
+    if ($day !== null && ($month === null || !checkdate($month, $day, $year))) {
+        return null;
+    }
+
+    return [
+        'year' => $year,
+        'month' => $month,
+        'day' => $day,
+    ];
+}
+
+function format_filename_template_date_value(mixed $value, mixed $format = null): string
+{
+    $text = is_scalar($value) || $value === null ? trim((string) $value) : '';
+    $parsed = parse_filename_template_date_value($text);
+    if ($parsed === null) {
+        return $text;
+    }
+
+    $resolvedFormat = normalize_filename_template_date_format($format, filename_template_date_format_default());
+    $yearText = sprintf('%04d', (int) $parsed['year']);
+    $month = is_int($parsed['month']) ? $parsed['month'] : null;
+    $day = is_int($parsed['day']) ? $parsed['day'] : null;
+    $monthText = $month !== null ? sprintf('%02d', $month) : '';
+    $dayText = $day !== null ? sprintf('%02d', $day) : '';
+    $shortMonths = ['JAN', 'FEB', 'MAR', 'APR', 'MAJ', 'JUN', 'JUL', 'AUG', 'SEP', 'OKT', 'NOV', 'DEC'];
+    $longMonths = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september', 'oktober', 'november', 'december'];
+
+    if ($resolvedFormat === 'YYYY') {
+        return $yearText;
+    }
+    if ($resolvedFormat === 'YYYY-MM') {
+        return $month !== null ? ($yearText . '-' . $monthText) : $yearText;
+    }
+    if ($resolvedFormat === 'MMM-YYYY') {
+        return $month !== null ? ($shortMonths[$month - 1] . '-' . $yearText) : $yearText;
+    }
+    if ($resolvedFormat === 'MMMM YYYY') {
+        return $month !== null ? ($longMonths[$month - 1] . ' ' . $yearText) : $yearText;
+    }
+    if ($resolvedFormat === 'DD MMM YYYY') {
+        return $month !== null && $day !== null ? ($dayText . ' ' . $shortMonths[$month - 1] . ' ' . $yearText) : $text;
+    }
+    if ($month === null) {
+        return $yearText;
+    }
+    return $day !== null ? ($yearText . '-' . $monthText . '-' . $dayText) : ($yearText . '-' . $monthText);
+}
+
 function evaluate_filename_template_parts_backend(array $parts, array $fieldValues): string
 {
     if ($parts === []) {
@@ -15763,6 +15870,11 @@ function evaluate_filename_template_parts_backend(array $parts, array $fieldValu
             $value = is_scalar($firstValue) || $firstValue === null
                 ? trim((string) $firstValue)
                 : '';
+            $fieldTypes = is_array($fieldValues['__fieldTypes'] ?? null) ? $fieldValues['__fieldTypes'] : [];
+            $valueType = is_string($fieldTypes[$key] ?? null) ? trim((string) $fieldTypes[$key]) : '';
+            if ($value !== '' && $valueType === 'date') {
+                $value = format_filename_template_date_value($value, $part['dateFormat'] ?? null);
+            }
             if ($value === '') {
                 continue;
             }
@@ -16052,6 +16164,9 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
             $fieldTypesByKey[$fieldKey] = legacy_extraction_field_type_for_value_type(extraction_field_value_type($fieldDefinition));
         }
     }
+    if (!isset($fieldTypesByKey['date']) && isset($fieldTypesByKey['due_date'])) {
+        $fieldTypesByKey['date'] = $fieldTypesByKey['due_date'];
+    }
 
     $folder = $folderId !== '' ? ($foldersById[$folderId] ?? null) : null;
     $sender = $senderId > 0 ? find_sender_by_id($senders, $senderId) : null;
@@ -16114,6 +16229,9 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
     ), static fn (string $value): bool => $value !== ''));
     if ($labelIds !== []) {
         $values['__labelIds'] = array_values(array_unique($labelIds));
+    }
+    if ($fieldTypesByKey !== []) {
+        $values['__fieldTypes'] = $fieldTypesByKey;
     }
 
     return $values;

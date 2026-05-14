@@ -7579,6 +7579,10 @@ body.is-resizing-sidebar {
   background: #fff4e7;
 }
 
+.filename-template-inline-token-center--data .filename-template-inline-token-floating-field > .floating-input-label {
+  background: #eefcf4;
+}
+
 .filename-template-inline-token-floating-field > .filename-template-inline-token-select,
 .filename-template-inline-token-floating-field > .filename-template-inline-token-slot,
 .filename-template-inline-token-floating-field > .filename-template-inline-token-slot-wrap {

@@ -10647,6 +10647,96 @@ function formatFilenameAmount(value) {
   return amount.toFixed(2).replace('.', ',');
 }
 
+const FILENAME_TEMPLATE_DATE_FORMAT_DEFAULT = 'YYYY-MM-DD';
+const FILENAME_TEMPLATE_DATE_FORMATS = [
+  ['YYYY-MM-DD', 'YYYY-MM-DD', '2026-11-03'],
+  ['YYYY-MM', 'YYYY-MM', '2026-11'],
+  ['YYYY', 'YYYY', '2026'],
+  ['MMM-YYYY', 'MMM-YYYY', 'NOV-2026'],
+  ['MMMM YYYY', 'MMMM YYYY', 'november 2026'],
+  ['DD MMM YYYY', 'DD MMM YYYY', '03 NOV 2026'],
+];
+const SWEDISH_MONTH_SHORT_NAMES = ['JAN', 'FEB', 'MAR', 'APR', 'MAJ', 'JUN', 'JUL', 'AUG', 'SEP', 'OKT', 'NOV', 'DEC'];
+const SWEDISH_MONTH_LONG_NAMES = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september', 'oktober', 'november', 'december'];
+
+function filenameTemplateDateFormatOptions() {
+  return FILENAME_TEMPLATE_DATE_FORMATS.map(([value, label, example]) => ({ value, label, example }));
+}
+
+function sanitizeFilenameTemplateDateFormat(value, fallback = FILENAME_TEMPLATE_DATE_FORMAT_DEFAULT) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  const allowed = new Set(FILENAME_TEMPLATE_DATE_FORMATS.map(([format]) => format));
+  if (allowed.has(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
+function parseFilenameTemplateDateValue(value) {
+  const text = typeof value === 'string'
+    ? value.trim()
+    : (value === null || value === undefined ? '' : String(value).trim());
+  if (text === '') {
+    return null;
+  }
+  const match = text.match(/^(\d{4})(?:[-/.](\d{1,2})(?:[-/.](\d{1,2}))?)?$/u);
+  if (!match) {
+    return null;
+  }
+  const year = Number.parseInt(match[1], 10);
+  const month = match[2] ? Number.parseInt(match[2], 10) : null;
+  const day = match[3] ? Number.parseInt(match[3], 10) : null;
+  if (!Number.isInteger(year) || year < 2000 || year > 2099) {
+    return null;
+  }
+  if (month !== null && (!Number.isInteger(month) || month < 1 || month > 12)) {
+    return null;
+  }
+  if (day !== null) {
+    if (month === null || !Number.isInteger(day) || day < 1 || day > 31) {
+      return null;
+    }
+    const candidate = new Date(Date.UTC(year, month - 1, day));
+    if (candidate.getUTCFullYear() !== year || candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) {
+      return null;
+    }
+  }
+  return { year, month, day };
+}
+
+function formatFilenameTemplateDateValue(value, format = FILENAME_TEMPLATE_DATE_FORMAT_DEFAULT) {
+  const parsed = parseFilenameTemplateDateValue(value);
+  if (!parsed) {
+    return typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+  }
+  const resolvedFormat = sanitizeFilenameTemplateDateFormat(format);
+  const yearText = String(parsed.year).padStart(4, '0');
+  const monthText = parsed.month !== null ? String(parsed.month).padStart(2, '0') : '';
+  const dayText = parsed.day !== null ? String(parsed.day).padStart(2, '0') : '';
+  if (resolvedFormat === 'YYYY') {
+    return yearText;
+  }
+  if (resolvedFormat === 'YYYY-MM') {
+    return parsed.month !== null ? `${yearText}-${monthText}` : yearText;
+  }
+  if (resolvedFormat === 'MMM-YYYY') {
+    return parsed.month !== null ? `${SWEDISH_MONTH_SHORT_NAMES[parsed.month - 1]}-${yearText}` : yearText;
+  }
+  if (resolvedFormat === 'MMMM YYYY') {
+    return parsed.month !== null ? `${SWEDISH_MONTH_LONG_NAMES[parsed.month - 1]} ${yearText}` : yearText;
+  }
+  if (resolvedFormat === 'DD MMM YYYY') {
+    if (parsed.month === null || parsed.day === null) {
+      return typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+    }
+    return `${dayText} ${SWEDISH_MONTH_SHORT_NAMES[parsed.month - 1]} ${yearText}`;
+  }
+  if (parsed.month === null) {
+    return yearText;
+  }
+  return parsed.day !== null ? `${yearText}-${monthText}-${dayText}` : `${yearText}-${monthText}`;
+}
+
 function extractionFieldTypeByKey(fieldKey) {
   const normalizedKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
   if (!normalizedKey) {
@@ -10776,6 +10866,21 @@ function buildFilenameFieldValues(job, options = {}) {
       values.set(key, text);
     }
   };
+  const fieldTypesByKey = {};
+  [
+    ...sanitizeExtractionFields(predefinedExtractionFieldsDraft),
+    ...sanitizeExtractionFields(extractionFieldsDraft),
+    ...sanitizeExtractionFields(systemExtractionFieldsDraft),
+  ].forEach((field) => {
+    const key = typeof field.key === 'string' ? field.key.trim() : '';
+    if (key !== '') {
+      fieldTypesByKey[key] = sanitizeExtractionFieldValueType(field.valueType, field, Array.isArray(field.ruleSets) ? field.ruleSets[0] : null);
+    }
+  });
+  if (!fieldTypesByKey.date && fieldTypesByKey.due_date) {
+    fieldTypesByKey.date = fieldTypesByKey.due_date;
+  }
+  values.set('__fieldTypes', fieldTypesByKey);
 
   setValue('folder', archiveFolderDisplayName(folder));
   setValue('client', clientDirName);
@@ -10888,7 +10993,12 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
     if (part.type === 'dataField' || part.type === 'systemField') {
       const key = typeof part.key === 'string' ? part.key.trim() : '';
       const rawValue = key ? fieldValues.get(key) : '';
-      const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+      const fieldTypes = fieldValues.get('__fieldTypes');
+      const valueType = fieldTypes && typeof fieldTypes === 'object' ? String(fieldTypes[key] || '').trim() : '';
+      let value = typeof rawValue === 'string' ? rawValue.trim() : '';
+      if (value !== '' && valueType === 'date') {
+        value = formatFilenameTemplateDateValue(value, part.dateFormat);
+      }
       if (value === '') {
         return;
       }
@@ -21205,16 +21315,25 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
   const prefixParts = sanitizeFilenameTemplateParts(input.prefixParts, depth + 1);
   const suffixParts = sanitizeFilenameTemplateParts(input.suffixParts, depth + 1);
   if (type === 'dataField' || type === 'systemField') {
-    const key = typeof input.key === 'string' ? input.key.trim() : '';
+    const key = typeof input.key === 'string'
+      ? input.key.trim()
+      : (type === 'dataField' && typeof input.fieldKey === 'string'
+        ? input.fieldKey.trim()
+        : (type === 'systemField' && typeof input.systemFieldKey === 'string' ? input.systemFieldKey.trim() : ''));
     if (!key) {
       return null;
     }
-    return {
+    const normalized = {
       type,
       key,
       prefixParts,
       suffixParts,
     };
+    const dateFormat = sanitizeFilenameTemplateDateFormat(input.dateFormat, '');
+    if (dateFormat !== '') {
+      normalized.dateFormat = dateFormat;
+    }
+    return normalized;
   }
   if (type === 'folder') {
     return {
@@ -21782,6 +21901,7 @@ function filenameTemplateSystemFieldOptions() {
     .map((field) => ({
       key: field.key,
       label: field.name,
+      valueType: sanitizeExtractionFieldValueType(field.valueType, field, Array.isArray(field.ruleSets) ? field.ruleSets[0] : null),
       tone: 'system',
       title: filenameTemplateSystemFieldTitle(field.key, field.name),
     }));
@@ -21818,6 +21938,7 @@ function filenameTemplateDataFieldOptions() {
     options.push({
       key,
       label: name,
+      valueType: sanitizeExtractionFieldValueType(normalized.valueType, normalized, Array.isArray(normalized.ruleSets) ? normalized.ruleSets[0] : null),
       tone: 'data',
       title: `Lägger till värdet för datafältet "${name}" i filnamnet.`,
     });
@@ -27037,6 +27158,8 @@ let activeEditable = null;
       const select = document.createElement('select');
       select.className = 'filename-template-inline-token-select';
       const options = filenameTemplateDataFieldOptions();
+      let dateFormatField = null;
+      let dateFormatSelect = null;
       if (options.length === 0) {
         const option = document.createElement('option');
         option.value = '';
@@ -27057,11 +27180,43 @@ let activeEditable = null;
         tokenPart.key = select.value;
       }
       select.title = meta.title || 'Välj vilket datafält som ska skrivas in i filnamnet.';
+      const syncDateFormatControl = () => {
+        const selectedOption = options.find((option) => option.key === tokenPart.key) || null;
+        const isDateField = selectedOption && selectedOption.valueType === 'date';
+        center.classList.toggle('filename-template-inline-token-center--stacked', !!isDateField);
+        if (dateFormatField instanceof HTMLElement) {
+          dateFormatField.hidden = !isDateField;
+        }
+        if (isDateField && dateFormatSelect instanceof HTMLSelectElement) {
+          tokenPart.dateFormat = sanitizeFilenameTemplateDateFormat(tokenPart.dateFormat);
+          dateFormatSelect.value = tokenPart.dateFormat;
+        } else {
+          delete tokenPart.dateFormat;
+        }
+      };
       select.addEventListener('change', () => {
         tokenPart.key = select.value;
+        syncDateFormatControl();
         syncPartControlChange();
       });
       center.appendChild(select);
+      dateFormatSelect = document.createElement('select');
+      dateFormatSelect.className = 'filename-template-inline-token-select';
+      filenameTemplateDateFormatOptions().forEach((formatOption) => {
+        const option = document.createElement('option');
+        option.value = formatOption.value;
+        option.textContent = `${formatOption.label} (${formatOption.example})`;
+        dateFormatSelect.appendChild(option);
+      });
+      dateFormatSelect.value = sanitizeFilenameTemplateDateFormat(tokenPart.dateFormat);
+      dateFormatSelect.title = 'Välj hur datumvärdet ska formatteras i filnamn eller sökväg.';
+      dateFormatSelect.addEventListener('change', () => {
+        tokenPart.dateFormat = sanitizeFilenameTemplateDateFormat(dateFormatSelect.value);
+        syncPartControlChange();
+      });
+      dateFormatField = createFloatingField('Datumformat', dateFormatSelect, 'filename-template-inline-token-floating-field');
+      center.appendChild(dateFormatField);
+      syncDateFormatControl();
     } else if (tokenPart.type === 'labels') {
       center.appendChild(label);
       const separatorInput = document.createElement('input');
