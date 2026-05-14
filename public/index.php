@@ -716,6 +716,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <div id="archive-structure-list" class="categories-list"></div>
     <div class="categories-actions settings-section-actions">
       <button id="archive-structure-add-folder" type="button">Lägg till mapp</button>
+      <button id="archive-structure-import" type="button">Importera...</button>
     </div>
 
     <div class="panel-actions">

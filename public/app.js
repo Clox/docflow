@@ -259,6 +259,7 @@ let ocrProcessingCancelEl = null;
 let ocrProcessingApplyEl = null;
 let archiveStructureListEl = null;
 let archiveStructureAddFolderEl = null;
+let archiveStructureImportEl = null;
 let archiveStructureFolderSortEl = null;
 let archiveStructureCancelEl = null;
 let archiveStructureApplyEl = null;
@@ -17590,6 +17591,7 @@ function bindSettingsPanelRefs(tabId) {
   } else if (tabId === 'archive-structure') {
     archiveStructureListEl = document.getElementById('archive-structure-list');
     archiveStructureAddFolderEl = document.getElementById('archive-structure-add-folder');
+    archiveStructureImportEl = document.getElementById('archive-structure-import');
     archiveStructureFolderSortEl = document.getElementById('archive-structure-folder-sort');
     archiveStructureCancelEl = document.getElementById('archive-structure-cancel');
     archiveStructureApplyEl = document.getElementById('archive-structure-apply');
@@ -17604,6 +17606,13 @@ function bindSettingsPanelRefs(tabId) {
       archiveFoldersDraft.push(defaultArchiveFolder());
       renderArchiveStructureEditor();
       updateSettingsActionButtons();
+    });
+    archiveStructureImportEl.addEventListener('click', async () => {
+      try {
+        await importArchiveStructureFromJson();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Kunde inte importera arkivstruktur.');
+      }
     });
     archiveStructureCancelEl.addEventListener('click', () => {
       let parsed = {};
@@ -19673,6 +19682,305 @@ function sanitizeFilenameTemplateDraft(template, fallbackIndex = 0, folderId = '
   };
 }
 
+function archiveStructureExistingIds(extraFolders = []) {
+  const ids = new Set();
+  [...archiveFoldersDraft, ...extraFolders].forEach((folder, folderIndex) => {
+    const sanitizedFolder = sanitizeArchiveFolder(folder, folderIndex);
+    if (sanitizedFolder.id) {
+      ids.add(sanitizedFolder.id);
+    }
+    sanitizedFolder.filenameTemplates.forEach((template) => {
+      if (template.id) {
+        ids.add(template.id);
+      }
+    });
+  });
+  return ids;
+}
+
+function uniqueArchiveStructureId(preferredId, fallbackBase, usedIds) {
+  const base = slugifyText(
+    typeof preferredId === 'string' && preferredId.trim() !== '' ? preferredId : fallbackBase,
+    '-',
+    fallbackBase || 'archive-item'
+  );
+  let candidate = base;
+  let suffix = 2;
+  while (usedIds.has(candidate)) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  usedIds.add(candidate);
+  return candidate;
+}
+
+function serializeFilenameTemplateDraftForClipboard(template, folderId = '', options = {}) {
+  const sanitized = sanitizeFilenameTemplateDraft(template, 0, folderId);
+  const serialized = {
+    type: 'filename_template',
+    id: sanitized.id,
+    template: sanitized.template,
+    labelIds: sanitized.labelIds,
+  };
+  if (options.includeFolderId === true && typeof folderId === 'string' && folderId.trim() !== '') {
+    serialized.folderId = folderId.trim();
+  }
+  return serialized;
+}
+
+function serializeArchiveFolderForClipboard(folder, fallbackIndex = 0) {
+  const sanitized = sanitizeArchiveFolder(folder, fallbackIndex);
+  return {
+    type: 'archive_folder',
+    id: sanitized.id,
+    name: sanitized.name,
+    priority: sanitized.priority,
+    pathTemplate: sanitized.pathTemplate,
+    filenameTemplates: sanitized.filenameTemplates.map((template) => serializeFilenameTemplateDraftForClipboard(template, sanitized.id, { includeFolderId: true })),
+  };
+}
+
+function archiveStructureLabelLookup() {
+  const labels = filenameTemplateLabelDefinitions();
+  const byId = new Map();
+  const byNormalizedName = new Map();
+  labels.forEach((label) => {
+    const id = typeof label.id === 'string' ? label.id.trim() : '';
+    const name = typeof label.name === 'string' ? label.name.trim() : '';
+    if (id) {
+      byId.set(id, id);
+      byId.set(id.toLocaleLowerCase('sv'), id);
+    }
+    if (name) {
+      byNormalizedName.set(name.toLocaleLowerCase('sv'), id);
+      byNormalizedName.set(slugifyText(name, '-', '').toLocaleLowerCase('sv'), id);
+    }
+  });
+  return { byId, byNormalizedName };
+}
+
+function resolveArchiveStructureImportedLabelId(value, lookup, warnings) {
+  let rawId = '';
+  let rawName = '';
+  if (typeof value === 'string') {
+    rawId = value.trim();
+    rawName = value.trim();
+  } else if (value && typeof value === 'object') {
+    rawId = String(value.id ?? value.labelId ?? value.key ?? '').trim();
+    rawName = String(value.name ?? value.labelName ?? value.label ?? '').trim();
+  }
+
+  const directId = rawId !== '' ? lookup.byId.get(rawId) || lookup.byId.get(rawId.toLocaleLowerCase('sv')) : '';
+  if (directId) {
+    return directId;
+  }
+  const byName = rawName !== '' ? lookup.byNormalizedName.get(rawName.toLocaleLowerCase('sv')) : '';
+  if (byName) {
+    return byName;
+  }
+  const bySlug = rawName !== '' ? lookup.byNormalizedName.get(slugifyText(rawName, '-', '').toLocaleLowerCase('sv')) : '';
+  if (bySlug) {
+    return bySlug;
+  }
+
+  const fallback = rawId || rawName;
+  if (fallback !== '') {
+    warnings.push(`Etiketten "${fallback}" hittades inte och lämnas som id.`);
+  }
+  return fallback;
+}
+
+function normalizeImportedArchiveStructureLabelIds(input, warnings) {
+  const lookup = archiveStructureLabelLookup();
+  const values = Array.isArray(input) ? input : [];
+  const seen = new Set();
+  const result = [];
+  values.forEach((value) => {
+    const labelId = resolveArchiveStructureImportedLabelId(value, lookup, warnings);
+    if (labelId !== '' && !seen.has(labelId)) {
+      seen.add(labelId);
+      result.push(labelId);
+    }
+  });
+  return result;
+}
+
+function normalizeImportedFilenameTemplatePartLabels(part, warnings) {
+  if (!part || typeof part !== 'object') {
+    return part;
+  }
+  const next = { ...part };
+  if (Array.isArray(next.labelIds)) {
+    next.labelIds = normalizeImportedArchiveStructureLabelIds(next.labelIds, warnings);
+  } else if (Array.isArray(next.labels)) {
+    next.labelIds = normalizeImportedArchiveStructureLabelIds(next.labels, warnings);
+    delete next.labels;
+  } else if (Array.isArray(next.labelNames)) {
+    next.labelIds = normalizeImportedArchiveStructureLabelIds(next.labelNames, warnings);
+    delete next.labelNames;
+  }
+  ['prefixParts', 'suffixParts', 'parts', 'thenParts', 'elseParts'].forEach((key) => {
+    if (Array.isArray(next[key])) {
+      next[key] = next[key].map((child) => normalizeImportedFilenameTemplatePartLabels(child, warnings));
+    }
+  });
+  return next;
+}
+
+function normalizeImportedFilenameTemplateObject(template, warnings) {
+  const input = template && typeof template === 'object' ? { ...template } : {};
+  if (typeof input.id !== 'string' && typeof input.key === 'string') {
+    input.id = input.key;
+  }
+  const labelSource = Array.isArray(input.labelIds)
+    ? input.labelIds
+    : (Array.isArray(input.labels)
+      ? input.labels
+      : (Array.isArray(input.labelNames) ? input.labelNames : (input.conditions && input.conditions.labelIds)));
+  const normalizedTemplate = input.template && typeof input.template === 'object'
+    ? {
+      ...input.template,
+      parts: Array.isArray(input.template.parts)
+        ? input.template.parts.map((part) => normalizeImportedFilenameTemplatePartLabels(part, warnings))
+        : [],
+    }
+    : input.template;
+  return {
+    ...input,
+    template: normalizedTemplate,
+    labelIds: normalizeImportedArchiveStructureLabelIds(labelSource, warnings),
+  };
+}
+
+function normalizeImportedArchiveFolderObject(folder, warnings) {
+  const input = folder && typeof folder === 'object' ? { ...folder } : {};
+  if (typeof input.id !== 'string' && typeof input.key === 'string') {
+    input.id = input.key;
+  }
+  return {
+    ...input,
+    filenameTemplates: Array.isArray(input.filenameTemplates)
+      ? input.filenameTemplates.map((template) => normalizeImportedFilenameTemplateObject(template, warnings))
+      : [],
+  };
+}
+
+function parseArchiveStructureImportJson(text, mode = 'folder') {
+  const source = typeof text === 'string' ? text.trim() : '';
+  if (source === '') {
+    return { error: 'Klistra in JSON först.' };
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(source);
+  } catch (error) {
+    return { error: 'JSON kunde inte tolkas.' };
+  }
+
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  if (rows.length < 1 || rows.some((row) => !row || typeof row !== 'object' || Array.isArray(row))) {
+    return { error: mode === 'folder' ? 'Importen måste vara ett mappobjekt eller en array med mappobjekt.' : 'Importen måste vara ett filnamnsmallobjekt eller en array med filnamnsmallar.' };
+  }
+
+  const warnings = [];
+  if (mode === 'folder') {
+    const wrongType = rows.find((row) => typeof row.type === 'string' && row.type.trim() !== '' && row.type !== 'archive_folder');
+    if (wrongType) {
+      return { error: 'Vald flik är Mapp, men JSON innehåller annan type än "archive_folder".' };
+    }
+    const folders = rows.map((row) => normalizeImportedArchiveFolderObject(row, warnings));
+    if (folders.some((folder) => typeof folder.name !== 'string' || folder.name.trim() === '')) {
+      return { error: 'Alla importerade mappar måste ha name.' };
+    }
+    return {
+      mode: 'folder',
+      folders,
+      warnings,
+      status: `${folders.length} ${folders.length === 1 ? 'mapp' : 'mappar'} upptäckta`,
+    };
+  }
+
+  const wrongType = rows.find((row) => typeof row.type === 'string' && row.type.trim() !== '' && row.type !== 'filename_template');
+  if (wrongType) {
+    return { error: 'Vald flik är Filnamnsmall, men JSON innehåller annan type än "filename_template".' };
+  }
+  const templates = rows.map((row) => normalizeImportedFilenameTemplateObject(row, warnings));
+  const folderIds = new Set(archiveFoldersDraft.map((folder, index) => sanitizeArchiveFolder(folder, index).id));
+  const validFolderIdCount = templates.filter((template) => {
+    const folderId = typeof template.folderId === 'string' ? template.folderId.trim() : '';
+    return folderId !== '' && folderIds.has(folderId);
+  }).length;
+  const fallbackFolderCount = templates.filter((template) => {
+    const folderId = typeof template.folderId === 'string' ? template.folderId.trim() : '';
+    return folderId === '' || !folderIds.has(folderId);
+  }).length;
+  const explicitMissingCount = templates.filter((template) => {
+    const folderId = typeof template.folderId === 'string' ? template.folderId.trim() : '';
+    return folderId !== '' && !folderIds.has(folderId);
+  }).length;
+  if (explicitMissingCount > 0) {
+    warnings.push(`${explicitMissingCount} filnamnsmall ${explicitMissingCount === 1 ? 'anger' : 'anger'} okänd folderId och behöver fallback-mapp.`);
+  }
+  return {
+    mode: 'filename_template',
+    templates,
+    validFolderIdCount,
+    fallbackFolderCount,
+    missingFolderCount: fallbackFolderCount,
+    warnings,
+    status: `${templates.length} ${templates.length === 1 ? 'filnamnsmall' : 'filnamnsmallar'} upptäckta`,
+  };
+}
+
+function importArchiveStructureFolders(folders) {
+  const usedIds = archiveStructureExistingIds();
+  const importedFolders = folders.map((folder, folderIndex) => {
+    const normalized = normalizeImportedArchiveFolderObject(folder, []);
+    const folderId = uniqueArchiveStructureId(normalized.id, normalized.name || `importerad-mapp-${folderIndex + 1}`, usedIds);
+    const sanitized = sanitizeArchiveFolder({
+      ...normalized,
+      id: folderId,
+      filenameTemplates: [],
+    }, archiveFoldersDraft.length + folderIndex);
+    sanitized.filenameTemplates = (Array.isArray(normalized.filenameTemplates) ? normalized.filenameTemplates : [])
+      .map((template, templateIndex) => sanitizeFilenameTemplateDraft({
+        ...template,
+        id: uniqueArchiveStructureId(template && template.id, `${folderId}-filename-template-${templateIndex + 1}`, usedIds),
+      }, templateIndex, folderId));
+    return sanitized;
+  });
+  archiveFoldersDraft.push(...importedFolders);
+  return importedFolders.length;
+}
+
+function importArchiveStructureFilenameTemplates(templates, fallbackFolderId = '') {
+  const folderIds = new Map();
+  archiveFoldersDraft.forEach((folder, index) => {
+    const sanitized = sanitizeArchiveFolder(folder, index);
+    archiveFoldersDraft[index] = sanitized;
+    folderIds.set(sanitized.id, index);
+  });
+  const fallbackId = typeof fallbackFolderId === 'string' ? fallbackFolderId.trim() : '';
+  const usedIds = archiveStructureExistingIds();
+  let importedCount = 0;
+  templates.forEach((template, templateIndex) => {
+    const folderId = typeof template.folderId === 'string' ? template.folderId.trim() : '';
+    const targetFolderId = folderIds.has(folderId) ? folderId : fallbackId;
+    if (!folderIds.has(targetFolderId)) {
+      return;
+    }
+    const folderIndex = folderIds.get(targetFolderId);
+    archiveFoldersDraft[folderIndex].filenameTemplates.push(sanitizeFilenameTemplateDraft({
+      ...template,
+      id: uniqueArchiveStructureId(template && template.id, `${targetFolderId}-filename-template-${templateIndex + 1}`, usedIds),
+      folderId: undefined,
+    }, archiveFoldersDraft[folderIndex].filenameTemplates.length, targetFolderId));
+    importedCount += 1;
+  });
+  return importedCount;
+}
+
 function sanitizeLabel(label) {
   const input = label && typeof label === 'object' ? label : {};
   const name = typeof input.name === 'string' ? input.name : '';
@@ -20401,6 +20709,304 @@ async function importSingleExtractionFieldFromJson() {
   }
 }
 
+function archiveStructureFolderOptions() {
+  return archiveFoldersDraft
+    .map((folder, index) => sanitizeArchiveFolder(folder, index))
+    .filter((folder) => folder.id !== '')
+    .map((folder) => ({
+      value: folder.id,
+      label: archiveFolderDisplayName(folder),
+    }));
+}
+
+function removeFolderIdsFromArchiveStructureImportJson(text) {
+  const source = typeof text === 'string' ? text.trim() : '';
+  if (source === '') {
+    return '';
+  }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(source);
+  } catch (error) {
+    return text;
+  }
+  const stripFolderId = (item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return item;
+    }
+    const next = { ...item };
+    delete next.folderId;
+    return next;
+  };
+  const next = Array.isArray(parsed) ? parsed.map(stripFolderId) : stripFolderId(parsed);
+  return JSON.stringify(next, null, 2);
+}
+
+function showArchiveStructureImportDialog() {
+  return new Promise((resolve) => {
+    let mode = 'folder';
+    let parsedResult = null;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'settings-dialog label-import-dialog archive-structure-import-dialog';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Importera arkivstruktur';
+
+    const body = document.createElement('div');
+    body.className = 'label-import-dialog-body';
+
+    const description = document.createElement('p');
+    description.textContent = 'Klistra in JSON för en eller flera mappar eller filnamnsmallar. Importen ändrar bara lokala inställningar tills du klickar Spara.';
+
+    const tabs = document.createElement('div');
+    tabs.className = 'archive-structure-import-tabs';
+    const folderTab = document.createElement('button');
+    folderTab.type = 'button';
+    folderTab.className = 'archive-structure-import-tab active';
+    folderTab.textContent = 'Mapp';
+    const templateTab = document.createElement('button');
+    templateTab.type = 'button';
+    templateTab.className = 'archive-structure-import-tab';
+    templateTab.textContent = 'Filnamnsmall';
+    tabs.append(folderTab, templateTab);
+
+    const sourceRow = document.createElement('div');
+    sourceRow.className = 'label-import-source-row';
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.json,application/json';
+    fileInput.hidden = true;
+
+    const fileButton = document.createElement('button');
+    fileButton.type = 'button';
+    fileButton.className = 'label-import-file-button';
+    fileButton.textContent = 'Välj fil';
+
+    const fileName = document.createElement('div');
+    fileName.className = 'label-import-file-name';
+    fileName.textContent = 'Ingen fil vald';
+
+    sourceRow.append(fileButton, fileName, fileInput);
+
+    const textarea = document.createElement('textarea');
+    textarea.placeholder = '{\n  "type": "archive_folder",\n  "name": "Fakturor",\n  "pathTemplate": { "parts": [] },\n  "filenameTemplates": []\n}';
+    textarea.spellcheck = false;
+
+    const status = document.createElement('div');
+    status.className = 'archive-structure-import-status';
+
+    const error = document.createElement('div');
+    error.className = 'label-import-error';
+
+    const actions = document.createElement('div');
+    actions.className = 'panel-actions archive-structure-import-actions';
+
+    const footerOptions = document.createElement('div');
+    footerOptions.className = 'archive-structure-import-footer-options hidden';
+    const fallbackSelect = document.createElement('select');
+    fallbackSelect.className = 'archive-structure-import-folder-select';
+    fallbackSelect.setAttribute('aria-label', 'Välj mapp');
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = '';
+    placeholderOption.textContent = 'Välj mapp...';
+    fallbackSelect.appendChild(placeholderOption);
+    archiveStructureFolderOptions().forEach((option) => {
+      const optionEl = document.createElement('option');
+      optionEl.value = option.value;
+      optionEl.textContent = option.label;
+      fallbackSelect.appendChild(optionEl);
+    });
+    const fallbackNote = document.createElement('div');
+    fallbackNote.className = 'archive-structure-import-note';
+    const clearFolderIdsButton = document.createElement('button');
+    clearFolderIdsButton.type = 'button';
+    clearFolderIdsButton.className = 'archive-structure-import-clear-folder-ids';
+    clearFolderIdsButton.textContent = 'Rensa explicit angivna mappar';
+    clearFolderIdsButton.title = 'Tar bort folderId från importerade filnamnsmallar så att mappvalet används för alla.';
+    footerOptions.append(fallbackNote, fallbackSelect, clearFolderIdsButton);
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'button-danger';
+    cancelButton.textContent = 'Avbryt';
+
+    const importButton = document.createElement('button');
+    importButton.type = 'button';
+    importButton.className = 'button-success';
+    importButton.textContent = 'Importera';
+
+    actions.append(footerOptions, cancelButton, importButton);
+    body.append(description, tabs, sourceRow, textarea, status, error);
+    dialog.append(title, body, actions);
+    overlay.appendChild(dialog);
+
+    const validate = () => {
+      parsedResult = parseArchiveStructureImportJson(textarea.value, mode);
+      error.textContent = '';
+      status.textContent = '';
+      status.dataset.tone = 'info';
+
+      if (!textarea.value.trim()) {
+        parsedResult = null;
+        importButton.disabled = true;
+      } else if (parsedResult && parsedResult.error) {
+        error.textContent = parsedResult.error;
+        importButton.disabled = true;
+      } else if (parsedResult) {
+        const warningText = Array.isArray(parsedResult.warnings) && parsedResult.warnings.length > 0
+          ? ` ${parsedResult.warnings.join(' ')}`
+          : '';
+        status.textContent = `${parsedResult.status}.${warningText}`;
+        importButton.disabled = false;
+      }
+
+      const templateMode = mode === 'filename_template';
+      footerOptions.classList.toggle('hidden', !templateMode);
+      if (templateMode && parsedResult && !parsedResult.error) {
+        const fallbackCount = Number(parsedResult.fallbackFolderCount || 0);
+        const explicitCount = Number(parsedResult.validFolderIdCount || 0);
+        fallbackSelect.disabled = fallbackCount < 1;
+        clearFolderIdsButton.disabled = explicitCount < 1;
+        if (fallbackCount < 1) {
+          fallbackNote.textContent = 'Alla filnamnsmallar anger mapp i JSON.';
+        } else if (explicitCount < 1) {
+          fallbackNote.textContent = 'Mappvalet används för alla filnamnsmallar.';
+        } else {
+          fallbackNote.textContent = `Mappvalet används för ${fallbackCount} ${fallbackCount === 1 ? 'filnamnsmall' : 'filnamnsmallar'} som saknar folderId. ${explicitCount} ${explicitCount === 1 ? 'filnamnsmall anger' : 'filnamnsmallar anger'} redan mapp i JSON.`;
+        }
+        if (fallbackCount > 0 && fallbackSelect.value === '') {
+          importButton.disabled = true;
+        }
+      } else {
+        fallbackSelect.disabled = true;
+        clearFolderIdsButton.disabled = true;
+        fallbackNote.textContent = '';
+      }
+    };
+
+    const setMode = (nextMode) => {
+      mode = nextMode === 'filename_template' ? 'filename_template' : 'folder';
+      folderTab.classList.toggle('active', mode === 'folder');
+      templateTab.classList.toggle('active', mode === 'filename_template');
+      textarea.placeholder = mode === 'folder'
+        ? '{\n  "type": "archive_folder",\n  "name": "Fakturor",\n  "pathTemplate": { "parts": [] },\n  "filenameTemplates": []\n}'
+        : '{\n  "type": "filename_template",\n  "folderId": "fakturor",\n  "template": { "parts": [] },\n  "labelIds": []\n}';
+      validate();
+    };
+
+    const finish = (value = null) => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      overlay.remove();
+      resolve(value);
+    };
+
+    const submit = () => {
+      validate();
+      if (!parsedResult || parsedResult.error) {
+        textarea.focus();
+        return;
+      }
+      if (mode === 'filename_template' && Number(parsedResult.fallbackFolderCount || 0) > 0 && fallbackSelect.value === '') {
+        error.textContent = 'Välj mapp för filnamnsmallar som saknar folderId.';
+        fallbackSelect.focus();
+        return;
+      }
+      finish({
+        ...parsedResult,
+        fallbackFolderId: mode === 'filename_template' ? fallbackSelect.value : '',
+      });
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        finish(null);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        submit();
+      }
+    };
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        finish(null);
+      }
+    });
+    folderTab.addEventListener('click', () => setMode('folder'));
+    templateTab.addEventListener('click', () => setMode('filename_template'));
+    textarea.addEventListener('input', validate);
+    fallbackSelect.addEventListener('change', validate);
+    clearFolderIdsButton.addEventListener('click', () => {
+      textarea.value = removeFolderIdsFromArchiveStructureImportJson(textarea.value);
+      validate();
+      textarea.focus();
+    });
+    cancelButton.addEventListener('click', () => finish(null));
+    importButton.addEventListener('click', submit);
+    fileButton.addEventListener('click', () => {
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      if (!file) {
+        return;
+      }
+      try {
+        textarea.value = await openFileAsText(file);
+        fileName.textContent = file.name;
+        validate();
+      } catch (fileError) {
+        error.textContent = fileError instanceof Error ? fileError.message : 'Kunde inte läsa filen.';
+      }
+    });
+
+    document.addEventListener('keydown', onKeyDown, true);
+    document.body.appendChild(overlay);
+    setMode('folder');
+    textarea.focus();
+  });
+}
+
+async function importArchiveStructureFromJson() {
+  const imported = await showArchiveStructureImportDialog();
+  if (!imported || typeof imported !== 'object') {
+    return;
+  }
+
+  const previousArchiveFoldersDraft = archiveFoldersDraft.map((folder, index) => sanitizeArchiveFolder(folder, index));
+  const previousBaselineJson = archiveStructureBaselineJson;
+  try {
+    let importedCount = 0;
+    if (imported.mode === 'folder') {
+      importedCount = importArchiveStructureFolders(imported.folders || []);
+    } else if (imported.mode === 'filename_template') {
+      importedCount = importArchiveStructureFilenameTemplates(imported.templates || [], imported.fallbackFolderId || '');
+    }
+    if (importedCount < 1) {
+      throw new Error('Inget importerades.');
+    }
+    renderArchiveStructureEditor();
+    updateSettingsActionButtons();
+  } catch (error) {
+    archiveFoldersDraft = previousArchiveFoldersDraft.map((folder, index) => sanitizeArchiveFolder(folder, index));
+    archiveStructureBaselineJson = previousBaselineJson;
+    renderArchiveStructureEditor();
+    updateSettingsActionButtons();
+    throw error;
+  }
+}
+
 function sanitizeFilenameTemplateParts(parts, depth = 0) {
   if (!Array.isArray(parts) || depth > 6) {
     return [];
@@ -20500,6 +21106,14 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
 }
 
 function sanitizeFilenameTemplate(template) {
+  if (typeof template === 'string') {
+    return {
+      parts: [{
+        type: 'text',
+        value: template,
+      }],
+    };
+  }
   const input = template && typeof template === 'object' ? template : {};
   return {
     parts: sanitizeFilenameTemplateParts(input.parts)
@@ -26772,9 +27386,14 @@ function renderArchiveStructureEditor() {
         updateSettingsActionButtons();
       },
     });
+    const copyFolderButton = createJsonCopyButton({
+      title: 'Kopiera mapp som JSON',
+      getValue: () => serializeArchiveFolderForClipboard(archiveFoldersDraft[folderIndex], folderIndex),
+    });
 
     fields.appendChild(createFloatingField('Namn', nameInput));
     fields.appendChild(createFloatingField('Prioritet', priorityInput));
+    folderActions.appendChild(copyFolderButton);
     folderActions.appendChild(removeButton);
     body.appendChild(folderActions);
     body.appendChild(fields);
@@ -26854,6 +27473,14 @@ function renderArchiveStructureEditor() {
           updateSettingsActionButtons();
         },
       });
+      const copyTemplateButton = createJsonCopyButton({
+        title: 'Kopiera filnamnsmall som JSON',
+        getValue: () => serializeFilenameTemplateDraftForClipboard(
+          archiveFoldersDraft[folderIndex].filenameTemplates[templateIndex],
+          archiveFoldersDraft[folderIndex].id
+        ),
+      });
+      templateActions.appendChild(copyTemplateButton);
       templateActions.appendChild(removeTemplateButton);
       templateBody.appendChild(templateActions);
       templateBody.appendChild(templateFields);
@@ -26977,6 +27604,44 @@ async function copyTextToClipboard(text) {
     textarea.remove();
   }
   return success;
+}
+
+function createJsonCopyButton({ title, getValue }) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'extraction-field-copy-button';
+  button.textContent = '⧉';
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.addEventListener('click', async () => {
+    const defaultTitle = title;
+    try {
+      const value = typeof getValue === 'function' ? getValue() : null;
+      const json = JSON.stringify(value, null, 2);
+      const copied = await copyTextToClipboard(json);
+      if (!copied) {
+        throw new Error('copy_failed');
+      }
+      button.classList.add('is-copied');
+      button.title = 'Kopierad';
+      button.setAttribute('aria-label', 'Kopierad');
+      window.setTimeout(() => {
+        button.classList.remove('is-copied');
+        button.title = defaultTitle;
+        button.setAttribute('aria-label', defaultTitle);
+      }, 1200);
+    } catch (error) {
+      button.classList.add('is-copy-failed');
+      button.title = 'Kunde inte kopiera';
+      button.setAttribute('aria-label', 'Kunde inte kopiera');
+      window.setTimeout(() => {
+        button.classList.remove('is-copy-failed');
+        button.title = defaultTitle;
+        button.setAttribute('aria-label', defaultTitle);
+      }, 1200);
+    }
+  });
+  return button;
 }
 
 function bindSettingsCommandCopyButtons(panelEl) {
