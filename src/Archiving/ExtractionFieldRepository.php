@@ -31,6 +31,7 @@ final class ExtractionFieldRepository
                 field_type,
                 field_key,
                 name,
+                value_type,
                 sort_order,
                 created_at,
                 updated_at
@@ -71,6 +72,7 @@ final class ExtractionFieldRepository
             $fieldType = is_string($row['field_type'] ?? null) ? trim((string) $row['field_type']) : '';
             $fieldKey = is_string($row['field_key'] ?? null) ? trim((string) $row['field_key']) : '';
             $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
+            $valueType = $this->normalizeValueType($row['value_type'] ?? null);
             if ($fieldId < 1 || $fieldKey === '' || $name === '') {
                 continue;
             }
@@ -78,11 +80,10 @@ final class ExtractionFieldRepository
             $field = [
                 'key' => $fieldKey,
                 'name' => $name,
+                'type' => $this->legacyRuleTypeForValueType($valueType),
+                'valueType' => $valueType,
                 'ruleSets' => $ruleSetsByFieldId[$fieldId] ?? [],
             ];
-
-            $fieldRuleSet = is_array($field['ruleSets'][0] ?? null) ? $field['ruleSets'][0] : [];
-            $field['type'] = is_string($fieldRuleSet['type'] ?? null) ? trim((string) $fieldRuleSet['type']) : 'regex';
 
             if ($fieldType === 'predefined') {
                 $field['predefinedFieldKey'] = $fieldKey;
@@ -134,6 +135,7 @@ final class ExtractionFieldRepository
                 field_type,
                 field_key,
                 name,
+                value_type,
                 sort_order,
                 created_at,
                 updated_at
@@ -142,6 +144,7 @@ final class ExtractionFieldRepository
                 :field_type,
                 :field_key,
                 :name,
+                :value_type,
                 :sort_order,
                 :created_at,
                 :updated_at
@@ -150,6 +153,7 @@ final class ExtractionFieldRepository
         $updateField = $this->pdo->prepare(
             'UPDATE archiving_data_fields
             SET name = :name,
+                value_type = :value_type,
                 sort_order = :sort_order,
                 updated_at = :updated_at
             WHERE id = :id'
@@ -212,6 +216,7 @@ final class ExtractionFieldRepository
                     $fieldKey = trim((string) $field['predefinedFieldKey']);
                 }
                 $name = is_string($field['name'] ?? null) ? trim((string) $field['name']) : '';
+                $valueType = $this->normalizeValueType($field['valueType'] ?? null, $field);
                 if ($fieldKey === '' || $name === '') {
                     continue;
                 }
@@ -223,6 +228,7 @@ final class ExtractionFieldRepository
                     $updateField->execute([
                         ':id' => $fieldId,
                         ':name' => $name,
+                        ':value_type' => $valueType,
                         ':sort_order' => $fieldOrder,
                         ':updated_at' => $timestamp,
                     ]);
@@ -232,6 +238,7 @@ final class ExtractionFieldRepository
                         ':field_type' => $fieldType,
                         ':field_key' => $fieldKey,
                         ':name' => $name,
+                        ':value_type' => $valueType,
                         ':sort_order' => $fieldOrder,
                         ':created_at' => $timestamp,
                         ':updated_at' => $timestamp,
@@ -277,9 +284,7 @@ final class ExtractionFieldRepository
                         ':data_field_id' => $fieldId,
                         ':requires_search_terms' => ($ruleSet['requiresSearchTerms'] ?? true) ? 1 : 0,
                         ':search_terms_json' => $searchTermsJson,
-                        ':rule_type' => is_string($ruleSet['type'] ?? null) && in_array(trim(strtolower((string) $ruleSet['type'])), ['regex', 'date', 'amount'], true)
-                            ? trim(strtolower((string) $ruleSet['type']))
-                            : 'regex',
+                        ':rule_type' => $this->legacyRuleTypeForValueType($valueType),
                         ':use_value_pattern' => ($ruleSet['useValuePattern'] ?? false) ? 1 : 0,
                         ':value_pattern' => is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '',
                         ':scope_json' => $scopeJson,
@@ -456,6 +461,39 @@ final class ExtractionFieldRepository
                 || ($scope['isRegex'] ?? false) === 1
                 || ($scope['isRegex'] ?? false) === '1',
         ];
+    }
+
+    private function normalizeValueType(mixed $value, ?array $legacyField = null): string
+    {
+        $normalized = is_string($value) ? trim(strtolower($value)) : '';
+        if (in_array($normalized, ['text', 'date', 'amount'], true)) {
+            return $normalized;
+        }
+
+        $legacy = is_array($legacyField) ? $legacyField : [];
+        $legacyType = is_string($legacy['type'] ?? null) ? trim(strtolower((string) $legacy['type'])) : '';
+        $legacyKey = is_string($legacy['predefinedFieldKey'] ?? null)
+            ? trim((string) $legacy['predefinedFieldKey'])
+            : (is_string($legacy['key'] ?? null) ? trim((string) $legacy['key']) : '');
+        $legacyExtractor = is_string($legacy['extractor'] ?? null) ? trim(strtolower((string) $legacy['extractor'])) : '';
+
+        if ($legacyType === 'amount' || $legacyKey === 'amount' || $legacyExtractor === 'amount') {
+            return 'amount';
+        }
+        if ($legacyType === 'date' || in_array($legacyKey, ['due_date', 'document_date'], true) || in_array($legacyExtractor, ['due_date', 'document_date'], true)) {
+            return 'date';
+        }
+
+        return 'text';
+    }
+
+    private function legacyRuleTypeForValueType(string $valueType): string
+    {
+        return match ($valueType) {
+            'date' => 'date',
+            'amount' => 'amount',
+            default => 'regex',
+        };
     }
 
     private function normalizeScope(string $scope): string

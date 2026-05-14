@@ -10588,7 +10588,7 @@ function extractionFieldTypeByKey(fieldKey) {
 
   const firstRuleSet = Array.isArray(match.ruleSets) ? match.ruleSets[0] : null;
   return sanitizeExtractionFieldValueType(
-    firstRuleSet && typeof firstRuleSet === 'object' ? firstRuleSet.valueType : '',
+    typeof match.valueType === 'string' ? match.valueType : '',
     match,
     firstRuleSet
   );
@@ -20487,6 +20487,7 @@ function defaultExtractionField() {
   return {
     key: '',
     name: '',
+    valueType: 'text',
     ruleSets: [defaultExtractionFieldRuleSet()],
   };
 }
@@ -20494,7 +20495,6 @@ function defaultExtractionField() {
 function defaultExtractionFieldRuleSet() {
   return {
     type: 'regex',
-    valueType: 'text',
     useSearchText: true,
     requiresSearchTerms: true,
     searchTerms: [{ text: '', isRegex: false }],
@@ -20605,6 +20605,10 @@ function sanitizeExtractionFieldValueType(value, legacyField = null, legacyRuleS
   }
   const legacy = legacyField && typeof legacyField === 'object' ? legacyField : {};
   const legacyRule = legacyRuleSet && typeof legacyRuleSet === 'object' ? legacyRuleSet : {};
+  const legacyRuleValueType = String(legacyRule.valueType || '').trim().toLowerCase();
+  if (legacyRuleValueType === 'text' || legacyRuleValueType === 'date' || legacyRuleValueType === 'amount') {
+    return legacyRuleValueType;
+  }
   const legacyType = sanitizeExtractionFieldType(
     Object.prototype.hasOwnProperty.call(legacyRule, 'type') ? legacyRule.type : legacy.type,
     legacyField
@@ -20718,12 +20722,8 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
     hasExplicitRuleSet ? '' : legacyAliasesFallback,
     legacyIsRegex
   );
-  const type = sanitizeExtractionFieldType(hasExplicitRuleSet ? input.type : legacy.type, legacy);
-  const valueType = sanitizeExtractionFieldValueType(
-    hasExplicitRuleSet ? input.valueType : legacy.valueType,
-    legacy,
-    hasExplicitRuleSet ? input : null
-  );
+  const fieldValueType = sanitizeExtractionFieldValueType(legacy.valueType, legacy, hasExplicitRuleSet ? input : null);
+  const type = legacyExtractionFieldTypeForValueType(fieldValueType);
   const scope = sanitizeExtractionFieldRuleScope(hasExplicitRuleSet ? input.scope : legacy.scope);
   const useSearchText = hasExplicitRuleSet
     ? input.useSearchText !== false && input.requiresSearchTerms !== false
@@ -20742,8 +20742,7 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
   );
 
   return {
-    type: legacyExtractionFieldTypeForValueType(valueType || type),
-    valueType,
+    type,
     useSearchText,
     requiresSearchTerms: useSearchText,
     searchTerms,
@@ -20801,6 +20800,11 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
     : derivedKey;
 
   if (isSystemField) {
+    const valueType = sanitizeExtractionFieldValueType(
+      typeof input.valueType === 'string' ? input.valueType : '',
+      input,
+      { type: input.type }
+    );
     let searchString = typeof input.searchString === 'string'
       ? input.searchString
       : (typeof input.query === 'string' ? input.query : '');
@@ -20816,6 +20820,8 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
     return {
       key: normalizedKey,
       name,
+      type: legacyExtractionFieldTypeForValueType(valueType),
+      valueType,
       aliases,
       searchString,
       isRegex: input.isRegex === true,
@@ -20829,17 +20835,23 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
     };
   }
 
+  const firstRuleSet = Array.isArray(input.ruleSets) && input.ruleSets[0] && typeof input.ruleSets[0] === 'object'
+    ? input.ruleSets[0]
+    : { type: input.type };
+  const valueType = sanitizeExtractionFieldValueType(
+    typeof input.valueType === 'string'
+      ? input.valueType
+      : '',
+    input,
+    firstRuleSet
+  );
+
   return {
     key: normalizedKey,
     name,
-    type: legacyExtractionFieldTypeForValueType(sanitizeExtractionFieldValueType(
-      typeof input.valueType === 'string'
-        ? input.valueType
-        : '',
-      input,
-      Array.isArray(input.ruleSets) ? input.ruleSets[0] : { type: input.type }
-    )),
-    ruleSets: sanitizeExtractionFieldRuleSets(input.ruleSets, input),
+    type: legacyExtractionFieldTypeForValueType(valueType),
+    valueType,
+    ruleSets: sanitizeExtractionFieldRuleSets(input.ruleSets, { ...input, valueType }),
     extractor,
     predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
     isPredefinedField,
@@ -23271,6 +23283,34 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
   fields.appendChild(createFloatingField('Namn', nameInput));
 
+  const fieldValueTypeSelect = document.createElement('select');
+  fieldValueTypeSelect.className = 'extraction-field-type-select';
+  [
+    ['text', 'Text'],
+    ['date', 'Datum'],
+    ['amount', 'Belopp'],
+  ].forEach(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    fieldValueTypeSelect.appendChild(option);
+  });
+  fieldValueTypeSelect.value = sanitizeExtractionFieldValueType(field.valueType, field, Array.isArray(field.ruleSets) ? field.ruleSets[0] : null);
+  if (readOnly) {
+    fieldValueTypeSelect.disabled = true;
+  } else {
+    fieldValueTypeSelect.addEventListener('change', () => {
+      const nextValueType = sanitizeExtractionFieldValueType(fieldValueTypeSelect.value, collection[index], Array.isArray(collection[index]?.ruleSets) ? collection[index].ruleSets[0] : null);
+      collection[index].valueType = nextValueType;
+      collection[index].type = legacyExtractionFieldTypeForValueType(nextValueType);
+      renderExtractionFieldsEditor();
+      updateSettingsActionButtons();
+    });
+  }
+  const fieldValueTypeField = createFloatingField('Värdetyp', fieldValueTypeSelect);
+  fieldValueTypeField.classList.add('extraction-field-header-value-type-field');
+  fields.appendChild(fieldValueTypeField);
+
   if (allowRemove) {
     const removeButton = createTrashButton({
       variant: 'node',
@@ -23336,20 +23376,6 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       let removeRuleSetButton = null;
       const ruleSetActions = document.createElement('div');
       ruleSetActions.className = 'tree-node-actions';
-
-      const valueTypeSelect = document.createElement('select');
-      valueTypeSelect.className = 'extraction-field-type-select';
-      [
-        ['text', 'Text'],
-        ['date', 'Datum'],
-        ['amount', 'Belopp'],
-      ].forEach(([value, label]) => {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = label;
-        valueTypeSelect.appendChild(option);
-      });
-      valueTypeSelect.value = sanitizeExtractionFieldValueType(ruleSet.valueType, collection[index], ruleSet);
 
       const requiresSearchTermsLabel = document.createElement('label');
       requiresSearchTermsLabel.className = 'extraction-field-rule-set-toggle';
@@ -23709,9 +23735,6 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
       const interpretationRow = document.createElement('div');
       interpretationRow.className = 'extraction-field-interpretation-row';
-      const valueTypeField = createFloatingField('Värdetyp', valueTypeSelect);
-      valueTypeField.classList.add('extraction-field-value-type-field');
-      interpretationRow.appendChild(valueTypeField);
 
       const datePositionSelect = document.createElement('select');
       [
@@ -23872,15 +23895,15 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       ruleFields.appendChild(interpretationRow);
 
       const syncRuleSetUi = () => {
-        const valueType = sanitizeExtractionFieldValueType(valueTypeSelect.value, collection[index], ruleSet);
+        const valueType = sanitizeExtractionFieldValueType(collection[index]?.valueType, collection[index], ruleSet);
         const type = legacyExtractionFieldTypeForValueType(valueType);
         const normalizationType = sanitizeExtractionFieldNormalizationType(normalizationTypeSelect.value);
         if (!requiresSearchTermsCheckbox.checked && !useValuePatternCheckbox.checked) {
           requiresSearchTermsCheckbox.checked = true;
         }
         collection[index].ruleSets[ruleSetIndex].type = type;
-        collection[index].ruleSets[ruleSetIndex].valueType = valueType;
         collection[index].type = type;
+        collection[index].valueType = valueType;
         collection[index].ruleSets[ruleSetIndex].useSearchText = requiresSearchTermsCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].requiresSearchTerms = requiresSearchTermsCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].useValuePattern = useValuePatternCheckbox.checked;
@@ -23945,7 +23968,6 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         updateSettingsActionButtons();
       };
 
-      valueTypeSelect.addEventListener('change', syncRuleSetUi);
       requiresSearchTermsCheckbox.addEventListener('change', syncRuleSetUi);
       useValuePatternCheckbox.addEventListener('change', syncRuleSetUi);
       scopeCheckbox.addEventListener('change', syncRuleSetUi);
@@ -23992,7 +24014,6 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       nextRuleSets.push({
         ...defaultExtractionFieldRuleSet(),
         type: baseRuleSet.type,
-        valueType: baseRuleSet.valueType,
         useSearchText: baseRuleSet.useSearchText,
         requiresSearchTerms: baseRuleSet.requiresSearchTerms,
         useValuePattern: baseRuleSet.useValuePattern,

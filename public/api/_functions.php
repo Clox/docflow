@@ -2759,6 +2759,13 @@ function normalize_extraction_field_value_type(mixed $value, ?array $legacyField
         return $normalized;
     }
 
+    $legacyRuleValueType = is_array($legacyRuleSet) && is_string($legacyRuleSet['valueType'] ?? null)
+        ? trim(strtolower((string) $legacyRuleSet['valueType']))
+        : '';
+    if (in_array($legacyRuleValueType, ['text', 'date', 'amount'], true)) {
+        return $legacyRuleValueType;
+    }
+
     $legacyTypeValue = is_array($legacyRuleSet) && array_key_exists('type', $legacyRuleSet)
         ? $legacyRuleSet['type']
         : (is_array($legacyField) && array_key_exists('type', $legacyField) ? $legacyField['type'] : null);
@@ -2774,6 +2781,12 @@ function normalize_extraction_field_value_type(mixed $value, ?array $legacyField
 function extraction_field_rule_set_value_type(array $ruleSet, ?array $legacyField = null): string
 {
     return normalize_extraction_field_value_type($ruleSet['valueType'] ?? null, $legacyField, $ruleSet);
+}
+
+function extraction_field_value_type(array $field): string
+{
+    $firstRuleSet = is_array($field['ruleSets'][0] ?? null) ? $field['ruleSets'][0] : [];
+    return normalize_extraction_field_value_type($field['valueType'] ?? null, $field, $firstRuleSet);
 }
 
 function normalize_extraction_field_use_value_pattern(mixed $value, string $pattern): bool
@@ -2934,16 +2947,16 @@ function extraction_field_concat_capture_group_value(array $match): ?string
     return implode('', $parts);
 }
 
-function extraction_field_runtime_rule_set(array $ruleSet): array
+function extraction_field_runtime_rule_set(array $ruleSet, ?string $valueType = null): array
 {
     $runtimeRuleSet = $ruleSet;
-    $valueType = extraction_field_rule_set_value_type($ruleSet);
+    $resolvedValueType = normalize_extraction_field_value_type($valueType, null, $ruleSet);
     $valuePattern = is_string($runtimeRuleSet['valuePattern'] ?? null) ? trim((string) $runtimeRuleSet['valuePattern']) : '';
     $usesValuePattern = normalize_extraction_field_use_value_pattern($runtimeRuleSet['useValuePattern'] ?? null, $valuePattern);
 
     if ($usesValuePattern && $valuePattern !== '') {
         $runtimeRuleSet['valuePattern'] = expand_extraction_field_value_pattern_macros($valuePattern);
-    } elseif ($valueType === 'date') {
+    } elseif ($resolvedValueType === 'date') {
         $datePosition = extraction_field_rule_set_position($ruleSet, 'date');
         $runtimeRuleSet['valuePattern'] = extraction_field_date_value_pattern($datePosition);
         $runtimeRuleSet['useValuePattern'] = true;
@@ -3000,7 +3013,6 @@ function default_extraction_field_rule_set(array $overrides = []): array
 {
     $defaults = [
         'type' => 'regex',
-        'valueType' => 'text',
         'useSearchText' => true,
         'requiresSearchTerms' => true,
         'searchTerms' => [],
@@ -3028,8 +3040,8 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             continue;
         }
 
-        $type = normalize_extraction_field_type($row['type'] ?? null, $legacyField, $row);
-        $valueType = normalize_extraction_field_value_type($row['valueType'] ?? null, $legacyField, $row);
+        $fieldValueType = normalize_extraction_field_value_type($legacyField['valueType'] ?? null, $legacyField, $row);
+        $type = legacy_extraction_field_type_for_value_type($fieldValueType);
         $requiresSearchTerms = array_key_exists('useSearchText', $row)
             ? normalize_extraction_field_use_search_text($row['useSearchText'] ?? null, true)
             : (
@@ -3052,7 +3064,6 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
 
         $normalized[] = default_extraction_field_rule_set([
             'type' => $type,
-            'valueType' => $valueType,
             'useSearchText' => $requiresSearchTerms,
             'requiresSearchTerms' => $requiresSearchTerms,
             'searchTerms' => $searchTerms,
@@ -3079,15 +3090,14 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
     $legacyIsRegex = normalize_extraction_field_is_regex($legacy['isRegex'] ?? false);
     $legacyAliases = normalize_extraction_field_search_terms($legacy['aliases'] ?? null, $legacyIsRegex, $legacyPattern);
     $requiresSearchTerms = $legacyAliases !== [];
-    $type = normalize_extraction_field_type($legacy['type'] ?? null, $legacy);
     $valueType = normalize_extraction_field_value_type($legacy['valueType'] ?? null, $legacy);
+    $type = legacy_extraction_field_type_for_value_type($valueType);
     $normalizationType = normalize_extraction_field_normalization_type($legacy['normalizationType'] ?? null);
     $normalizationReplacements = normalize_extraction_field_normalization_replacements($legacy['normalizationReplacements'] ?? null);
     if ($legacyPattern !== '' || $legacyAliases !== [] || $legacy !== []) {
         $datePosition = normalize_extraction_field_position($legacy['datePosition'] ?? null);
         return [default_extraction_field_rule_set([
             'type' => $type,
-            'valueType' => $valueType,
             'useSearchText' => $requiresSearchTerms,
             'requiresSearchTerms' => $requiresSearchTerms,
             'searchTerms' => $requiresSearchTerms ? $legacyAliases : [],
@@ -3146,7 +3156,10 @@ function normalize_extraction_fields(mixed $input): array
         }
 
         $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
-        $ruleSets = normalize_extraction_field_rule_sets($row['ruleSets'] ?? null, $row);
+        $legacyFirstRuleSet = is_array($row['ruleSets'][0] ?? null) ? $row['ruleSets'][0] : [];
+        $valueType = normalize_extraction_field_value_type($row['valueType'] ?? null, $row, $legacyFirstRuleSet);
+        $fieldForRuleSets = array_merge($row, ['valueType' => $valueType]);
+        $ruleSets = normalize_extraction_field_rule_sets($row['ruleSets'] ?? null, $fieldForRuleSets);
 
         if ($name === '') {
             continue;
@@ -3166,6 +3179,8 @@ function normalize_extraction_fields(mixed $input): array
         $fields[] = [
             'key' => $key,
             'name' => $name,
+            'type' => legacy_extraction_field_type_for_value_type($valueType),
+            'valueType' => $valueType,
             'ruleSets' => $ruleSets,
         ];
     }
@@ -3181,9 +3196,14 @@ function normalize_predefined_extraction_field_with_defaults(string $key, mixed 
         $name = is_string($defaults['name'] ?? null) ? trim((string) $defaults['name']) : '';
     }
 
+    $legacyFirstRuleSet = is_array($field['ruleSets'][0] ?? null)
+        ? $field['ruleSets'][0]
+        : (is_array($defaults['ruleSets'][0] ?? null) ? $defaults['ruleSets'][0] : []);
+    $valueType = normalize_extraction_field_value_type($field['valueType'] ?? ($defaults['valueType'] ?? null), $field ?: $defaults, $legacyFirstRuleSet);
+    $fieldForRuleSets = array_merge($field, ['valueType' => $valueType]);
     $ruleSets = array_key_exists('ruleSets', $field)
-        ? normalize_extraction_field_rule_sets($field['ruleSets'] ?? null, $field)
-        : normalize_extraction_field_rule_sets(null, $field);
+        ? normalize_extraction_field_rule_sets($field['ruleSets'] ?? null, $fieldForRuleSets)
+        : normalize_extraction_field_rule_sets(null, $fieldForRuleSets);
     $defaultRuleSets = predefined_extraction_field_default_rule_sets($defaults);
     $ruleSets = $ruleSets !== [] ? $ruleSets : $defaultRuleSets;
         if (!array_key_exists('ruleSets', $field)) {
@@ -3203,6 +3223,8 @@ function normalize_predefined_extraction_field_with_defaults(string $key, mixed 
     return [
         'key' => $key,
         'name' => $name,
+        'type' => legacy_extraction_field_type_for_value_type($valueType),
+        'valueType' => $valueType,
         'ruleSets' => $ruleSets,
         'predefinedFieldKey' => $key,
         'isPredefinedField' => true,
@@ -3300,10 +3322,17 @@ function normalize_system_extraction_field_with_defaults(string $key, mixed $inp
     if ($aliases === []) {
         $aliases = $defaultAliases;
     }
+    $valueType = normalize_extraction_field_value_type(
+        array_key_exists('valueType', $field) ? $field['valueType'] : ($defaults['valueType'] ?? null),
+        $field ?: $defaults,
+        ['type' => $field['type'] ?? ($defaults['type'] ?? null)]
+    );
 
     return [
         'key' => $key,
         'name' => $name,
+        'type' => legacy_extraction_field_type_for_value_type($valueType),
+        'valueType' => $valueType,
         'aliases' => $aliases,
         'searchString' => $searchString,
         'isRegex' => normalize_extraction_field_is_regex(
@@ -14688,7 +14717,9 @@ function extraction_field_rule_set_position(array $ruleSet, string $type): strin
 
 function resolve_extraction_field_candidate_value(mixed $value, array $match, array $ruleSet, array $field = []): mixed
 {
-    $valueType = extraction_field_rule_set_value_type($ruleSet, $field);
+    $valueType = $field !== []
+        ? extraction_field_value_type($field)
+        : extraction_field_rule_set_value_type($ruleSet);
     $rawText = is_string($match['raw'] ?? null) ? (string) $match['raw'] : '';
     $matchText = is_string($match['matchText'] ?? null) ? (string) $match['matchText'] : $rawText;
     $candidateText = is_string($value) ? $value : (is_scalar($value) ? (string) $value : '');
@@ -15137,11 +15168,14 @@ function extract_configured_rule_set_field_matches(
     array $replacementMap,
     array $ruleSet,
     array $positionSettings = [],
-    array $lineGeometries = []
+    array $lineGeometries = [],
+    array $field = []
 ): array
 {
-    $valueType = extraction_field_rule_set_value_type($ruleSet);
-    $runtimeRuleSet = extraction_field_runtime_rule_set($ruleSet);
+    $valueType = $field !== []
+        ? extraction_field_value_type($field)
+        : extraction_field_rule_set_value_type($ruleSet);
+    $runtimeRuleSet = extraction_field_runtime_rule_set($ruleSet, $valueType);
     $scope = normalize_extraction_field_rule_scope($runtimeRuleSet['scope'] ?? null);
     $scopeDebug = null;
     if ($scope !== null) {
@@ -15243,10 +15277,11 @@ function extract_configured_rule_set_field_result(
     array $replacementMap,
     array $ruleSet,
     array $positionSettings = [],
-    array $lineGeometries = []
+    array $lineGeometries = [],
+    array $field = []
 ): array
 {
-    $matches = extract_configured_rule_set_field_matches($lines, $replacementMap, $ruleSet, $positionSettings, $lineGeometries);
+    $matches = extract_configured_rule_set_field_matches($lines, $replacementMap, $ruleSet, $positionSettings, $lineGeometries, $field);
     return is_array($matches[0] ?? null) ? $matches[0] : empty_extraction_field_result();
 }
 
@@ -15268,6 +15303,11 @@ function extract_configured_text_field_results(
 
         $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
         $name = is_string($field['name'] ?? null) ? trim((string) $field['name']) : '';
+        $valueType = extraction_field_value_type($field);
+        $field = array_merge($field, [
+            'type' => legacy_extraction_field_type_for_value_type($valueType),
+            'valueType' => $valueType,
+        ]);
         $ruleSets = normalize_extraction_field_rule_sets($field['ruleSets'] ?? null, $field);
         $extractor = valid_extraction_field_extractor(
             is_string($field['extractor'] ?? null) ? (string) $field['extractor'] : 'generic_label'
@@ -15295,7 +15335,8 @@ function extract_configured_text_field_results(
                     $replacementMap,
                     $ruleSet,
                     $positionSettings,
-                    $lineGeometries
+                    $lineGeometries,
+                    $field
                 );
                 if ($candidateMatches === []) {
                     continue;
@@ -15339,7 +15380,7 @@ function extract_configured_text_field_results(
             if ($matchRuleSetIndex !== null && is_array($ruleSets[$matchRuleSetIndex] ?? null)) {
                 $normalizationRuleSet = $ruleSets[$matchRuleSetIndex];
             }
-            $normalizationRuleSet = extraction_field_runtime_rule_set($normalizationRuleSet);
+            $normalizationRuleSet = extraction_field_runtime_rule_set($normalizationRuleSet, extraction_field_value_type($field));
 
             $resolvedValue = $match['value'] ?? null;
             $resolvedValue = resolve_extraction_field_candidate_value($resolvedValue, $match, $normalizationRuleSet, $field);
@@ -15372,6 +15413,8 @@ function extract_configured_text_field_results(
         $results[$key] = [
             'key' => $key,
             'name' => $name,
+            'type' => legacy_extraction_field_type_for_value_type($valueType),
+            'valueType' => $valueType,
             'ruleSets' => $ruleSets,
             'extractor' => $extractor,
             'value' => $primaryMatch['value'] ?? null,
@@ -15933,11 +15976,7 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
             if ($fieldKey === '') {
                 continue;
             }
-            $ruleSets = normalize_extraction_field_rule_sets($fieldDefinition['ruleSets'] ?? null, $fieldDefinition);
-            $fieldTypesByKey[$fieldKey] = extraction_field_rule_set_type(
-                is_array($ruleSets[0] ?? null) ? $ruleSets[0] : default_extraction_field_rule_set(),
-                $fieldDefinition
-            );
+            $fieldTypesByKey[$fieldKey] = legacy_extraction_field_type_for_value_type(extraction_field_value_type($fieldDefinition));
         }
     }
 
