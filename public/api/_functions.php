@@ -8100,6 +8100,70 @@ function transfer_swedish_diacritics_token(string $sourceText, string $truthText
     return is_array($result) && is_string($result['text'] ?? null) ? (string) $result['text'] : $sourceText;
 }
 
+function text_added_swedish_diacritic(string $sourceText, string $adjustedText): bool
+{
+    $sourceChars = utf8_chars($sourceText);
+    $adjustedChars = utf8_chars($adjustedText);
+    if (count($adjustedChars) <= count($sourceChars)) {
+        return false;
+    }
+
+    $sourceCount = 0;
+    foreach ($sourceChars as $char) {
+        if (is_swedish_diacritic_char($char)) {
+            $sourceCount++;
+        }
+    }
+
+    $adjustedCount = 0;
+    foreach ($adjustedChars as $char) {
+        if (is_swedish_diacritic_char($char)) {
+            $adjustedCount++;
+        }
+    }
+
+    return $adjustedCount > $sourceCount;
+}
+
+function bbox_union(array $left, array $right): array
+{
+    return [
+        'x0' => min((float) ($left['x0'] ?? 0.0), (float) ($right['x0'] ?? 0.0)),
+        'y0' => min((float) ($left['y0'] ?? 0.0), (float) ($right['y0'] ?? 0.0)),
+        'x1' => max((float) ($left['x1'] ?? 0.0), (float) ($right['x1'] ?? 0.0)),
+        'y1' => max((float) ($left['y1'] ?? 0.0), (float) ($right['y1'] ?? 0.0)),
+    ];
+}
+
+function bbox_is_near_or_overlapping(array $left, array $right): bool
+{
+    if (bbox_intersection_area($left, $right) > 0.0) {
+        return true;
+    }
+
+    return bbox_center_distance_ratio($left, $right) <= 0.9;
+}
+
+function expand_bbox_for_added_text(array $sourceBbox, string $sourceText, string $adjustedText, ?array $truthBbox = null): array
+{
+    $sourceLength = count(utf8_chars($sourceText));
+    $adjustedLength = count(utf8_chars($adjustedText));
+    if ($adjustedLength <= $sourceLength) {
+        return $sourceBbox;
+    }
+
+    if ($truthBbox !== null && bbox_is_near_or_overlapping($sourceBbox, $truthBbox)) {
+        return bbox_union($sourceBbox, $truthBbox);
+    }
+
+    $extraChars = $adjustedLength - $sourceLength;
+    $width = max(0.0, (float) ($sourceBbox['x1'] ?? 0.0) - (float) ($sourceBbox['x0'] ?? 0.0));
+    $charWidth = $width / max($sourceLength, 1);
+    $expanded = $sourceBbox;
+    $expanded['x1'] = max((float) ($sourceBbox['x1'] ?? 0.0), (float) ($sourceBbox['x1'] ?? 0.0) + ($charWidth * $extraChars));
+    return $expanded;
+}
+
 function build_debug_word_from_fragments(array $fragments, string $text, ?array $fallbackBbox = null, ?float $fallbackScore = null): ?array
 {
     if ($fragments === []) {
@@ -8386,6 +8450,14 @@ function apply_tesseract_swedish_truth_to_segments(array $segments, array $tesse
         $adjustedText = transfer_swedish_diacritics($segmentText, (string) $bestCandidate['text']);
         if ($adjustedText !== $segmentText) {
             $segments[$index]['text'] = $adjustedText;
+            if (text_added_swedish_diacritic($segmentText, $adjustedText)) {
+                $segments[$index]['bbox'] = expand_bbox_for_added_text(
+                    $segmentBbox,
+                    $segmentText,
+                    $adjustedText,
+                    normalize_debug_word_bbox($bestCandidate['bbox'] ?? null)
+                );
+            }
         }
     }
 

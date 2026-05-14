@@ -457,6 +457,21 @@ def _bbox_center_distance_ratio(left: dict[str, float], right: dict[str, float])
     return distance / baseline
 
 
+def _bbox_union(left: dict[str, float], right: dict[str, float]) -> dict[str, float]:
+    return {
+        'x0': min(left['x0'], right['x0']),
+        'y0': min(left['y0'], right['y0']),
+        'x1': max(left['x1'], right['x1']),
+        'y1': max(left['y1'], right['y1']),
+    }
+
+
+def _bbox_is_near_or_overlapping(left: dict[str, float], right: dict[str, float]) -> bool:
+    if _bbox_intersection_area(left, right) > 0.0:
+        return True
+    return _bbox_center_distance_ratio(left, right) <= 0.9
+
+
 def _lowercase_text(text: str) -> str:
     return text.lower()
 
@@ -624,6 +639,33 @@ def _transfer_swedish_diacritics(source_text: str, truth_text: str) -> str:
             return ''.join(transferred_parts)
 
     return _transfer_swedish_diacritics_token(source_text, truth_text)
+
+
+def _text_added_swedish_diacritic(source_text: str, adjusted_text: str) -> bool:
+    if len(adjusted_text) <= len(source_text):
+        return False
+    source_count = sum(1 for char in source_text if _is_swedish_diacritic_char(char))
+    adjusted_count = sum(1 for char in adjusted_text if _is_swedish_diacritic_char(char))
+    return adjusted_count > source_count
+
+
+def _expand_bbox_for_added_text(
+    source_bbox: dict[str, float],
+    source_text: str,
+    adjusted_text: str,
+    truth_bbox: dict[str, float] | None = None,
+) -> dict[str, float]:
+    if len(adjusted_text) <= len(source_text):
+        return source_bbox
+
+    if truth_bbox is not None and _bbox_is_near_or_overlapping(source_bbox, truth_bbox):
+        return _bbox_union(source_bbox, truth_bbox)
+
+    extra_chars = len(adjusted_text) - len(source_text)
+    char_width = (source_bbox['x1'] - source_bbox['x0']) / max(len(source_text), 1)
+    expanded = dict(source_bbox)
+    expanded['x1'] = max(source_bbox['x1'], source_bbox['x1'] + (char_width * extra_chars))
+    return expanded
 
 
 def _build_debug_word_from_fragments(
@@ -854,6 +896,13 @@ def _apply_tesseract_swedish_truth_to_segments(
         adjusted_text = _transfer_swedish_diacritics(segment_text, str(best_candidate.get('text') or ''))
         if adjusted_text != segment_text:
             adjusted[index]['text'] = adjusted_text
+            if _text_added_swedish_diacritic(segment_text, adjusted_text):
+                adjusted[index]['bbox'] = _expand_bbox_for_added_text(
+                    segment_bbox,
+                    segment_text,
+                    adjusted_text,
+                    _normalize_bbox(best_candidate.get('bbox')),
+                )
 
     return adjusted
 
