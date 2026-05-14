@@ -11579,6 +11579,7 @@ function showLabelImportDialog() {
     importButton.type = 'button';
     importButton.className = 'button-success';
     importButton.textContent = 'Importera';
+    importButton.disabled = true;
 
     actions.append(cancelButton, importButton);
     body.append(description, sourceRow, textarea, error);
@@ -11591,12 +11592,31 @@ function showLabelImportDialog() {
       resolve(value);
     };
 
-    const submit = () => {
+    const validate = () => {
       const result = parseImportedLabelJson(textarea.value);
-      if (!result || !result.label) {
+      if (!textarea.value.trim()) {
+        error.textContent = '';
+        error.removeAttribute('data-tone');
+        importButton.disabled = true;
+        return null;
+      }
+      if (!result || !Array.isArray(result.items) || result.items.length < 1) {
         error.textContent = result && typeof result.error === 'string'
           ? result.error
           : 'Importen misslyckades.';
+        error.removeAttribute('data-tone');
+        importButton.disabled = true;
+        return null;
+      }
+      error.textContent = typeof result.status === 'string' ? result.status : '';
+      error.dataset.tone = 'info';
+      importButton.disabled = false;
+      return result;
+    };
+
+    const submit = () => {
+      const result = validate();
+      if (!result) {
         textarea.focus();
         return;
       }
@@ -11626,6 +11646,7 @@ function showLabelImportDialog() {
     });
     cancelButton.addEventListener('click', () => finish(null));
     importButton.addEventListener('click', submit);
+    textarea.addEventListener('input', validate);
     fileButton.addEventListener('click', () => {
       fileInput.click();
     });
@@ -11637,9 +11658,11 @@ function showLabelImportDialog() {
       try {
         textarea.value = await openFileAsText(file);
         fileName.textContent = file.name;
-        error.textContent = '';
+        validate();
       } catch (fileError) {
         error.textContent = fileError instanceof Error ? fileError.message : 'Kunde inte läsa filen.';
+        error.removeAttribute('data-tone');
+        importButton.disabled = true;
       }
     });
 
@@ -19865,6 +19888,52 @@ function normalizeImportedArchiveFolderObject(folder, warnings) {
   };
 }
 
+function removeJsonTrailingCommas(source) {
+  const text = String(source || '');
+  let result = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      result += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      result += char;
+      continue;
+    }
+
+    if (char === ',') {
+      let nextIndex = index + 1;
+      while (nextIndex < text.length && /\s/.test(text[nextIndex])) {
+        nextIndex += 1;
+      }
+      if (text[nextIndex] === '}' || text[nextIndex] === ']') {
+        continue;
+      }
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function parseImportJsonSource(source) {
+  return JSON.parse(removeJsonTrailingCommas(source));
+}
+
 function parseArchiveStructureImportJson(text, mode = 'folder') {
   const source = typeof text === 'string' ? text.trim() : '';
   if (source === '') {
@@ -19873,7 +19942,7 @@ function parseArchiveStructureImportJson(text, mode = 'folder') {
 
   let parsed = null;
   try {
-    parsed = JSON.parse(source);
+    parsed = parseImportJsonSource(source);
   } catch (error) {
     return { error: 'JSON kunde inte tolkas.' };
   }
@@ -20228,46 +20297,66 @@ function parseImportedLabelJson(text) {
 
   let parsed = null;
   try {
-    parsed = JSON.parse(source);
+    parsed = parseImportJsonSource(source);
   } catch (error) {
     return { error: 'JSON kunde inte tolkas.' };
   }
 
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { error: 'Importerad etikett måste vara ett JSON-objekt.' };
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  if (rows.length < 1 || rows.some((row) => !row || typeof row !== 'object' || Array.isArray(row))) {
+    return { error: 'Importen måste vara ett etikettobjekt eller en array med etikettobjekt.' };
   }
 
-  const hasRequiredFields = typeof parsed.id === 'string'
-    && parsed.id.trim() !== ''
-    && typeof parsed.name === 'string'
-    && parsed.name.trim() !== ''
-    && Object.prototype.hasOwnProperty.call(parsed, 'minScore')
-    && Array.isArray(parsed.rules)
-    && parsed.rules.length > 0;
-  if (!hasRequiredFields) {
-    return { error: 'Importerad etikett måste innehålla id, name, minScore och rules.' };
-  }
-
-  const systemLabelKey = typeof parsed.systemLabelKey === 'string' ? parsed.systemLabelKey.trim() : '';
-  if (systemLabelKey !== '') {
-    if (!Object.prototype.hasOwnProperty.call(SYSTEM_LABELS, systemLabelKey)) {
-      return { error: `Okänd systemetikett: ${systemLabelKey}` };
+  const items = [];
+  const seenIds = new Set();
+  for (const row of rows) {
+    const hasRequiredFields = typeof row.id === 'string'
+      && row.id.trim() !== ''
+      && typeof row.name === 'string'
+      && row.name.trim() !== ''
+      && Object.prototype.hasOwnProperty.call(row, 'minScore')
+      && Array.isArray(row.rules)
+      && row.rules.length > 0;
+    if (!hasRequiredFields) {
+      return { error: 'Importerad etikett måste innehålla id, name, minScore och rules.' };
     }
-    return {
-      label: sanitizeSystemLabelByKey(systemLabelKey, parsed),
-      isSystemLabel: true,
-      systemLabelKey,
-    };
-  }
 
-  if (parsed.isSystemLabel === true) {
-    return { error: 'Importerad systemetikett saknar systemLabelKey.' };
+    const systemLabelKey = typeof row.systemLabelKey === 'string' ? row.systemLabelKey.trim() : '';
+    let imported = null;
+    if (systemLabelKey !== '') {
+      if (!Object.prototype.hasOwnProperty.call(SYSTEM_LABELS, systemLabelKey)) {
+        return { error: `Okänd systemetikett: ${systemLabelKey}` };
+      }
+      imported = {
+        label: sanitizeSystemLabelByKey(systemLabelKey, row),
+        isSystemLabel: true,
+        systemLabelKey,
+      };
+    } else {
+      if (row.isSystemLabel === true) {
+        return { error: 'Importerad systemetikett saknar systemLabelKey.' };
+      }
+      imported = {
+        label: sanitizeLabel(row),
+        isSystemLabel: false,
+        systemLabelKey: '',
+      };
+    }
+
+    const identity = imported.isSystemLabel
+      ? `system:${imported.systemLabelKey}`
+      : `custom:${typeof imported.label.id === 'string' ? imported.label.id.trim() : ''}`;
+    if (seenIds.has(identity)) {
+      return { error: `Importen innehåller dubblett: ${typeof imported.label.name === 'string' ? imported.label.name : identity}` };
+    }
+    seenIds.add(identity);
+    items.push(imported);
   }
 
   return {
-    label: sanitizeLabel(parsed),
-    isSystemLabel: false,
-    systemLabelKey: '',
+    ...items[0],
+    items,
+    status: `${items.length} ${items.length === 1 ? 'etikett' : 'etiketter'} upptäckta`,
   };
 }
 
@@ -20371,18 +20460,28 @@ function revealImportedLabelInEditor(imported) {
 
 async function importSingleLabelFromJson() {
   const imported = await showLabelImportDialog();
-  if (!imported || !imported.label) {
+  const importedItems = imported && Array.isArray(imported.items)
+    ? imported.items
+    : (imported && imported.label ? [imported] : []);
+  if (importedItems.length < 1) {
     return;
   }
 
-  const conflict = labelImportConflictDetails(imported);
-  if (typeof conflict.error === 'string' && conflict.error !== '') {
-    alert(conflict.error);
-    return;
+  const conflicts = [];
+  for (const item of importedItems) {
+    const conflict = labelImportConflictDetails(item);
+    if (typeof conflict.error === 'string' && conflict.error !== '') {
+      alert(conflict.error);
+      return;
+    }
+    conflicts.push(conflict);
   }
 
-  if ((conflict.kind === 'replace-custom' || conflict.kind === 'replace-system') && conflict.message) {
-    const confirmed = window.confirm(conflict.message);
+  const replaceMessages = conflicts
+    .filter((conflict) => (conflict.kind === 'replace-custom' || conflict.kind === 'replace-system') && conflict.message)
+    .map((conflict) => conflict.message);
+  if (replaceMessages.length > 0) {
+    const confirmed = window.confirm(replaceMessages.join('\n'));
     if (!confirmed) {
       return;
     }
@@ -20395,23 +20494,25 @@ async function importSingleLabelFromJson() {
   const previousCustomCollapsed = labelsCustomCollapsed;
 
   try {
-    if (imported.isSystemLabel === true && typeof imported.systemLabelKey === 'string' && imported.systemLabelKey.trim() !== '') {
-      const systemLabelKey = imported.systemLabelKey.trim();
-      systemLabelsDraft[systemLabelKey] = imported.label;
-      labelsBuiltInCollapsed = false;
-    } else {
-      const existingIndex = labelsDraft.findIndex((row) => sanitizeLabel(row).id === imported.label.id);
-      if (existingIndex >= 0) {
-        labelsDraft.splice(existingIndex, 1, imported.label);
+    importedItems.forEach((item) => {
+      if (item.isSystemLabel === true && typeof item.systemLabelKey === 'string' && item.systemLabelKey.trim() !== '') {
+        const systemLabelKey = item.systemLabelKey.trim();
+        systemLabelsDraft[systemLabelKey] = item.label;
+        labelsBuiltInCollapsed = false;
       } else {
-        labelsDraft.push(imported.label);
+        const existingIndex = labelsDraft.findIndex((row) => sanitizeLabel(row).id === item.label.id);
+        if (existingIndex >= 0) {
+          labelsDraft.splice(existingIndex, 1, item.label);
+        } else {
+          labelsDraft.push(item.label);
+        }
+        labelsCustomCollapsed = false;
       }
-      labelsCustomCollapsed = false;
-    }
+    });
 
     renderLabelsEditor();
     updateSettingsActionButtons();
-    revealImportedLabelInEditor(imported);
+    revealImportedLabelInEditor(importedItems[importedItems.length - 1]);
   } catch (error) {
     labelsDraft = previousLabelsDraft.map(sanitizeLabel);
     systemLabelsDraft = sanitizeSystemLabels(previousSystemLabelsDraft);
@@ -20432,32 +20533,47 @@ function parseImportedExtractionFieldJson(text) {
 
   let parsed = null;
   try {
-    parsed = JSON.parse(source);
+    parsed = parseImportJsonSource(source);
   } catch (error) {
     return { error: 'JSON kunde inte tolkas.' };
   }
 
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { error: 'Importerad datafält måste vara ett JSON-objekt.' };
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  if (rows.length < 1 || rows.some((row) => !row || typeof row !== 'object' || Array.isArray(row))) {
+    return { error: 'Importen måste vara ett datafältsobjekt eller en array med datafältsobjekt.' };
   }
 
-  const hasRequiredFields = typeof parsed.key === 'string'
-    && parsed.key.trim() !== ''
-    && typeof parsed.name === 'string'
-    && parsed.name.trim() !== '';
-  if (!hasRequiredFields) {
-    return { error: 'Importerad datafält måste innehålla key och name.' };
+  const seenKeys = new Set();
+  const items = [];
+  for (const row of rows) {
+    const hasRequiredFields = typeof row.key === 'string'
+      && row.key.trim() !== ''
+      && typeof row.name === 'string'
+      && row.name.trim() !== '';
+    if (!hasRequiredFields) {
+      return { error: 'Importerad datafält måste innehålla key och name.' };
+    }
+
+    const field = sanitizeExtractionField({
+      ...row,
+      isSystemField: false,
+      isPredefinedField: false,
+      systemFieldKey: '',
+      predefinedFieldKey: '',
+    }, extractionFieldsDraft.length + items.length);
+    const fieldKey = typeof field.key === 'string' ? field.key.trim() : '';
+    if (seenKeys.has(fieldKey)) {
+      return { error: `Importen innehåller dubblett för datafält-id: ${fieldKey}` };
+    }
+    seenKeys.add(fieldKey);
+    items.push({ field });
   }
 
-  const field = sanitizeExtractionField({
-    ...parsed,
-    isSystemField: false,
-    isPredefinedField: false,
-    systemFieldKey: '',
-    predefinedFieldKey: '',
-  }, extractionFieldsDraft.length);
-
-  return { field };
+  return {
+    ...items[0],
+    items,
+    status: `${items.length} ${items.length === 1 ? 'datafält' : 'datafält'} upptäckta`,
+  };
 }
 
 function extractionFieldImportConflictDetails(imported) {
@@ -20587,6 +20703,7 @@ function showExtractionFieldImportDialog() {
     importButton.type = 'button';
     importButton.className = 'button-success';
     importButton.textContent = 'Importera';
+    importButton.disabled = true;
 
     actions.append(cancelButton, importButton);
     body.append(description, sourceRow, textarea, error);
@@ -20599,12 +20716,31 @@ function showExtractionFieldImportDialog() {
       resolve(value);
     };
 
-    const submit = () => {
+    const validate = () => {
       const result = parseImportedExtractionFieldJson(textarea.value);
-      if (!result || !result.field) {
+      if (!textarea.value.trim()) {
+        error.textContent = '';
+        error.removeAttribute('data-tone');
+        importButton.disabled = true;
+        return null;
+      }
+      if (!result || !Array.isArray(result.items) || result.items.length < 1) {
         error.textContent = result && typeof result.error === 'string'
           ? result.error
           : 'Importen misslyckades.';
+        error.removeAttribute('data-tone');
+        importButton.disabled = true;
+        return null;
+      }
+      error.textContent = typeof result.status === 'string' ? result.status : '';
+      error.dataset.tone = 'info';
+      importButton.disabled = false;
+      return result;
+    };
+
+    const submit = () => {
+      const result = validate();
+      if (!result) {
         textarea.focus();
         return;
       }
@@ -20634,6 +20770,7 @@ function showExtractionFieldImportDialog() {
     });
     cancelButton.addEventListener('click', () => finish(null));
     importButton.addEventListener('click', submit);
+    textarea.addEventListener('input', validate);
     fileButton.addEventListener('click', () => {
       fileInput.click();
     });
@@ -20645,9 +20782,11 @@ function showExtractionFieldImportDialog() {
       try {
         textarea.value = await openFileAsText(file);
         fileName.textContent = file.name;
-        error.textContent = '';
+        validate();
       } catch (fileError) {
         error.textContent = fileError instanceof Error ? fileError.message : 'Kunde inte läsa filen.';
+        error.removeAttribute('data-tone');
+        importButton.disabled = true;
       }
     });
 
@@ -20659,18 +20798,28 @@ function showExtractionFieldImportDialog() {
 
 async function importSingleExtractionFieldFromJson() {
   const imported = await showExtractionFieldImportDialog();
-  if (!imported || !imported.field) {
+  const importedItems = imported && Array.isArray(imported.items)
+    ? imported.items
+    : (imported && imported.field ? [imported] : []);
+  if (importedItems.length < 1) {
     return;
   }
 
-  const conflict = extractionFieldImportConflictDetails(imported);
-  if (typeof conflict.error === 'string' && conflict.error !== '') {
-    alert(conflict.error);
-    return;
+  const conflicts = [];
+  for (const item of importedItems) {
+    const conflict = extractionFieldImportConflictDetails(item);
+    if (typeof conflict.error === 'string' && conflict.error !== '') {
+      alert(conflict.error);
+      return;
+    }
+    conflicts.push(conflict);
   }
 
-  if (conflict.kind === 'replace-custom' && conflict.message) {
-    const confirmed = window.confirm(conflict.message);
+  const replaceMessages = conflicts
+    .filter((conflict) => conflict.kind === 'replace-custom' && conflict.message)
+    .map((conflict) => conflict.message);
+  if (replaceMessages.length > 0) {
+    const confirmed = window.confirm(replaceMessages.join('\n'));
     if (!confirmed) {
       return;
     }
@@ -20683,19 +20832,21 @@ async function importSingleExtractionFieldFromJson() {
   const previousCustomCollapsed = extractionFieldsCustomCollapsed;
 
   try {
-    const field = imported.field;
-    const existingIndex = extractionFieldsDraft.findIndex((row) => sanitizeExtractionField(row).key === field.key);
-    if (existingIndex >= 0) {
-      extractionFieldsDraft.splice(existingIndex, 1, field);
-    } else {
-      extractionFieldsDraft.push(field);
-    }
+    importedItems.forEach((item) => {
+      const field = item.field;
+      const existingIndex = extractionFieldsDraft.findIndex((row) => sanitizeExtractionField(row).key === field.key);
+      if (existingIndex >= 0) {
+        extractionFieldsDraft.splice(existingIndex, 1, field);
+      } else {
+        extractionFieldsDraft.push(field);
+      }
+    });
     extractionFieldsCustomCollapsed = false;
 
     renderExtractionFieldsEditor();
     renderSystemExtractionFieldsEditor();
     updateSettingsActionButtons();
-    revealImportedExtractionFieldInEditor(imported);
+    revealImportedExtractionFieldInEditor(importedItems[importedItems.length - 1]);
   } catch (error) {
     extractionFieldsDraft = previousExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
     predefinedExtractionFieldsDraft = previousPredefinedExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
@@ -20726,7 +20877,7 @@ function removeFolderIdsFromArchiveStructureImportJson(text) {
   }
   let parsed = null;
   try {
-    parsed = JSON.parse(source);
+    parsed = parseImportJsonSource(source);
   } catch (error) {
     return text;
   }
