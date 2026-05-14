@@ -22444,12 +22444,27 @@ function createMatchPatternInspector(options = {}) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'match-pattern-inspector-toggle';
+  const label = document.createElement('span');
+  label.className = 'match-pattern-inspector-toggle-label';
+  const dot = document.createElement('span');
+  dot.className = 'match-pattern-inspector-toggle-label-dot';
+  dot.textContent = '.';
+  const star = document.createElement('span');
+  star.className = 'match-pattern-inspector-toggle-label-star';
+  star.textContent = '*';
+  label.append(dot, star);
+  const icon = document.createElement('span');
+  icon.className = 'match-pattern-inspector-toggle-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  button.append(label, icon);
 
   let open = stateKey ? matchPatternInspectorStateByKey.get(stateKey) === true : false;
   const bindings = [];
 
   const syncButton = () => {
-    button.textContent = open ? 'Visa redigering' : 'Visa matchningsmönster';
+    const label = open ? 'Visa redigering' : 'Visa matchningsmönster';
+    button.title = label;
+    button.setAttribute('aria-label', label);
     button.setAttribute('aria-expanded', open ? 'true' : 'false');
     button.setAttribute('aria-pressed', open ? 'true' : 'false');
     button.classList.toggle('is-active', open);
