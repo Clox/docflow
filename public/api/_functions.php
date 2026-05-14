@@ -12117,9 +12117,10 @@ function document_date_candidates_from_text(string $text, int $offsetBase = 0): 
 {
     $candidates = [];
     $seen = [];
+    $yearFirstSeparatorPattern = '(?:\s*[.\-\/]\s*|\s+)';
 
     $matches = [];
-    if (@preg_match_all('/\b(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) >= 1) {
+    if (@preg_match_all('/\b(20\d{2})' . $yearFirstSeparatorPattern . '(\d{1,2})' . $yearFirstSeparatorPattern . '(\d{1,2})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) >= 1) {
         $all = is_array($matches[0] ?? null) ? $matches[0] : [];
         foreach ($all as $index => $group) {
             if (!is_array($group) || count($group) < 2) {
@@ -12138,7 +12139,7 @@ function document_date_candidates_from_text(string $text, int $offsetBase = 0): 
     }
 
     $matches = [];
-    if (@preg_match_all('/\b(20\d{2})[.\-\/](\d{1,2})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) >= 1) {
+    if (@preg_match_all('/\b(20\d{2})' . $yearFirstSeparatorPattern . '(\d{1,2})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) >= 1) {
         $all = is_array($matches[0] ?? null) ? $matches[0] : [];
         foreach ($all as $index => $group) {
             if (!is_array($group) || count($group) < 2) {

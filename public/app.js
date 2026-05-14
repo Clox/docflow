@@ -21690,6 +21690,7 @@ function createMatchPatternInspector(options = {}) {
 
     const wrapperEl = binding.inputEl.closest('.inline-input-wrap');
     if (wrapperEl instanceof HTMLElement) {
+      wrapperEl.classList.toggle('is-match-pattern-preview', open);
       const accessoryWrapEl = wrapperEl.querySelector('.inline-input-accessories');
       if (accessoryWrapEl instanceof HTMLElement) {
         const visibleAccessories = Array.from(accessoryWrapEl.children).filter((child) => child instanceof HTMLElement && child.hidden !== true);
