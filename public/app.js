@@ -22510,7 +22510,7 @@ function createMatchPatternInspector(options = {}) {
       binding.regexButtonEl.setAttribute('aria-disabled', open ? 'true' : 'false');
     }
 
-    if (binding.removeButtonEl instanceof HTMLButtonElement) {
+    if (binding.removeButtonEl instanceof HTMLButtonElement && binding.hideRemoveButtonInPreview !== false) {
       binding.removeButtonEl.hidden = open;
       binding.removeButtonEl.style.display = open ? 'none' : '';
       binding.removeButtonEl.disabled = open;
@@ -25533,6 +25533,7 @@ function renderSingleLabelEditor(container, options = {}) {
           copyButtonEl: textCopyButton,
           regexButtonEl: regexToggleButton,
           removeButtonEl: removeRuleButton,
+          hideRemoveButtonInPreview: false,
           placeholder: rule.type === 'sender_name_contains'
             ? 'Ex: "kommun"'
             : 'Ex: "förfallodatum"',
