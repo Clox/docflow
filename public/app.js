@@ -23977,15 +23977,12 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       datePositionSelect.addEventListener('change', syncRuleSetUi);
       amountPositionSelect.addEventListener('change', syncRuleSetUi);
 
-      if (ruleSetIndex > 0) {
+      if (ruleSets.length > 1) {
         removeRuleSetButton = createTrashButton({
           variant: 'node',
           title: 'Ta bort regeluppsättning',
           onClick: () => {
             collection[index].ruleSets.splice(ruleSetIndex, 1);
-            if (collection[index].ruleSets.length === 0) {
-              collection[index].ruleSets.push(defaultExtractionFieldRuleSet());
-            }
             renderExtractionFieldsEditor();
             updateSettingsActionButtons();
           },
