@@ -32,6 +32,31 @@ if ($headerAfterEventId === false || $headerAfterEventId === null || $headerAfte
 
 $lastEventId = max((int) $requestedAfterEventId, (int) $headerAfterEventId);
 $lastKeepaliveAt = time();
+$lastSupplementHash = '';
+
+$emitStateSupplement = static function (array $config) use (&$lastSupplementHash): void {
+    $payload = [
+        'senderPayeeLookupQueue' => build_sender_payee_lookup_queue_state_payload(1),
+        'senderOrganizationLookupQueue' => build_sender_organization_lookup_queue_state_payload(1),
+        'archivingRules' => build_archiving_rules_state_payload($config),
+        'lastEventId' => latest_job_event_id(),
+        'stateUpdateTransport' => (string) ($config['stateUpdateTransport'] ?? 'polling'),
+    ];
+    $hashSource = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $hash = sha1(is_string($hashSource) ? $hashSource : '');
+    if ($hash === $lastSupplementHash) {
+        return;
+    }
+    $lastSupplementHash = $hash;
+
+    $encodedPayload = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encodedPayload)) {
+        throw new RuntimeException('Kunde inte serialisera state-event');
+    }
+
+    echo "event: state\n";
+    echo 'data: ' . $encodedPayload . "\n\n";
+};
 
 while (!connection_aborted()) {
     try {
@@ -61,6 +86,7 @@ while (!connection_aborted()) {
             }
 
             $lastKeepaliveAt = time();
+            $emitStateSupplement($config);
             @ob_flush();
             flush();
         } elseif ((time() - $lastKeepaliveAt) >= 10) {
@@ -75,6 +101,7 @@ while (!connection_aborted()) {
             echo "event: keepalive\n";
             echo 'data: ' . $keepalivePayload . "\n\n";
             $lastKeepaliveAt = time();
+            $emitStateSupplement($config);
             @ob_flush();
             flush();
         }

@@ -446,6 +446,7 @@ let loadedMetaJobId = '';
 let pdfFrameJobIds = pdfFrameEls.map(() => '');
 let pollInFlight = false;
 let pendingFetchStateOptions = null;
+let pendingStatePollOptions = null;
 let stateStream = null;
 let statePollTimer = null;
 let stateUpdateTransport = 'polling';
@@ -676,10 +677,11 @@ function countUnarchivedJobsInState() {
   );
 }
 
-function requestStateRefresh(delay = 0) {
+function requestStateRefresh(delay = 0, options = {}) {
   if (stateUpdateTransport === 'sse') {
     return;
   }
+  pendingStatePollOptions = mergeFetchStateOptions(pendingStatePollOptions, options);
   scheduleStatePoll(delay);
 }
 
@@ -728,45 +730,22 @@ function pruneReprocessWatchJobs() {
 }
 
 function scheduleReprocessWatchRefresh(delayMs = 1500) {
-  if (reprocessWatchRefreshTimer !== null) {
+  if (stateUpdateTransport === 'sse') {
+    pruneReprocessWatchJobs();
     return;
   }
   if (reprocessWatchJobIds.size === 0) {
     return;
   }
 
-  reprocessWatchRefreshTimer = window.setTimeout(async () => {
-    reprocessWatchRefreshTimer = null;
-    if (reprocessWatchJobIds.size === 0) {
-      return;
-    }
-
-    try {
-      await fetchState({ force: true });
-    } catch (error) {
-      console.error('[Docflow] Reprocess watchdog refresh failed', error);
-    } finally {
-      pruneReprocessWatchJobs();
-      if (reprocessWatchJobIds.size > 0) {
-        scheduleReprocessWatchRefresh(2500);
-      }
-    }
-  }, delayMs);
+  requestStateRefresh(delayMs, { force: true });
 }
 
 function scheduleSenderLookupQueueRefresh(delayMs = 300) {
-  if (senderLookupQueueRefreshTimer !== null) {
-    window.clearTimeout(senderLookupQueueRefreshTimer);
+  if (stateUpdateTransport === 'sse') {
+    return;
   }
-
-  senderLookupQueueRefreshTimer = window.setTimeout(async () => {
-    senderLookupQueueRefreshTimer = null;
-    try {
-      await fetchState({ refreshSenders: true, force: true, syncTransport: false });
-    } catch (error) {
-      console.error('[Docflow] Sender lookup queue refresh failed', error);
-    }
-  }, delayMs);
+  requestStateRefresh(delayMs, { refreshSenders: true, force: true });
 }
 
 function syncSelectOptions(selectEl, placeholderText, options, lastSignature) {
@@ -28976,7 +28955,9 @@ function scheduleStatePoll(delay = 1500) {
 
   statePollTimer = window.setTimeout(() => {
     statePollTimer = null;
-    fetchState();
+    const options = pendingStatePollOptions || {};
+    pendingStatePollOptions = null;
+    fetchState(options);
   }, delay);
 }
 
@@ -29023,6 +29004,40 @@ function startStateStream() {
       }
     } catch (error) {
       // Ignore keepalive payload parse failures.
+    }
+  });
+
+  stream.addEventListener('state', (event) => {
+    if (!event || typeof event.data !== 'string' || event.data === '') {
+      return;
+    }
+    try {
+      const payload = JSON.parse(event.data);
+      if (!payload || typeof payload !== 'object') {
+        return;
+      }
+      const nextTransport = sanitizeStateUpdateTransport(payload.stateUpdateTransport, stateUpdateTransport);
+      stateUpdateTransport = nextTransport;
+      applyState({
+        senderOrganizationLookupQueue: payload.senderOrganizationLookupQueue && typeof payload.senderOrganizationLookupQueue === 'object'
+          ? payload.senderOrganizationLookupQueue
+          : undefined,
+        senderPayeeLookupQueue: payload.senderPayeeLookupQueue && typeof payload.senderPayeeLookupQueue === 'object'
+          ? payload.senderPayeeLookupQueue
+          : undefined,
+        archivingRules: payload.archivingRules && typeof payload.archivingRules === 'object'
+          ? payload.archivingRules
+          : undefined,
+      });
+      const lastEventId = Number.parseInt(String(payload.lastEventId || ''), 10);
+      if (Number.isInteger(lastEventId) && lastEventId > stateEventCursor) {
+        stateEventCursor = lastEventId;
+      }
+      if (nextTransport !== 'sse') {
+        syncStateUpdateTransport();
+      }
+    } catch (error) {
+      // Ignore malformed state stream payloads and wait for next event.
     }
   });
 
