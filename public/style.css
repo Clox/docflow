@@ -6510,7 +6510,7 @@ body.is-resizing-sidebar {
 
 .floating-input-label {
   position: absolute;
-  top: 1px;
+  top: -1px;
   left: 8px;
   transform: translateY(-50%);
   padding: 0 4px;
@@ -6603,6 +6603,11 @@ body.is-resizing-sidebar {
   width: calc(var(--inline-input-text-width) + var(--inline-input-accessories-width));
   min-width: calc(12ch + var(--inline-input-accessories-width));
   max-width: min(100%, calc(40ch + var(--inline-input-accessories-width)));
+}
+
+.extraction-field-value-pattern-field > .extraction-field-alias-input-wrap {
+  width: 100%;
+  max-width: 100%;
 }
 
 .extraction-field-alias-row input {
