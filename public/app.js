@@ -1827,9 +1827,10 @@ function syncJobLabelsExpandedWidth(job = findJobById(selectedJobId)) {
 
   const baseWidth = controlRowEl.offsetWidth || jobLabelsFieldEl.offsetWidth || 0;
   const summaryItems = jobLabelsSummaryItems(job);
+  const widthItems = summaryItems.filter((item) => item.type === 'label');
   const chipFont = `11px ${window.getComputedStyle(jobLabelsFieldEl).fontFamily}`;
-  const chipWidths = summaryItems.length > 0
-    ? summaryItems.map((item) => Math.ceil(measureUiTextWidth(item.text, chipFont) + (item.type === 'data-field' ? 50 : 24)))
+  const chipWidths = widthItems.length > 0
+    ? widthItems.map((item) => Math.ceil(measureUiTextWidth(item.text, chipFont) + 24))
     : [Math.ceil(measureUiTextWidth('Inga etiketter eller datafält', window.getComputedStyle(jobLabelsFieldEl).font) + 20)];
   const chipsTotalWidth = chipWidths.reduce((sum, width) => sum + width, 0) + Math.max(0, chipWidths.length - 1) * 6 + 18;
   const resetWidth = resetLabelsActionEl instanceof HTMLButtonElement && !resetLabelsActionEl.hidden
@@ -21478,7 +21479,8 @@ function installFloatingInputHelpDismissHandler() {
       if (!instance || typeof instance.close !== 'function' || !(instance.button instanceof HTMLElement) || !(instance.panel instanceof HTMLElement)) {
         return;
       }
-      if (instance.button.contains(target) || instance.panel.contains(target)) {
+      const triggerElements = Array.isArray(instance.triggers) ? instance.triggers : [instance.button];
+      if (triggerElements.some((trigger) => trigger instanceof HTMLElement && trigger.contains(target)) || instance.panel.contains(target)) {
         return;
       }
       if (instance.open === true) {
@@ -21488,7 +21490,99 @@ function installFloatingInputHelpDismissHandler() {
   });
 }
 
-function createFloatingHelpToggle(helpText, options = {}) {
+function appendFloatingHelpContent(container, content) {
+  if (content instanceof Node) {
+    container.appendChild(content);
+    return;
+  }
+  if (Array.isArray(content)) {
+    content.forEach((item) => appendFloatingHelpContent(container, item));
+    return;
+  }
+  container.textContent = typeof content === 'string' ? content : '';
+}
+
+function createHelpSection(title, items) {
+  const section = document.createElement('div');
+  section.className = 'floating-input-help-section';
+  if (typeof title === 'string' && title.trim() !== '') {
+    const heading = document.createElement('div');
+    heading.className = 'floating-input-help-section-title';
+    heading.textContent = title.trim();
+    section.appendChild(heading);
+  }
+  const list = document.createElement('ul');
+  list.className = 'floating-input-help-list';
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const li = document.createElement('li');
+    if (item instanceof Node) {
+      li.appendChild(item);
+    } else if (Array.isArray(item)) {
+      item.forEach((part) => appendFloatingHelpContent(li, part));
+    } else {
+      li.textContent = String(item || '');
+    }
+    list.appendChild(li);
+  });
+  section.appendChild(list);
+  return section;
+}
+
+function createInlineCode(text) {
+  const code = document.createElement('code');
+  code.textContent = text;
+  return code;
+}
+
+function createHelpTextLine(parts) {
+  const fragment = document.createDocumentFragment();
+  (Array.isArray(parts) ? parts : [parts]).forEach((part) => {
+    if (part instanceof Node) {
+      fragment.appendChild(part);
+    } else {
+      fragment.appendChild(document.createTextNode(String(part || '')));
+    }
+  });
+  return fragment;
+}
+
+function createOcrMatchHelpContent() {
+  return createOcrTextMatchHelpContent();
+}
+
+function createOcrMatchHelpDisclosure(helpId, buttonLabel) {
+  return createFloatingHelpToggle(createOcrMatchHelpContent(), { helpId, buttonLabel });
+}
+
+function createOcrTextMatchHelpContent() {
+  const wrapper = document.createElement('div');
+  wrapper.appendChild(createHelpSection('', [
+    'Mellanslag matchar flexibel whitespace i OCR-text.',
+  ]));
+  wrapper.appendChild(createHelpSection('Placeholders', [
+    createHelpTextLine([createInlineCode('{DATUM}'), ' - datum i stödda format, t.ex. ', createInlineCode('2026-05-01'), ' eller ', createInlineCode('maj 2026')]),
+    createHelpTextLine([createInlineCode('{BELOPP}'), ' - numeriskt belopp, t.ex. ', createInlineCode('331'), ' eller ', createInlineCode('1 234,50')]),
+  ]));
+  wrapper.appendChild(createHelpSection('Capture groups', [
+    'Om inga capture groups finns används hela matchningen.',
+    'Om capture groups finns concat:as grupperna i ordning.',
+    createHelpTextLine(['Non-capture groups ', createInlineCode('(?:...)'), ' används för struktur och blir inte del av det extraherade värdet.']),
+  ]));
+  wrapper.appendChild(createHelpSection('Exempel', [
+    createHelpTextLine([createInlineCode('foo(?:baz)bar'), ' → ', createInlineCode('foobazbar')]),
+    createHelpTextLine([createInlineCode('(foo)(?:baz)(bar)'), ' → ', createInlineCode('foobar')]),
+  ]));
+  wrapper.appendChild(createHelpSection('Belopp med kronor/ören', [
+    createInlineCode('(?<KRONOR>\\d+)\\s+(?<OREN>\\d{2})'),
+  ]));
+  return wrapper;
+}
+
+function createValuePatternHelpContent() {
+  return createOcrTextMatchHelpContent();
+}
+
+function createFloatingHelpToggle(helpContent, options = {}) {
   const helpId = typeof options.helpId === 'string' && options.helpId.trim() !== ''
     ? options.helpId.trim()
     : '';
@@ -21512,13 +21606,17 @@ function createFloatingHelpToggle(helpText, options = {}) {
   }
   const helpInner = document.createElement('div');
   helpInner.className = 'input-help floating-input-help-panel-content';
-  helpInner.textContent = typeof helpText === 'string' ? helpText : '';
+  appendFloatingHelpContent(helpInner, helpContent);
   panel.appendChild(helpInner);
 
   let open = false;
+  let labelEl = null;
   const sync = () => {
     button.setAttribute('aria-expanded', open ? 'true' : 'false');
     button.classList.toggle('is-active', open);
+    if (labelEl instanceof HTMLElement) {
+      labelEl.classList.toggle('is-help-active', open);
+    }
     panel.classList.toggle('hidden', !open);
     panel.style.display = open ? 'block' : '';
   };
@@ -21535,21 +21633,44 @@ function createFloatingHelpToggle(helpText, options = {}) {
 
   button.addEventListener('click', (event) => {
     event.preventDefault();
+    event.stopPropagation();
     toggle();
   });
 
-  floatingInputHelpInstances.add({
+  const attachLabel = (label) => {
+    if (!(label instanceof HTMLElement)) {
+      return;
+    }
+    labelEl = label;
+    label.classList.add('floating-input-label--with-help');
+    label.classList.add('floating-input-help-trigger');
+    label.addEventListener('click', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target && target.closest('button')) {
+        return;
+      }
+      event.preventDefault();
+      toggle();
+    });
+    sync();
+  };
+
+  const instance = {
     button,
     panel,
+    get triggers() {
+      return labelEl instanceof HTMLElement ? [button, labelEl] : [button];
+    },
     get open() {
       return open;
     },
     close,
-  });
+  };
+  floatingInputHelpInstances.add(instance);
   installFloatingInputHelpDismissHandler();
 
   sync();
-  return { button, panel, close, toggle };
+  return { button, panel, close, toggle, attachLabel };
 }
 
 function inlineInputAccessoryWidthHint(accessory) {
@@ -23474,15 +23595,12 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const searchTermsLabel = document.createElement('label');
       searchTermsLabel.className = 'floating-input-label';
       searchTermsLabel.textContent = 'Söktext';
-      const matchHelpText = 'Mellanslag matchar automatiskt flexibel whitespace i OCR-text.';
-      const searchTermsHelpDisclosure = createFloatingHelpToggle(
-        matchHelpText,
-        {
-          helpId: `search-terms-help-${typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : index}-${ruleSetIndex}`,
-          buttonLabel: 'Visa hjälp för söktext',
-        }
+      const searchTermsHelpDisclosure = createOcrMatchHelpDisclosure(
+        `search-terms-help-${typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : index}-${ruleSetIndex}`,
+        'Visa hjälp för söktext'
       );
       searchTermsLabel.appendChild(searchTermsHelpDisclosure.button);
+      searchTermsHelpDisclosure.attachLabel(searchTermsLabel);
       const searchTermsList = document.createElement('div');
       searchTermsList.className = 'extraction-field-aliases';
       const searchTermValues = extractionFieldSearchTermsForEditor(ruleSet);
@@ -23711,15 +23829,13 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       scopeLabel.className = 'floating-input-label floating-input-label--with-help';
       const scopeLabelText = document.createElement('span');
       scopeLabelText.textContent = 'Begränsa till text efter';
-      const scopeHelpDisclosure = createFloatingHelpToggle(
-        matchHelpText,
-        {
-          helpId: `scope-help-${typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : index}-${ruleSetIndex}`,
-          buttonLabel: 'Visa hjälp för begränsa till text efter',
-        }
+      const scopeHelpDisclosure = createOcrMatchHelpDisclosure(
+        `scope-help-${typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : index}-${ruleSetIndex}`,
+        'Visa hjälp för begränsa till text efter'
       );
       scopeLabel.appendChild(scopeLabelText);
       scopeLabel.appendChild(scopeHelpDisclosure.button);
+      scopeHelpDisclosure.attachLabel(scopeLabel);
       scopeField.appendChild(scopeLabel);
       scopeField.appendChild(scopeInputWrap);
       scopeField.appendChild(scopeHelpDisclosure.panel);
@@ -23766,7 +23882,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const valuePatternLabelText = document.createElement('span');
       valuePatternLabelText.textContent = 'Värdemönster';
       const valuePatternHelpDisclosure = createFloatingHelpToggle(
-        'Du kan använda {DATUM} och {BELOPP} i värdemönster. Belopp kan även byggas med named groups: (?<KRONOR>\\d+)\\s+(?<ÖREN>\\d{2}) eller (?<OREN>\\d{2}).',
+        createValuePatternHelpContent(),
         {
           helpId: `value-pattern-help-${typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : index}-${ruleSetIndex}`,
           buttonLabel: 'Visa hjälp för värdemönster',
@@ -23774,6 +23890,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       );
       valuePatternLabel.appendChild(valuePatternLabelText);
       valuePatternLabel.appendChild(valuePatternHelpDisclosure.button);
+      valuePatternHelpDisclosure.attachLabel(valuePatternLabel);
       valuePatternField.appendChild(valuePatternLabel);
       valuePatternField.appendChild(valuePatternInputWrap);
       valuePatternField.appendChild(valuePatternHelpDisclosure.panel);
@@ -24732,16 +24849,12 @@ function renderSingleLabelEditor(container, options = {}) {
       ruleFields.appendChild(createFloatingField('Fält', fieldSelect));
     } else {
       if (rule.type === 'text') {
-        const matchHelpText = 'Mellanslag matchar automatiskt flexibel whitespace i OCR-text.';
         const labelRuleStateKey = builtIn
           ? `built-in:${typeof options.labelKey === 'string' && options.labelKey.trim() !== '' ? options.labelKey.trim() : `label-${ruleIndex}`}`
           : `custom:${typeof currentLabel.id === 'string' && currentLabel.id.trim() !== '' ? currentLabel.id.trim() : `label-${typeof options.labelIndex === 'number' ? options.labelIndex : ruleIndex}`}`;
-        const textHelpDisclosure = createFloatingHelpToggle(
-          matchHelpText,
-          {
-            helpId: `label-rule-help-${builtIn ? `built-in-${typeof options.labelKey === 'string' ? options.labelKey.trim() : 'label'}` : `custom-${typeof currentLabel.id === 'string' ? currentLabel.id.trim() : 'label'}`}-${ruleIndex}`,
-            buttonLabel: 'Visa hjälp för regeltext',
-          }
+        const textHelpDisclosure = createOcrMatchHelpDisclosure(
+          `label-rule-help-${builtIn ? `built-in-${typeof options.labelKey === 'string' ? options.labelKey.trim() : 'label'}` : `custom-${typeof currentLabel.id === 'string' ? currentLabel.id.trim() : 'label'}`}-${ruleIndex}`,
+          'Visa hjälp för regeltext'
         );
         ruleMatchPatternInspector = createMatchPatternInspector({
           stateKey: `label:${labelRuleStateKey}:rule:${ruleIndex}`,
@@ -24774,6 +24887,7 @@ function renderSingleLabelEditor(container, options = {}) {
         const textFieldLabelNode = textFieldLabel.querySelector('.floating-input-label');
         if (textFieldLabelNode instanceof HTMLElement) {
           textFieldLabelNode.appendChild(textHelpDisclosure.button);
+          textHelpDisclosure.attachLabel(textFieldLabelNode);
         }
         textFieldLabel.appendChild(textHelpDisclosure.panel);
         ruleMatchPatternInspector.registerInput({

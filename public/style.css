@@ -6560,6 +6560,16 @@ body.is-resizing-sidebar {
   gap: 4px;
 }
 
+.floating-input-help-trigger {
+  cursor: help;
+}
+
+.floating-input-help-trigger:hover,
+.floating-input-help-trigger:focus-visible,
+.floating-input-help-trigger.is-help-active {
+  color: #334155;
+}
+
 .floating-input-label .floating-input-help-toggle {
   margin-left: 1px;
   position: relative;
@@ -6572,7 +6582,7 @@ body.is-resizing-sidebar {
   padding: 0;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
-  background: #fff;
+  background: rgba(248, 250, 252, 0.92);
   color: #64748b;
   font: inherit;
   font-size: 10px;
@@ -6582,6 +6592,9 @@ body.is-resizing-sidebar {
   flex: 0 0 auto;
 }
 
+.floating-input-help-trigger:hover .floating-input-help-toggle,
+.floating-input-help-trigger:focus-visible .floating-input-help-toggle,
+.floating-input-help-trigger.is-help-active .floating-input-help-toggle,
 .floating-input-help-toggle:hover,
 .floating-input-help-toggle:focus-visible,
 .floating-input-help-toggle.is-active {
@@ -6608,6 +6621,38 @@ body.is-resizing-sidebar {
   background: #fff;
   color: #374151;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+  user-select: text;
+}
+
+.floating-input-help-section + .floating-input-help-section {
+  margin-top: 8px;
+}
+
+.floating-input-help-section-title {
+  margin-bottom: 3px;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.floating-input-help-list {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.floating-input-help-list li {
+  margin: 0;
+}
+
+.floating-input-help-panel code {
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #0f172a;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
 }
 
 .extraction-field-aliases-field {
