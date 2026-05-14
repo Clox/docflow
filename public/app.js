@@ -22632,10 +22632,12 @@ function createMatchPatternInspector(options = {}) {
       ? String(binding.getPreviewValue(originalValue) || '')
       : originalValue;
     const nextValue = open ? patternValue : originalValue;
+    const shouldSyncValue = open || binding._wasMatchPatternPreview === true;
 
-    if (binding.inputEl.value !== nextValue) {
+    if (shouldSyncValue && binding.inputEl.value !== nextValue) {
       binding.inputEl.value = nextValue;
     }
+    binding._wasMatchPatternPreview = open;
     binding.inputEl.readOnly = open;
     binding.inputEl.setAttribute('aria-readonly', open ? 'true' : 'false');
     binding.inputEl.placeholder = open
