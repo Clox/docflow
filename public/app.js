@@ -13881,10 +13881,6 @@ function setOcrWordTooltipWordHighlights(page, wordIndexes, className = 'is-hove
   ocrWordTooltipHoveredWordIndexes = nextWordIndexes;
 }
 
-function isOcrWordTooltipLocked() {
-  return ocrWordTooltipIsLocked === true;
-}
-
 function openOcrWordTooltipForWordIndex(page, wordIndex, matchLookup = null) {
   if (!page || !Array.isArray(page.words) || !Number.isInteger(wordIndex)) {
     return;
@@ -14699,27 +14695,15 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
             chipEl.setAttribute('aria-label', `Öppna bbox #${wordIndex + 1}`);
             chipEl.setAttribute('title', `Öppna bbox #${wordIndex + 1}`);
             chipEl.addEventListener('mouseenter', () => {
-              if (isOcrWordTooltipLocked()) {
-                return;
-              }
               setOcrWordTooltipWordHighlights(page, [wordIndex], 'is-tooltip-hover');
             });
             chipEl.addEventListener('focus', () => {
-              if (isOcrWordTooltipLocked()) {
-                return;
-              }
               setOcrWordTooltipWordHighlights(page, [wordIndex], 'is-tooltip-hover');
             });
             chipEl.addEventListener('mouseleave', () => {
-              if (isOcrWordTooltipLocked()) {
-                return;
-              }
               clearOcrWordTooltipWordHighlights();
             });
             chipEl.addEventListener('blur', () => {
-              if (isOcrWordTooltipLocked()) {
-                return;
-              }
               clearOcrWordTooltipWordHighlights();
             });
             chipEl.addEventListener('click', (event) => {
