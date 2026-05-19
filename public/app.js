@@ -6597,6 +6597,9 @@ function setOcrDebugExportStatus(message, tone = 'info') {
 
 function renderOcrDebugExportStatus() {
   if (!(ocrDebugExportStatusEl instanceof HTMLElement)) {
+    if (ocrDebugExportStatusTone === 'error' && ocrDebugExportStatusMessage !== '') {
+      alert(ocrDebugExportStatusMessage);
+    }
     return;
   }
 
@@ -6663,52 +6666,91 @@ function ocrDebugExportStatusLabel(status) {
     case 'changed':
       return '≠ ändrad';
     case 'onlyInA':
-      return '− endast i A';
+      return '− endast i gammal';
     case 'onlyInB':
-      return '+ endast i B';
+      return '+ endast i ny';
     default:
       return String(status || '');
   }
 }
 
-function ocrDebugExportComparisonSummary(counts) {
-  const changedCount = Number(counts && counts.changed || 0);
-  const onlyInACount = Number(counts && counts.onlyInA || 0);
-  const onlyInBCount = Number(counts && counts.onlyInB || 0);
-  const metadataCount = Number(counts && counts.metadataChanged || 0);
-  const missingCount = onlyInACount + onlyInBCount;
-  const parts = [];
-
-  if (changedCount > 0) {
-    parts.push(changedCount === 1 ? '1 ändrad fil' : `${changedCount} ändrade filer`);
-  }
-  if (missingCount > 0) {
-    parts.push(missingCount === 1 ? '1 saknad fil' : `${missingCount} saknade filer`);
-  }
-  if (metadataCount > 0) {
-    parts.push(metadataCount === 1 ? '1 metadataändring' : `${metadataCount} metadataändringar`);
-  }
-  if (parts.length === 0) {
-    return 'Jämförelse klar: inga skillnader hittades.';
-  }
-  if (parts.length === 1) {
-    return `Jämförelse klar: ${parts[0]}.`;
-  }
-  return `Jämförelse klar: ${parts.slice(0, -1).join(', ')} och ${parts[parts.length - 1]}.`;
-}
-
-function ocrDebugExportComparisonTitle(snapshotInfo, fallback) {
+function ocrDebugExportComparisonDetails(snapshotInfo) {
   if (!snapshotInfo || typeof snapshotInfo !== 'object') {
-    return fallback;
+    return {
+      exportedAt: '',
+      exportedAtText: '',
+      filterLabel: '',
+      folderName: '',
+    };
   }
-  const folderName = typeof snapshotInfo.folderName === 'string' ? snapshotInfo.folderName : fallback;
+  const folderName = typeof snapshotInfo.folderName === 'string' ? snapshotInfo.folderName.trim() : '';
   const filterLabel = typeof snapshotInfo.filterLabel === 'string' && snapshotInfo.filterLabel.trim() !== ''
     ? snapshotInfo.filterLabel.trim()
     : '';
   const exportedAt = typeof snapshotInfo.exportedAt === 'string' && snapshotInfo.exportedAt.trim() !== ''
-    ? formatOcrDebugExportDateTime(snapshotInfo.exportedAt)
+    ? snapshotInfo.exportedAt.trim()
     : '';
-  return [folderName, filterLabel, exportedAt].filter(Boolean).join(' · ');
+  return {
+    exportedAt,
+    exportedAtText: exportedAt !== '' ? formatOcrDebugExportDateTime(exportedAt) : '',
+    filterLabel,
+    folderName,
+  };
+}
+
+function ocrDebugExportComparisonSides(result) {
+  const left = ocrDebugExportComparisonDetails(result && result.left);
+  const right = ocrDebugExportComparisonDetails(result && result.right);
+  const leftTime = Date.parse(left.exportedAt || '');
+  const rightTime = Date.parse(right.exportedAt || '');
+  const leftIsOlder = Number.isFinite(leftTime) && Number.isFinite(rightTime)
+    ? leftTime <= rightTime
+    : true;
+  return {
+    oldKey: leftIsOlder ? 'left' : 'right',
+    newKey: leftIsOlder ? 'right' : 'left',
+    oldInfo: leftIsOlder ? left : right,
+    newInfo: leftIsOlder ? right : left,
+  };
+}
+
+function closeOcrDebugExportCompareResult() {
+  ocrDebugExportCompareResult = null;
+  ocrDebugExportShowIdenticalEl = null;
+  renderOcrDebugExportCompareResult();
+}
+
+function createOcrDebugSnapshotSummary(label, info) {
+  const item = document.createElement('div');
+  item.className = 'ocr-debug-compare-snapshot';
+  if (info && info.folderName) {
+    item.title = info.folderName;
+  }
+  const labelEl = document.createElement('div');
+  labelEl.className = 'ocr-debug-compare-snapshot-label';
+  labelEl.textContent = label;
+  const dateEl = document.createElement('div');
+  dateEl.className = 'ocr-debug-compare-snapshot-date';
+  dateEl.textContent = info && info.exportedAtText ? info.exportedAtText : 'Okänt datum';
+  item.append(labelEl, dateEl);
+  if (info && info.filterLabel) {
+    const filterEl = document.createElement('div');
+    filterEl.className = 'ocr-debug-compare-snapshot-filter';
+    filterEl.textContent = info.filterLabel;
+    item.appendChild(filterEl);
+  }
+  return item;
+}
+
+function ocrDebugExportFileDisplayLabel(relativePath) {
+  const normalized = typeof relativePath === 'string' ? relativePath.trim() : '';
+  if (/^text\/[^/]+\.txt$/u.test(normalized)) {
+    return 'Textlager';
+  }
+  if (/^merged_objects\/[^/]+\.json$/u.test(normalized)) {
+    return 'Textobjekt / OCR-objekt';
+  }
+  return normalized || 'Fil';
 }
 
 async function copyOcrDebugExportCommand(command, buttonEl) {
@@ -7041,73 +7083,164 @@ function createOcrDebugMeldSplitButton({ label, toggleLabel, command, relativePa
   return splitButton;
 }
 
-function appendOcrDebugMetadataLines(sectionEl, lines, className) {
-  lines.forEach((line) => {
-    const item = document.createElement('div');
-    item.className = className;
-    item.textContent = line;
-    sectionEl.appendChild(item);
-  });
+function createSnapshotCompareMissingValue() {
+  const item = document.createElement('span');
+  item.className = 'snapshot-compare-missing-value';
+  item.textContent = 'saknas';
+  return item;
 }
 
-function createOcrDebugMetadataDiffRow(diff) {
+function snapshotCompareDocumentTitle(diff, sideKey) {
+  const doc = diff && typeof diff === 'object' && diff[`${sideKey}Document`] && typeof diff[`${sideKey}Document`] === 'object'
+    ? diff[`${sideKey}Document`]
+    : {};
+  const filename = typeof doc.originalFilename === 'string' && doc.originalFilename.trim() !== ''
+    ? doc.originalFilename.trim()
+    : (typeof doc.filename === 'string' && doc.filename.trim() !== '' ? doc.filename.trim() : '');
+  return filename;
+}
+
+function createSnapshotCompareValue(value, options = {}) {
+  const normalizedValue = typeof value === 'string' ? value.trim() : '';
+  if (normalizedValue === '') {
+    return createSnapshotCompareMissingValue();
+  }
+  if (options.type === 'dataField') {
+    return createJobDataFieldSummaryChip(options.label || 'Datafält', normalizedValue);
+  }
+  if (options.type === 'label') {
+    return createJobLabelsSummaryChip(normalizedValue, 'job-labels-summary-chip');
+  }
+  const text = document.createElement('span');
+  text.className = 'snapshot-compare-plain-value';
+  text.textContent = normalizedValue;
+  return text;
+}
+
+function appendSnapshotCompareTableRow(table, fieldLabel, oldValue, newValue, options = {}) {
+  const row = document.createElement('div');
+  row.className = 'snapshot-compare-table-row';
+  const field = document.createElement('div');
+  field.className = 'snapshot-compare-table-field';
+  field.textContent = fieldLabel;
+  const oldCell = document.createElement('div');
+  oldCell.className = 'snapshot-compare-table-cell';
+  oldCell.appendChild(createSnapshotCompareValue(oldValue, {
+    ...options,
+    label: options.oldLabel || options.label || fieldLabel,
+  }));
+  const newCell = document.createElement('div');
+  newCell.className = 'snapshot-compare-table-cell';
+  newCell.appendChild(createSnapshotCompareValue(newValue, {
+    ...options,
+    label: options.newLabel || options.label || fieldLabel,
+  }));
+  row.append(field, oldCell, newCell);
+  table.appendChild(row);
+}
+
+function createOcrDebugMetadataDiffRow(diff, sides) {
+  const oldSide = sides && sides.oldKey === 'right' ? 'right' : 'left';
+  const newSide = oldSide === 'left' ? 'right' : 'left';
   const row = document.createElement('div');
   row.className = 'ocr-debug-compare-file-row ocr-debug-compare-file-row--metadata';
 
-  const main = document.createElement('div');
-  main.className = 'ocr-debug-compare-file-main ocr-debug-compare-file-main--metadata';
-  const status = document.createElement('span');
-  status.className = 'ocr-debug-compare-file-status';
-  status.textContent = '≠ metadata';
-  const path = document.createElement('span');
-  path.className = 'ocr-debug-compare-file-path';
-  path.textContent = `dokument/${diff && typeof diff.jobId === 'string' ? diff.jobId : ''}`;
-  main.append(status, path);
-  row.appendChild(main);
+  const header = document.createElement('div');
+  header.className = 'ocr-debug-metadata-document-header';
+  const title = document.createElement('div');
+  title.className = 'ocr-debug-metadata-document-title';
+  title.textContent = snapshotCompareDocumentTitle(diff, oldSide) || snapshotCompareDocumentTitle(diff, newSide) || 'Dokument';
+  const job = document.createElement('div');
+  job.className = 'ocr-debug-metadata-document-job';
+  const jobId = diff && typeof diff.jobId === 'string' ? diff.jobId : '';
+  job.textContent = jobId !== '' ? `Jobb: ${jobId}` : '';
+  header.append(title, job);
+  row.appendChild(header);
 
-  const details = document.createElement('div');
-  details.className = 'ocr-debug-metadata-diff';
+  const table = document.createElement('div');
+  table.className = 'snapshot-compare-table';
+  const tableHead = document.createElement('div');
+  tableHead.className = 'snapshot-compare-table-row snapshot-compare-table-row--head';
+  ['Uppgift', 'Gammal', 'Ny'].forEach((label) => {
+    const cell = document.createElement('div');
+    cell.textContent = label;
+    tableHead.appendChild(cell);
+  });
+  table.appendChild(tableHead);
+
+  const oldTitle = snapshotCompareDocumentTitle(diff, oldSide);
+  const newTitle = snapshotCompareDocumentTitle(diff, newSide);
+  if (oldTitle !== '' || newTitle !== '') {
+    appendSnapshotCompareTableRow(table, 'Filnamn', oldTitle, newTitle);
+  }
+
+  const scalarDiffs = Array.isArray(diff && diff.metadata) ? diff.metadata : [];
+  scalarDiffs.forEach((item) => {
+    const label = item && typeof item.label === 'string' && item.label.trim() !== ''
+      ? item.label.trim()
+      : String(item && item.key || 'Uppgift');
+    const from = item && typeof item.from === 'string' ? item.from : '';
+    const to = item && typeof item.to === 'string' ? item.to : '';
+    appendSnapshotCompareTableRow(table, label, oldSide === 'left' ? from : to, oldSide === 'left' ? to : from);
+  });
 
   const dataFields = Array.isArray(diff && diff.dataFields) ? diff.dataFields : [];
-  if (dataFields.length > 0) {
-    const section = document.createElement('div');
-    section.className = 'ocr-debug-metadata-diff-section';
-    const title = document.createElement('div');
-    title.className = 'ocr-debug-metadata-diff-title';
-    title.textContent = 'Datafält:';
-    section.appendChild(title);
-    dataFields.forEach((field) => {
-      const name = field && typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : String(field && field.key || '');
-      const changed = Array.isArray(field && field.changed) ? field.changed : [];
-      changed.forEach((item) => {
-        const from = item && typeof item.from === 'string' ? item.from : '';
-        const to = item && typeof item.to === 'string' ? item.to : '';
-        appendOcrDebugMetadataLines(section, [`${name}: ${from} → ${to}`], 'ocr-debug-metadata-diff-line');
+  dataFields.forEach((field) => {
+    const name = field && typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : String(field && field.key || '');
+    const changed = Array.isArray(field && field.changed) ? field.changed : [];
+    changed.forEach((item) => {
+      const from = item && typeof item.from === 'string' ? item.from : '';
+      const to = item && typeof item.to === 'string' ? item.to : '';
+      appendSnapshotCompareTableRow(table, name, oldSide === 'left' ? from : to, oldSide === 'left' ? to : from, {
+        type: 'dataField',
+        label: name,
       });
-      const added = Array.isArray(field && field.added) ? field.added : [];
-      appendOcrDebugMetadataLines(section, added.map((value) => `+ ${name} = ${value}`), 'ocr-debug-metadata-diff-line ocr-debug-metadata-diff-line--added');
-      const removed = Array.isArray(field && field.removed) ? field.removed : [];
-      appendOcrDebugMetadataLines(section, removed.map((value) => `− ${name} = ${value}`), 'ocr-debug-metadata-diff-line ocr-debug-metadata-diff-line--removed');
     });
-    details.appendChild(section);
-  }
+    const added = Array.isArray(field && field.added) ? field.added : [];
+    added.forEach((value) => {
+      appendSnapshotCompareTableRow(
+        table,
+        name,
+        oldSide === 'left' ? '' : String(value || ''),
+        oldSide === 'left' ? String(value || '') : '',
+        { type: 'dataField', label: name }
+      );
+    });
+    const removed = Array.isArray(field && field.removed) ? field.removed : [];
+    removed.forEach((value) => {
+      appendSnapshotCompareTableRow(
+        table,
+        name,
+        oldSide === 'left' ? String(value || '') : '',
+        oldSide === 'left' ? '' : String(value || ''),
+        { type: 'dataField', label: name }
+      );
+    });
+  });
 
   const labelDiff = diff && typeof diff.labels === 'object' ? diff.labels : {};
   const addedLabels = Array.isArray(labelDiff.added) ? labelDiff.added : [];
   const removedLabels = Array.isArray(labelDiff.removed) ? labelDiff.removed : [];
-  if (addedLabels.length > 0 || removedLabels.length > 0) {
-    const section = document.createElement('div');
-    section.className = 'ocr-debug-metadata-diff-section';
-    const title = document.createElement('div');
-    title.className = 'ocr-debug-metadata-diff-title';
-    title.textContent = 'Etiketter:';
-    section.appendChild(title);
-    appendOcrDebugMetadataLines(section, addedLabels.map((name) => `+ ${name}`), 'ocr-debug-metadata-diff-line ocr-debug-metadata-diff-line--added');
-    appendOcrDebugMetadataLines(section, removedLabels.map((name) => `− ${name}`), 'ocr-debug-metadata-diff-line ocr-debug-metadata-diff-line--removed');
-    details.appendChild(section);
-  }
+  addedLabels.forEach((name) => {
+    appendSnapshotCompareTableRow(
+      table,
+      `Etikett: ${name}`,
+      oldSide === 'left' ? '' : String(name || ''),
+      oldSide === 'left' ? String(name || '') : '',
+      { type: 'label' }
+    );
+  });
+  removedLabels.forEach((name) => {
+    appendSnapshotCompareTableRow(
+      table,
+      `Etikett: ${name}`,
+      oldSide === 'left' ? String(name || '') : '',
+      oldSide === 'left' ? '' : String(name || ''),
+      { type: 'label' }
+    );
+  });
 
-  row.appendChild(details);
+  row.appendChild(table);
   return row;
 }
 
@@ -7125,6 +7258,7 @@ function renderOcrDebugExportCompareResult() {
     return;
   }
   ocrDebugExportCompareResultEl.classList.remove('hidden');
+  const sides = ocrDebugExportComparisonSides(result);
 
   const heading = document.createElement('div');
   heading.className = 'ocr-debug-compare-heading';
@@ -7134,43 +7268,72 @@ function renderOcrDebugExportCompareResult() {
   title.textContent = 'Jämförelse';
   heading.appendChild(title);
 
+  const closeCompareButton = document.createElement('button');
+  closeCompareButton.type = 'button';
+  closeCompareButton.className = 'settings-backup-row-button';
+  closeCompareButton.textContent = 'Stäng jämförelse';
+  closeCompareButton.addEventListener('click', closeOcrDebugExportCompareResult);
+
   const folderCommand = typeof result.meldDirectoryCommand === 'string' ? result.meldDirectoryCommand : '';
+  const headingActions = document.createElement('div');
+  headingActions.className = 'ocr-debug-compare-heading-actions';
   if (folderCommand !== '') {
-    heading.appendChild(createOcrDebugMeldSplitButton({
+    headingActions.appendChild(createOcrDebugMeldSplitButton({
       label: 'Jämför mappar',
       toggleLabel: 'Fler Meld-åtgärder för mappar',
       command: folderCommand,
     }));
   }
+  headingActions.appendChild(closeCompareButton);
+  heading.appendChild(headingActions);
   ocrDebugExportCompareResultEl.appendChild(heading);
 
   const snapshots = document.createElement('div');
   snapshots.className = 'ocr-debug-compare-snapshots';
-  const left = document.createElement('div');
-  left.className = 'ocr-debug-compare-snapshot';
-  left.textContent = `Snapshot A: ${ocrDebugExportComparisonTitle(result.left, 'Snapshot A')}`;
-  const right = document.createElement('div');
-  right.className = 'ocr-debug-compare-snapshot';
-  right.textContent = `Snapshot B: ${ocrDebugExportComparisonTitle(result.right, 'Snapshot B')}`;
-  snapshots.append(left, right);
+  snapshots.append(
+    createOcrDebugSnapshotSummary('Gammal', sides.oldInfo),
+    createOcrDebugSnapshotSummary('Ny', sides.newInfo)
+  );
   ocrDebugExportCompareResultEl.appendChild(snapshots);
 
   const counts = result.counts && typeof result.counts === 'object' ? result.counts : {};
-  const countList = document.createElement('div');
-  countList.className = 'ocr-debug-compare-counts';
+  const countSections = document.createElement('div');
+  countSections.className = 'ocr-debug-compare-count-sections';
+  const fileCounts = document.createElement('div');
+  fileCounts.className = 'ocr-debug-compare-count-section';
+  const fileCountsTitle = document.createElement('div');
+  fileCountsTitle.className = 'ocr-debug-compare-count-section-title';
+  fileCountsTitle.textContent = 'Filer';
+  const fileCountList = document.createElement('div');
+  fileCountList.className = 'ocr-debug-compare-counts';
+  const onlyInOld = sides.oldKey === 'left' ? counts.onlyInA : counts.onlyInB;
+  const onlyInNew = sides.oldKey === 'left' ? counts.onlyInB : counts.onlyInA;
   [
-    ['Identiska', counts.identical],
+    ['Oförändrade', counts.identical],
     ['Ändrade', counts.changed],
-    ['Endast i A', counts.onlyInA],
-    ['Endast i B', counts.onlyInB],
-    ['Metadata', result.metadataChanged],
+    ['Endast i gammal', onlyInOld],
+    ['Endast i ny', onlyInNew],
   ].forEach(([label, value]) => {
     const item = document.createElement('span');
     item.className = 'ocr-debug-compare-count';
     item.textContent = `${label}: ${Number.isFinite(Number(value)) ? Number(value) : 0}`;
-    countList.appendChild(item);
+    fileCountList.appendChild(item);
   });
-  ocrDebugExportCompareResultEl.appendChild(countList);
+  fileCounts.append(fileCountsTitle, fileCountList);
+  const metadataCounts = document.createElement('div');
+  metadataCounts.className = 'ocr-debug-compare-count-section';
+  const metadataCountsTitle = document.createElement('div');
+  metadataCountsTitle.className = 'ocr-debug-compare-count-section-title';
+  metadataCountsTitle.textContent = 'Dokumenttolkning';
+  const metadataCountList = document.createElement('div');
+  metadataCountList.className = 'ocr-debug-compare-counts';
+  const metadataCount = document.createElement('span');
+  metadataCount.className = 'ocr-debug-compare-count';
+  metadataCount.textContent = `Dokument med ändrad tolkning: ${Number.isFinite(Number(result.metadataChanged)) ? Number(result.metadataChanged) : 0}`;
+  metadataCountList.appendChild(metadataCount);
+  metadataCounts.append(metadataCountsTitle, metadataCountList);
+  countSections.append(fileCounts, metadataCounts);
+  ocrDebugExportCompareResultEl.appendChild(countSections);
 
   const showIdenticalRow = document.createElement('label');
   showIdenticalRow.className = 'ocr-debug-compare-show-identical';
@@ -7200,7 +7363,7 @@ function renderOcrDebugExportCompareResult() {
     fileList.appendChild(empty);
   } else {
     metadataDiffs.forEach((diff) => {
-      fileList.appendChild(createOcrDebugMetadataDiffRow(diff));
+      fileList.appendChild(createOcrDebugMetadataDiffRow(diff, sides));
     });
     visibleFiles.forEach((file) => {
       if (!file || typeof file.relativePath !== 'string') {
@@ -7213,10 +7376,14 @@ function renderOcrDebugExportCompareResult() {
       main.className = 'ocr-debug-compare-file-main';
       const status = document.createElement('span');
       status.className = 'ocr-debug-compare-file-status';
-      status.textContent = ocrDebugExportStatusLabel(file.status);
+      const mappedStatus = file.status === 'onlyInA' && sides.oldKey === 'right'
+        ? 'onlyInB'
+        : (file.status === 'onlyInB' && sides.oldKey === 'right' ? 'onlyInA' : file.status);
+      status.textContent = ocrDebugExportStatusLabel(mappedStatus);
       const path = document.createElement('span');
       path.className = 'ocr-debug-compare-file-path';
-      path.textContent = file.relativePath;
+      path.textContent = ocrDebugExportFileDisplayLabel(file.relativePath);
+      path.title = file.relativePath;
       main.append(status, path);
       row.appendChild(main);
 
@@ -7621,11 +7788,6 @@ async function compareSelectedOcrDebugExports() {
       return;
     }
     ocrDebugExportCompareResult = payload.comparison;
-    const counts = payload.comparison.counts && typeof payload.comparison.counts === 'object'
-      ? payload.comparison.counts
-      : {};
-    counts.metadataChanged = Number(payload.comparison.metadataChanged || 0);
-    setOcrDebugExportStatus(ocrDebugExportComparisonSummary(counts), 'success');
     renderOcrDebugExportCompareResult();
   } catch (error) {
     if (requestToken !== ocrDebugExportCompareRequestToken) {
@@ -7719,11 +7881,6 @@ function openOcrDebugExportDialog() {
 
   controls.append(filterField, createShell);
 
-  const status = document.createElement('div');
-  status.id = 'snapshot-status';
-  status.className = 'settings-backup-status';
-  status.setAttribute('aria-live', 'polite');
-
   const compareActions = document.createElement('div');
   compareActions.className = 'snapshot-compare-actions';
   const compareButton = document.createElement('button');
@@ -7755,7 +7912,7 @@ function openOcrDebugExportDialog() {
   closeButton.textContent = 'Stäng';
   actions.appendChild(closeButton);
 
-  body.append(description, controls, status, compareActions, compareResult, history);
+  body.append(description, controls, compareActions, compareResult, history);
   dialog.append(title, body, actions);
   overlay.appendChild(dialog);
 
@@ -7806,7 +7963,7 @@ function openOcrDebugExportDialog() {
   ocrDebugExportCreateButtonEl = createButton;
   ocrDebugExportCreateSpinnerEl = createSpinner;
   ocrDebugExportCreateLabelEl = createLabel;
-  ocrDebugExportStatusEl = status;
+  ocrDebugExportStatusEl = null;
   ocrDebugExportListEl = list;
   ocrDebugExportCompareButtonEl = compareButton;
   ocrDebugExportCompareResultEl = compareResult;

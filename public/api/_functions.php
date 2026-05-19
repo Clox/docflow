@@ -6574,12 +6574,51 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
 {
     $extractedPath = rtrim($jobDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'extracted.json';
     $jobPath = rtrim($jobDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'job.json';
+    $jobData = load_json_file($jobPath);
+    $jobData = is_array($jobData) ? $jobData : [];
     $extractedData = load_json_file($extractedPath);
     if (!is_array($extractedData)) {
-        $jobData = load_json_file($jobPath);
         $analysis = is_array($jobData['analysis'] ?? null) ? $jobData['analysis'] : [];
         $extractedData = $analysis;
     }
+    static $rules = null;
+    static $displayMaps = null;
+    if (!is_array($rules)) {
+        $rules = load_active_archiving_rules();
+        $displayMaps = archiving_review_display_maps($rules, $rules);
+    }
+    $displayMaps = is_array($displayMaps) ? $displayMaps : archiving_review_display_maps($rules, $rules);
+    $autoResult = is_array($extractedData['autoArchivingResult'] ?? null)
+        ? normalize_auto_archiving_result($extractedData['autoArchivingResult'])
+        : [];
+
+    $scalarMetadata = [];
+    $appendScalarMetadata = static function (string $key, string $label, mixed $value) use (&$scalarMetadata): void {
+        $text = is_scalar($value) || $value === null ? trim((string) $value) : '';
+        $scalarMetadata[] = [
+            'key' => $key,
+            'label' => $label,
+            'value' => $text,
+        ];
+    };
+
+    $selectedClientDirName = is_string($jobData['selectedClientDirName'] ?? null) ? trim((string) $jobData['selectedClientDirName']) : '';
+    $selectedSenderId = isset($jobData['selectedSenderId']) ? (int) $jobData['selectedSenderId'] : 0;
+    $selectedFolderId = is_string($jobData['selectedFolderId'] ?? null) ? trim((string) $jobData['selectedFolderId']) : '';
+    $clientId = $selectedClientDirName !== '' ? $selectedClientDirName : (is_string($autoResult['clientId'] ?? null) ? trim((string) $autoResult['clientId']) : '');
+    $senderId = $selectedSenderId > 0 ? (string) $selectedSenderId : (isset($autoResult['senderId']) ? (string) ((int) $autoResult['senderId']) : '');
+    $folderId = $selectedFolderId !== '' ? $selectedFolderId : (is_string($autoResult['folderId'] ?? null) ? trim((string) $autoResult['folderId']) : '');
+    $filenameTemplateId = is_string($autoResult['filenameTemplateId'] ?? null) ? trim((string) $autoResult['filenameTemplateId']) : '';
+
+    $appendScalarMetadata('originalFilename', 'Ursprunglig fil', $jobData['originalFilename'] ?? '');
+    $appendScalarMetadata('filename', 'Filnamn', $jobData['filename'] ?? ($autoResult['filename'] ?? ''));
+    $appendScalarMetadata('createdAt', 'Skapad/importerad', $jobData['createdAt'] ?? '');
+    $appendScalarMetadata('clientId', 'Huvudman', $clientId !== '' ? archiving_review_display_value('clientId', $clientId, $displayMaps) : '');
+    $appendScalarMetadata('senderId', 'Avsändare', $senderId !== '' ? archiving_review_display_value('senderId', $senderId, $displayMaps) : '');
+    $appendScalarMetadata('folderId', 'Mapp', $folderId !== '' ? archiving_review_display_value('folderId', $folderId, $displayMaps) : '');
+    $appendScalarMetadata('filenameTemplateId', 'Filnamnsmall', $filenameTemplateId !== '' ? archiving_review_display_value('filenameTemplateId', $filenameTemplateId, $displayMaps) : '');
+    $appendScalarMetadata('archiveFolderPath', 'Föreslagen arkivsökväg', $autoResult['archiveFolderPath'] ?? '');
+    $appendScalarMetadata('proposedFilename', 'Föreslaget arkivnamn', $autoResult['filename'] ?? '');
 
     $labelNameMap = debug_export_label_name_map($extractedData);
     $labels = [];
@@ -6616,6 +6655,13 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
 
     return [
         'jobId' => $jobId,
+        'document' => [
+            'jobId' => $jobId,
+            'originalFilename' => is_string($jobData['originalFilename'] ?? null) ? trim((string) $jobData['originalFilename']) : '',
+            'filename' => is_string($jobData['filename'] ?? null) ? trim((string) $jobData['filename']) : '',
+            'createdAt' => is_string($jobData['createdAt'] ?? null) ? trim((string) $jobData['createdAt']) : '',
+        ],
+        'metadata' => $scalarMetadata,
         'labels' => $labels,
         'dataFields' => $fields,
     ];
@@ -6781,6 +6827,59 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
     return $diffs;
 }
 
+function debug_export_metadata_scalar_diff(array $leftMetadata, array $rightMetadata): array
+{
+    $normalize = static function (array $items): array {
+        $map = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $key = is_string($item['key'] ?? null) ? trim((string) $item['key']) : '';
+            if ($key === '') {
+                continue;
+            }
+            $label = is_string($item['label'] ?? null) && trim((string) $item['label']) !== ''
+                ? trim((string) $item['label'])
+                : $key;
+            $value = is_scalar($item['value'] ?? null) || ($item['value'] ?? null) === null
+                ? trim((string) ($item['value'] ?? ''))
+                : '';
+            $map[$key] = [
+                'key' => $key,
+                'label' => $label,
+                'value' => $value,
+            ];
+        }
+        ksort($map, SORT_NATURAL);
+        return $map;
+    };
+
+    $left = $normalize($leftMetadata);
+    $right = $normalize($rightMetadata);
+    $keys = array_values(array_unique(array_merge(array_keys($left), array_keys($right))));
+    sort($keys, SORT_NATURAL);
+
+    $diffs = [];
+    foreach ($keys as $key) {
+        $leftItem = $left[$key] ?? null;
+        $rightItem = $right[$key] ?? null;
+        $label = is_array($rightItem) ? (string) $rightItem['label'] : (is_array($leftItem) ? (string) $leftItem['label'] : $key);
+        $leftValue = is_array($leftItem) ? (string) $leftItem['value'] : '';
+        $rightValue = is_array($rightItem) ? (string) $rightItem['value'] : '';
+        if ($leftValue === $rightValue) {
+            continue;
+        }
+        $diffs[] = [
+            'key' => $key,
+            'label' => $label,
+            'from' => $leftValue,
+            'to' => $rightValue,
+        ];
+    }
+    return $diffs;
+}
+
 function compare_debug_export_document_metadata(string $leftDirectory, string $rightDirectory): array
 {
     $leftFiles = debug_export_metadata_files($leftDirectory);
@@ -6802,12 +6901,20 @@ function compare_debug_export_document_metadata(string $leftDirectory, string $r
             is_array($left['dataFields'] ?? null) ? $left['dataFields'] : [],
             is_array($right['dataFields'] ?? null) ? $right['dataFields'] : []
         );
-        if (($labelDiff['added'] ?? []) === [] && ($labelDiff['removed'] ?? []) === [] && $fieldDiff === []) {
+        $leftHasScalarMetadata = array_key_exists('metadata', $left) && is_array($left['metadata']);
+        $rightHasScalarMetadata = array_key_exists('metadata', $right) && is_array($right['metadata']);
+        $metadataDiff = $leftHasScalarMetadata && $rightHasScalarMetadata
+            ? debug_export_metadata_scalar_diff($left['metadata'], $right['metadata'])
+            : [];
+        if (($labelDiff['added'] ?? []) === [] && ($labelDiff['removed'] ?? []) === [] && $fieldDiff === [] && $metadataDiff === []) {
             continue;
         }
         $diffs[] = [
             'jobId' => $jobId,
             'status' => 'metadataChanged',
+            'leftDocument' => is_array($left['document'] ?? null) ? $left['document'] : ['jobId' => $jobId],
+            'rightDocument' => is_array($right['document'] ?? null) ? $right['document'] : ['jobId' => $jobId],
+            'metadata' => $metadataDiff,
             'labels' => $labelDiff,
             'dataFields' => $fieldDiff,
         ];
