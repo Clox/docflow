@@ -15803,8 +15803,11 @@ function ocrDataFieldActiveRow() {
   }
   const index = Number.isInteger(ocrDataFieldSelection.matchIndex)
     ? ocrDataFieldSelection.matchIndex
-    : 0;
-  return rows[Math.max(0, Math.min(rows.length - 1, index))] || null;
+    : -1;
+  if (index < 0 || index >= rows.length) {
+    return null;
+  }
+  return rows[index] || null;
 }
 
 function formatOcrPercent(value, options = {}) {
@@ -16213,7 +16216,7 @@ function syncOcrDataFieldSelection() {
 
   if (ocrDataFieldSelection.fieldKey !== group.fieldKey) {
     ocrDataFieldSelection.fieldKey = group.fieldKey;
-    ocrDataFieldSelection.matchIndex = 0;
+    ocrDataFieldSelection.matchIndex = -1;
   }
 
   const rows = group.rows || [];
@@ -16222,8 +16225,8 @@ function syncOcrDataFieldSelection() {
     return group;
   }
 
-  if (!Number.isInteger(ocrDataFieldSelection.matchIndex) || ocrDataFieldSelection.matchIndex < 0 || ocrDataFieldSelection.matchIndex >= rows.length) {
-    ocrDataFieldSelection.matchIndex = 0;
+  if (!Number.isInteger(ocrDataFieldSelection.matchIndex) || ocrDataFieldSelection.matchIndex >= rows.length) {
+    ocrDataFieldSelection.matchIndex = -1;
   }
 
   return group;
@@ -16321,9 +16324,6 @@ function syncOcrDataFieldFieldSelect() {
     ? selectedGroup.fieldKey
     : (visibleGroups[0] ? visibleGroups[0].fieldKey : '');
   ocrDataFieldSelection.fieldKey = nextFieldKey;
-  if (ocrDataFieldSelection.fieldKey !== '' && ocrDataFieldSelection.matchIndex < 0) {
-    ocrDataFieldSelection.matchIndex = 0;
-  }
   ocrSearchFieldSelectEl.value = ocrDataFieldSelection.fieldKey || (visibleGroups[0] ? visibleGroups[0].fieldKey : '');
 }
 
@@ -16365,7 +16365,9 @@ async function refreshOcrDataFieldSearch(options = {}) {
   setOcrSearchStatus(ocrDataFieldStatusText(rows.length));
   syncOcrDataFieldConfidenceUi(rows[ocrDataFieldSelection.matchIndex] || null);
   renderOcrPages();
-  scrollOcrDataFieldMatchIntoView(rows[ocrDataFieldSelection.matchIndex] || null);
+  if (ocrDataFieldSelection.matchIndex >= 0) {
+    scrollOcrDataFieldMatchIntoView(rows[ocrDataFieldSelection.matchIndex] || null);
+  }
 }
 
 function syncOcrHighlightPresentation() {
@@ -29729,6 +29731,9 @@ ocrSearchModeButtons().forEach((buttonEl) => {
       return;
     }
     ocrSearchMode = nextMode;
+    if (nextMode === 'datafield') {
+      ocrDataFieldSelection.matchIndex = -1;
+    }
     syncOcrSearchModeUi();
     if (isOcrDataFieldMode() && ensureOcrDataFieldSource()) {
       return;
@@ -29748,7 +29753,7 @@ if (ocrSearchFieldSelectEl instanceof HTMLSelectElement) {
     const nextFieldKey = typeof ocrSearchFieldSelectEl.value === 'string' ? ocrSearchFieldSelectEl.value.trim() : '';
     const nextGroup = ocrDataFieldGroupByKey(nextFieldKey) || ocrDataFieldCurrentGroup();
     ocrDataFieldSelection.fieldKey = nextGroup ? nextGroup.fieldKey : '';
-    ocrDataFieldSelection.matchIndex = 0;
+    ocrDataFieldSelection.matchIndex = -1;
     refreshOcrSearch({ preserveScroll: true });
   });
 }
@@ -29761,6 +29766,7 @@ if (ocrSearchFieldHitFilterEl instanceof HTMLSelectElement) {
       return;
     }
     matchesFieldHitFilterMode = nextMode;
+    ocrDataFieldSelection.matchIndex = -1;
     window.localStorage.setItem(MATCHES_FIELD_HIT_FILTER_STORAGE_KEY, matchesFieldHitFilterMode);
     syncOcrDataFieldHitFilterUi();
     refreshLoadedMatchesView();
