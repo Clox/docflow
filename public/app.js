@@ -12322,6 +12322,11 @@ function setActiveOcrSource(source, options = {}) {
     saveCurrentOcrViewState();
   }
   currentOcrSource = nextSource;
+  if (ocrSearchMode === 'datafield' && nextSource !== 'merged-objects') {
+    ocrSearchMode = 'text';
+    ocrDataFieldSelection.matchIndex = -1;
+    syncOcrSearchModeUi();
+  }
   ocrSearchInputEl.placeholder = `Sök i ${ocrSourceDisplayName(nextSource)}`;
   ocrSourceTabEls.forEach((buttonEl) => {
     const isActive = buttonEl.dataset.ocrSource === nextSource;
