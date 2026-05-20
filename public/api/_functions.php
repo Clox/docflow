@@ -9902,7 +9902,31 @@ function build_rule_match_pattern(string $ruleText, array $inverseMap): ?string
         $parts[] = '[' . $charClass . ']';
     }
 
-    return '/' . implode('', $parts) . '/iu';
+    return delimit_ocr_text_regex(implode('', $parts), '/', 'iu', false);
+}
+
+function ocr_text_regex_flags(string $flags = 'iu'): string
+{
+    $normalized = '';
+    foreach (str_split($flags) as $flag) {
+        if ($flag !== '' && strpos($normalized, $flag) === false) {
+            $normalized .= $flag;
+        }
+    }
+
+    return strpos($normalized, 'm') === false ? $normalized . 'm' : $normalized;
+}
+
+function delimit_ocr_text_regex(string $pattern, string $delimiter = '/', string $flags = 'iu', bool $escapeDelimiter = true): string
+{
+    $body = $escapeDelimiter
+        ? str_replace($delimiter, '\\' . $delimiter, $pattern)
+        : $pattern;
+
+    return $delimiter
+        . $body
+        . $delimiter
+        . ocr_text_regex_flags($flags);
 }
 
 function find_source_text_for_rule(string $ocrText, string $ruleText, array $inverseMap): string
@@ -9917,7 +9941,7 @@ function find_source_text_for_rule(string $ocrText, string $ruleText, array $inv
         return is_string($match) && $match !== '' ? $match : $ruleText;
     }
 
-    $literal = '/' . preg_quote($ruleText, '/') . '/iu';
+    $literal = delimit_ocr_text_regex(preg_quote($ruleText, '/'), '/', 'iu', false);
     if (@preg_match($literal, $ocrText, $matches) === 1) {
         $match = $matches[0] ?? '';
         return is_string($match) && $match !== '' ? $match : $ruleText;
@@ -10622,7 +10646,10 @@ function build_literal_space_flexible_regex(string $text, array $replacementMap,
             return null;
         }
 
-        $body = substr($segmentPattern, 1, -3);
+        $delimiterPosition = strrpos($segmentPattern, '/');
+        $body = $delimiterPosition !== false && $delimiterPosition > 0
+            ? substr($segmentPattern, 1, $delimiterPosition - 1)
+            : '';
         if (!is_string($body) || $body === '') {
             return null;
         }
@@ -10636,10 +10663,10 @@ function build_literal_space_flexible_regex(string $text, array $replacementMap,
 
     $joined = implode('\s+', $patternParts);
     if ($useWordBoundaries) {
-        return '/\b' . $joined . '\b/iu';
+        return delimit_ocr_text_regex('\b' . $joined . '\b', '/', 'iu', false);
     }
 
-    return '/' . $joined . '/iu';
+    return delimit_ocr_text_regex($joined, '/', 'iu', false);
 }
 
 function build_label_rule_text_regex(string $ruleText, bool $isRegex, array $replacementMap): ?string
@@ -10650,7 +10677,7 @@ function build_label_rule_text_regex(string $ruleText, bool $isRegex, array $rep
     }
 
     if ($isRegex) {
-        return '/' . str_replace('/', '\/', regex_pattern_with_whitespace_wildcards($trimmed)) . '/iu';
+        return delimit_ocr_text_regex(regex_pattern_with_whitespace_wildcards($trimmed));
     }
 
     return build_literal_space_flexible_regex($trimmed, $replacementMap, false);
@@ -10663,7 +10690,7 @@ function build_archiving_zone_regex(string $pattern): ?string
         return null;
     }
 
-    return '/' . str_replace('/', '\/', regex_pattern_with_whitespace_wildcards($trimmed)) . '/ium';
+    return delimit_ocr_text_regex(regex_pattern_with_whitespace_wildcards($trimmed));
 }
 
 function build_data_field_search_term_regex(string $searchTerm, array $replacementMap, bool $isRegex = false): ?string
@@ -10674,7 +10701,7 @@ function build_data_field_search_term_regex(string $searchTerm, array $replaceme
     }
 
     if ($isRegex) {
-        return '/' . str_replace('/', '\/', regex_pattern_with_whitespace_wildcards($trimmed)) . '/iu';
+        return delimit_ocr_text_regex(regex_pattern_with_whitespace_wildcards($trimmed));
     }
 
     return build_literal_space_flexible_regex($trimmed, $replacementMap, true);
@@ -13604,8 +13631,8 @@ function extraction_field_pattern_candidates_from_text(
     $pattern = normalize_extraction_field_regex_pattern($pattern);
 
     $delimitedPattern = $isRegex
-        ? '~' . str_replace('~', '\~', regex_pattern_with_whitespace_wildcards($pattern)) . '~iu'
-        : '~' . literal_pattern_with_whitespace_wildcards($pattern, '~') . '~iu';
+        ? delimit_ocr_text_regex(regex_pattern_with_whitespace_wildcards($pattern), '~')
+        : delimit_ocr_text_regex(literal_pattern_with_whitespace_wildcards($pattern, '~'), '~', 'iu', false);
 
     $matches = [];
     if (@preg_match_all($delimitedPattern, $text, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) < 1) {
