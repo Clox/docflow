@@ -24774,6 +24774,7 @@ function renderOcrPdfSubstitutionsEditor() {
       renderOcrProcessingCommand();
       updateSettingsActionButtons();
     });
+    const toInputWithAccessories = createInlineInputWithAccessories(toInput, [], 'extraction-field-alias-input-wrap');
 
     const enabledLabel = document.createElement('label');
     enabledLabel.className = 'matching-row-checkbox';
@@ -24798,7 +24799,7 @@ function renderOcrPdfSubstitutionsEditor() {
 
     rowEl.appendChild(enabledLabel);
     rowEl.appendChild(fromField);
-    rowEl.appendChild(createFloatingField('Till', toInput, 'matching-char-field'));
+    rowEl.appendChild(createFloatingField('Till', toInputWithAccessories, 'matching-char-field'));
 
     if (rowIndex > 0) {
       const removeButton = createTrashButton({
