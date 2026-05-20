@@ -561,12 +561,6 @@ def _is_noise_character(char: str) -> bool:
 
 
 def _transfer_swedish_diacritics_token(source_text: str, truth_text: str) -> str:
-    # Preserve lone invoice-style "à" tokens from RapidOCR.
-    # This avoids Tesseract turning "à 2,21 kr" into "å 2,21 kr" while
-    # keeping the normal Swedish å/ä/ö transfer logic for real words.
-    if source_text.strip() == 'à':
-        return source_text
-
     source_chars = list(source_text)
     truth_chars = list(truth_text)
     if not source_chars or not truth_chars:

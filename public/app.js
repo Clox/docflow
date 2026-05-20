@@ -19265,7 +19265,9 @@ function defaultClientDraft() {
 function defaultReplacement() {
   return {
     from: '',
-    to: ''
+    to: '',
+    isRegex: false,
+    enabled: true
   };
 }
 
@@ -19440,7 +19442,9 @@ function sanitizeReplacement(row) {
   const input = row && typeof row === 'object' ? row : {};
   return {
     from: typeof input.from === 'string' ? input.from : '',
-    to: typeof input.to === 'string' ? input.to : ''
+    to: typeof input.to === 'string' ? input.to : '',
+    isRegex: input.isRegex === true,
+    enabled: input.enabled !== false
   };
 }
 
@@ -22945,6 +22949,21 @@ function createOcrTextMatchHelpContent() {
   return wrapper;
 }
 
+function createOcrPdfTextSubstitutionsHelpContent() {
+  const wrapper = document.createElement('div');
+  wrapper.appendChild(createHelpSection('', [
+    'Textersättningar ändrar OCR-texten innan PDF-filens textlager byggs.',
+    'Från kan vara vanlig text eller regex.',
+    createHelpTextLine(['Om Från är regex kan Till använda grupper som: ', createInlineCode('$1'), ', ', createInlineCode('$2'), ' osv.']),
+    'Textersättningar körs mot pluginens befintliga ord-/bbox-flöde, inte mot hela radtexten.',
+  ]));
+  wrapper.appendChild(createHelpSection('Exempel', [
+    createInlineCode('([0-9]+)\\s+kr'),
+    createHelpTextLine(['→ ', createInlineCode('$1 kr')]),
+  ]));
+  return wrapper;
+}
+
 function createValuePatternHelpContent() {
   return createOcrTextMatchHelpContent();
 }
@@ -24713,36 +24732,72 @@ function renderOcrPdfSubstitutionsEditor() {
   if (ocrPdfSubstitutionsDraft.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';
-    empty.textContent = 'Inga substitutioner ännu.';
+    empty.textContent = 'Inga textersättningar ännu.';
     ocrPdfSubstitutionsListEl.appendChild(empty);
     return;
   }
 
   ocrPdfSubstitutionsDraft.forEach((row, rowIndex) => {
+    const replacement = sanitizeReplacement(row);
     const rowEl = document.createElement('div');
-    rowEl.className = 'matching-row';
+    rowEl.className = 'matching-row ocr-pdf-substitution-row';
 
     const fromInput = document.createElement('input');
     fromInput.type = 'text';
-    fromInput.placeholder = 'Ex: 0K:';
-    fromInput.value = row.from;
+    fromInput.placeholder = 'Ex: ([0-9]+)\\s+kr';
+    fromInput.value = replacement.from;
     fromInput.addEventListener('input', () => {
       ocrPdfSubstitutionsDraft[rowIndex].from = fromInput.value;
       renderOcrProcessingCommand();
       updateSettingsActionButtons();
     });
+    const fromRegexButton = createRegexToggleButton({
+      getActive: () => ocrPdfSubstitutionsDraft[rowIndex]?.isRegex === true,
+      setActive: (next) => {
+        ocrPdfSubstitutionsDraft[rowIndex].isRegex = next === true;
+        renderOcrProcessingCommand();
+        updateSettingsActionButtons();
+      },
+    });
+    const fromInputWithAccessories = createInlineInputWithAccessories(fromInput, [fromRegexButton], 'extraction-field-alias-input-wrap');
+    const helpDisclosure = createFloatingHelpToggle(createOcrPdfTextSubstitutionsHelpContent(), {
+      helpId: `ocr-pdf-text-substitutions-help-${rowIndex}`,
+      buttonLabel: 'Visa hjälp för textersättningar',
+    });
 
     const toInput = document.createElement('input');
     toInput.type = 'text';
-    toInput.placeholder = 'Ex: OK:';
-    toInput.value = row.to;
+    toInput.placeholder = 'Ex: $1 kr';
+    toInput.value = replacement.to;
     toInput.addEventListener('input', () => {
       ocrPdfSubstitutionsDraft[rowIndex].to = toInput.value;
       renderOcrProcessingCommand();
       updateSettingsActionButtons();
     });
 
-    rowEl.appendChild(createFloatingField('Från', fromInput, 'matching-char-field'));
+    const enabledLabel = document.createElement('label');
+    enabledLabel.className = 'matching-row-checkbox';
+    const enabledInput = document.createElement('input');
+    enabledInput.type = 'checkbox';
+    enabledInput.checked = replacement.enabled !== false;
+    enabledInput.addEventListener('change', () => {
+      ocrPdfSubstitutionsDraft[rowIndex].enabled = enabledInput.checked;
+      renderOcrProcessingCommand();
+      updateSettingsActionButtons();
+    });
+    enabledLabel.appendChild(enabledInput);
+    enabledLabel.appendChild(document.createTextNode('Aktiv'));
+
+    const fromField = createFloatingField('Från', fromInputWithAccessories, 'matching-char-field');
+    const fromFieldLabel = fromField.querySelector('.floating-input-label');
+    if (fromFieldLabel instanceof HTMLElement) {
+      fromFieldLabel.appendChild(helpDisclosure.button);
+      helpDisclosure.attachLabel(fromFieldLabel);
+    }
+    fromField.appendChild(helpDisclosure.panel);
+
+    rowEl.appendChild(enabledLabel);
+    rowEl.appendChild(fromField);
     rowEl.appendChild(createFloatingField('Till', toInput, 'matching-char-field'));
 
     if (rowIndex > 0) {
@@ -28521,7 +28576,9 @@ function renderOcrProcessingCommand() {
   const optimizeLevel = sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1);
   const deskewSegment = ocrSkipExistingTextEl.checked ? '--deskew ' : '';
   const extractionMethod = sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout');
-  const substitutions = ocrPdfSubstitutionsDraft.map(sanitizeReplacement).filter((row) => row.from !== '' && row.to !== '');
+  const substitutions = ocrPdfSubstitutionsDraft
+    .map(sanitizeReplacement)
+    .filter((row) => row.enabled !== false && row.from !== '');
   let pluginSegment = '--plugin docflow_ocrmypdf_plugin.py ';
   if (substitutions.length > 0) {
     pluginSegment += '--docflow-transform-script docflow_transform_runtime.py --docflow-transform-config data/docflow_ocr_transform_config.json ';

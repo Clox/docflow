@@ -7,6 +7,7 @@ JSON file pointed to by --docflow-transform-config.
 """
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,7 @@ def _load_config(config_path: str) -> dict[str, Any]:
     return {}
 
 
-def _substitutions(options) -> list[dict[str, str]]:
+def _substitutions(options) -> list[dict[str, Any]]:
     config_path = _config_path_from_options(options)
     if config_path is None:
         return []
@@ -49,25 +50,50 @@ def _substitutions(options) -> list[dict[str, str]]:
     if not isinstance(rows, list):
         return []
 
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         source = row.get('from', '')
         replacement = row.get('to', '')
+        enabled = row.get('enabled', True)
+        is_regex = row.get('isRegex', False)
         if not isinstance(source, str) or not isinstance(replacement, str):
             continue
-        if source == '' or replacement == '':
+        if source == '' or enabled is False:
             continue
-        normalized.append({'from': source, 'to': replacement})
+        normalized.append({
+            'from': source,
+            'to': replacement,
+            'isRegex': is_regex is True,
+        })
     return normalized
+
+
+def _expand_dollar_groups(replacement: str, match: re.Match[str]) -> str:
+    def replace_group(group_match: re.Match[str]) -> str:
+        group_index = int(group_match.group(1))
+        try:
+            value = match.group(group_index)
+        except IndexError:
+            return ''
+        return value or ''
+
+    return re.sub(r'\$(\d+)', replace_group, replacement)
 
 
 def _apply(text: str, options) -> str:
     if not isinstance(text, str):
         return text
     for row in _substitutions(options):
-        text = text.replace(row['from'], row['to'])
+        if row.get('isRegex') is True:
+            try:
+                pattern = re.compile(row['from'])
+            except re.error:
+                continue
+            text = pattern.sub(lambda match: _expand_dollar_groups(row['to'], match), text)
+        else:
+            text = text.replace(row['from'], row['to'])
     return text
 
 

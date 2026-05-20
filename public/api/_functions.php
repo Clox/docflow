@@ -203,13 +203,15 @@ function sanitize_ocr_pdf_text_substitutions($rows): array
 
         $from = is_string($row['from'] ?? null) ? trim((string) $row['from']) : '';
         $to = is_string($row['to'] ?? null) ? trim((string) $row['to']) : '';
-        if ($from === '' || $to === '') {
+        if ($from === '') {
             continue;
         }
 
         $normalized[] = [
             'from' => $from,
             'to' => $to,
+            'isRegex' => ($row['isRegex'] ?? false) === true,
+            'enabled' => ($row['enabled'] ?? true) !== false,
         ];
     }
 
@@ -6081,9 +6083,56 @@ function docflow_legacy_generated_transform_script_path(): string
     return DATA_DIR . '/docflow_ocr_pdf_transform.py';
 }
 
+function active_ocr_pdf_text_substitutions(array $substitutions): array
+{
+    return array_values(array_filter(
+        sanitize_ocr_pdf_text_substitutions($substitutions),
+        static fn (array $row): bool => ($row['enabled'] ?? true) !== false && (string) ($row['from'] ?? '') !== ''
+    ));
+}
+
+function apply_ocr_pdf_text_substitutions_to_text(string $text, array $substitutions): string
+{
+    $current = $text;
+    foreach (active_ocr_pdf_text_substitutions($substitutions) as $row) {
+        $from = (string) ($row['from'] ?? '');
+        if ($from === '') {
+            continue;
+        }
+        $to = (string) ($row['to'] ?? '');
+        if (($row['isRegex'] ?? false) === true) {
+            $pattern = '~' . str_replace('~', '\\~', $from) . '~u';
+            $next = @preg_replace($pattern, $to, $current);
+            if (is_string($next)) {
+                $current = $next;
+            }
+            continue;
+        }
+
+        $current = str_replace($from, $to, $current);
+    }
+
+    return $current;
+}
+
+function apply_ocr_pdf_text_substitutions_to_debug_words(array $words, array $substitutions): array
+{
+    if (active_ocr_pdf_text_substitutions($substitutions) === []) {
+        return $words;
+    }
+
+    return array_map(static function ($word) use ($substitutions) {
+        if (!is_array($word) || !is_string($word['text'] ?? null)) {
+            return $word;
+        }
+        $word['text'] = apply_ocr_pdf_text_substitutions_to_text((string) $word['text'], $substitutions);
+        return $word;
+    }, $words);
+}
+
 function write_docflow_ocr_transform_config(array $substitutions): ?string
 {
-    $normalized = sanitize_ocr_pdf_text_substitutions($substitutions);
+    $normalized = active_ocr_pdf_text_substitutions($substitutions);
     $legacyScriptPath = docflow_legacy_generated_transform_script_path();
     if (is_file($legacyScriptPath)) {
         @unlink($legacyScriptPath);
@@ -6154,7 +6203,7 @@ function run_ocrmypdf(
         }
     }
 
-    $normalizedSubstitutions = sanitize_ocr_pdf_text_substitutions($ocrPdfTextSubstitutions);
+    $normalizedSubstitutions = active_ocr_pdf_text_substitutions($ocrPdfTextSubstitutions);
     if ($normalizedSubstitutions !== []) {
         $runtimeScriptPath = docflow_ocr_transform_runtime_script_path();
         $transformConfigPath = write_docflow_ocr_transform_config($normalizedSubstitutions);
@@ -8601,10 +8650,6 @@ function transfer_swedish_diacritics(string $sourceText, string $truthText): str
 
 function transfer_swedish_diacritics_token(string $sourceText, string $truthText): string
 {
-    if (trim($sourceText) === 'à') {
-        return $sourceText;
-    }
-
     $sourceChars = utf8_chars($sourceText);
     $truthChars = utf8_chars($truthText);
     $sourceCount = count($sourceChars);
@@ -9303,7 +9348,12 @@ function append_tesseract_only_missing_lines(array $mergedWords, array $rapidocr
     return $mergedWords;
 }
 
-function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload, int $pageNumber, array $tesseractPayload = []): array
+function build_merged_objects_payload_from_rapidocr_page(
+    array $rapidocrPayload,
+    int $pageNumber,
+    array $tesseractPayload = [],
+    array $ocrPdfTextSubstitutions = []
+): array
 {
     $pageWidth = is_numeric($rapidocrPayload['pageWidth'] ?? null) ? (float) $rapidocrPayload['pageWidth'] : null;
     $pageHeight = is_numeric($rapidocrPayload['pageHeight'] ?? null) ? (float) $rapidocrPayload['pageHeight'] : null;
@@ -9334,6 +9384,7 @@ function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload,
         }
     }
     $mergedWords = append_tesseract_only_missing_lines($mergedWords, $rapidocrLines, $tesseractWords);
+    $mergedWords = apply_ocr_pdf_text_substitutions_to_debug_words($mergedWords, $ocrPdfTextSubstitutions);
 
     $pageText = render_grid_text_from_debug_payload([
         'pageWidth' => $pageWidth,
@@ -9354,7 +9405,11 @@ function build_merged_objects_payload_from_rapidocr_page(array $rapidocrPayload,
     ];
 }
 
-function build_merged_objects_document_from_rapidocr_pages(array $rapidocrPages, array $tesseractPages = []): ?array
+function build_merged_objects_document_from_rapidocr_pages(
+    array $rapidocrPages,
+    array $tesseractPages = [],
+    array $ocrPdfTextSubstitutions = []
+): ?array
 {
     if ($rapidocrPages === []) {
         return null;
@@ -9370,7 +9425,12 @@ function build_merged_objects_document_from_rapidocr_pages(array $rapidocrPages,
             $pageNumber = $pageIndex + 1;
         }
         $tesseractPage = is_array($tesseractPages[$pageIndex] ?? null) ? $tesseractPages[$pageIndex] : [];
-        $pages[] = build_merged_objects_payload_from_rapidocr_page($rapidocrPage, $pageNumber, $tesseractPage);
+        $pages[] = build_merged_objects_payload_from_rapidocr_page(
+            $rapidocrPage,
+            $pageNumber,
+            $tesseractPage,
+            $ocrPdfTextSubstitutions
+        );
     }
 
     if ($pages === []) {
@@ -9383,7 +9443,7 @@ function build_merged_objects_document_from_rapidocr_pages(array $rapidocrPages,
     ];
 }
 
-function write_merged_object_debug_files_from_rapidocr(string $jobDir): void
+function write_merged_object_debug_files_from_rapidocr(string $jobDir, array $ocrPdfTextSubstitutions = []): void
 {
     $rapidocrPages = load_job_engine_debug_pages($jobDir, 'rapidocr');
     $tesseractPages = load_job_engine_debug_pages($jobDir, 'tesseract');
@@ -9404,7 +9464,11 @@ function write_merged_object_debug_files_from_rapidocr(string $jobDir): void
         return;
     }
 
-    $document = build_merged_objects_document_from_rapidocr_pages($rapidocrPages, $tesseractPages);
+    $document = build_merged_objects_document_from_rapidocr_pages(
+        $rapidocrPages,
+        $tesseractPages,
+        $ocrPdfTextSubstitutions
+    );
     if ($document === null) {
         if ($jobId !== null) {
             clear_job_merged_objects_document($jobId);
@@ -9510,11 +9574,6 @@ function texts_are_similar_enough(string $left, string $right): bool
     return $distance <= max(1, (int) floor($maxLen * 0.2));
 }
 
-function is_lone_invoice_at_token(string $text): bool
-{
-    return trim($text) === 'à';
-}
-
 function choose_experiment_merged_word(array $tesseractWord, ?array $rapidocrWord): array
 {
     if ($rapidocrWord === null) {
@@ -9522,14 +9581,6 @@ function choose_experiment_merged_word(array $tesseractWord, ?array $rapidocrWor
             'chosen' => $tesseractWord,
             'source' => 'tesseract-only',
             'rapidocrWord' => null,
-        ];
-    }
-
-    if (is_lone_invoice_at_token((string) ($rapidocrWord['text'] ?? ''))) {
-        return [
-            'chosen' => $rapidocrWord,
-            'source' => 'rapidocr-lone-a-guard',
-            'rapidocrWord' => $rapidocrWord,
         ];
     }
 
@@ -19372,7 +19423,7 @@ function process_claimed_job(
         }
         regenerate_debug_text_files_from_json($jobDir, 'tesseract');
         regenerate_debug_text_files_from_json($jobDir, 'rapidocr');
-        write_merged_object_debug_files_from_rapidocr($jobDir);
+        write_merged_object_debug_files_from_rapidocr($jobDir, $ocrPdfTextSubstitutions);
     } else {
         if (!is_file($reviewPdfPath)) {
             throw new RuntimeException('Missing review.pdf');

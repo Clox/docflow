@@ -5587,6 +5587,11 @@ body.is-resizing-sidebar {
   overflow: auto;
 }
 
+#ocr-pdf-substitutions-list {
+  max-height: none;
+  overflow: visible;
+}
+
 .matching-replacements-section {
   display: flex;
   flex: 1;
@@ -5722,6 +5727,19 @@ body.is-resizing-sidebar {
 
 .matching-row:last-child {
   margin-bottom: 0;
+}
+
+.ocr-pdf-substitution-row {
+  grid-template-columns: auto minmax(120px, 1fr) minmax(120px, 1fr) auto;
+}
+
+.matching-row-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #4b5563;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .sender-row {

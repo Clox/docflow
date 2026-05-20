@@ -694,11 +694,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     </div>
     <p class="settings-help"><code>pdftotext -layout</code> är den äldre direkta textutläsningen. <code>bbox-grid</code> läser ord och koordinater via <code>pdftotext -bbox-layout</code> och bygger sedan en rutnätstext från samma data.</p>
     <div class="settings-group">
-      <p>Substitutions nedan ändrar OCR-texten innan den byggs in i PDF-filens textlager via Docflows OCRmyPDF-plugin.</p>
-      <p>Exempel: mappa <code>0K:</code> till <code>OK:</code> eller korrigera återkommande felstavade ord redan i PDF-texten.</p>
+      <h3>Textersättningar</h3>
+      <p>Textersättningar ändrar OCR-texten innan PDF-filens textlager byggs.</p>
       <div id="ocr-pdf-substitutions-list" class="matching-list"></div>
       <div class="categories-actions settings-section-actions">
-        <button id="ocr-pdf-substitutions-add-row" type="button">Lägg till substitution</button>
+        <button id="ocr-pdf-substitutions-add-row" type="button">Lägg till textersättning</button>
       </div>
     </div>
     <div class="panel-actions">
