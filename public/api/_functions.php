@@ -6677,6 +6677,154 @@ function debug_export_string_list(mixed $value): array
     return array_values(array_unique($items));
 }
 
+function debug_export_scalar_text(mixed $value): string
+{
+    return is_string($value) || is_numeric($value) ? trim((string) $value) : '';
+}
+
+function debug_export_float_or_null(mixed $value): ?float
+{
+    return is_numeric($value) ? (float) $value : null;
+}
+
+function debug_export_int_or_null(mixed $value): ?int
+{
+    return is_int($value) ? $value : (is_numeric($value) ? (int) $value : null);
+}
+
+function debug_export_bbox_or_null(mixed $bbox): ?array
+{
+    if (!is_array($bbox)) {
+        return null;
+    }
+
+    $normalized = [];
+    foreach (['x0', 'y0', 'x1', 'y1'] as $key) {
+        if (!is_numeric($bbox[$key] ?? null)) {
+            return null;
+        }
+        $normalized[$key] = (float) $bbox[$key];
+    }
+
+    return $normalized;
+}
+
+function debug_export_bbox_signature(mixed $bbox): string
+{
+    $normalized = debug_export_bbox_or_null($bbox);
+    if ($normalized === null) {
+        return '';
+    }
+
+    return implode(',', array_map(
+        static fn (float $value): string => rtrim(rtrim(sprintf('%.3F', $value), '0'), '.'),
+        [$normalized['x0'], $normalized['y0'], $normalized['x1'], $normalized['y1']]
+    ));
+}
+
+function debug_export_accepted_candidate(array $match, int $matchIndex): array
+{
+    $confidence = debug_export_float_or_null($match['finalConfidence'] ?? null)
+        ?? debug_export_float_or_null($match['confidence'] ?? null)
+        ?? 0.0;
+    $labelBbox = debug_export_bbox_or_null($match['labelBbox'] ?? null);
+    $valueBbox = debug_export_bbox_or_null($match['valueBbox'] ?? null);
+
+    $candidate = [
+        'value' => debug_export_scalar_text($match['value'] ?? ''),
+        'confidence' => clamp_confidence($confidence),
+        'matchIndex' => $matchIndex,
+        'searchTerm' => debug_export_scalar_text($match['searchTerm'] ?? ''),
+        'labelText' => debug_export_scalar_text($match['labelText'] ?? ''),
+        'matchText' => debug_export_scalar_text($match['matchText'] ?? ($match['raw'] ?? '')),
+        'source' => debug_export_scalar_text($match['source'] ?? ''),
+    ];
+
+    foreach (['baseConfidence', 'finalConfidence', 'score'] as $key) {
+        $number = debug_export_float_or_null($match[$key] ?? null);
+        if ($number !== null) {
+            $candidate[$key] = $key === 'score' ? $number : clamp_confidence($number);
+        }
+    }
+    foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex'] as $key) {
+        $number = debug_export_int_or_null($match[$key] ?? null);
+        if ($number !== null) {
+            $candidate[$key] = $number;
+        }
+    }
+    if ($labelBbox !== null) {
+        $candidate['keyBBox'] = $labelBbox;
+    }
+    if ($valueBbox !== null) {
+        $candidate['valueBBox'] = $valueBbox;
+    }
+
+    return $candidate;
+}
+
+function debug_export_match_rejected_by_zone_barrier(array $match, array $zoneMatches): bool
+{
+    if ($zoneMatches === []) {
+        return false;
+    }
+
+    $labelBbox = normalize_debug_word_bbox($match['labelBbox'] ?? null);
+    $valueBbox = normalize_debug_word_bbox($match['valueBbox'] ?? null);
+    if ($labelBbox === null || $valueBbox === null) {
+        return false;
+    }
+
+    $pageNumber = is_int($match['pageNumber'] ?? null) ? (int) $match['pageNumber'] : null;
+    return candidate_crosses_zone_barrier(
+        $labelBbox,
+        $valueBbox,
+        connector_points_between_bboxes($labelBbox, $valueBbox),
+        $zoneMatches,
+        $pageNumber
+    );
+}
+
+function debug_export_data_field_snapshot(string $fieldKey, mixed $values, array $meta, float $acceptanceThreshold, array $zoneMatches = []): array
+{
+    $name = is_string($meta['name'] ?? null) && trim((string) $meta['name']) !== ''
+        ? trim((string) $meta['name'])
+        : $fieldKey;
+    $valueList = debug_export_string_list($values);
+    $matches = is_array($meta['matches'] ?? null) ? array_values($meta['matches']) : [];
+    $acceptedCandidates = [];
+
+    foreach ($matches as $matchIndex => $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+        if (debug_export_match_rejected_by_zone_barrier($match, $zoneMatches)) {
+            continue;
+        }
+        $confidence = debug_export_float_or_null($match['finalConfidence'] ?? null)
+            ?? debug_export_float_or_null($match['confidence'] ?? null)
+            ?? 0.0;
+        $accepted = ($match['accepted'] ?? false) === true || clamp_confidence($confidence) >= $acceptanceThreshold;
+        if (!$accepted) {
+            continue;
+        }
+        $candidate = debug_export_accepted_candidate($match, $matchIndex);
+        if ($candidate['value'] === '') {
+            continue;
+        }
+        $acceptedCandidates[] = $candidate;
+    }
+
+    return [
+        'key' => $fieldKey,
+        'name' => $name,
+        'fieldKey' => $fieldKey,
+        'fieldName' => $name,
+        'values' => $valueList,
+        'canonicalValue' => $valueList[0] ?? '',
+        'acceptedCandidates' => $acceptedCandidates,
+    ];
+}
+
 function debug_export_label_name_map(array $extractedData): array
 {
     $map = [];
@@ -6709,11 +6857,36 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
     }
     static $rules = null;
     static $displayMaps = null;
+    static $dataFieldAcceptanceThreshold = null;
     if (!is_array($rules)) {
         $rules = load_active_archiving_rules();
         $displayMaps = archiving_review_display_maps($rules, $rules);
     }
+    if (!is_float($dataFieldAcceptanceThreshold)) {
+        $matchingPayload = load_matching_settings_payload();
+        $dataFieldAcceptanceThreshold = is_numeric($matchingPayload['dataFieldAcceptanceThreshold'] ?? null)
+            ? clamp_confidence((float) $matchingPayload['dataFieldAcceptanceThreshold'])
+            : 0.5;
+    }
     $displayMaps = is_array($displayMaps) ? $displayMaps : archiving_review_display_maps($rules, $rules);
+    $zoneMatches = [];
+    try {
+        if (is_array($rules) && is_array($jobData)) {
+            $ocrText = load_job_analysis_text($jobDir, null);
+            $matchingPayload = load_matching_settings_payload();
+            $replacementMap = replacement_map(
+                is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []
+            );
+            $zoneMatches = detect_configured_zone_matches(
+                split_lines_for_matching($ocrText),
+                is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
+                $replacementMap,
+                build_matching_line_geometries_for_job($jobData, $ocrText)
+            );
+        }
+    } catch (Throwable $e) {
+        $zoneMatches = is_array($extractedData['zoneMatches'] ?? null) ? $extractedData['zoneMatches'] : [];
+    }
     $autoResult = is_array($extractedData['autoArchivingResult'] ?? null)
         ? normalize_auto_archiving_result($extractedData['autoArchivingResult'])
         : [];
@@ -6768,14 +6941,7 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
             continue;
         }
         $meta = is_array($fieldMeta[$normalizedKey] ?? null) ? $fieldMeta[$normalizedKey] : [];
-        $name = is_string($meta['name'] ?? null) && trim((string) $meta['name']) !== ''
-            ? trim((string) $meta['name'])
-            : $normalizedKey;
-        $fields[] = [
-            'key' => $normalizedKey,
-            'name' => $name,
-            'values' => debug_export_string_list($values),
-        ];
+        $fields[] = debug_export_data_field_snapshot($normalizedKey, $values, $meta, $dataFieldAcceptanceThreshold, $zoneMatches);
     }
     usort($fields, static fn (array $left, array $right): int => strnatcasecmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? '')));
 
@@ -6899,22 +7065,144 @@ function debug_export_label_diff(array $leftLabels, array $rightLabels): array
 
 function debug_export_data_field_diff(array $leftFields, array $rightFields): array
 {
+    $candidateIdentity = static function (array $candidate): string {
+        $parts = [
+            'value=' . debug_export_scalar_text($candidate['value'] ?? ''),
+            'page=' . debug_export_scalar_text($candidate['pageNumber'] ?? ''),
+            'line=' . debug_export_scalar_text($candidate['lineIndex'] ?? ''),
+            'labelLine=' . debug_export_scalar_text($candidate['labelLineIndex'] ?? ''),
+            'start=' . debug_export_scalar_text($candidate['start'] ?? ''),
+            'keyBox=' . debug_export_bbox_signature($candidate['keyBBox'] ?? ($candidate['labelBbox'] ?? null)),
+            'valueBox=' . debug_export_bbox_signature($candidate['valueBBox'] ?? null),
+        ];
+
+        $hasPosition = implode('', array_slice($parts, 1)) !== 'page=line=labelLine=start=keyBox=valueBox=';
+        if (!$hasPosition) {
+            $searchTerm = debug_export_scalar_text($candidate['searchTerm'] ?? '');
+            $labelText = debug_export_scalar_text($candidate['labelText'] ?? '');
+            $parts[] = 'search=' . (function_exists('mb_strtolower') ? mb_strtolower($searchTerm, 'UTF-8') : strtolower($searchTerm));
+            $parts[] = 'label=' . (function_exists('mb_strtolower') ? mb_strtolower($labelText, 'UTF-8') : strtolower($labelText));
+        }
+
+        return implode('|', $parts);
+    };
+
+    $normalizeCandidate = static function (mixed $candidate, int $fallbackIndex) use ($candidateIdentity): ?array {
+        if (!is_array($candidate)) {
+            return null;
+        }
+        $value = debug_export_scalar_text($candidate['value'] ?? '');
+        if ($value === '') {
+            return null;
+        }
+
+        $normalized = [
+            'value' => $value,
+            'confidence' => clamp_confidence(debug_export_float_or_null($candidate['confidence'] ?? null) ?? 0.0),
+            'matchIndex' => debug_export_int_or_null($candidate['matchIndex'] ?? null) ?? $fallbackIndex,
+            'searchTerm' => debug_export_scalar_text($candidate['searchTerm'] ?? ''),
+            'labelText' => debug_export_scalar_text($candidate['labelText'] ?? ''),
+            'matchText' => debug_export_scalar_text($candidate['matchText'] ?? ''),
+            'source' => debug_export_scalar_text($candidate['source'] ?? ''),
+        ];
+        foreach (['baseConfidence', 'finalConfidence', 'score'] as $key) {
+            $number = debug_export_float_or_null($candidate[$key] ?? null);
+            if ($number !== null) {
+                $normalized[$key] = $key === 'score' ? $number : clamp_confidence($number);
+            }
+        }
+        foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex'] as $key) {
+            $number = debug_export_int_or_null($candidate[$key] ?? null);
+            if ($number !== null) {
+                $normalized[$key] = $number;
+            }
+        }
+        $keyBbox = debug_export_bbox_or_null($candidate['keyBBox'] ?? ($candidate['labelBbox'] ?? null));
+        $valueBbox = debug_export_bbox_or_null($candidate['valueBBox'] ?? null);
+        if ($keyBbox !== null) {
+            $normalized['keyBBox'] = $keyBbox;
+        }
+        if ($valueBbox !== null) {
+            $normalized['valueBBox'] = $valueBbox;
+        }
+        $normalized['identity'] = $candidateIdentity($normalized);
+
+        return $normalized;
+    };
+
+    $normalizeCandidates = static function (array $field) use ($normalizeCandidate): array {
+        $sourceCandidates = is_array($field['acceptedCandidates'] ?? null) ? array_values($field['acceptedCandidates']) : [];
+        if ($sourceCandidates === []) {
+            $sourceCandidates = array_map(
+                static fn (string $value): array => ['value' => $value, 'confidence' => 0.0],
+                debug_export_string_list($field['values'] ?? [])
+            );
+        }
+
+        $map = [];
+        foreach ($sourceCandidates as $index => $candidate) {
+            $normalized = $normalizeCandidate($candidate, $index);
+            if ($normalized === null) {
+                continue;
+            }
+            $identity = $normalized['identity'];
+            if (isset($map[$identity])) {
+                $identity .= '|dup=' . $index;
+                $normalized['identity'] = $identity;
+            }
+            $map[$identity] = $normalized;
+        }
+        ksort($map, SORT_NATURAL);
+        return $map;
+    };
+
+    $candidateComparable = static function (array $candidate): array {
+        $copy = $candidate;
+        unset($copy['identity'], $copy['matchIndex']);
+        foreach (['confidence', 'baseConfidence', 'finalConfidence', 'score'] as $key) {
+            if (isset($copy[$key]) && is_numeric($copy[$key])) {
+                $copy[$key] = round((float) $copy[$key], 6);
+            }
+        }
+        return $copy;
+    };
+
+    $publicCandidate = static function (array $candidate): array {
+        unset($candidate['identity']);
+        return $candidate;
+    };
+
     $normalize = static function (array $fields): array {
         $map = [];
         foreach ($fields as $field) {
             if (!is_array($field)) {
                 continue;
             }
-            $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+            $key = is_string($field['fieldKey'] ?? null) ? trim((string) $field['fieldKey']) : '';
+            if ($key === '') {
+                $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+            }
             if ($key === '') {
                 continue;
             }
-            $name = is_string($field['name'] ?? null) && trim((string) $field['name']) !== ''
+            $name = is_string($field['fieldName'] ?? null) && trim((string) $field['fieldName']) !== ''
+                ? trim((string) $field['fieldName'])
+                : (is_string($field['name'] ?? null) && trim((string) $field['name']) !== ''
                 ? trim((string) $field['name'])
-                : $key;
+                : $key);
             $values = debug_export_string_list($field['values'] ?? []);
             sort($values, SORT_NATURAL);
-            $map[$key] = ['key' => $key, 'name' => $name, 'values' => $values];
+            $canonicalValue = debug_export_scalar_text($field['canonicalValue'] ?? '');
+            if ($canonicalValue === '') {
+                $canonicalValue = $values[0] ?? '';
+            }
+            $map[$key] = [
+                'key' => $key,
+                'name' => $name,
+                'values' => $values,
+                'canonicalValue' => $canonicalValue,
+                'acceptedCandidates' => is_array($field['acceptedCandidates'] ?? null) ? array_values($field['acceptedCandidates']) : [],
+            ];
         }
         ksort($map, SORT_NATURAL);
         return $map;
@@ -6931,16 +7219,49 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         $name = is_array($rightField) ? (string) $rightField['name'] : (is_array($leftField) ? (string) $leftField['name'] : $key);
         $leftValues = is_array($leftField) ? $leftField['values'] : [];
         $rightValues = is_array($rightField) ? $rightField['values'] : [];
+        $leftCanonical = is_array($leftField) ? (string) $leftField['canonicalValue'] : '';
+        $rightCanonical = is_array($rightField) ? (string) $rightField['canonicalValue'] : '';
         $added = array_values(array_diff($rightValues, $leftValues));
         $removed = array_values(array_diff($leftValues, $rightValues));
-        if ($added === [] && $removed === []) {
-            continue;
-        }
         $changed = [];
         if (count($leftValues) === 1 && count($rightValues) === 1 && count($added) === 1 && count($removed) === 1) {
             $changed[] = ['from' => $leftValues[0], 'to' => $rightValues[0]];
             $added = [];
             $removed = [];
+        }
+        $leftCandidates = is_array($leftField) ? $normalizeCandidates($leftField) : [];
+        $rightCandidates = is_array($rightField) ? $normalizeCandidates($rightField) : [];
+        $candidateKeys = array_values(array_unique(array_merge(array_keys($leftCandidates), array_keys($rightCandidates))));
+        sort($candidateKeys, SORT_NATURAL);
+        $candidateAdded = [];
+        $candidateRemoved = [];
+        $candidateChanged = [];
+        foreach ($candidateKeys as $candidateKey) {
+            $leftCandidate = $leftCandidates[$candidateKey] ?? null;
+            $rightCandidate = $rightCandidates[$candidateKey] ?? null;
+            if (!is_array($leftCandidate) && is_array($rightCandidate)) {
+                $candidateAdded[] = $publicCandidate($rightCandidate);
+                continue;
+            }
+            if (is_array($leftCandidate) && !is_array($rightCandidate)) {
+                $candidateRemoved[] = $publicCandidate($leftCandidate);
+                continue;
+            }
+            if (!is_array($leftCandidate) || !is_array($rightCandidate)) {
+                continue;
+            }
+            if ($candidateComparable($leftCandidate) !== $candidateComparable($rightCandidate)) {
+                $candidateChanged[] = [
+                    'from' => $publicCandidate($leftCandidate),
+                    'to' => $publicCandidate($rightCandidate),
+                ];
+            }
+        }
+        $canonicalChanged = $leftCanonical !== $rightCanonical
+            ? ['from' => $leftCanonical, 'to' => $rightCanonical]
+            : null;
+        if ($added === [] && $removed === [] && $changed === [] && $candidateAdded === [] && $candidateRemoved === [] && $candidateChanged === [] && $canonicalChanged === null) {
+            continue;
         }
         $diffs[] = [
             'key' => $key,
@@ -6948,6 +7269,10 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'added' => $added,
             'removed' => $removed,
             'changed' => $changed,
+            'canonicalChanged' => $canonicalChanged,
+            'candidateAdded' => $candidateAdded,
+            'candidateRemoved' => $candidateRemoved,
+            'candidateChanged' => $candidateChanged,
         ];
     }
     return $diffs;

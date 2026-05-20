@@ -5029,6 +5029,18 @@ body.is-resizing-sidebar {
   font-size: 13px;
 }
 
+.snapshot-compare-candidate-value {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.snapshot-compare-candidate-details {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .snapshot-compare-missing-value {
   color: #94a3b8;
   font-size: 12px;
