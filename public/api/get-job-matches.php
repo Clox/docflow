@@ -96,6 +96,24 @@ try {
             'finalConfidence' => $resolvedFinalConfidence,
         ];
     };
+    $isRejectedByZoneBarrier = static function (array $match) use (&$zoneMatches): bool {
+        if ($zoneMatches === []) {
+            return false;
+        }
+        $labelBbox = normalize_debug_word_bbox($match['labelBbox'] ?? null);
+        $valueBbox = normalize_debug_word_bbox($match['valueBbox'] ?? null);
+        if ($labelBbox === null || $valueBbox === null) {
+            return false;
+        }
+        $pageNumber = is_int($match['pageNumber'] ?? null) ? (int) $match['pageNumber'] : null;
+        return candidate_crosses_zone_barrier(
+            $labelBbox,
+            $valueBbox,
+            connector_points_between_bboxes($labelBbox, $valueBbox),
+            $zoneMatches,
+            $pageNumber
+        );
+    };
 
     $fields = [];
     $allFieldKeys = array_values(array_unique(array_merge(array_keys($fieldValues), array_keys($fieldMeta))));
@@ -118,6 +136,9 @@ try {
                     continue;
                 }
                 if ($isInvalidPositionMatch($match)) {
+                    continue;
+                }
+                if ($isRejectedByZoneBarrier($match)) {
                     continue;
                 }
 
