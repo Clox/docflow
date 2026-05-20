@@ -3024,6 +3024,35 @@ body.is-resizing-sidebar {
   stroke-width: 2.75;
 }
 
+.ocr-zone-overlay {
+  position: absolute;
+  z-index: 0;
+  pointer-events: auto;
+  border: 2px solid rgba(22, 101, 52, 0.45);
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(149, 210, 170, 0.24) 0,
+      rgba(149, 210, 170, 0.24) 8px,
+      rgba(21, 128, 61, 0.08) 8px,
+      rgba(21, 128, 61, 0.08) 16px
+    );
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.72) inset;
+}
+
+.ocr-zone-overlay:hover {
+  border-color: rgba(22, 101, 52, 0.7);
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(149, 210, 170, 0.34) 0,
+      rgba(149, 210, 170, 0.34) 8px,
+      rgba(21, 128, 61, 0.12) 8px,
+      rgba(21, 128, 61, 0.12) 16px
+    );
+}
+
 
 
 .ocr-word-box {
@@ -3345,6 +3374,18 @@ body.is-resizing-sidebar {
   letter-spacing: 0.01em;
   white-space: nowrap;
   flex: 0 0 auto;
+}
+
+.ocr-word-tooltip-index.is-clickable {
+  cursor: pointer;
+}
+
+.ocr-word-tooltip-index.is-clickable:hover,
+.ocr-word-tooltip-index.is-clickable:focus-visible {
+  color: #1d4ed8;
+  outline: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .ocr-word-tooltip-copy {
@@ -6135,6 +6176,14 @@ body.is-resizing-sidebar {
   background-image: url('/assets/icons/category.svg');
 }
 
+.tree-body-icon-zone {
+  width: 18px;
+  height: 18px;
+  border: 2px dashed #64748b;
+  background: transparent;
+  box-sizing: border-box;
+}
+
 .tree-body-icon-rule {
   width: 18px;
   height: 18px;
@@ -6390,6 +6439,11 @@ body.is-resizing-sidebar {
   transition: opacity 0.12s ease, color 0.12s ease, background-color 0.12s ease;
 }
 
+.extraction-field-editor-actions .icon-delete-button--node,
+.extraction-field-editor-actions .tree-remove-button--node {
+  align-self: center;
+}
+
 .extraction-field-copy-button:hover,
 .extraction-field-copy-button:focus-visible {
   opacity: 1;
@@ -6585,7 +6639,15 @@ body.is-resizing-sidebar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr);
   gap: 8px;
-  align-items: start;
+  align-items: end;
+}
+
+.extraction-zone-header-fields {
+  grid-template-columns: minmax(120px, max-content) minmax(220px, 1fr);
+}
+
+.extraction-zone-header-fields .extraction-field-value-pattern-field {
+  grid-column: 1 / -1;
 }
 
 .extraction-field-header-value-type-field {

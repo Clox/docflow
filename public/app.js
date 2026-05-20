@@ -44,6 +44,7 @@ const ocrMenuWrapEl = document.getElementById('ocr-menu-wrap');
 const ocrMenuButtonEl = document.getElementById('ocr-menu-button');
 const ocrMenuEl = document.getElementById('ocr-menu');
 const ocrDownloadActionEl = document.getElementById('ocr-download-action');
+const ocrToggleZonesActionEl = document.getElementById('ocr-toggle-zones-action');
 let ocrWordTooltipEl = null;
 let ocrWordTooltipSectionsEl = null;
 let ocrWordTooltipPrimaryColumnEl = null;
@@ -288,6 +289,9 @@ let extractionFieldsApplyEl = null;
 let extractionFieldsTabEls = [];
 let extractionFieldsViewCustomEl = null;
 let extractionFieldsViewSystemEl = null;
+let extractionFieldsViewZonesEl = null;
+let extractionZonesEditorEl = null;
+let extractionFieldsTabDescriptionEl = null;
 let archivingReviewStatusEl = null;
 let archivingReviewSummaryEl = null;
 let archivingReviewTemplateChangesEl = null;
@@ -464,6 +468,7 @@ let ocrDataFieldSelection = {
 };
 let ocrShowPageImage = false;
 let ocrPageImageBlend = 0.5;
+let ocrShowZones = window.localStorage.getItem('docflow.ocr.showZones') !== '0';
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
 let ocrSearchActiveIndex = -1;
@@ -609,6 +614,7 @@ let renderedArchivingReviewSignature = '';
 let extractionFieldsDraft = [];
 let predefinedExtractionFieldsDraft = [];
 let systemExtractionFieldsDraft = [];
+let extractionZonesDraft = [];
 let extractionFieldsBuiltInCollapsed = true;
 let extractionFieldsCustomCollapsed = false;
 let activeExtractionFieldsTabId = 'fields';
@@ -3581,6 +3587,7 @@ async function setViewerOcr(jobId) {
     loadedOcrJobId = jobId;
     loadedOcrSource = currentOcrSource;
     setOcrDocumentPages(cachedContent.pages, cachedContent.text || '', cachedContent.mode || 'text');
+    await ensureOcrZoneMatchesLoaded(jobId);
     await refreshOcrSearch();
     restoreOcrViewState(currentOcrSource, restoreSelectionScroll);
     return;
@@ -3631,6 +3638,7 @@ async function setViewerOcr(jobId) {
       mode,
     });
     setOcrDocumentPages(pages, resolvedText, mode);
+    await ensureOcrZoneMatchesLoaded(jobId);
     await refreshOcrSearch();
     restoreOcrViewState(currentOcrSource, restoreSelectionScroll);
   } catch (error) {
@@ -4819,6 +4827,20 @@ async function ensureLoadedMatchesPayload(jobId) {
   loadedMatchesJobId = normalizedJobId;
   loadedMatchesPayload = payload;
   return payload;
+}
+
+async function ensureOcrZoneMatchesLoaded(jobId) {
+  if (!ocrShowZones || !jobId) {
+    return;
+  }
+  try {
+    await ensureLoadedMatchesPayload(jobId);
+    if (currentViewMode === 'ocr') {
+      rerenderOcrPagesPreservingScroll();
+    }
+  } catch (error) {
+    // Zone overlays are supplemental; OCR rendering must not fail if metadata is missing.
+  }
 }
 
 async function setViewerMatches(jobId) {
@@ -12372,6 +12394,11 @@ function syncOcrMenuState(job = findJobById(selectedJobId)) {
   ocrMenuButtonEl.disabled = disabled;
   ocrMenuButtonEl.title = disabled ? 'Markera ett färdigbearbetat dokument först.' : 'Fler alternativ';
   ocrDownloadActionEl.disabled = disabled;
+  if (ocrToggleZonesActionEl instanceof HTMLButtonElement) {
+    ocrToggleZonesActionEl.disabled = disabled;
+    ocrToggleZonesActionEl.textContent = ocrShowZones ? 'Dölj zoner' : 'Visa zoner';
+    ocrToggleZonesActionEl.setAttribute('aria-checked', ocrShowZones ? 'true' : 'false');
+  }
 }
 
 function ocrDownloadBaseName(job) {
@@ -12620,6 +12647,8 @@ function renderConfigurationBackups(items = settingsBackupItems) {
           `${Number(item.summary.clients || 0)} huvudmän`,
           `${Number(item.summary.senders || 0)} avsändare`,
           `${Number(item.summary.labels || 0)} etiketter`,
+          `${Number(item.summary.dataFields || 0)} datafält`,
+          `${Number(item.summary.zones || 0)} ${Number(item.summary.zones || 0) === 1 ? 'zon' : 'zoner'}`,
         ].join(' · ')
       : '';
     meta.textContent = summary ? `${version} · ${summary}` : version;
@@ -14015,6 +14044,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
 
   return {
     indexLabel: `Träff #${matchIndex}`,
+    dataFieldMatchIndex: Number.isInteger(row?.matchIndex) ? row.matchIndex : null,
     text: [
       ...(showKeySection ? [`Nyckel-BBoxar: ${formatOcrWordIndexList(keyWordIndexes)}`] : []),
       `Värde-BBoxar: ${formatOcrWordIndexList(valueWordIndexes)}`,
@@ -14460,7 +14490,25 @@ function createOcrWordTooltipSection(options = {}) {
     bboxCopyResetTimerId: 0,
     tooltipPage: null,
     tooltipMatchLookup: null,
+    dataFieldMatchIndex: null,
   };
+
+  const activateDataFieldMatch = (event) => {
+    if (!Number.isInteger(state.dataFieldMatchIndex)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    applyOcrDataFieldSelection(state.dataFieldMatchIndex);
+  };
+
+  indexEl.addEventListener('click', activateDataFieldMatch);
+  indexEl.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    activateDataFieldMatch(event);
+  });
 
   bindOcrWordTooltipCopyButton(copyButtonEl, state, {
     textKey: 'copyText',
@@ -14558,6 +14606,11 @@ function clearOcrWordTooltipSection(section) {
 
   if (section.indexEl instanceof HTMLElement) {
     section.indexEl.textContent = '';
+    section.indexEl.classList.remove('is-clickable');
+    section.indexEl.removeAttribute('role');
+    section.indexEl.removeAttribute('tabindex');
+    section.indexEl.removeAttribute('title');
+    section.indexEl.removeAttribute('aria-label');
   }
   if (section.textEl instanceof HTMLElement) {
     section.textEl.replaceChildren();
@@ -14575,6 +14628,7 @@ function clearOcrWordTooltipSection(section) {
   section.state.bboxCopyTitle = 'Kopiera träff med alla bboxar som JSON';
   section.state.tooltipPage = null;
   section.state.tooltipMatchLookup = null;
+  section.state.dataFieldMatchIndex = null;
   section.state.keyWordIndexes = [];
   section.state.valueWordIndexes = [];
 
@@ -14616,11 +14670,25 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
   section.state.copyTitle = tooltipData.copyTitle || 'Kopiera index, text och koordinater som JSON';
   section.state.bboxCopyText = tooltipData.bboxCopyText || '';
   section.state.bboxCopyTitle = tooltipData.bboxCopyTitle || 'Kopiera träff med alla bboxar som JSON';
+  section.state.dataFieldMatchIndex = Number.isInteger(tooltipData.dataFieldMatchIndex) ? tooltipData.dataFieldMatchIndex : null;
   section.state.keyWordIndexes = Array.isArray(tooltipData.keyWordIndexes) ? tooltipData.keyWordIndexes : [];
   section.state.valueWordIndexes = Array.isArray(tooltipData.valueWordIndexes) ? tooltipData.valueWordIndexes : [];
 
   if (section.indexEl instanceof HTMLElement) {
     section.indexEl.textContent = tooltipData.indexLabel || '';
+    const hasDataFieldMatch = Number.isInteger(section.state.dataFieldMatchIndex);
+    section.indexEl.classList.toggle('is-clickable', hasDataFieldMatch);
+    if (hasDataFieldMatch) {
+      section.indexEl.setAttribute('role', 'button');
+      section.indexEl.setAttribute('tabindex', '0');
+      section.indexEl.setAttribute('title', 'Gör denna träff aktiv');
+      section.indexEl.setAttribute('aria-label', `Gör ${tooltipData.indexLabel || 'träffen'} aktiv`);
+    } else {
+      section.indexEl.removeAttribute('role');
+      section.indexEl.removeAttribute('tabindex');
+      section.indexEl.removeAttribute('title');
+      section.indexEl.removeAttribute('aria-label');
+    }
   }
   if (section.includeText && section.textEl instanceof HTMLElement) {
     section.textEl.textContent = tooltipData.text || '';
@@ -15191,6 +15259,53 @@ function ocrDataFieldRowsForPage(page) {
   });
 }
 
+function ocrZoneMatchesForPage(page) {
+  if (!ocrShowZones || !loadedMatchesPayload || typeof loadedMatchesPayload !== 'object' || !Array.isArray(loadedMatchesPayload.zones)) {
+    return [];
+  }
+  return loadedMatchesPayload.zones.filter((zone) => {
+    const pageNumber = Number(zone && zone.pageNumber);
+    return Number.isInteger(pageNumber) && pageNumber === page.number && zone && typeof zone === 'object' && zone.boundingRect;
+  });
+}
+
+function renderOcrZoneOverlays(surfaceEl, page, objectScale) {
+  const zones = ocrZoneMatchesForPage(page);
+  if (zones.length === 0) {
+    return;
+  }
+
+  zones.forEach((zone) => {
+    const rect = zone && typeof zone === 'object' ? zone.boundingRect : null;
+    if (!rect || typeof rect !== 'object') {
+      return;
+    }
+    const x0 = Number(rect.x0);
+    const y0 = Number(rect.y0);
+    const x1 = Number(rect.x1);
+    const y1 = Number(rect.y1);
+    if (![x0, y0, x1, y1].every(Number.isFinite) || x1 <= x0 || y1 <= y0) {
+      return;
+    }
+
+    const zoneEl = document.createElement('div');
+    zoneEl.className = 'ocr-zone-overlay';
+    zoneEl.style.left = `${Math.max(0, x0 * objectScale)}px`;
+    zoneEl.style.top = `${Math.max(0, y0 * objectScale)}px`;
+    zoneEl.style.width = `${Math.max(1, (x1 - x0) * objectScale)}px`;
+    zoneEl.style.height = `${Math.max(1, (y1 - y0) * objectScale)}px`;
+    const name = typeof zone.zoneName === 'string' && zone.zoneName.trim() !== '' ? zone.zoneName.trim() : 'Zon';
+    const bboxCount = Array.isArray(zone.bboxIndexes) ? zone.bboxIndexes.length : 0;
+    zoneEl.title = [
+      name,
+      `Sida ${Number(zone.pageNumber) || page.number}`,
+      bboxCount > 0 ? `${bboxCount} bboxar` : '',
+      typeof zone.matchedText === 'string' && zone.matchedText.trim() !== '' ? zone.matchedText.trim() : '',
+    ].filter(Boolean).join('\n');
+    surfaceEl.appendChild(zoneEl);
+  });
+}
+
 function renderObjectOcrPage(page, pageMatches, objectScale) {
   const wrapperEl = document.createElement('div');
   wrapperEl.className = 'ocr-page ocr-page--objects';
@@ -15207,6 +15322,7 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
   const wordElements = new Map();
   const wordsToFit = [];
   const matchLookup = buildObjectPageMatchLookup(page, pageMatches);
+  renderOcrZoneOverlays(surfaceEl, page, objectScale);
 
   [...page.words].sort((left, right) => {
     const leftArea = left.rect.width * left.rect.height;
@@ -17971,6 +18087,9 @@ function bindSettingsPanelRefs(tabId) {
     extractionFieldsTabEls = Array.from(document.querySelectorAll('[data-extraction-fields-tab]'));
     extractionFieldsViewCustomEl = document.getElementById('extraction-fields-view-custom');
     extractionFieldsViewSystemEl = document.getElementById('extraction-fields-view-system');
+    extractionFieldsViewZonesEl = document.getElementById('extraction-fields-view-zones');
+    extractionZonesEditorEl = document.getElementById('extraction-zones-editor');
+    extractionFieldsTabDescriptionEl = document.getElementById('extraction-fields-tab-description');
     extractionFieldsTabEls.forEach((tabButton) => {
       tabButton.addEventListener('click', () => {
         const nextTabId = tabButton.dataset.extractionFieldsTab;
@@ -17982,6 +18101,12 @@ function bindSettingsPanelRefs(tabId) {
     });
     extractionFieldsAddRowEl.addEventListener('click', () => {
       closeExtractionFieldsAddMenu();
+      if (activeExtractionFieldsTabId === 'zones') {
+        extractionZonesDraft.push(defaultExtractionZone());
+        renderExtractionZonesEditor();
+        updateSettingsActionButtons();
+        return;
+      }
       if (activeExtractionFieldsTabId !== 'fields') {
         return;
       }
@@ -18018,8 +18143,12 @@ function bindSettingsPanelRefs(tabId) {
       systemExtractionFieldsDraft = Array.isArray(parsed.systemFields)
         ? parsed.systemFields.map((field, index) => sanitizeExtractionField(field, index))
         : [];
+      extractionZonesDraft = Array.isArray(parsed.zones)
+        ? parsed.zones.map((zone, index) => sanitizeExtractionZone(zone, index))
+        : [];
       renderExtractionFieldsEditor();
       renderSystemExtractionFieldsEditor();
+      renderExtractionZonesEditor();
       updateSettingsActionButtons();
     });
     extractionFieldsApplyEl.addEventListener('click', async () => {
@@ -18528,13 +18657,15 @@ function normalizedLabelsJson(labels, systemLabels = systemLabelsDraft) {
 function normalizedExtractionFieldsJson(
   extractionFields,
   predefinedExtractionFields = predefinedExtractionFieldsDraft,
-  systemExtractionFields = systemExtractionFieldsDraft
+  systemExtractionFields = systemExtractionFieldsDraft,
+  zones = extractionZonesDraft
 ) {
   return JSON.stringify(
     {
       fields: sanitizeExtractionFields(extractionFields),
       predefinedFields: sanitizeExtractionFields(predefinedExtractionFields),
       systemFields: sanitizeExtractionFields(systemExtractionFields),
+      zones: sanitizeExtractionZones(zones),
     }
   );
 }
@@ -21602,6 +21733,37 @@ function defaultExtractionField() {
     valueType: 'text',
     ruleSets: [defaultExtractionFieldRuleSet()],
   };
+}
+
+function defaultExtractionZone() {
+  return {
+    id: '',
+    name: '',
+    enabled: true,
+    pattern: '',
+    isRegex: false,
+  };
+}
+
+function sanitizeExtractionZone(zone, fallbackIndex = 0) {
+  const input = zone && typeof zone === 'object' ? zone : {};
+  const name = typeof input.name === 'string' ? input.name.trim() : '';
+  const pattern = typeof input.pattern === 'string' ? input.pattern : '';
+  const fallbackId = normalizeConfigKey(name || `zone_${fallbackIndex + 1}`);
+  const id = typeof input.id === 'string' && input.id.trim() !== ''
+    ? input.id.trim()
+    : fallbackId;
+  return {
+    id,
+    name,
+    enabled: input.enabled !== false,
+    pattern,
+    isRegex: true,
+  };
+}
+
+function sanitizeExtractionZones(zones) {
+  return Array.isArray(zones) ? zones.map((zone, index) => sanitizeExtractionZone(zone, index)) : [];
 }
 
 function defaultExtractionFieldRuleSet() {
@@ -24939,7 +25101,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const valuePatternLabel = document.createElement('label');
       valuePatternLabel.className = 'floating-input-label floating-input-label--with-help';
       const valuePatternLabelText = document.createElement('span');
-      valuePatternLabelText.textContent = 'Värdemönster';
+      valuePatternLabelText.textContent = 'Värdemönster (Regex)';
       const valuePatternHelpDisclosure = createFloatingHelpToggle(
         createValuePatternHelpContent(),
         {
@@ -25367,6 +25529,160 @@ function renderSystemExtractionFieldsEditor() {
   });
 }
 
+function createZoneHelpContent() {
+  const wrapper = document.createElement('div');
+  wrapper.appendChild(createHelpSection('', [
+    'Mönstret definierar en zon i OCR-texten.',
+    'Alla bboxar som ingår i matchningen räknas till zonen.',
+    'Zoner fungerar som barriärer för datafältmatchning med söktext.',
+    'Mellanslag matchar flexibel whitespace i OCR-text.',
+  ]));
+  return wrapper;
+}
+
+function renderExtractionZonesEditor() {
+  if (!extractionZonesEditorEl) {
+    return;
+  }
+
+  extractionZonesEditorEl.innerHTML = '';
+  const label = document.createElement('div');
+  label.className = 'archive-folders-label';
+  label.textContent = 'Zoner';
+  extractionZonesEditorEl.appendChild(label);
+
+  if (extractionZonesDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Inga zoner ännu.';
+    extractionZonesEditorEl.appendChild(empty);
+    return;
+  }
+
+  extractionZonesDraft.forEach((zone, index) => {
+    const currentZone = sanitizeExtractionZone(zone, index);
+    extractionZonesDraft[index] = currentZone;
+
+    const node = document.createElement('div');
+    node.className = 'tree-node tree-category extraction-zone-node';
+    const row = createTreeRow({ markerless: true });
+    row.classList.add('extraction-zone-row');
+    const body = document.createElement('div');
+    body.className = 'tree-body category-body extraction-field-editor-body extraction-zone-body';
+    appendTreeBodyIcon(body, 'tree-body-icon tree-body-icon-zone');
+    const actions = document.createElement('div');
+    actions.className = 'extraction-field-editor-actions';
+
+    const copyZoneButton = document.createElement('button');
+    copyZoneButton.type = 'button';
+    copyZoneButton.className = 'extraction-field-copy-button';
+    copyZoneButton.textContent = '⧉';
+    copyZoneButton.title = 'Kopiera zon som JSON';
+    copyZoneButton.setAttribute('aria-label', 'Kopiera zon som JSON');
+    copyZoneButton.addEventListener('click', async () => {
+      const text = JSON.stringify(sanitizeExtractionZone(extractionZonesDraft[index], index), null, 2);
+      const original = copyZoneButton.textContent || '⧉';
+      const copied = await copyTextToClipboard(text);
+      copyZoneButton.textContent = copied ? 'Kopierad' : 'Fel';
+      window.setTimeout(() => {
+        copyZoneButton.textContent = original;
+      }, 1200);
+    });
+    actions.appendChild(copyZoneButton);
+
+    const inspector = createMatchPatternInspector({
+      stateKey: `extraction-zone:${currentZone.id || index}`,
+    });
+    actions.appendChild(inspector.button);
+
+    const removeButton = createTrashButton({
+      variant: 'node',
+      title: 'Ta bort zon',
+      onClick: () => {
+        extractionZonesDraft.splice(index, 1);
+        renderExtractionZonesEditor();
+        updateSettingsActionButtons();
+      },
+    });
+    actions.appendChild(removeButton);
+
+    const enabledLabel = document.createElement('label');
+    enabledLabel.className = 'extraction-field-rule-set-toggle extraction-zone-enabled';
+    const enabledCheckbox = document.createElement('input');
+    enabledCheckbox.type = 'checkbox';
+    enabledCheckbox.checked = currentZone.enabled !== false;
+    const enabledText = document.createElement('span');
+    enabledText.textContent = 'Aktiv';
+    enabledLabel.append(enabledCheckbox, enabledText);
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Ex: Bankgiro maskinrad';
+    nameInput.value = currentZone.name;
+
+    const patternInput = document.createElement('input');
+    patternInput.type = 'text';
+    patternInput.placeholder = 'Ex: Du kan också skanna nedan med din bankapp';
+    patternInput.value = currentZone.pattern;
+    const copyButton = createMatchPatternCopyButton(() => {
+      const pattern = String(extractionZonesDraft[index]?.pattern || '').trim();
+      return pattern !== '' ? buildInspectionMatchPattern(pattern, true) : '';
+    });
+    const patternWrap = createInlineInputWithAccessories(patternInput, [copyButton], 'extraction-field-alias-input-wrap');
+
+    const patternField = document.createElement('div');
+    patternField.className = 'floating-input-group extraction-field-value-pattern-field';
+    const patternLabel = document.createElement('label');
+    patternLabel.className = 'floating-input-label floating-input-label--with-help';
+    const patternLabelText = document.createElement('span');
+    patternLabelText.textContent = 'Zonmönster (Regex)';
+    const helpDisclosure = createFloatingHelpToggle(createZoneHelpContent(), {
+      helpId: `zone-help-${currentZone.id || index}`,
+      buttonLabel: 'Visa hjälp för zonmönster',
+    });
+    patternLabel.append(patternLabelText, helpDisclosure.button);
+    helpDisclosure.attachLabel(patternLabel);
+    patternField.append(patternLabel, patternWrap, helpDisclosure.panel);
+
+    inspector.registerInput({
+      groupKey: 'zonePattern',
+      inputEl: patternInput,
+      copyButtonEl: copyButton,
+      placeholder: 'Ex: Du kan också skanna nedan med din bankapp',
+      previewPlaceholder: 'Genererat matchningsmönster',
+      getOriginalValue: () => String(extractionZonesDraft[index]?.pattern || '').trim(),
+      getPreviewValue: (original) => (original !== '' ? buildInspectionMatchPattern(original, true) : ''),
+    });
+
+    const syncZone = () => {
+      extractionZonesDraft[index] = sanitizeExtractionZone({
+        ...extractionZonesDraft[index],
+        name: nameInput.value,
+        enabled: enabledCheckbox.checked,
+        pattern: patternInput.value,
+      }, index);
+      inspector.refresh();
+      updateSettingsActionButtons();
+    };
+    enabledCheckbox.addEventListener('change', syncZone);
+    nameInput.addEventListener('input', syncZone);
+    patternInput.addEventListener('input', syncZone);
+
+    const fields = document.createElement('div');
+    fields.className = 'extraction-field-header-fields extraction-zone-header-fields';
+    fields.appendChild(enabledLabel);
+    fields.appendChild(createFloatingField('Namn', nameInput));
+    fields.appendChild(patternField);
+
+    body.appendChild(actions);
+    body.appendChild(fields);
+    row.appendChild(body);
+    node.appendChild(row);
+    extractionZonesEditorEl.appendChild(node);
+    inspector.refresh();
+  });
+}
+
 function syncLabelsEditorValidation() {
   if (!labelsListEl) {
     return;
@@ -25419,19 +25735,30 @@ function createEditorGroup(title, collapsed, onToggle, onRender) {
 }
 
 function setExtractionFieldsTab(tabId) {
-  if (!Array.isArray(extractionFieldsTabEls) || !extractionFieldsViewCustomEl || !extractionFieldsViewSystemEl) {
+  if (!Array.isArray(extractionFieldsTabEls) || !extractionFieldsViewCustomEl || !extractionFieldsViewSystemEl || !extractionFieldsViewZonesEl) {
     return;
   }
-  activeExtractionFieldsTabId = tabId === 'system' ? 'system' : 'fields';
+  activeExtractionFieldsTabId = tabId === 'system' || tabId === 'zones' ? tabId : 'fields';
   extractionFieldsTabEls.forEach((button) => {
     const isActive = button.dataset.extractionFieldsTab === activeExtractionFieldsTabId;
     button.classList.toggle('active', isActive);
   });
   extractionFieldsViewCustomEl.classList.toggle('hidden', activeExtractionFieldsTabId !== 'fields');
   extractionFieldsViewSystemEl.classList.toggle('hidden', activeExtractionFieldsTabId !== 'system');
+  extractionFieldsViewZonesEl.classList.toggle('hidden', activeExtractionFieldsTabId !== 'zones');
+  if (extractionFieldsTabDescriptionEl instanceof HTMLElement) {
+    extractionFieldsTabDescriptionEl.textContent = activeExtractionFieldsTabId === 'system'
+      ? 'Systemdatafält är inbyggda fält som kan användas i filnamn och regler.'
+      : activeExtractionFieldsTabId === 'zones'
+        ? 'Zoner definierar barriärer i OCR-texten som förhindrar felaktig key/value-matchning mellan dokumentdelar.'
+        : 'Definiera egna datafält genom att kombinera hur värdet hittas med hur värdet tolkas och normaliseras.';
+  }
   if (extractionFieldsAddRowEl) {
     extractionFieldsAddRowEl.classList.toggle('hidden', activeExtractionFieldsTabId === 'system');
-    extractionFieldsAddRowEl.textContent = 'Lägg till datafält';
+    extractionFieldsAddRowEl.textContent = activeExtractionFieldsTabId === 'zones' ? 'Lägg till zon' : 'Lägg till datafält';
+  }
+  if (extractionFieldsAddMenuToggleEl instanceof HTMLButtonElement) {
+    extractionFieldsAddMenuToggleEl.classList.toggle('hidden', activeExtractionFieldsTabId === 'zones' || activeExtractionFieldsTabId === 'system');
   }
 }
 
@@ -28643,7 +28970,7 @@ async function loadExtractionFields() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.fields) || !Array.isArray(payload.predefinedFields) || !Array.isArray(payload.systemFields)) {
+  if (!payload || !Array.isArray(payload.fields) || !Array.isArray(payload.predefinedFields) || !Array.isArray(payload.systemFields) || !Array.isArray(payload.zones)) {
     throw new Error('Ogiltigt svar för datafält');
   }
 
@@ -28651,6 +28978,7 @@ async function loadExtractionFields() {
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
   predefinedExtractionFieldsDraft = payload.predefinedFields.map((field, index) => sanitizeExtractionField(field, index));
   systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
+  extractionZonesDraft = payload.zones.map((zone, index) => sanitizeExtractionZone(zone, index));
   extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
   applyArchivingRulesPayloadFromResponse(payload, {
     forceRender: true,
@@ -28659,6 +28987,7 @@ async function loadExtractionFields() {
   refreshSelectedJobProposalUi(previousProposalContext);
   renderExtractionFieldsEditor();
   renderSystemExtractionFieldsEditor();
+  renderExtractionZonesEditor();
   if (archiveStructureListEl) {
     renderArchiveStructureEditor();
   }
@@ -28846,6 +29175,7 @@ async function saveExtractionFields() {
   const normalizedExtractionFields = extractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const normalizedPredefinedExtractionFields = predefinedExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const normalizedSystemExtractionFields = systemExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
+  const normalizedExtractionZones = extractionZonesDraft.map((zone, index) => sanitizeExtractionZone(zone, index));
   const response = await fetch('/api/save-extraction-fields.php', {
     method: 'POST',
     headers: {
@@ -28855,11 +29185,12 @@ async function saveExtractionFields() {
       fields: normalizedExtractionFields,
       predefinedFields: normalizedPredefinedExtractionFields,
       systemFields: normalizedSystemExtractionFields,
+      zones: normalizedExtractionZones,
     })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.fields) || !Array.isArray(payload.predefinedFields) || !Array.isArray(payload.systemFields)) {
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.fields) || !Array.isArray(payload.predefinedFields) || !Array.isArray(payload.systemFields) || !Array.isArray(payload.zones)) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara datafält';
@@ -28870,9 +29201,11 @@ async function saveExtractionFields() {
   extractionFieldsDraft = payload.fields.map((field, index) => sanitizeExtractionField(field, index));
   predefinedExtractionFieldsDraft = payload.predefinedFields.map((field, index) => sanitizeExtractionField(field, index));
   systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
+  extractionZonesDraft = payload.zones.map((zone, index) => sanitizeExtractionZone(zone, index));
   extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
   renderExtractionFieldsEditor();
   renderSystemExtractionFieldsEditor();
+  renderExtractionZonesEditor();
   if (archiveStructureListEl) {
     renderArchiveStructureEditor();
   }
@@ -29201,6 +29534,20 @@ if (ocrDownloadActionEl instanceof HTMLButtonElement) {
     } finally {
       syncOcrMenuState(findJobById(selectedJobId));
     }
+  });
+}
+
+if (ocrToggleZonesActionEl instanceof HTMLButtonElement) {
+  ocrToggleZonesActionEl.addEventListener('click', async () => {
+    ocrShowZones = !ocrShowZones;
+    window.localStorage.setItem('docflow.ocr.showZones', ocrShowZones ? '1' : '0');
+    syncOcrMenuState(findJobById(selectedJobId));
+    closeOcrMenu();
+    if (ocrShowZones && selectedJobId) {
+      await ensureOcrZoneMatchesLoaded(selectedJobId);
+      return;
+    }
+    rerenderOcrPagesPreservingScroll();
   });
 }
 
@@ -29682,9 +30029,11 @@ settingsTabEls.forEach((tabButton) => {
         extractionFieldsDraft = [];
         predefinedExtractionFieldsDraft = [];
         systemExtractionFieldsDraft = [];
+        extractionZonesDraft = [];
         extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
         renderExtractionFieldsEditor();
         renderSystemExtractionFieldsEditor();
+        renderExtractionZonesEditor();
       } else if (tabId === 'paths') {
         alert('Kunde inte ladda sökvägsinställningar.');
         inboxPathBaselineValue = normalizedPathValue(inputInboxPathEl ? inputInboxPathEl.value : '');
@@ -30487,6 +30836,7 @@ Promise.all([
     extractionFieldsDraft = [];
     predefinedExtractionFieldsDraft = [];
     systemExtractionFieldsDraft = [];
+    extractionZonesDraft = [];
     extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
     console.error('Kunde inte ladda datafält vid app-start.');
   }),

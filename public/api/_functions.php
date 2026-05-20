@@ -450,6 +450,7 @@ function configuration_backup_summary(array $payload): array
         'senders' => is_array($payload['senders'] ?? null) ? count($payload['senders']) : 0,
         'labels' => is_array($payload['labels'] ?? null) ? count($payload['labels']) : 0,
         'dataFields' => is_array($payload['dataFields']['fields'] ?? null) ? count($payload['dataFields']['fields']) : 0,
+        'zones' => is_array($payload['dataFields']['zones'] ?? null) ? count($payload['dataFields']['zones']) : 0,
         'archiveFolders' => is_array($payload['archiveStructure']['archiveFolders'] ?? null) ? count($payload['archiveStructure']['archiveFolders']) : 0,
     ];
 }
@@ -610,6 +611,7 @@ function build_configuration_export_payload(): array
             'fields' => is_array($activeRules['fields'] ?? null) ? $activeRules['fields'] : [],
             'predefinedFields' => is_array($activeRules['predefinedFields'] ?? null) ? $activeRules['predefinedFields'] : [],
             'systemFields' => is_array($activeRules['systemFields'] ?? null) ? $activeRules['systemFields'] : [],
+            'zones' => is_array($activeRules['zones'] ?? null) ? $activeRules['zones'] : [],
         ],
         'matching' => [
             'replacements' => is_array($matching['replacements'] ?? null) ? $matching['replacements'] : [],
@@ -875,6 +877,7 @@ function apply_configuration_import_payload(array $payload): array
         'fields' => is_array($payload['dataFields']['fields'] ?? null) ? $payload['dataFields']['fields'] : [],
         'predefinedFields' => is_array($payload['dataFields']['predefinedFields'] ?? null) ? $payload['dataFields']['predefinedFields'] : [],
         'systemFields' => is_array($payload['dataFields']['systemFields'] ?? null) ? $payload['dataFields']['systemFields'] : [],
+        'zones' => is_array($payload['dataFields']['zones'] ?? null) ? $payload['dataFields']['zones'] : [],
     ]);
 
     $normalizedMatching = [
@@ -1039,6 +1042,7 @@ function apply_configuration_import_payload(array $payload): array
             'fields' => is_array($nextActiveRules['fields'] ?? null) ? $nextActiveRules['fields'] : [],
             'predefinedFields' => is_array($nextActiveRules['predefinedFields'] ?? null) ? $nextActiveRules['predefinedFields'] : [],
             'systemFields' => is_array($nextActiveRules['systemFields'] ?? null) ? $nextActiveRules['systemFields'] : [],
+            'zones' => is_array($nextActiveRules['zones'] ?? null) ? $nextActiveRules['zones'] : [],
         ],
         'matching' => $normalizedMatching,
         'ocr' => [
@@ -1210,6 +1214,26 @@ function extraction_field_repository_instance(): ?\Docflow\Archiving\ExtractionF
     try {
         $pdo = \Docflow\Database\Connection::make();
         $repository = new \Docflow\Archiving\ExtractionFieldRepository($pdo);
+    } catch (Throwable $e) {
+        $repository = null;
+    }
+
+    return $repository;
+}
+
+function zone_repository_instance(): ?\Docflow\Archiving\ZoneRepository
+{
+    static $initialized = false;
+    static $repository = null;
+
+    if ($initialized) {
+        return $repository;
+    }
+
+    $initialized = true;
+    try {
+        $pdo = \Docflow\Database\Connection::make();
+        $repository = new \Docflow\Archiving\ZoneRepository($pdo);
     } catch (Throwable $e) {
         $repository = null;
     }
@@ -3969,6 +3993,60 @@ function normalize_archive_structure_data(mixed $input): array
     ];
 }
 
+function normalize_archiving_zone(mixed $input, int $fallbackIndex = 0): ?array
+{
+    if (!is_array($input)) {
+        return null;
+    }
+
+    $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
+    $pattern = is_string($input['pattern'] ?? null) ? trim((string) $input['pattern']) : '';
+    if ($name === '' || $pattern === '') {
+        return null;
+    }
+
+    $id = is_string($input['id'] ?? null) ? trim((string) $input['id']) : '';
+    if ($id === '') {
+        $id = normalize_config_key($name !== '' ? $name : ('zone_' . ($fallbackIndex + 1)));
+    }
+    if ($id === '') {
+        $id = 'zone_' . ($fallbackIndex + 1);
+    }
+
+    return [
+        'id' => $id,
+        'name' => $name,
+        'enabled' => ($input['enabled'] ?? true) !== false,
+        'pattern' => $pattern,
+        'isRegex' => true,
+    ];
+}
+
+function normalize_archiving_zones(mixed $input): array
+{
+    $rows = is_array($input) ? $input : [];
+    $zones = [];
+    $seen = [];
+    foreach ($rows as $index => $row) {
+        $zone = normalize_archiving_zone($row, is_int($index) ? $index : count($zones));
+        if ($zone === null) {
+            continue;
+        }
+        $baseId = $zone['id'];
+        $id = $baseId;
+        $suffix = 2;
+        while (isset($seen[$id])) {
+            $id = $baseId . '_' . $suffix;
+            $suffix++;
+        }
+        $seen[$id] = true;
+        $zone['id'] = $id;
+        $zones[] = $zone;
+    }
+
+    return $zones;
+}
+
 function normalize_archiving_rules_set(mixed $input): array
 {
     $decoded = is_array($input) ? $input : [];
@@ -4027,6 +4105,9 @@ function normalize_archiving_rules_set(mixed $input): array
         'systemFields' => normalize_system_extraction_fields(
             is_array($decoded['systemFields'] ?? null) ? $decoded['systemFields'] : []
         ),
+        'zones' => normalize_archiving_zones(
+            is_array($decoded['zones'] ?? null) ? $decoded['zones'] : []
+        ),
     ];
 }
 
@@ -4040,6 +4121,7 @@ function normalize_archiving_rules_state(mixed $input): array
         'fields' => [],
         'predefinedFields' => predefined_extraction_fields_template(),
         'systemFields' => system_extraction_fields_template(),
+        'zones' => [],
     ]);
     $active = array_key_exists('activeArchivingRules', $decoded)
         ? normalize_archiving_rules_set($decoded['activeArchivingRules'])
@@ -4077,6 +4159,26 @@ function hydrate_archiving_rules_state_from_field_repository(
     return $state;
 }
 
+function hydrate_archiving_rules_state_from_zone_repository(
+    array $state,
+    \Docflow\Archiving\ZoneRepository $repository
+): array {
+    $activeRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
+
+    if (!$repository->hasAnyRows()) {
+        $repository->replaceScopes(
+            is_array($activeRules['zones'] ?? null) ? $activeRules['zones'] : [],
+            is_array($activeRules['zones'] ?? null) ? $activeRules['zones'] : []
+        );
+    }
+
+    $activeRules['zones'] = normalize_archiving_zones($repository->loadScope('active'));
+    $state['activeArchivingRules'] = normalize_archiving_rules_set($activeRules);
+    $state['draftArchivingRules'] = $state['activeArchivingRules'];
+
+    return $state;
+}
+
 function hydrate_archiving_rules_state_from_label_repository(
     array $state,
     \Docflow\Archiving\LabelRepository $repository
@@ -4100,7 +4202,7 @@ function hydrate_archiving_rules_state_from_label_repository(
     return $state;
 }
 
-function archiving_rules_state_without_normalized_tables(array $state, bool $stripLabels, bool $stripFields): array
+function archiving_rules_state_without_normalized_tables(array $state, bool $stripLabels, bool $stripFields, bool $stripZones = false): array
 {
     $normalized = normalize_archiving_rules_state($state);
     foreach (['activeArchivingRules', 'draftArchivingRules'] as $rulesKey) {
@@ -4114,6 +4216,9 @@ function archiving_rules_state_without_normalized_tables(array $state, bool $str
         if ($stripFields) {
             $normalized[$rulesKey]['fields'] = [];
             $normalized[$rulesKey]['predefinedFields'] = [];
+        }
+        if ($stripZones) {
+            $normalized[$rulesKey]['zones'] = [];
         }
     }
 
@@ -4163,6 +4268,14 @@ function load_archiving_rules_state(): array
             // Fall back to the inline JSON state if the dedicated rule-set tables are unavailable.
         }
     }
+    $zoneRepository = zone_repository_instance();
+    if ($zoneRepository !== null) {
+        try {
+            $normalized = hydrate_archiving_rules_state_from_zone_repository($normalized, $zoneRepository);
+        } catch (Throwable $e) {
+            // Fall back to inline JSON state if the dedicated zone table is unavailable.
+        }
+    }
     return $normalized;
 }
 
@@ -4197,12 +4310,24 @@ function save_archiving_rules_state(array $state): array
             // Keep inline JSON persistence working even if the dedicated field tables are temporarily unavailable.
         }
     }
+    $zoneRepository = zone_repository_instance();
+    $zonesPersistedInRepository = false;
+    if ($zoneRepository !== null) {
+        try {
+            $activeZones = is_array($normalized['activeArchivingRules']['zones'] ?? null) ? $normalized['activeArchivingRules']['zones'] : [];
+            $zoneRepository->replaceScopes($activeZones, $activeZones);
+            $normalized = hydrate_archiving_rules_state_from_zone_repository($normalized, $zoneRepository);
+            $zonesPersistedInRepository = true;
+        } catch (Throwable $e) {
+            // Keep inline JSON persistence working even if the dedicated zone table is temporarily unavailable.
+        }
+    }
     $repository = archiving_rules_state_repository_instance();
     if ($repository === null) {
         throw new RuntimeException('Archiving rules state repository is unavailable.');
     }
 
-    $storedState = archiving_rules_state_without_normalized_tables($normalized, $labelsPersistedInRepository, $fieldsPersistedInRepository);
+    $storedState = archiving_rules_state_without_normalized_tables($normalized, $labelsPersistedInRepository, $fieldsPersistedInRepository, $zonesPersistedInRepository);
     $repository->replaceState(
         (int) ($storedState['activeArchivingRulesVersion'] ?? 1),
         is_array($storedState['activeArchivingRules'] ?? null) ? $storedState['activeArchivingRules'] : [],
@@ -4369,6 +4494,7 @@ function archiving_rules_changed_sections(array $active, array $draft): array
         'fields' => 'Egna datafält',
         'predefinedFields' => 'Fördefinierade datafält',
         'systemFields' => 'Systemdatafält',
+        'zones' => 'Zoner',
     ] as $key => $label) {
         $leftValue = $active[$key] ?? null;
         $rightValue = $draft[$key] ?? null;
@@ -7797,7 +7923,7 @@ function build_grid_text_lines_from_debug_words(array $words): array
     $wordWidths = [];
     $lineHeights = [];
 
-    foreach ($words as $word) {
+    foreach ($words as $wordIndex => $word) {
         if (!is_array($word)) {
             continue;
         }
@@ -7824,6 +7950,7 @@ function build_grid_text_lines_from_debug_words(array $words): array
 
         $normalized[] = [
             'text' => $text,
+            'wordIndex' => is_numeric($word['index'] ?? null) ? (int) $word['index'] : (is_int($wordIndex) ? $wordIndex : count($normalized)),
             'x0' => $bbox['x0'],
             'y0' => $bbox['y0'],
             'x1' => $bbox['x1'],
@@ -7893,6 +8020,7 @@ function build_grid_text_lines_from_debug_words(array $words): array
                 'start' => $start,
                 'end' => strlen($buffer),
                 'text' => $text,
+                'wordIndex' => is_numeric($word['wordIndex'] ?? null) ? (int) $word['wordIndex'] : null,
                 'bbox' => [
                     'x0' => (float) ($word['x0'] ?? 0.0),
                     'y0' => (float) ($word['y0'] ?? 0.0),
@@ -10528,6 +10656,16 @@ function build_label_rule_text_regex(string $ruleText, bool $isRegex, array $rep
     return build_literal_space_flexible_regex($trimmed, $replacementMap, false);
 }
 
+function build_archiving_zone_regex(string $pattern): ?string
+{
+    $trimmed = trim($pattern);
+    if ($trimmed === '') {
+        return null;
+    }
+
+    return '/' . str_replace('/', '\/', regex_pattern_with_whitespace_wildcards($trimmed)) . '/ium';
+}
+
 function build_data_field_search_term_regex(string $searchTerm, array $replacementMap, bool $isRegex = false): ?string
 {
     $trimmed = trim($searchTerm);
@@ -10811,6 +10949,144 @@ function find_document_label_hits(array $lines, array $labels, array $replacemen
     }
 
     return $hits;
+}
+
+function union_bboxes(?array $left, ?array $right): ?array
+{
+    if ($left === null) {
+        return $right;
+    }
+    if ($right === null) {
+        return $left;
+    }
+
+    return [
+        'x0' => min((float) ($left['x0'] ?? 0.0), (float) ($right['x0'] ?? 0.0)),
+        'y0' => min((float) ($left['y0'] ?? 0.0), (float) ($right['y0'] ?? 0.0)),
+        'x1' => max((float) ($left['x1'] ?? 0.0), (float) ($right['x1'] ?? 0.0)),
+        'y1' => max((float) ($left['y1'] ?? 0.0), (float) ($right['y1'] ?? 0.0)),
+    ];
+}
+
+function detect_configured_zone_matches(array $lines, array $zones, array $replacementMap, array $lineGeometries): array
+{
+    $activeZones = array_values(array_filter($zones, static function ($zone): bool {
+        return is_array($zone)
+            && ($zone['enabled'] ?? true) !== false
+            && is_string($zone['pattern'] ?? null)
+            && trim((string) $zone['pattern']) !== '';
+    }));
+    if ($activeZones === [] || $lineGeometries === []) {
+        return [];
+    }
+
+    $compiled = [];
+    foreach ($activeZones as $zone) {
+        $pattern = build_archiving_zone_regex((string) ($zone['pattern'] ?? ''));
+        if (!is_string($pattern)) {
+            continue;
+        }
+        $compiled[] = [
+            'zone' => $zone,
+            'pattern' => $pattern,
+        ];
+    }
+    if ($compiled === []) {
+        return [];
+    }
+
+    $documentLines = [];
+    $lineRanges = [];
+    $offset = 0;
+    foreach ($lines as $index => $line) {
+        if (!is_int($index)) {
+            continue;
+        }
+        $text = is_string($line) ? (string) $line : '';
+        $documentLines[] = $text;
+        $length = strlen($text);
+        $lineRanges[] = [
+            'index' => $index,
+            'start' => $offset,
+            'end' => $offset + $length,
+        ];
+        $offset += $length + 1;
+    }
+    $documentText = implode("\n", $documentLines);
+    if ($documentText === '') {
+        return [];
+    }
+
+    $matches = [];
+    foreach ($compiled as $item) {
+        $pregMatches = [];
+        if (@preg_match_all((string) $item['pattern'], $documentText, $pregMatches, PREG_OFFSET_CAPTURE) < 1) {
+            continue;
+        }
+        foreach (is_array($pregMatches[0] ?? null) ? $pregMatches[0] : [] as $match) {
+            if (!is_array($match)) {
+                continue;
+            }
+            $matchedText = is_string($match[0] ?? null) ? (string) $match[0] : '';
+            $matchStart = is_int($match[1] ?? null) ? (int) $match[1] : -1;
+            if ($matchedText === '' || $matchStart < 0) {
+                continue;
+            }
+            $matchEnd = $matchStart + strlen($matchedText);
+            $bbox = null;
+            $bboxIndexes = [];
+            $pageNumber = null;
+            foreach ($lineRanges as $range) {
+                $lineStart = (int) ($range['start'] ?? 0);
+                $lineEnd = (int) ($range['end'] ?? 0);
+                if ($lineEnd < $matchStart || $lineStart > $matchEnd) {
+                    continue;
+                }
+                $lineIndex = (int) ($range['index'] ?? -1);
+                $geometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+                if ($geometry === null) {
+                    continue;
+                }
+                $localStart = max(0, $matchStart - $lineStart);
+                $localEnd = max($localStart, min($lineEnd, $matchEnd) - $lineStart);
+                foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+                    if (!is_array($segment)) {
+                        continue;
+                    }
+                    $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+                    $segmentEnd = is_int($segment['end'] ?? null) ? (int) $segment['end'] : -1;
+                    if ($segmentStart < 0 || $segmentEnd <= $segmentStart || $segmentEnd <= $localStart || $segmentStart >= $localEnd) {
+                        continue;
+                    }
+                    $segmentBbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+                    if ($segmentBbox === null) {
+                        continue;
+                    }
+                    $bbox = union_bboxes($bbox, $segmentBbox);
+                    if (is_numeric($segment['wordIndex'] ?? null)) {
+                        $bboxIndexes[] = ((int) $segment['wordIndex']) + 1;
+                    }
+                }
+                if ($pageNumber === null && is_numeric($geometry['pageNumber'] ?? null)) {
+                    $pageNumber = (int) $geometry['pageNumber'];
+                }
+            }
+            if ($bbox === null || $pageNumber === null) {
+                continue;
+            }
+            $zone = is_array($item['zone'] ?? null) ? $item['zone'] : [];
+            $matches[] = [
+                'zoneId' => is_string($zone['id'] ?? null) ? trim((string) $zone['id']) : '',
+                'zoneName' => is_string($zone['name'] ?? null) ? trim((string) $zone['name']) : '',
+                'pageNumber' => $pageNumber,
+                'bboxIndexes' => array_values(array_unique($bboxIndexes)),
+                'boundingRect' => $bbox,
+                'matchedText' => normalize_inline_whitespace($matchedText),
+            ];
+        }
+    }
+
+    return $matches;
 }
 
 function find_all_label_hits(array $lines, array $labels, array $replacementMap, bool $isRegex = false): array
@@ -11226,6 +11502,101 @@ function connector_points_between_bboxes(array $labelBbox, array $candidateBbox)
         'start' => closest_point_on_bbox_to_point($labelBbox, (float) $candidateCenter['x'], (float) $candidateCenter['y']),
         'end' => closest_point_on_bbox_to_point($candidateBbox, (float) $labelCenter['x'], (float) $labelCenter['y']),
     ];
+}
+
+function point_in_bbox(array $point, array $bbox): bool
+{
+    $x = (float) ($point['x'] ?? 0.0);
+    $y = (float) ($point['y'] ?? 0.0);
+    return $x >= (float) ($bbox['x0'] ?? 0.0)
+        && $x <= (float) ($bbox['x1'] ?? 0.0)
+        && $y >= (float) ($bbox['y0'] ?? 0.0)
+        && $y <= (float) ($bbox['y1'] ?? 0.0);
+}
+
+function zone_id_for_bbox_center(array $bbox, array $zoneMatches, ?int $pageNumber): ?string
+{
+    $center = bbox_center_point($bbox);
+    foreach ($zoneMatches as $zone) {
+        if (!is_array($zone)) {
+            continue;
+        }
+        if ($pageNumber !== null && is_numeric($zone['pageNumber'] ?? null) && (int) $zone['pageNumber'] !== $pageNumber) {
+            continue;
+        }
+        $rect = normalize_debug_word_bbox($zone['boundingRect'] ?? null);
+        if ($rect === null || !point_in_bbox($center, $rect)) {
+            continue;
+        }
+        $zoneId = is_string($zone['zoneId'] ?? null) ? trim((string) $zone['zoneId']) : '';
+        return $zoneId !== '' ? $zoneId : null;
+    }
+
+    return null;
+}
+
+function candidate_crosses_zone_barrier(array $labelBbox, array $candidateBbox, ?array $connector, array $zoneMatches, ?int $pageNumber): bool
+{
+    if ($zoneMatches === []) {
+        return false;
+    }
+
+    $labelZoneId = zone_id_for_bbox_center($labelBbox, $zoneMatches, $pageNumber);
+    $candidateZoneId = zone_id_for_bbox_center($candidateBbox, $zoneMatches, $pageNumber);
+    if ($labelZoneId !== null || $candidateZoneId !== null) {
+        return $labelZoneId !== $candidateZoneId;
+    }
+    if (!is_array($connector)) {
+        return false;
+    }
+
+    $start = is_array($connector['start'] ?? null) ? $connector['start'] : [];
+    $end = is_array($connector['end'] ?? null) ? $connector['end'] : [];
+    foreach ($zoneMatches as $zone) {
+        if (!is_array($zone)) {
+            continue;
+        }
+        if ($pageNumber !== null && is_numeric($zone['pageNumber'] ?? null) && (int) $zone['pageNumber'] !== $pageNumber) {
+            continue;
+        }
+        $rect = normalize_debug_word_bbox($zone['boundingRect'] ?? null);
+        if ($rect !== null && line_segment_intersects_bbox($start, $end, $rect)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function candidate_is_rejected_by_zone_barrier(
+    array $hit,
+    int $candidateStart,
+    int $candidateLineIndex,
+    ?string $candidateSpanText,
+    array $lineGeometries,
+    array $zoneMatches
+): bool {
+    if ($zoneMatches === []) {
+        return false;
+    }
+    $relation = resolve_candidate_geometry_relation($hit, $candidateStart, $candidateLineIndex, $candidateSpanText, $lineGeometries);
+    if (!is_array($relation)) {
+        return false;
+    }
+
+    $labelBbox = is_array($relation['labelBbox'] ?? null) ? $relation['labelBbox'] : null;
+    $candidateBbox = is_array($relation['candidateBbox'] ?? null) ? $relation['candidateBbox'] : null;
+    if ($labelBbox === null || $candidateBbox === null) {
+        return false;
+    }
+
+    return candidate_crosses_zone_barrier(
+        $labelBbox,
+        $candidateBbox,
+        is_array($relation['connector'] ?? null) ? $relation['connector'] : null,
+        $zoneMatches,
+        is_numeric($relation['pageNumber'] ?? null) ? (int) $relation['pageNumber'] : null
+    );
 }
 
 function connector_vector(array $connector): array
@@ -14326,6 +14697,10 @@ function add_anchored_extraction_field_match(
         $lineGeometries,
         $spanText
     );
+    $zoneMatches = is_array($positionSettings['zoneMatches'] ?? null) ? $positionSettings['zoneMatches'] : [];
+    if (candidate_is_rejected_by_zone_barrier($hit, $start, $candidateLineIndex, $spanText, $lineGeometries, $zoneMatches)) {
+        return;
+    }
     $confidenceComponents = apply_anchored_position_geometry_policy(
         $confidenceComponents,
         $hitLineIndex,
@@ -14544,6 +14919,10 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                 $spanText = is_string($candidate['spanText'] ?? null)
                     ? (string) $candidate['spanText']
                     : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                $zoneMatches = is_array($positionSettings['zoneMatches'] ?? null) ? $positionSettings['zoneMatches'] : [];
+                if (candidate_is_rejected_by_zone_barrier($hit, $start, $candidateLineIndex, $spanText, $lineGeometries, $zoneMatches)) {
+                    continue;
+                }
                 $confidenceComponents = candidate_confidence_components(
                     $hit,
                     $resolvedCandidateLine,
@@ -16603,6 +16982,13 @@ function calculate_auto_archiving_result_from_text(
         is_array($resolvedMatchingPayload['positionAdjustment'] ?? null) ? $resolvedMatchingPayload['positionAdjustment'] : []
     );
     $lineGeometries = build_matching_line_geometries_for_job($job, $ocrText);
+    $zoneMatches = detect_configured_zone_matches(
+        split_lines_for_matching($ocrText),
+        is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
+        $replacementMap,
+        $lineGeometries
+    );
+    $positionSettings['zoneMatches'] = $zoneMatches;
     $systemLabels = is_array($rules['systemLabels'] ?? null) ? $rules['systemLabels'] : [];
     $labels = is_array($rules['labels'] ?? null) ? $rules['labels'] : [];
     $archiveFolders = is_array($rules['archiveFolders'] ?? null) ? $rules['archiveFolders'] : [];
@@ -16715,6 +17101,7 @@ function calculate_auto_archiving_result_from_text(
         'extractionFieldResults' => $configuredFieldResults,
         'extractionFieldValues' => $configuredFieldValues,
         'extractionFieldMeta' => $configuredFieldMeta,
+        'zoneMatches' => $zoneMatches,
         'autoArchivingResult' => $autoResult,
     ];
 }
@@ -18727,6 +19114,7 @@ function process_claimed_job(
         'labels' => $analysisPayload['labels'],
         'extractionFields' => $analysisPayload['extractionFieldValues'],
         'extractionFieldMeta' => $analysisPayload['extractionFieldMeta'] !== [] ? $analysisPayload['extractionFieldMeta'] : new stdClass(),
+        'zoneMatches' => is_array($analysisPayload['zoneMatches'] ?? null) ? $analysisPayload['zoneMatches'] : [],
         'clientMatches' => $analysisPayload['clientMatches'],
         'preselectedClient' => $analysisPayload['preselectedClient'],
         'preselectedSender' => null,
@@ -18762,6 +19150,7 @@ function process_claimed_job(
         'labels' => $analysisPayload['labels'],
         'extractionFields' => $analysisPayload['extractionFieldValues'],
         'extractionFieldMeta' => $analysisPayload['extractionFieldMeta'] !== [] ? $analysisPayload['extractionFieldMeta'] : new stdClass(),
+        'zoneMatches' => is_array($analysisPayload['zoneMatches'] ?? null) ? $analysisPayload['zoneMatches'] : [],
         'clientMatches' => $analysisPayload['clientMatches'],
         'preselectedClient' => $analysisPayload['preselectedClient'],
         'preselectedSender' => $analysisPayload['preselectedSender'],

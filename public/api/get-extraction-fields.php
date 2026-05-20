@@ -10,6 +10,7 @@ try {
         'fields' => is_array($rules['fields'] ?? null) ? $rules['fields'] : [],
         'predefinedFields' => is_array($rules['predefinedFields'] ?? null) ? $rules['predefinedFields'] : [],
         'systemFields' => is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [],
+        'zones' => is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
         'archivingRules' => build_archiving_rules_state_payload($config),
         'lastEventId' => latest_job_event_id(),
         'activeArchivingRulesVersion' => active_archiving_rules_version(),
@@ -19,6 +20,7 @@ try {
         'fields' => [],
         'predefinedFields' => [],
         'systemFields' => [],
+        'zones' => [],
         'error' => $e->getMessage(),
     ], 500);
 }

@@ -23,6 +23,7 @@ if (
     || !is_array($payload['predefinedFields'])
     || !array_key_exists('systemFields', $payload)
     || !is_array($payload['systemFields'])
+    || (array_key_exists('zones', $payload) && !is_array($payload['zones']))
 ) {
     json_response(['error' => 'Invalid JSON payload'], 400);
     exit;
@@ -50,6 +51,7 @@ try {
     $nextRules['fields'] = normalize_extraction_fields($payload['fields']);
     $nextRules['predefinedFields'] = normalize_predefined_extraction_fields($payload['predefinedFields']);
     $nextRules['systemFields'] = normalize_system_extraction_fields($payload['systemFields']);
+    $nextRules['zones'] = normalize_archiving_zones($payload['zones'] ?? []);
     $nextFieldKeys = [];
     foreach (is_array($nextRules['fields'] ?? null) ? $nextRules['fields'] : [] as $field) {
         if (!is_array($field)) {
@@ -91,6 +93,7 @@ try {
         'fields' => is_array($activeRules['fields'] ?? null) ? $activeRules['fields'] : [],
         'predefinedFields' => is_array($activeRules['predefinedFields'] ?? null) ? $activeRules['predefinedFields'] : [],
         'systemFields' => is_array($activeRules['systemFields'] ?? null) ? $activeRules['systemFields'] : [],
+        'zones' => is_array($activeRules['zones'] ?? null) ? $activeRules['zones'] : [],
         'archivingRules' => build_archiving_rules_state_payload($config),
         'lastEventId' => latest_job_event_id(),
         'activeArchivingRulesVersion' => (int) ($stored['activeArchivingRulesVersion'] ?? 1),

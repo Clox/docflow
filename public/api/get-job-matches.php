@@ -12,8 +12,9 @@ try {
         exit;
     }
 
-    $extractedPath = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR)
-        . DIRECTORY_SEPARATOR . $id
+    $jobDir = rtrim($config['jobsDirectory'], DIRECTORY_SEPARATOR)
+        . DIRECTORY_SEPARATOR . $id;
+    $extractedPath = $jobDir
         . DIRECTORY_SEPARATOR . 'extracted.json';
 
     if (!is_file($extractedPath)) {
@@ -48,6 +49,30 @@ try {
     $clientMatches = $extracted['clientMatches'] ?? [];
     if (!is_array($clientMatches)) {
         $clientMatches = [];
+    }
+    $zoneMatches = $extracted['zoneMatches'] ?? [];
+    if (!is_array($zoneMatches)) {
+        $zoneMatches = [];
+    }
+    try {
+        $job = load_json_file($jobDir . DIRECTORY_SEPARATOR . 'job.json');
+        if (is_array($job)) {
+            $rules = load_active_archiving_rules();
+            $matchingPayload = load_matching_settings_payload();
+            $ocrText = load_job_analysis_text($jobDir, null);
+            $replacementMap = replacement_map(
+                is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []
+            );
+            $liveZoneMatches = detect_configured_zone_matches(
+                split_lines_for_matching($ocrText),
+                is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
+                $replacementMap,
+                build_matching_line_geometries_for_job($job, $ocrText)
+            );
+            $zoneMatches = $liveZoneMatches;
+        }
+    } catch (Throwable $e) {
+        // Keep the stored match payload usable even if live zone overlay calculation fails.
     }
 
     $isInvalidPositionMatch = static function (array $match): bool {
@@ -416,11 +441,13 @@ try {
         'labels' => $labels,
         'fields' => $fields,
         'clients' => $clients,
+        'zones' => $zoneMatches,
     ]);
 } catch (Throwable $e) {
     json_response([
         'labels' => [],
         'fields' => [],
         'clients' => [],
+        'zones' => [],
     ], 500);
 }

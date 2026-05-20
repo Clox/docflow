@@ -356,6 +356,13 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                 role="menuitem"
                 title="Ladda ner aktuell OCR-representation för valt dokument"
               >Ladda ner</button>
+              <button
+                id="ocr-toggle-zones-action"
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked="true"
+                title="Visa eller dölj zongränser i OCR-vyn"
+              >Dölj zoner</button>
             </div>
           </div>
         </div>
@@ -767,16 +774,20 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-data-fields">
     <h3>Datafält</h3>
-    <p>Definiera egna datafält genom att kombinera hur värdet hittas med hur värdet tolkas och normaliseras.</p>
     <div class="archive-subtabs">
       <button id="extraction-fields-tab-custom" class="archive-subtab active" type="button" data-extraction-fields-tab="fields">Datafält</button>
       <button id="extraction-fields-tab-system" class="archive-subtab" type="button" data-extraction-fields-tab="system">Systemdatafält</button>
+      <button id="extraction-fields-tab-zones" class="archive-subtab" type="button" data-extraction-fields-tab="zones">Zoner</button>
     </div>
+    <p id="extraction-fields-tab-description">Definiera egna datafält genom att kombinera hur värdet hittas med hur värdet tolkas och normaliseras.</p>
     <div id="extraction-fields-view-custom" class="archive-view">
       <div id="extraction-fields-editor" class="categories-list"></div>
     </div>
     <div id="extraction-fields-view-system" class="archive-view hidden">
       <div id="system-extraction-fields-editor" class="categories-list"></div>
+    </div>
+    <div id="extraction-fields-view-zones" class="archive-view hidden">
+      <div id="extraction-zones-editor" class="categories-list"></div>
     </div>
     <div class="categories-actions settings-section-actions">
       <div id="extraction-fields-split-button" class="split-button">
@@ -913,7 +924,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
   <template id="settings-template-backup">
     <h3>Säkerhetskopiering</h3>
 <p>Här sparas versioner av din konfiguration. Du kan när som helst återställa en tidigare version.</p>
-<p>Ingår: huvudmän, avsändare, etiketter, datafält, arkivstruktur samt inställningar för textigenkänning och textmatchning.</p>
+<p>Ingår: huvudmän, avsändare, etiketter, datafält, zoner, arkivstruktur samt inställningar för textigenkänning och textmatchning.</p>
 <p>Ingår inte: sökvägar och data kopplad till specifika dokument.</p>
 <p>Skapa säkerhetskopia sparar nuvarande version. Import lägger till en version från fil. Återställ ersätter nuvarande konfiguration.</p>
     <input id="settings-backup-file" type="file" accept=".json,application/json" hidden>
