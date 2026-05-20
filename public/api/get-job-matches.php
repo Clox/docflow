@@ -114,6 +114,62 @@ try {
             $pageNumber
         );
     };
+    $normalizeCaptureRanges = static function ($ranges): array {
+        if (!is_array($ranges)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(
+            static function ($range): ?array {
+                if (!is_array($range)) {
+                    return null;
+                }
+                $start = is_int($range['start'] ?? null) ? (int) $range['start'] : null;
+                $end = is_int($range['end'] ?? null) ? (int) $range['end'] : null;
+                if ($start === null || $end === null || $start < 0 || $end <= $start) {
+                    return null;
+                }
+                return [
+                    'start' => $start,
+                    'end' => $end,
+                ];
+            },
+            $ranges
+        ), static fn ($range): bool => is_array($range)));
+    };
+    $inferCaptureRangesFromExtractedRaw = static function (array $match) use ($normalizeCaptureRanges): array {
+        $storedRanges = $normalizeCaptureRanges($match['captureRanges'] ?? null);
+        if ($storedRanges !== []) {
+            return $storedRanges;
+        }
+
+        $matchText = is_string($match['matchText'] ?? null) ? (string) $match['matchText'] : '';
+        $extractedRaw = is_string($match['raw'] ?? null) ? (string) $match['raw'] : '';
+        if ($matchText === '' || $extractedRaw === '' || $matchText === $extractedRaw) {
+            return [];
+        }
+
+        $start = strpos($matchText, $extractedRaw);
+        if ($start === false) {
+            return [];
+        }
+
+        $end = $start + strlen($extractedRaw);
+        if ($end <= $start) {
+            return [];
+        }
+
+        $charStart = utf8_strlen_safe(substr($matchText, 0, $start));
+        $charLength = utf8_strlen_safe(substr($matchText, $start, $end - $start));
+        if ($charLength <= 0) {
+            return [];
+        }
+
+        return [[
+            'start' => $charStart,
+            'end' => $charStart + $charLength,
+        ]];
+    };
 
     $fields = [];
     $allFieldKeys = array_values(array_unique(array_merge(array_keys($fieldValues), array_keys($fieldMeta))));
@@ -167,6 +223,9 @@ try {
                 );
                 $confidence = $normalizedConfidence['confidence'];
                 $score = is_numeric($match['score'] ?? null) ? (float) $match['score'] : null;
+                $rawMatchText = is_string($match['matchText'] ?? null)
+                    ? (string) $match['matchText']
+                    : (is_string($match['raw'] ?? null) ? (string) $match['raw'] : '');
 
                 $candidateRows[] = [
                     'value' => $candidateValue,
@@ -181,9 +240,9 @@ try {
                     'scopeMatchedText' => is_string($match['scopeMatchedText'] ?? null) ? trim((string) $match['scopeMatchedText']) : '',
                     'scopeLineIndex' => is_int($match['scopeLineIndex'] ?? null) ? (int) $match['scopeLineIndex'] : null,
                     'extractedRaw' => is_string($match['raw'] ?? null) ? (string) $match['raw'] : '',
-                    'raw' => is_string($match['matchText'] ?? null)
-                        ? (string) $match['matchText']
-                        : (is_string($match['raw'] ?? null) ? (string) $match['raw'] : ''),
+                    'raw' => $rawMatchText,
+                    'matchText' => $rawMatchText,
+                    'captureRanges' => $inferCaptureRangesFromExtractedRaw($match),
                     'confidence' => $confidence,
                     'baseConfidence' => $normalizedConfidence['baseConfidence'],
                     'finalConfidence' => $normalizedConfidence['finalConfidence'],
@@ -276,6 +335,13 @@ try {
                 $fallbackScore = $index === 0 && is_numeric($firstMatch['score'] ?? null)
                     ? (float) $firstMatch['score']
                     : null;
+                $fallbackRawMatchText = $index === 0 && is_string($firstMatch['matchText'] ?? null)
+                    ? (string) $firstMatch['matchText']
+                    : ($index === 0 && is_string($firstMatch['raw'] ?? null)
+                        ? (string) $firstMatch['raw']
+                        : ($index === 0 && is_string($legacyField['matchText'] ?? null)
+                            ? (string) $legacyField['matchText']
+                            : ($index === 0 && is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : '')));
 
                 $candidateRows[] = [
                     'value' => $candidateValue,
@@ -304,13 +370,9 @@ try {
                     'extractedRaw' => $index === 0 && is_string($firstMatch['raw'] ?? null)
                         ? (string) $firstMatch['raw']
                         : ($index === 0 && is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''),
-                    'raw' => $index === 0 && is_string($firstMatch['matchText'] ?? null)
-                        ? (string) $firstMatch['matchText']
-                        : ($index === 0 && is_string($firstMatch['raw'] ?? null)
-                            ? (string) $firstMatch['raw']
-                            : ($index === 0 && is_string($legacyField['matchText'] ?? null)
-                                ? (string) $legacyField['matchText']
-                                : ($index === 0 && is_string($legacyField['raw'] ?? null) ? (string) $legacyField['raw'] : ''))),
+                    'raw' => $fallbackRawMatchText,
+                    'matchText' => $fallbackRawMatchText,
+                    'captureRanges' => $index === 0 ? $inferCaptureRangesFromExtractedRaw($firstMatch) : [],
                     'confidence' => $fallbackConfidence,
                     'baseConfidence' => $fallbackNormalizedConfidence['baseConfidence'],
                     'finalConfidence' => $fallbackNormalizedConfidence['finalConfidence'],

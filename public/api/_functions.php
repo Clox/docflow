@@ -3008,6 +3008,67 @@ function extraction_field_concat_capture_group_value(array $match): ?string
     return implode('', $parts);
 }
 
+function extraction_field_capture_group_ranges(array $match): array
+{
+    $fullMatch = $match[0] ?? null;
+    if (!is_array($fullMatch) || !is_string($fullMatch[0] ?? null) || !is_int($fullMatch[1] ?? null)) {
+        return [];
+    }
+
+    $raw = (string) $fullMatch[0];
+    $fullStart = (int) $fullMatch[1];
+    if ($raw === '' || $fullStart < 0) {
+        return [];
+    }
+
+    $captureIndexes = [];
+    foreach ($match as $key => $value) {
+        if (is_int($key) && $key > 0) {
+            $captureIndexes[] = $key;
+        }
+    }
+    if ($captureIndexes === []) {
+        return [];
+    }
+
+    sort($captureIndexes, SORT_NUMERIC);
+
+    $ranges = [];
+    $rawByteLength = strlen($raw);
+    foreach ($captureIndexes as $captureIndex) {
+        $captureGroup = $match[$captureIndex] ?? null;
+        if (!is_array($captureGroup) || !is_string($captureGroup[0] ?? null) || !is_int($captureGroup[1] ?? null)) {
+            continue;
+        }
+
+        $captureValue = (string) $captureGroup[0];
+        $captureStart = (int) $captureGroup[1];
+        if ($captureValue === '' || $captureStart < $fullStart) {
+            continue;
+        }
+
+        $localByteStart = $captureStart - $fullStart;
+        $captureByteLength = strlen($captureValue);
+        $localByteEnd = $localByteStart + $captureByteLength;
+        if ($localByteStart < 0 || $localByteEnd > $rawByteLength || $localByteEnd <= $localByteStart) {
+            continue;
+        }
+
+        $charStart = utf8_strlen_safe(substr($raw, 0, $localByteStart));
+        $charLength = utf8_strlen_safe(substr($raw, $localByteStart, $captureByteLength));
+        if ($charLength <= 0) {
+            continue;
+        }
+
+        $ranges[] = [
+            'start' => $charStart,
+            'end' => $charStart + $charLength,
+        ];
+    }
+
+    return $ranges;
+}
+
 function extraction_field_runtime_rule_set(array $ruleSet, ?string $valueType = null): array
 {
     $runtimeRuleSet = $ruleSet;
@@ -14041,6 +14102,7 @@ function extraction_field_pattern_candidates_from_text(
             continue;
         }
 
+        $captureRanges = [];
         $value = $raw;
         $extractedRaw = $raw;
         if ($isRegex && $combineSplitAmountParts) {
@@ -14059,6 +14121,7 @@ function extraction_field_pattern_candidates_from_text(
                     'start' => $offsetBase + $valueStart,
                     'spanText' => $extractedRaw,
                     'matchType' => 'pattern',
+                    'captureRanges' => $captureRanges,
                 ];
                 continue;
             }
@@ -14071,6 +14134,7 @@ function extraction_field_pattern_candidates_from_text(
             if ($captureValue !== null) {
                 $value = $captureValue;
                 $extractedRaw = $captureValue;
+                $captureRanges = extraction_field_capture_group_ranges($match);
             }
         }
 
@@ -14081,6 +14145,7 @@ function extraction_field_pattern_candidates_from_text(
             'start' => $offsetBase + $start,
             'spanText' => $raw,
             'matchType' => 'pattern',
+            'captureRanges' => $captureRanges,
         ];
     }
 
@@ -14264,6 +14329,7 @@ function extraction_field_document_pattern_candidates_from_lines(
             'start' => $candidateStart,
             'spanText' => $raw,
             'matchType' => is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern',
+            'captureRanges' => is_array($candidate['captureRanges'] ?? null) ? $candidate['captureRanges'] : [],
             'lineIndex' => $lineIndex,
             'labelBbox' => null,
             'valueBbox' => $candidateBbox,
@@ -14621,7 +14687,8 @@ function add_extraction_field_match(
     ?string $invalidReason = null,
     ?array $labelBbox = null,
     ?array $valueBbox = null,
-    ?int $pageNumber = null
+    ?int $pageNumber = null,
+    ?array $captureRanges = null
 ): void {
     if ($lineIndex < 0 || $start < 0 || $value === null) {
         return;
@@ -14683,6 +14750,28 @@ function add_extraction_field_match(
     }
     if (is_int($pageNumber) && $pageNumber > 0) {
         $candidate['pageNumber'] = $pageNumber;
+    }
+    if (is_array($captureRanges)) {
+        $normalizedCaptureRanges = array_values(array_filter(array_map(
+            static function ($range): ?array {
+                if (!is_array($range)) {
+                    return null;
+                }
+                $start = is_int($range['start'] ?? null) ? (int) $range['start'] : null;
+                $end = is_int($range['end'] ?? null) ? (int) $range['end'] : null;
+                if ($start === null || $end === null || $start < 0 || $end <= $start) {
+                    return null;
+                }
+                return [
+                    'start' => $start,
+                    'end' => $end,
+                ];
+            },
+            $captureRanges
+        ), static fn ($range): bool => is_array($range)));
+        if ($normalizedCaptureRanges !== []) {
+            $candidate['captureRanges'] = $normalizedCaptureRanges;
+        }
     }
     if (is_numeric($otherMatchKeyPenalty)) {
         $candidate['otherMatchKeyPenalty'] = max(0.0, (float) $otherMatchKeyPenalty);
@@ -16008,6 +16097,7 @@ function extract_unlabeled_pattern_field_result(
         'source' => 'pattern',
         'raw' => is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null,
         'matchText' => is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : (is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : null),
+        'captureRanges' => is_array($candidate['captureRanges'] ?? null) ? $candidate['captureRanges'] : [],
         'labelBbox' => is_array($candidate['labelBbox'] ?? null) ? $candidate['labelBbox'] : null,
         'valueBbox' => is_array($candidate['valueBbox'] ?? null) ? $candidate['valueBbox'] : null,
         'pageNumber' => is_int($candidate['pageNumber'] ?? null) ? (int) $candidate['pageNumber'] : null,
@@ -16060,7 +16150,8 @@ function extract_unlabeled_pattern_field_matches(
             matchType: is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern',
             labelBbox: is_array($candidate['labelBbox'] ?? null) ? $candidate['labelBbox'] : null,
             valueBbox: is_array($candidate['valueBbox'] ?? null) ? $candidate['valueBbox'] : null,
-            pageNumber: is_int($candidate['pageNumber'] ?? null) ? (int) $candidate['pageNumber'] : null
+            pageNumber: is_int($candidate['pageNumber'] ?? null) ? (int) $candidate['pageNumber'] : null,
+            captureRanges: is_array($candidate['captureRanges'] ?? null) ? $candidate['captureRanges'] : null
         );
     }
 

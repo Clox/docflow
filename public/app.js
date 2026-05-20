@@ -3848,6 +3848,24 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
   const acceptanceThreshold = Number.isFinite(Number(matchingDataFieldAcceptanceThresholdDraft))
     ? Number(matchingDataFieldAcceptanceThresholdDraft)
     : 0.5;
+  const normalizeMatchCaptureRanges = (ranges) => {
+    if (!Array.isArray(ranges)) {
+      return [];
+    }
+    return ranges
+      .map((range) => {
+        if (!range || typeof range !== 'object') {
+          return null;
+        }
+        const start = Number.isInteger(range.start) ? range.start : null;
+        const end = Number.isInteger(range.end) ? range.end : null;
+        if (start === null || end === null || start < 0 || end <= start) {
+          return null;
+        }
+        return { start, end };
+      })
+      .filter(Boolean);
+  };
 
   const fieldGroups = fieldsByKey && typeof fieldsByKey === 'object'
     ? Object.entries(fieldsByKey)
@@ -3890,6 +3908,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 value: rawValue,
                 raw: typeof match.raw === 'string' ? match.raw : '',
                 matchText: typeof match.matchText === 'string' ? match.matchText : '',
+                captureRanges: normalizeMatchCaptureRanges(match.captureRanges),
                 extractedRaw: typeof match.extractedRaw === 'string' ? match.extractedRaw : '',
                 source: typeof match.source === 'string' ? match.source : '',
                 labelText: typeof match.labelText === 'string' ? match.labelText : '',
@@ -3948,6 +3967,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
             value: fallbackValue,
             raw: typeof field.raw === 'string' ? field.raw : '',
             matchText: typeof field.matchText === 'string' ? field.matchText : '',
+            captureRanges: normalizeMatchCaptureRanges(field.captureRanges),
             extractedRaw: typeof field.extractedRaw === 'string' ? field.extractedRaw : '',
             source: typeof field.source === 'string' ? field.source : '',
             labelText: typeof field.labelText === 'string' ? field.labelText : '',
@@ -4312,6 +4332,33 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       appendInlinePart(container, text.slice(cursor));
     }
   };
+  const appendCaptureGroupSegmentText = (container, text, captureRanges = []) => {
+    if (!(container instanceof HTMLElement) || typeof text !== 'string' || text === '') {
+      return;
+    }
+    const resolvedRanges = mergeHighlightRanges(captureRanges)
+      .map((range) => ({
+        start: Math.max(0, Math.min(text.length, range.start)),
+        end: Math.max(0, Math.min(text.length, range.end)),
+      }))
+      .filter((range) => range.end > range.start);
+    if (resolvedRanges.length === 0) {
+      appendInlinePart(container, text);
+      return;
+    }
+
+    let cursor = 0;
+    resolvedRanges.forEach((range) => {
+      if (range.start > cursor) {
+        appendInlinePart(container, text.slice(cursor, range.start), 'key');
+      }
+      appendInlinePart(container, text.slice(range.start, range.end));
+      cursor = Math.max(cursor, range.end);
+    });
+    if (cursor < text.length) {
+      appendInlinePart(container, text.slice(cursor), 'key');
+    }
+  };
   const projectSourceRangesToDisplay = (ranges, displayMap) => {
     if (!Array.isArray(ranges) || ranges.length === 0 || !Array.isArray(displayMap) || displayMap.length === 0) {
       return [];
@@ -4410,6 +4457,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
     const betweenText = typeof row?.between === 'string' ? row.between : '';
     const matchText = typeof row?.matchText === 'string' ? row.matchText : '';
     const valueText = matchText !== '' ? matchText : (typeof row?.raw === 'string' ? row.raw : '');
+    const captureRanges = Array.isArray(row?.captureRanges) ? row.captureRanges : [];
     const labelLineIndex = Number.isInteger(row?.labelLineIndex) ? row.labelLineIndex : null;
     const candidateLineIndex = Number.isInteger(row?.lineIndex) ? row.lineIndex : null;
     const isDifferentRows = labelLineIndex !== null && candidateLineIndex !== null
@@ -4425,6 +4473,11 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
     }
 
     const noiseRanges = resolveNoiseRanges(row, combinedText);
+    const shouldShowCaptureParts = keyText === ''
+      && betweenText === ''
+      && captureRanges.length > 0
+      && (row?.source === 'pattern' || row?.matchType === 'pattern')
+      && valueText === matchText;
     const segments = [
       {
         sourceText: keyText,
@@ -4459,6 +4512,8 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
         : [];
       if (localDisplayRanges.length > 0) {
         appendHighlightedSegmentText(segmentEl, segment.display.text, localDisplayRanges);
+      } else if (segment.className === 'value' && shouldShowCaptureParts) {
+        appendCaptureGroupSegmentText(segmentEl, segment.display.text, captureRanges);
       } else {
         appendInlinePart(segmentEl, segment.display.text);
       }

@@ -4164,6 +4164,10 @@ body.is-resizing-sidebar {
   color: #111827;
 }
 
+.matches-hit-cell .value .key {
+  font-weight: 400;
+}
+
 .matches-hit-row-badge {
   display: inline-block;
   margin-left: 6px;
