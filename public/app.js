@@ -4798,6 +4798,60 @@ function refreshLoadedMatchesView() {
   }
 }
 
+function invalidateMatchesPayloadCache() {
+  matchesRequestSeq += 1;
+  loadedMatchesJobId = '';
+  loadedMatchesPayload = null;
+}
+
+async function invalidateAnalysisViews(options = {}) {
+  const jobId = typeof selectedJobId === 'string' ? selectedJobId.trim() : '';
+  const clearOcrCache = options && options.clearOcrCache === true;
+
+  invalidateMatchesPayloadCache();
+  if (clearOcrCache) {
+    ocrRequestSeq += 1;
+    clearOcrViewCache();
+    loadedOcrJobId = '';
+    loadedOcrSource = '';
+  }
+
+  if (jobId === '') {
+    return;
+  }
+
+  if (currentViewMode === 'matches') {
+    await setViewerMatches(jobId);
+    return;
+  }
+
+  if (currentViewMode !== 'ocr') {
+    return;
+  }
+
+  if (clearOcrCache) {
+    await setViewerOcr(jobId);
+    return;
+  }
+
+  if (!ocrShowZones && !isOcrDataFieldMode()) {
+    return;
+  }
+
+  try {
+    await ensureLoadedMatchesPayload(jobId);
+  } catch (error) {
+    return;
+  }
+
+  if (ocrShowZones) {
+    rerenderOcrPagesPreservingScroll();
+  }
+  if (isOcrDataFieldMode()) {
+    refreshOcrSearch({ preserveScroll: true });
+  }
+}
+
 async function ensureLoadedMatchesPayload(jobId) {
   const normalizedJobId = typeof jobId === 'string' ? jobId.trim() : '';
   if (normalizedJobId === '') {
@@ -29019,6 +29073,7 @@ async function saveClientsSettings() {
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
   await fetchState({ refreshClients: true });
+  await invalidateAnalysisViews();
 }
 
 async function saveSendersSettings() {
@@ -29049,6 +29104,7 @@ async function saveSendersSettings() {
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
   await fetchState({ refreshSenders: true });
+  await invalidateAnalysisViews();
 }
 
 async function saveMatchingSettings() {
@@ -29083,6 +29139,7 @@ async function saveMatchingSettings() {
   matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft);
   renderMatchingEditor();
   watchReprocessedJobIdsFromPayload(payload);
+  await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -29125,6 +29182,7 @@ async function saveArchiveStructure() {
   refreshSelectedJobProposalUi(previousProposalContext, { syncFolder: true });
   renderArchiveStructureEditor();
   watchReprocessedJobIdsFromPayload(payload);
+  await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -29167,6 +29225,7 @@ async function saveLabels() {
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   refreshSelectedJobProposalUi(previousProposalContext, { syncLabels: true });
   watchReprocessedJobIdsFromPayload(payload);
+  await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -29212,6 +29271,7 @@ async function saveExtractionFields() {
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   refreshSelectedJobProposalUi(previousProposalContext);
   watchReprocessedJobIdsFromPayload(payload);
+  await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -29294,6 +29354,7 @@ async function saveOcrProcessingSettings() {
   renderOcrPdfSubstitutionsEditor();
   renderOcrProcessingCommand();
   watchReprocessedJobIdsFromPayload(payload);
+  await invalidateAnalysisViews({ clearOcrCache: true });
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
