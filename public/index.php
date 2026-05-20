@@ -392,7 +392,14 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <div id="settings-modal" class="modal-overlay hidden">
     <div id="settings-dialog" class="settings-dialog">
-      <aside id="settings-dialog-nav" class="settings-nav">
+      <div id="settings-dialog-titlebar" class="settings-dialog-titlebar" title="Dra för att flytta inställningsfönstret">
+        <div class="settings-dialog-titlebar-grab" aria-hidden="true"></div>
+        <div class="settings-dialog-titlebar-actions">
+          <button id="settings-dialog-close" class="settings-dialog-titlebar-button settings-dialog-titlebar-close" type="button" aria-label="Stäng inställningar" title="Stäng inställningar">×</button>
+        </div>
+      </div>
+      <div class="settings-dialog-body">
+        <aside id="settings-dialog-nav" class="settings-nav">
         <h2>Inställningar</h2>
         <div class="settings-nav-section">
           <div class="settings-nav-group-title">Register</div>
@@ -421,8 +428,8 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <button class="settings-tab" data-settings-tab="extensions" type="button">Tillägg</button>
           <button class="settings-tab" data-settings-tab="backup" type="button">Säkerhetskopiering</button>
         </div>
-      </aside>
-      <section class="settings-content">
+        </aside>
+        <section class="settings-content">
         <div id="settings-panel-clients" class="settings-panel active"></div>
         <div id="settings-panel-senders" class="settings-panel hidden"></div>
         <div id="settings-panel-matching" class="settings-panel hidden"></div>
@@ -443,7 +450,8 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
             <button id="settings-close" type="button">Stäng</button>
           </div>
         </div>
-      </section>
+        </section>
+      </div>
       <button id="settings-dialog-resize-handle" class="settings-dialog-resize-handle" type="button" aria-label="Ändra storlek på inställningsfönstret" title="Ändra storlek"></button>
     </div>
   </div>

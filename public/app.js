@@ -106,12 +106,14 @@ const archivedReviewPanelEl = document.getElementById('archived-review-panel');
 const settingsButtonEl = document.getElementById('settings-button');
 const settingsModalEl = document.getElementById('settings-modal');
 const settingsDialogEl = document.getElementById('settings-dialog');
+const settingsDialogTitlebarEl = document.getElementById('settings-dialog-titlebar');
 const settingsDialogResizeHandleEl = document.getElementById('settings-dialog-resize-handle');
 const settingsTabEls = Array.from(document.querySelectorAll('[data-settings-tab]'));
 const archivingReviewSettingsTabEl = document.querySelector('[data-settings-tab="archiving-review"]');
 const settingsPanelSectionActionsHostEl = document.getElementById('settings-panel-section-actions-host');
 const settingsPanelActionsHostEl = document.getElementById('settings-panel-actions-host');
 const settingsCloseEl = document.getElementById('settings-close');
+const settingsDialogCloseEl = document.getElementById('settings-dialog-close');
 const selectedJobPanelEl = document.getElementById('selected-job-panel');
 const selectedJobActionsPanelEl = document.getElementById('selected-job-actions-panel');
 const selectedJobNameEl = document.getElementById('selected-job-name');
@@ -336,6 +338,7 @@ let pathsCancelEl = null;
 let pathsApplyEl = null;
 let ocrDebugExportDialogOverlayEl = null;
 let ocrDebugExportDialogEl = null;
+let ocrDebugExportDialogLayout = null;
 let ocrDebugExportFilterSelectEl = null;
 let ocrDebugExportCreateShellEl = null;
 let ocrDebugExportCreateButtonEl = null;
@@ -591,7 +594,7 @@ const VALID_VIEW_MODES = new Set(['pdf', 'ocr', 'matches', 'meta', 'error', 'rev
 const SETTINGS_DIALOG_MIN_WIDTH_PX = 720;
 const SETTINGS_DIALOG_MIN_HEIGHT_PX = 520;
 const SETTINGS_DIALOG_VIEWPORT_MARGIN_PX = 12;
-const SETTINGS_DIALOG_DRAG_HANDLE_HEIGHT_PX = 44;
+const SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX = 50;
 let settingsDialogLayout = null;
 let settingsDialogDragState = null;
 let settingsDialogResizeState = null;
@@ -8013,6 +8016,23 @@ function openOcrDebugExportDialog() {
   const dialog = document.createElement('div');
   dialog.className = 'settings-dialog label-import-dialog snapshot-dialog';
 
+  const titlebar = document.createElement('div');
+  titlebar.className = 'settings-dialog-titlebar';
+  titlebar.title = 'Dra för att flytta snapshotfönstret';
+  const titlebarGrab = document.createElement('div');
+  titlebarGrab.className = 'settings-dialog-titlebar-grab';
+  titlebarGrab.setAttribute('aria-hidden', 'true');
+  const titlebarActions = document.createElement('div');
+  titlebarActions.className = 'settings-dialog-titlebar-actions';
+  const titlebarCloseButton = document.createElement('button');
+  titlebarCloseButton.type = 'button';
+  titlebarCloseButton.className = 'settings-dialog-titlebar-button settings-dialog-titlebar-close';
+  titlebarCloseButton.setAttribute('aria-label', 'Stäng snapshots');
+  titlebarCloseButton.setAttribute('title', 'Stäng snapshots');
+  titlebarCloseButton.textContent = '×';
+  titlebarActions.appendChild(titlebarCloseButton);
+  titlebar.append(titlebarGrab, titlebarActions);
+
   const title = document.createElement('h3');
   title.textContent = 'Snapshots';
 
@@ -8097,11 +8117,88 @@ function openOcrDebugExportDialog() {
   closeButton.textContent = 'Stäng';
   actions.appendChild(closeButton);
 
+  const resizeHandle = document.createElement('button');
+  resizeHandle.type = 'button';
+  resizeHandle.className = 'settings-dialog-resize-handle';
+  resizeHandle.setAttribute('aria-label', 'Ändra storlek på snapshotfönstret');
+  resizeHandle.setAttribute('title', 'Ändra storlek');
+
   body.append(description, controls, compareActions, compareResult, history);
-  dialog.append(title, body, actions);
+  dialog.append(titlebar, title, body, actions, resizeHandle);
   overlay.appendChild(dialog);
 
+  let snapshotDragState = null;
+  let snapshotResizeState = null;
+  const snapshotLayoutOptions = {
+    minWidth: 520,
+    minHeight: 420,
+    fallback: () => {
+      const width = Math.min(720, Math.max(520, window.innerWidth - 32));
+      const height = Math.min(760, Math.max(420, window.innerHeight - 32));
+      return {
+        width,
+        height,
+        left: Math.round((window.innerWidth - width) / 2),
+        top: Math.round((window.innerHeight - height) / 2),
+      };
+    },
+  };
+  const snapshotResolvedLayoutOptions = () => ({
+    ...snapshotLayoutOptions,
+    fallback: typeof snapshotLayoutOptions.fallback === 'function'
+      ? snapshotLayoutOptions.fallback()
+      : snapshotLayoutOptions.fallback,
+  });
+  const applySnapshotDialogLayout = (layout) => {
+    const nextLayout = applyFloatingDialogLayout(dialog, layout, snapshotResolvedLayoutOptions());
+    if (nextLayout !== null) {
+      ocrDebugExportDialogLayout = nextLayout;
+    }
+  };
+  const stopSnapshotDialogInteractions = () => {
+    snapshotDragState = null;
+    snapshotResizeState = null;
+    document.body.classList.remove('is-dragging-settings-dialog', 'is-resizing-settings-dialog');
+    document.removeEventListener('pointermove', onSnapshotPointerMove, true);
+    document.removeEventListener('pointerup', onSnapshotPointerUp, true);
+    document.removeEventListener('pointercancel', onSnapshotPointerUp, true);
+  };
+  const ensureSnapshotPointerListeners = () => {
+    document.addEventListener('pointermove', onSnapshotPointerMove, true);
+    document.addEventListener('pointerup', onSnapshotPointerUp, true);
+    document.addEventListener('pointercancel', onSnapshotPointerUp, true);
+  };
+
+  function onSnapshotPointerMove(event) {
+    if (snapshotDragState) {
+      applySnapshotDialogLayout({
+        ...ocrDebugExportDialogLayout,
+        left: snapshotDragState.left + (event.clientX - snapshotDragState.startX),
+        top: snapshotDragState.top + (event.clientY - snapshotDragState.startY),
+      });
+      event.preventDefault();
+      return;
+    }
+    if (snapshotResizeState) {
+      applySnapshotDialogLayout({
+        left: snapshotResizeState.left,
+        top: snapshotResizeState.top,
+        width: snapshotResizeState.width + (event.clientX - snapshotResizeState.startX),
+        height: snapshotResizeState.height + (event.clientY - snapshotResizeState.startY),
+      });
+      event.preventDefault();
+    }
+  }
+
+  function onSnapshotPointerUp() {
+    if (!snapshotDragState && !snapshotResizeState) {
+      return;
+    }
+    stopSnapshotDialogInteractions();
+  }
+
   const finish = () => {
+    stopSnapshotDialogInteractions();
     document.removeEventListener('keydown', onKeyDown, true);
     overlay.remove();
     if (ocrDebugExportDialogOverlayEl === overlay) {
@@ -8127,6 +8224,45 @@ function openOcrDebugExportDialog() {
       finish();
     }
   });
+  titlebar.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest('button')) {
+      return;
+    }
+    const rect = dialog.getBoundingClientRect();
+    snapshotDragState = {
+      startX: event.clientX,
+      startY: event.clientY,
+      left: ocrDebugExportDialogLayout ? ocrDebugExportDialogLayout.left : rect.left,
+      top: ocrDebugExportDialogLayout ? ocrDebugExportDialogLayout.top : rect.top,
+    };
+    snapshotResizeState = null;
+    document.body.classList.add('is-dragging-settings-dialog');
+    ensureSnapshotPointerListeners();
+    event.preventDefault();
+  });
+  resizeHandle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const rect = dialog.getBoundingClientRect();
+    snapshotResizeState = {
+      startX: event.clientX,
+      startY: event.clientY,
+      left: ocrDebugExportDialogLayout ? ocrDebugExportDialogLayout.left : rect.left,
+      top: ocrDebugExportDialogLayout ? ocrDebugExportDialogLayout.top : rect.top,
+      width: ocrDebugExportDialogLayout ? ocrDebugExportDialogLayout.width : rect.width,
+      height: ocrDebugExportDialogLayout ? ocrDebugExportDialogLayout.height : rect.height,
+    };
+    snapshotDragState = null;
+    document.body.classList.add('is-resizing-settings-dialog');
+    ensureSnapshotPointerListeners();
+    event.preventDefault();
+  });
+  titlebarCloseButton.addEventListener('click', finish);
   closeButton.addEventListener('click', finish);
   filterSelect.addEventListener('change', () => {
     ocrDebugExportCurrentFilter = VALID_JOB_LIST_MODES.has(filterSelect.value) ? filterSelect.value : 'ready';
@@ -8140,6 +8276,7 @@ function openOcrDebugExportDialog() {
   });
   document.addEventListener('keydown', onKeyDown, true);
   document.body.appendChild(overlay);
+  applySnapshotDialogLayout(ocrDebugExportDialogLayout || snapshotResolvedLayoutOptions().fallback);
 
   ocrDebugExportDialogOverlayEl = overlay;
   ocrDebugExportDialogEl = dialog;
@@ -17536,31 +17673,50 @@ function defaultSettingsDialogLayout() {
   };
 }
 
-function clampSettingsDialogLayout(layout) {
+function clampFloatingDialogLayout(layout, options = {}) {
   const source = layout && typeof layout === 'object' ? layout : {};
   const bounds = settingsDialogViewportBounds();
+  const fallback = options.fallback && typeof options.fallback === 'object'
+    ? options.fallback
+    : defaultSettingsDialogLayout();
+  const minWidth = Number.isFinite(Number(options.minWidth))
+    ? Number(options.minWidth)
+    : SETTINGS_DIALOG_MIN_WIDTH_PX;
+  const minHeight = Number.isFinite(Number(options.minHeight))
+    ? Number(options.minHeight)
+    : SETTINGS_DIALOG_MIN_HEIGHT_PX;
   const width = Math.round(Math.min(
     bounds.width,
-    Math.max(Math.min(SETTINGS_DIALOG_MIN_WIDTH_PX, bounds.width), Number(source.width) || defaultSettingsDialogLayout().width)
+    Math.max(Math.min(minWidth, bounds.width), Number(source.width) || fallback.width)
   ));
   const height = Math.round(Math.min(
     bounds.height,
-    Math.max(Math.min(SETTINGS_DIALOG_MIN_HEIGHT_PX, bounds.height), Number(source.height) || defaultSettingsDialogLayout().height)
+    Math.max(Math.min(minHeight, bounds.height), Number(source.height) || fallback.height)
   ));
-  const left = Math.round(Math.min(
-    window.innerWidth - bounds.margin - width,
-    Math.max(bounds.margin, Number(source.left))
-  ));
-  const top = Math.round(Math.min(
-    window.innerHeight - bounds.margin - height,
-    Math.max(bounds.margin, Number(source.top))
-  ));
+  const sourceLeft = Number(source.left);
+  const sourceTop = Number(source.top);
+  const rawLeft = Number.isFinite(sourceLeft) ? sourceLeft : fallback.left;
+  const rawTop = Number.isFinite(sourceTop) ? sourceTop : fallback.top;
+  const minLeft = SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX - width;
+  const maxLeft = window.innerWidth - SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX;
+  const minTop = 0;
+  const maxTop = window.innerHeight - SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX;
+  const left = Math.round(Math.min(maxLeft, Math.max(minLeft, rawLeft)));
+  const top = Math.round(Math.min(maxTop, Math.max(minTop, rawTop)));
   return {
     width,
     height,
-    left: Number.isFinite(left) ? left : bounds.margin,
-    top: Number.isFinite(top) ? top : bounds.margin,
+    left,
+    top,
   };
+}
+
+function clampSettingsDialogLayout(layout) {
+  return clampFloatingDialogLayout(layout, {
+    minWidth: SETTINGS_DIALOG_MIN_WIDTH_PX,
+    minHeight: SETTINGS_DIALOG_MIN_HEIGHT_PX,
+    fallback: defaultSettingsDialogLayout(),
+  });
 }
 
 function applySettingsDialogLayout(layout) {
@@ -17573,6 +17729,18 @@ function applySettingsDialogLayout(layout) {
   settingsDialogEl.style.height = `${nextLayout.height}px`;
   settingsDialogEl.style.left = `${nextLayout.left}px`;
   settingsDialogEl.style.top = `${nextLayout.top}px`;
+}
+
+function applyFloatingDialogLayout(dialogEl, layout, options = {}) {
+  if (!(dialogEl instanceof HTMLElement)) {
+    return null;
+  }
+  const nextLayout = clampFloatingDialogLayout(layout, options);
+  dialogEl.style.width = `${nextLayout.width}px`;
+  dialogEl.style.height = `${nextLayout.height}px`;
+  dialogEl.style.left = `${nextLayout.left}px`;
+  dialogEl.style.top = `${nextLayout.top}px`;
+  return nextLayout;
 }
 
 function restoreSettingsDialogLayout() {
@@ -30276,6 +30444,12 @@ settingsCloseEl.addEventListener('click', () => {
   closeSettingsModal();
 });
 
+if (settingsDialogCloseEl instanceof HTMLButtonElement) {
+  settingsDialogCloseEl.addEventListener('click', () => {
+    closeSettingsModal();
+  });
+}
+
 if (ocrShowPageImageEl) {
   ocrShowPageImageEl.addEventListener('change', () => {
     ocrShowPageImage = ocrShowPageImageEl.checked;
@@ -30451,29 +30625,16 @@ settingsModalEl.addEventListener('mousedown', (event) => {
   closeSettingsModal();
 });
 
-if (settingsDialogEl instanceof HTMLElement) {
-  settingsDialogEl.addEventListener('pointermove', (event) => {
-    const target = event.target;
-    const isInteractive = target instanceof HTMLElement && target.closest('button, input, select, textarea, a, label');
-    const rect = settingsDialogEl.getBoundingClientRect();
-    const isTopDragArea = (event.clientY - rect.top) <= SETTINGS_DIALOG_DRAG_HANDLE_HEIGHT_PX;
-    settingsDialogEl.style.cursor = !isInteractive && isTopDragArea ? 'move' : '';
-  });
-  settingsDialogEl.addEventListener('pointerleave', () => {
-    settingsDialogEl.style.cursor = '';
-  });
-  settingsDialogEl.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) {
+if (settingsDialogTitlebarEl instanceof HTMLElement) {
+  settingsDialogTitlebarEl.addEventListener('pointerdown', (event) => {
+    if (!(settingsDialogEl instanceof HTMLElement) || event.button !== 0) {
       return;
     }
     const target = event.target;
-    if (target instanceof HTMLElement && target.closest('button, input, select, textarea, a, label')) {
+    if (target instanceof HTMLElement && target.closest('button')) {
       return;
     }
     const rect = settingsDialogEl.getBoundingClientRect();
-    if ((event.clientY - rect.top) > SETTINGS_DIALOG_DRAG_HANDLE_HEIGHT_PX) {
-      return;
-    }
     settingsDialogDragState = {
       startX: event.clientX,
       startY: event.clientY,

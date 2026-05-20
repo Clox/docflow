@@ -4286,10 +4286,12 @@ body.is-resizing-sidebar {
   height: min(920px, calc(100dvh - 24px));
   max-height: calc(100dvh - 24px);
   background: #fff;
-  border-radius: 8px;
+  border: 1px solid #111827;
+  border-radius: 12px;
   overflow: hidden;
   display: flex;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  flex-direction: column;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.22);
 }
 
 #settings-dialog {
@@ -4298,6 +4300,77 @@ body.is-resizing-sidebar {
   min-height: 520px;
   max-width: calc(100vw - 24px);
   max-height: calc(100dvh - 24px);
+}
+
+.settings-dialog-titlebar {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid #d8dee8;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  cursor: grab;
+  touch-action: none;
+}
+
+.settings-dialog-titlebar-grab {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-dialog-titlebar-actions {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 4px 0 4px 8px;
+}
+
+.settings-dialog-titlebar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-dialog-titlebar-button:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.settings-dialog-titlebar-button:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 1px;
+}
+
+.settings-dialog-titlebar-close {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+.settings-dialog-titlebar:active,
+body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
+  cursor: grabbing;
+}
+
+.settings-dialog-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 .settings-nav {
@@ -4431,6 +4504,12 @@ body.is-resizing-sidebar {
   position: relative;
   min-width: 0;
   overflow: hidden;
+}
+
+.snapshot-dialog {
+  position: fixed;
+  min-width: 520px;
+  min-height: 420px;
 }
 
 .snapshot-controls {
