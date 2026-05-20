@@ -2734,8 +2734,8 @@ function normalize_extraction_field_normalization_replacement_item(mixed $input)
     }
 
     $find = is_string($input['find'] ?? null)
-        ? trim((string) $input['find'])
-        : (is_string($input['from'] ?? null) ? trim((string) $input['from']) : '');
+        ? (string) $input['find']
+        : (is_string($input['from'] ?? null) ? (string) $input['from'] : '');
     $replace = is_string($input['replace'] ?? null)
         ? (string) $input['replace']
         : (is_string($input['to'] ?? null) ? (string) $input['to'] : '');
@@ -3333,7 +3333,8 @@ function normalize_predefined_extraction_field_with_defaults(string $key, mixed 
                 || array_key_exists('searchString', $field)
                 || array_key_exists('query', $field)
                 || array_key_exists('normalizationType', $field)
-                || array_key_exists('normalizationChars', $field);
+                || array_key_exists('normalizationChars', $field)
+                || array_key_exists('normalizationReplacements', $field);
             if (!$hasLegacyOverrides) {
                 $ruleSets = $defaultRuleSets;
             }
@@ -3471,6 +3472,11 @@ function normalize_system_extraction_field_with_defaults(string $key, mixed $inp
             array_key_exists('normalizationChars', $field)
                 ? $field['normalizationChars']
                 : ($defaults['normalizationChars'] ?? '')
+        ),
+        'normalizationReplacements' => normalize_extraction_field_normalization_replacements(
+            array_key_exists('normalizationReplacements', $field)
+                ? $field['normalizationReplacements']
+                : ($defaults['normalizationReplacements'] ?? [])
         ),
         'extractor' => valid_extraction_field_extractor(
             is_string($field['extractor'] ?? null) ? (string) $field['extractor'] : (string) ($defaults['extractor'] ?? 'generic_label'),

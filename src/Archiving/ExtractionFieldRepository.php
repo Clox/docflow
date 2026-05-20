@@ -172,6 +172,7 @@ final class ExtractionFieldRepository
                 scope_json,
                 normalization_type,
                 normalization_chars,
+                normalization_replacements_json,
                 date_position,
                 amount_position,
                 sort_order,
@@ -187,6 +188,7 @@ final class ExtractionFieldRepository
                 :scope_json,
                 :normalization_type,
                 :normalization_chars,
+                :normalization_replacements_json,
                 :date_position,
                 :amount_position,
                 :sort_order,
@@ -279,6 +281,13 @@ final class ExtractionFieldRepository
                     if (!is_string($scopeJson)) {
                         throw new RuntimeException('Could not encode field rule-set scope.');
                     }
+                    $normalizationReplacementsJson = json_encode(
+                        $this->normalizeNormalizationReplacementsForStorage($ruleSet['normalizationReplacements'] ?? null),
+                        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                    );
+                    if (!is_string($normalizationReplacementsJson)) {
+                        throw new RuntimeException('Could not encode field rule-set normalization replacements.');
+                    }
 
                     $insertRuleSet->execute([
                         ':data_field_id' => $fieldId,
@@ -290,6 +299,7 @@ final class ExtractionFieldRepository
                         ':scope_json' => $scopeJson,
                         ':normalization_type' => is_string($ruleSet['normalizationType'] ?? null) ? trim((string) $ruleSet['normalizationType']) : 'none',
                         ':normalization_chars' => is_string($ruleSet['normalizationChars'] ?? null) ? (string) $ruleSet['normalizationChars'] : '',
+                        ':normalization_replacements_json' => $normalizationReplacementsJson,
                         ':date_position' => is_string($ruleSet['datePosition'] ?? null) && in_array(trim(strtolower((string) $ruleSet['datePosition'])), ['first', 'second', 'last'], true)
                             ? trim(strtolower((string) $ruleSet['datePosition']))
                             : 'first',
@@ -371,6 +381,7 @@ final class ExtractionFieldRepository
                 scope_json,
                 normalization_type,
                 normalization_chars,
+                normalization_replacements_json,
                 date_position,
                 amount_position,
                 sort_order,
@@ -397,6 +408,7 @@ final class ExtractionFieldRepository
             }
             $searchTerms = json_decode((string) ($row['search_terms_json'] ?? '[]'), true);
             $scope = json_decode((string) ($row['scope_json'] ?? '{}'), true);
+            $normalizationReplacements = json_decode((string) ($row['normalization_replacements_json'] ?? '[]'), true);
             $resolvedSearchTerms = [];
             if (is_array($searchTerms)) {
                 foreach ($searchTerms as $searchTerm) {
@@ -434,6 +446,7 @@ final class ExtractionFieldRepository
                 'scope' => $this->normalizeRuleSetScopeForStorage(is_array($scope) ? $scope : null) ?: null,
                 'normalizationType' => is_string($row['normalization_type'] ?? null) ? trim((string) $row['normalization_type']) : 'none',
                 'normalizationChars' => is_string($row['normalization_chars'] ?? null) ? (string) $row['normalization_chars'] : '',
+                'normalizationReplacements' => $this->normalizeNormalizationReplacementsForStorage($normalizationReplacements),
                 'datePosition' => is_string($row['date_position'] ?? null) ? trim(strtolower((string) $row['date_position'])) : 'first',
                 'amountPosition' => is_string($row['amount_position'] ?? null) ? trim(strtolower((string) $row['amount_position'])) : 'first',
             ];
@@ -461,6 +474,36 @@ final class ExtractionFieldRepository
                 || ($scope['isRegex'] ?? false) === 1
                 || ($scope['isRegex'] ?? false) === '1',
         ];
+    }
+
+    private function normalizeNormalizationReplacementsForStorage(mixed $replacements): array
+    {
+        $rows = is_array($replacements) ? $replacements : [];
+        $normalized = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $find = is_string($row['find'] ?? null)
+                ? (string) $row['find']
+                : (is_string($row['from'] ?? null) ? (string) $row['from'] : '');
+            if ($find === '') {
+                continue;
+            }
+
+            $normalized[] = [
+                'find' => $find,
+                'replace' => is_string($row['replace'] ?? null)
+                    ? (string) $row['replace']
+                    : (is_string($row['to'] ?? null) ? (string) $row['to'] : ''),
+                'isRegex' => ($row['isRegex'] ?? false) === true
+                    || ($row['isRegex'] ?? false) === 1
+                    || ($row['isRegex'] ?? false) === '1',
+            ];
+        }
+
+        return $normalized;
     }
 
     private function normalizeValueType(mixed $value, ?array $legacyField = null): string

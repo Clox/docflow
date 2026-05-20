@@ -22218,9 +22218,9 @@ function defaultExtractionFieldNormalizationReplacement() {
 function sanitizeExtractionFieldNormalizationReplacement(row) {
   const input = row && typeof row === 'object' ? row : {};
   const find = typeof input.find === 'string'
-    ? input.find.trim()
-    : (typeof input.from === 'string' ? input.from.trim() : '');
-  if (!find) {
+    ? input.find
+    : (typeof input.from === 'string' ? input.from : '');
+  if (find === '') {
     return null;
   }
   return {
@@ -22491,6 +22491,7 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
       isRegex: input.isRegex === true,
       normalizationType: sanitizeExtractionFieldNormalizationType(input.normalizationType),
       normalizationChars: typeof input.normalizationChars === 'string' ? input.normalizationChars : '',
+      normalizationReplacements: sanitizeExtractionFieldNormalizationReplacementsInput(input.normalizationReplacements),
       extractor,
       predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
       isPredefinedField,
