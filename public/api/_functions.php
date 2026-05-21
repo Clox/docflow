@@ -21719,9 +21719,17 @@ function append_job_event(array $event): array
 
 function read_job_events_since(int $afterEventId, int $limit = 500): array
 {
+    $latestEventId = latest_job_event_id();
+    if ($latestEventId > 0 && $afterEventId >= $latestEventId) {
+        return [];
+    }
+
     $path = job_events_log_path();
     if (!is_file($path)) {
         return [];
+    }
+    if ($latestEventId > 0 && $afterEventId > 0 && ($latestEventId - $afterEventId) <= $limit) {
+        return read_recent_job_events_since($path, $afterEventId, $limit);
     }
 
     $handle = fopen($path, 'rb');
@@ -21750,6 +21758,80 @@ function read_job_events_since(int $afterEventId, int $limit = 500): array
     }
 
     return $events;
+}
+
+function read_recent_job_events_since(string $path, int $afterEventId, int $limit): array
+{
+    $fileSize = @filesize($path);
+    if (!is_int($fileSize) || $fileSize <= 0) {
+        return [];
+    }
+
+    $handle = fopen($path, 'rb');
+    if ($handle === false) {
+        return [];
+    }
+
+    $events = [];
+    $buffer = '';
+    $position = $fileSize;
+    $chunkSize = 65536;
+
+    try {
+        while ($position > 0 && count($events) < $limit) {
+            $readSize = min($chunkSize, $position);
+            $position -= $readSize;
+            if (fseek($handle, $position) !== 0) {
+                break;
+            }
+            $chunk = fread($handle, $readSize);
+            if (!is_string($chunk) || $chunk === '') {
+                break;
+            }
+
+            $buffer = $chunk . $buffer;
+            $lines = explode("\n", $buffer);
+            if ($position > 0) {
+                $buffer = array_shift($lines);
+            } else {
+                $buffer = '';
+            }
+
+            for ($index = count($lines) - 1; $index >= 0; $index--) {
+                $line = trim($lines[$index]);
+                if ($line === '') {
+                    continue;
+                }
+                $decoded = json_decode($line, true);
+                if (!is_array($decoded)) {
+                    continue;
+                }
+                $eventId = isset($decoded['id']) ? (int) $decoded['id'] : 0;
+                if ($eventId <= $afterEventId) {
+                    return array_reverse($events);
+                }
+                $events[] = $decoded;
+                if (count($events) >= $limit) {
+                    break 2;
+                }
+            }
+        }
+
+        $line = trim($buffer);
+        if ($line !== '' && count($events) < $limit) {
+            $decoded = json_decode($line, true);
+            if (is_array($decoded)) {
+                $eventId = isset($decoded['id']) ? (int) $decoded['id'] : 0;
+                if ($eventId > $afterEventId) {
+                    $events[] = $decoded;
+                }
+            }
+        }
+    } finally {
+        fclose($handle);
+    }
+
+    return array_reverse($events);
 }
 
 function latest_job_event_id(): int
