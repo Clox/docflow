@@ -16285,7 +16285,6 @@ function extract_configured_rule_set_field_matches(
         $scopeDebug = is_array($scoped['debug'] ?? null) ? $scoped['debug'] : null;
     }
     $requiresSearchTerms = extraction_field_rule_set_uses_search_text($runtimeRuleSet);
-    $normalizationType = normalize_extraction_field_normalization_type($runtimeRuleSet['normalizationType'] ?? null);
     $searchTerms = normalize_extraction_field_search_terms(
         $runtimeRuleSet['searchTerms'] ?? null,
         normalize_extraction_field_is_regex($runtimeRuleSet['isRegex'] ?? false)
@@ -16296,7 +16295,7 @@ function extract_configured_rule_set_field_matches(
         && $valuePattern !== '';
     $combineSplitAmountParts = $valueType === 'amount' && extraction_field_value_pattern_uses_semantic_amount_parts($valuePattern);
 
-    $preferCaptureGroupValue = $valueType === 'date' || $valueType === 'amount' || $normalizationType !== 'replacements';
+    $preferCaptureGroupValue = true;
     $candidateExtractor = match ($valueType) {
         'amount' => 'amount_candidates_from_text',
         default => static function (string $text, int $offsetBase) use ($valuePattern, $preferCaptureGroupValue): array {
