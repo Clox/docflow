@@ -6780,6 +6780,8 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .rule-fields select,
 .rule-fields input[type="text"],
 .rule-fields input[type="number"],
+.extraction-field-normalization-group input,
+.extraction-field-normalization-group select,
 .extraction-field-rule-set-fields input,
 .extraction-field-rule-set-fields select {
   width: 100%;
@@ -6832,6 +6834,8 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .label-fields textarea:disabled,
 .extraction-field-header-fields input:disabled,
 .extraction-field-header-fields select:disabled,
+.extraction-field-normalization-group input:disabled,
+.extraction-field-normalization-group select:disabled,
 .category-fields input:disabled {
   background: #f3f4f6;
   color: #444;
@@ -7386,6 +7390,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 
 .extraction-field-normalization-group--field {
   margin-top: 0;
+  margin-left: 22px;
 }
 
 .extraction-field-value-type-field,
