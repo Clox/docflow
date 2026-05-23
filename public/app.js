@@ -14302,6 +14302,9 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   const valueText = typeof row?.value === 'string' && row.value.trim() !== ''
     ? row.value.trim()
     : '';
+  const valueHighlightText = typeof row?.extractedRaw === 'string' && row.extractedRaw.trim() !== ''
+    ? row.extractedRaw.trim()
+    : valueText;
   const valueMatchText = typeof row?.matchText === 'string' && row.matchText.trim() !== ''
     ? row.matchText.trim()
     : (typeof row?.raw === 'string' && row.raw.trim() !== ''
@@ -14412,6 +14415,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     hasKey: showKeySection,
     keyText,
     valueText,
+    valueHighlightText,
     valueMatchText,
     keyWordIndexes: Array.from(keyWordIndexes).sort((left, right) => left - right),
     valueWordIndexes: Array.from(valueWordIndexes).sort((left, right) => left - right),
@@ -15057,7 +15061,7 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
 
     const detailGroups = [
       ...(showKeySection ? [{ label: 'Nyckel', value: tooltipData.keyText, wordIndexes: keyWordIndexes }] : []),
-      { label: 'Värde', value: tooltipData.valueText, fullValue: tooltipData.valueMatchText, wordIndexes: valueWordIndexes },
+      { label: 'Värde', value: tooltipData.valueText, highlightValue: tooltipData.valueHighlightText, fullValue: tooltipData.valueMatchText, wordIndexes: valueWordIndexes },
     ];
 
     section.detailEl.replaceChildren();
@@ -15087,7 +15091,9 @@ function setOcrWordTooltipSectionData(section, tooltipData) {
           typeof group.fullValue === 'string' && group.fullValue.trim() !== ''
             ? group.fullValue
             : group.value,
-          typeof group.value === 'string' ? group.value : ''
+          typeof group.highlightValue === 'string' && group.highlightValue.trim() !== ''
+            ? group.highlightValue
+            : (typeof group.value === 'string' ? group.value : '')
         );
       } else {
         textRowValueEl.textContent = typeof group.value === 'string' && group.value.trim() !== ''
@@ -16439,9 +16445,38 @@ function ocrDataFieldMatchHasKey(row, keyWordIndexes = null) {
 
 function ocrDataFieldValueCandidateTexts(row) {
   const texts = [
+    ...ocrDataFieldCaptureCandidateTexts(row),
+    row && typeof row.extractedRaw === 'string' ? row.extractedRaw : '',
     row && typeof row.value === 'string' ? row.value : '',
   ];
   return Array.from(new Set(texts.map((text) => String(text || '').trim()).filter((text) => text !== '')));
+}
+
+function sliceTextByCharacterRange(text, start, end) {
+  const chars = Array.from(String(text || ''));
+  const from = Math.max(0, Math.min(chars.length, Number(start) || 0));
+  const to = Math.max(from, Math.min(chars.length, Number(end) || 0));
+  return chars.slice(from, to).join('');
+}
+
+function ocrDataFieldCaptureCandidateTexts(row) {
+  const matchText = typeof row?.matchText === 'string' && row.matchText !== ''
+    ? row.matchText
+    : (typeof row?.raw === 'string' ? row.raw : '');
+  if (matchText === '' || !Array.isArray(row?.captureRanges) || row.captureRanges.length === 0) {
+    return [];
+  }
+
+  return Array.from(new Set(
+    row.captureRanges
+      .map((range) => {
+        if (!range || typeof range !== 'object') {
+          return '';
+        }
+        return sliceTextByCharacterRange(matchText, range.start, range.end).trim();
+      })
+      .filter((text) => text !== '')
+  ));
 }
 
 function ocrDataFieldStoredWordIndexesForRow(row, kind = 'value') {
@@ -16468,6 +16503,18 @@ function ocrDataFieldSpanCandidateTexts(row, kind = 'value') {
 
   if (kind === 'key') {
     return ocrDataFieldKeyCandidateTexts(row);
+  }
+
+  const captureTexts = ocrDataFieldCaptureCandidateTexts(row);
+  const extractedRaw = typeof row?.extractedRaw === 'string' ? row.extractedRaw.trim() : '';
+  const fullMatchText = typeof row?.matchText === 'string' ? row.matchText.trim() : '';
+  if (captureTexts.length > 0 || (extractedRaw !== '' && fullMatchText !== '' && extractedRaw !== fullMatchText)) {
+    return valueTexts.sort((left, right) => {
+      if (right.length !== left.length) {
+        return right.length - left.length;
+      }
+      return left.localeCompare(right, 'sv');
+    });
   }
 
   if (!hasKey) {
