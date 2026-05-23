@@ -7384,6 +7384,10 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   gap: 8px;
 }
 
+.extraction-field-normalization-group--field {
+  margin-top: 0;
+}
+
 .extraction-field-value-type-field,
 .extraction-field-date-position-field,
 .extraction-field-normalization-group > .floating-input-group:first-child {

@@ -22121,6 +22121,9 @@ function defaultExtractionField() {
     key: '',
     name: '',
     valueType: 'text',
+    normalizationType: 'none',
+    normalizationChars: '',
+    normalizationReplacements: [],
     ruleSets: [defaultExtractionFieldRuleSet()],
   };
 }
@@ -22242,6 +22245,20 @@ function sanitizeExtractionFieldNormalizationReplacementsInput(replacements) {
     }
   });
   return normalized;
+}
+
+function bankgiroFieldNormalizationOverride(field) {
+  const input = field && typeof field === 'object' ? field : {};
+  const predefinedKey = typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey.trim() : '';
+  const key = typeof input.key === 'string' ? input.key.trim() : '';
+  if (predefinedKey !== 'bankgiro' && !(input.isPredefinedField === true && key === 'bankgiro')) {
+    return null;
+  }
+  return {
+    normalizationType: 'whitelist',
+    normalizationChars: '0123456789',
+    normalizationReplacements: [],
+  };
 }
 
 function sanitizeExtractionFieldType(value, legacyField = null) {
@@ -22510,12 +22527,24 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
     input,
     firstRuleSet
   );
+  const fieldNormalization = valueType === 'text'
+    ? (bankgiroFieldNormalizationOverride(input) || {
+      normalizationType: sanitizeExtractionFieldNormalizationType(input.normalizationType),
+      normalizationChars: typeof input.normalizationChars === 'string' ? input.normalizationChars : '',
+      normalizationReplacements: sanitizeExtractionFieldNormalizationReplacementsInput(input.normalizationReplacements),
+    })
+    : {
+      normalizationType: 'none',
+      normalizationChars: '',
+      normalizationReplacements: [],
+    };
 
   return {
     key: normalizedKey,
     name,
     type: legacyExtractionFieldTypeForValueType(valueType),
     valueType,
+    ...fieldNormalization,
     ruleSets: sanitizeExtractionFieldRuleSets(input.ruleSets, { ...input, valueType }),
     extractor,
     predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
@@ -22523,6 +22552,178 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
     systemFieldKey: typeof input.systemFieldKey === 'string' ? input.systemFieldKey : '',
     isSystemField: input.isSystemField === true,
   };
+}
+
+function createExtractionFieldNormalizationEditor({
+  field,
+  disabled = false,
+  onChange = () => {},
+} = {}) {
+  const source = field && typeof field === 'object' ? field : {};
+  const state = {
+    normalizationType: sanitizeExtractionFieldNormalizationType(source.normalizationType),
+    normalizationChars: typeof source.normalizationChars === 'string' ? source.normalizationChars : '',
+    normalizationReplacements: sanitizeExtractionFieldNormalizationReplacementsInput(source.normalizationReplacements),
+  };
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'extraction-field-normalization-group extraction-field-normalization-group--field';
+
+  const typeSelect = document.createElement('select');
+  typeSelect.className = 'extraction-field-normalization-select';
+  [
+    ['none', 'Ingen'],
+    ['whitelist', 'Whitelist'],
+    ['blacklist', 'Blacklist'],
+    ['replacements', 'Ersättningar'],
+  ].forEach(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    typeSelect.appendChild(option);
+  });
+  typeSelect.value = state.normalizationType;
+  typeSelect.disabled = disabled;
+
+  const charsInput = document.createElement('input');
+  charsInput.type = 'text';
+  charsInput.placeholder = 'Ex: 0123456789';
+  charsInput.value = state.normalizationChars;
+  charsInput.disabled = disabled;
+  const charsField = createFloatingField('Normaliseringstecken', charsInput);
+  charsField.classList.add('extraction-field-normalization-field');
+
+  const replacementsList = document.createElement('div');
+  replacementsList.className = 'extraction-field-normalization-replacements-list';
+  const addReplacementButton = document.createElement('button');
+  addReplacementButton.type = 'button';
+  addReplacementButton.className = 'extraction-field-normalization-replacements-add';
+  addReplacementButton.textContent = 'Lägg till ersättning';
+  addReplacementButton.disabled = disabled;
+  const replacementsField = document.createElement('div');
+  replacementsField.className = 'extraction-field-normalization-replacements-field';
+  replacementsField.appendChild(replacementsList);
+  if (!disabled) {
+    replacementsField.appendChild(addReplacementButton);
+  }
+
+  const persist = () => {
+    onChange({
+      normalizationType: state.normalizationType,
+      normalizationChars: state.normalizationChars,
+      normalizationReplacements: state.normalizationReplacements.map((replacement) => ({
+        find: typeof replacement.find === 'string' ? replacement.find : '',
+        replace: typeof replacement.replace === 'string' ? replacement.replace : '',
+        isRegex: replacement.isRegex === true,
+      })),
+    });
+    updateSettingsActionButtons();
+  };
+
+  const sync = () => {
+    state.normalizationType = sanitizeExtractionFieldNormalizationType(typeSelect.value);
+    state.normalizationChars = charsInput.value;
+    persist();
+    renderDynamic();
+  };
+
+  const renderReplacementRows = (focusIndex = null) => {
+    replacementsList.innerHTML = '';
+    if (state.normalizationReplacements.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'categories-empty extraction-field-normalization-replacements-empty';
+      empty.textContent = 'Inga ersättningar ännu.';
+      replacementsList.appendChild(empty);
+      return;
+    }
+
+    state.normalizationReplacements.forEach((replacementValue, replacementIndex) => {
+      const row = document.createElement('div');
+      row.className = 'extraction-field-normalization-replacement-row';
+
+      const findInput = document.createElement('input');
+      findInput.type = 'text';
+      findInput.placeholder = 'Ex: ^(\\d+)(\\d{4})$';
+      findInput.value = typeof replacementValue.find === 'string' ? replacementValue.find : '';
+      findInput.disabled = disabled;
+      findInput.addEventListener('input', () => {
+        state.normalizationReplacements[replacementIndex].find = findInput.value;
+        persist();
+      });
+
+      const replaceInput = document.createElement('input');
+      replaceInput.type = 'text';
+      replaceInput.placeholder = 'Ex: $1-$2';
+      replaceInput.value = typeof replacementValue.replace === 'string' ? replacementValue.replace : '';
+      replaceInput.disabled = disabled;
+      replaceInput.addEventListener('input', () => {
+        state.normalizationReplacements[replacementIndex].replace = replaceInput.value;
+        persist();
+      });
+
+      const regexToggleButton = createRegexToggleButton({
+        getActive: () => replacementValue.isRegex === true,
+        setActive: (next) => {
+          state.normalizationReplacements[replacementIndex].isRegex = next === true;
+          persist();
+        },
+      });
+      regexToggleButton.title = 'Regex';
+      regexToggleButton.setAttribute('aria-label', 'Regex');
+      regexToggleButton.disabled = disabled;
+
+      const findInputWrap = createInlineInputWithAccessories(findInput, [regexToggleButton], 'extraction-field-alias-input-wrap');
+      row.appendChild(createFloatingField('Hitta', findInputWrap));
+      row.appendChild(createFloatingField('Ersätt med', replaceInput));
+      if (!disabled) {
+        const removeReplacementButton = createTrashButton({
+          variant: 'row',
+          className: 'extraction-field-normalization-replacement-remove',
+          title: 'Ta bort ersättning',
+          onClick: () => {
+            state.normalizationReplacements.splice(replacementIndex, 1);
+            persist();
+            renderDynamic();
+          },
+        });
+        row.appendChild(removeReplacementButton);
+      }
+      replacementsList.appendChild(row);
+
+      if (!disabled && focusIndex === replacementIndex) {
+        findInput.focus();
+      }
+    });
+  };
+
+  const renderDynamic = () => {
+    charsField.hidden = state.normalizationType !== 'whitelist' && state.normalizationType !== 'blacklist';
+    if (state.normalizationType === 'replacements') {
+      if (!replacementsField.parentNode) {
+        wrapper.appendChild(replacementsField);
+      }
+      if (!disabled && state.normalizationReplacements.length === 0) {
+        state.normalizationReplacements.push(defaultExtractionFieldNormalizationReplacement());
+      }
+      renderReplacementRows();
+    } else if (replacementsField.parentNode) {
+      replacementsField.remove();
+    }
+  };
+
+  typeSelect.addEventListener('change', sync);
+  charsInput.addEventListener('input', sync);
+  addReplacementButton.addEventListener('click', () => {
+    state.normalizationReplacements.push(defaultExtractionFieldNormalizationReplacement());
+    persist();
+    renderReplacementRows(state.normalizationReplacements.length - 1);
+  });
+
+  wrapper.appendChild(createFloatingField('Normalisering (datafält)', typeSelect));
+  wrapper.appendChild(charsField);
+  renderDynamic();
+
+  return wrapper;
 }
 
 function measureInlineInputTextWidth(input, sample) {
@@ -25062,6 +25263,13 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   const readOnly = options.readOnly === true;
   const isDocumentDateField = field.extractor === 'document_date'
     || field.systemFieldKey === 'document_date';
+  const lockedFieldNormalization = bankgiroFieldNormalizationOverride(field);
+  if (lockedFieldNormalization) {
+    collection[index] = {
+      ...collection[index],
+      ...lockedFieldNormalization,
+    };
+  }
 
   const fieldNode = document.createElement('div');
   fieldNode.className = 'tree-node tree-category';
@@ -25208,6 +25416,25 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
   fieldBody.appendChild(fieldActions);
   fieldBody.appendChild(fields);
+
+  if (field.valueType === 'text') {
+    const fieldNormalization = createExtractionFieldNormalizationEditor({
+      field: {
+        ...field,
+        ...(lockedFieldNormalization || {}),
+      },
+      disabled: readOnly || lockedFieldNormalization !== null,
+      onChange: (nextNormalization) => {
+        if (readOnly || lockedFieldNormalization !== null) {
+          return;
+        }
+        collection[index].normalizationType = nextNormalization.normalizationType;
+        collection[index].normalizationChars = nextNormalization.normalizationChars;
+        collection[index].normalizationReplacements = nextNormalization.normalizationReplacements;
+      },
+    });
+    fieldBody.appendChild(fieldNormalization);
+  }
 
   if (!readOnly) {
     const ruleSetList = createTreeChildren({ markerless: true });
@@ -25742,7 +25969,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
       const normalizationGroup = document.createElement('div');
       normalizationGroup.className = 'extraction-field-normalization-group';
-      normalizationGroup.appendChild(createFloatingField('Normalisering', normalizationTypeSelect));
+      normalizationGroup.appendChild(createFloatingField('Normalisering (regel)', normalizationTypeSelect));
       normalizationGroup.appendChild(normalizationCharsField);
       interpretationRow.appendChild(normalizationGroup);
       ruleFields.appendChild(interpretationRow);

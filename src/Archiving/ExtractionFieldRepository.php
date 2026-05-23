@@ -32,6 +32,9 @@ final class ExtractionFieldRepository
                 field_key,
                 name,
                 value_type,
+                normalization_type,
+                normalization_chars,
+                normalization_replacements_json,
                 sort_order,
                 created_at,
                 updated_at
@@ -82,6 +85,9 @@ final class ExtractionFieldRepository
                 'name' => $name,
                 'type' => $this->legacyRuleTypeForValueType($valueType),
                 'valueType' => $valueType,
+                'normalizationType' => $this->normalizeNormalizationType($row['normalization_type'] ?? null),
+                'normalizationChars' => is_string($row['normalization_chars'] ?? null) ? (string) $row['normalization_chars'] : '',
+                'normalizationReplacements' => $this->normalizeNormalizationReplacementsForStorage(json_decode((string) ($row['normalization_replacements_json'] ?? '[]'), true)),
                 'ruleSets' => $ruleSetsByFieldId[$fieldId] ?? [],
             ];
 
@@ -136,6 +142,9 @@ final class ExtractionFieldRepository
                 field_key,
                 name,
                 value_type,
+                normalization_type,
+                normalization_chars,
+                normalization_replacements_json,
                 sort_order,
                 created_at,
                 updated_at
@@ -145,6 +154,9 @@ final class ExtractionFieldRepository
                 :field_key,
                 :name,
                 :value_type,
+                :normalization_type,
+                :normalization_chars,
+                :normalization_replacements_json,
                 :sort_order,
                 :created_at,
                 :updated_at
@@ -154,6 +166,9 @@ final class ExtractionFieldRepository
             'UPDATE archiving_data_fields
             SET name = :name,
                 value_type = :value_type,
+                normalization_type = :normalization_type,
+                normalization_chars = :normalization_chars,
+                normalization_replacements_json = :normalization_replacements_json,
                 sort_order = :sort_order,
                 updated_at = :updated_at
             WHERE id = :id'
@@ -222,6 +237,13 @@ final class ExtractionFieldRepository
                 if ($fieldKey === '' || $name === '') {
                     continue;
                 }
+                $fieldNormalizationReplacementsJson = json_encode(
+                    $this->normalizeNormalizationReplacementsForStorage($field['normalizationReplacements'] ?? null),
+                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                );
+                if (!is_string($fieldNormalizationReplacementsJson)) {
+                    throw new RuntimeException('Could not encode extraction field normalization replacements.');
+                }
                 $lookupKey = $fieldType . ':' . $fieldKey;
                 $seenFieldKeys[$lookupKey] = true;
 
@@ -231,6 +253,9 @@ final class ExtractionFieldRepository
                         ':id' => $fieldId,
                         ':name' => $name,
                         ':value_type' => $valueType,
+                        ':normalization_type' => $this->normalizeNormalizationType($field['normalizationType'] ?? null),
+                        ':normalization_chars' => is_string($field['normalizationChars'] ?? null) ? (string) $field['normalizationChars'] : '',
+                        ':normalization_replacements_json' => $fieldNormalizationReplacementsJson,
                         ':sort_order' => $fieldOrder,
                         ':updated_at' => $timestamp,
                     ]);
@@ -241,6 +266,9 @@ final class ExtractionFieldRepository
                         ':field_key' => $fieldKey,
                         ':name' => $name,
                         ':value_type' => $valueType,
+                        ':normalization_type' => $this->normalizeNormalizationType($field['normalizationType'] ?? null),
+                        ':normalization_chars' => is_string($field['normalizationChars'] ?? null) ? (string) $field['normalizationChars'] : '',
+                        ':normalization_replacements_json' => $fieldNormalizationReplacementsJson,
                         ':sort_order' => $fieldOrder,
                         ':created_at' => $timestamp,
                         ':updated_at' => $timestamp,
@@ -474,6 +502,12 @@ final class ExtractionFieldRepository
                 || ($scope['isRegex'] ?? false) === 1
                 || ($scope['isRegex'] ?? false) === '1',
         ];
+    }
+
+    private function normalizeNormalizationType(mixed $value): string
+    {
+        $normalized = is_string($value) ? trim(strtolower($value)) : '';
+        return in_array($normalized, ['whitelist', 'blacklist', 'replacements'], true) ? $normalized : 'none';
     }
 
     private function normalizeNormalizationReplacementsForStorage(mixed $replacements): array

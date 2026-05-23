@@ -2463,6 +2463,9 @@ function predefined_extraction_field_definitions(): array
         ],
         'bankgiro' => [
             'name' => 'Bankgiro',
+            'normalizationType' => 'whitelist',
+            'normalizationChars' => '0123456789',
+            'normalizationReplacements' => [],
             'ruleSets' => [[
                 'type' => 'regex',
                 'useSearchText' => true,
@@ -3303,6 +3306,9 @@ function normalize_extraction_fields(mixed $input): array
             'name' => $name,
             'type' => legacy_extraction_field_type_for_value_type($valueType),
             'valueType' => $valueType,
+            'normalizationType' => $valueType === 'text' ? normalize_extraction_field_normalization_type($row['normalizationType'] ?? null) : 'none',
+            'normalizationChars' => $valueType === 'text' ? normalize_extraction_field_normalization_chars($row['normalizationChars'] ?? null) : '',
+            'normalizationReplacements' => $valueType === 'text' ? normalize_extraction_field_normalization_replacements($row['normalizationReplacements'] ?? null) : [],
             'ruleSets' => $ruleSets,
         ];
     }
@@ -3342,12 +3348,32 @@ function normalize_predefined_extraction_field_with_defaults(string $key, mixed 
     if ($key === 'amount') {
         $ruleSets = array_map('normalize_predefined_amount_rule_set', $ruleSets);
     }
+    if ($key === 'bankgiro' && !array_key_exists('ruleSets', $field)) {
+        $ruleSets = $defaultRuleSets;
+    }
+    $normalizationType = $valueType === 'text'
+        ? normalize_extraction_field_normalization_type($field['normalizationType'] ?? ($defaults['normalizationType'] ?? null))
+        : 'none';
+    $normalizationChars = $valueType === 'text'
+        ? normalize_extraction_field_normalization_chars($field['normalizationChars'] ?? ($defaults['normalizationChars'] ?? null))
+        : '';
+    $normalizationReplacements = $valueType === 'text'
+        ? normalize_extraction_field_normalization_replacements($field['normalizationReplacements'] ?? ($defaults['normalizationReplacements'] ?? null))
+        : [];
+    if ($key === 'bankgiro') {
+        $normalizationType = 'whitelist';
+        $normalizationChars = '0123456789';
+        $normalizationReplacements = [];
+    }
 
     return [
         'key' => $key,
         'name' => $name,
         'type' => legacy_extraction_field_type_for_value_type($valueType),
         'valueType' => $valueType,
+        'normalizationType' => $normalizationType,
+        'normalizationChars' => $normalizationChars,
+        'normalizationReplacements' => $normalizationReplacements,
         'ruleSets' => $ruleSets,
         'predefinedFieldKey' => $key,
         'isPredefinedField' => true,
@@ -15820,9 +15846,13 @@ function resolve_extraction_field_candidate_value(mixed $value, array $match, ar
     $matchText = is_string($match['matchText'] ?? null) ? (string) $match['matchText'] : $rawText;
     $candidateText = is_string($value) ? $value : (is_scalar($value) ? (string) $value : '');
     $lookupText = trim($candidateText) !== '' ? $candidateText : ($matchText !== '' ? $matchText : $rawText);
+    $lookupText = apply_extraction_field_normalization($lookupText, $ruleSet);
+    if ($field !== []) {
+        $lookupText = apply_extraction_field_normalization($lookupText, $field);
+    }
 
     if ($valueType === 'amount') {
-        if (is_numeric($value)) {
+        if (trim($lookupText) === '' && is_numeric($value)) {
             return number_format((float) $value, 2, '.', '');
         }
         $amount = normalize_swedish_amount($lookupText);
@@ -15833,8 +15863,8 @@ function resolve_extraction_field_candidate_value(mixed $value, array $match, ar
         return extract_date_from_text($lookupText);
     }
 
-    if (is_string($value)) {
-        return apply_extraction_field_normalization($value, $ruleSet);
+    if (is_string($value) || trim($lookupText) !== '') {
+        return $lookupText;
     }
 
     return $value;
