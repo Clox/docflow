@@ -7507,6 +7507,25 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   background: #ebebeb;
 }
 
+.categories-actions .match-pattern-inspector-toggle,
+.settings-section-actions .match-pattern-inspector-toggle {
+  width: 36px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #f5f5f5;
+}
+
+.categories-actions .match-pattern-inspector-toggle:hover,
+.categories-actions .match-pattern-inspector-toggle:focus-visible,
+.categories-actions .match-pattern-inspector-toggle.is-active,
+.settings-section-actions .match-pattern-inspector-toggle:hover,
+.settings-section-actions .match-pattern-inspector-toggle:focus-visible,
+.settings-section-actions .match-pattern-inspector-toggle.is-active {
+  background: #ebebeb;
+}
+
 .filename-template-editor {
   display: flex;
   flex-direction: column;

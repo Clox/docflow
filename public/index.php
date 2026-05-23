@@ -773,6 +773,21 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <button id="labels-import-row" type="button" role="menuitem">Importera från JSON</button>
         </div>
       </div>
+      <button
+        id="labels-match-pattern-inspector-toggle"
+        type="button"
+        class="match-pattern-inspector-toggle"
+        title="Visa matchningsmönster"
+        aria-label="Visa matchningsmönster"
+        aria-expanded="false"
+        aria-pressed="false"
+      >
+        <span class="match-pattern-inspector-toggle-label">
+          <span class="match-pattern-inspector-toggle-label-dot">.</span>
+          <span class="match-pattern-inspector-toggle-label-star">*</span>
+        </span>
+        <span class="match-pattern-inspector-toggle-icon" aria-hidden="true"></span>
+      </button>
     </div>
     <div class="panel-actions">
       <button id="labels-cancel" class="button-danger" type="button">Avbryt</button>
@@ -817,6 +832,21 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <button id="extraction-fields-import-row" type="button" role="menuitem">Importera från JSON</button>
         </div>
       </div>
+      <button
+        id="extraction-fields-match-pattern-inspector-toggle"
+        type="button"
+        class="match-pattern-inspector-toggle"
+        title="Visa matchningsmönster"
+        aria-label="Visa matchningsmönster"
+        aria-expanded="false"
+        aria-pressed="false"
+      >
+        <span class="match-pattern-inspector-toggle-label">
+          <span class="match-pattern-inspector-toggle-label-dot">.</span>
+          <span class="match-pattern-inspector-toggle-label-star">*</span>
+        </span>
+        <span class="match-pattern-inspector-toggle-icon" aria-hidden="true"></span>
+      </button>
     </div>
     <div class="panel-actions">
       <button id="extraction-fields-cancel" class="button-danger" type="button">Avbryt</button>

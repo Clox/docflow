@@ -275,6 +275,7 @@ let labelsAddMenuHome = null;
 let labelsAddMenuOpenRaf = 0;
 let labelsAddMenuRepositionHandler = null;
 let labelsImportRowEl = null;
+let labelsMatchPatternInspectorToggleEl = null;
 let labelsCancelEl = null;
 let labelsApplyEl = null;
 let extractionFieldsEditorEl = null;
@@ -286,6 +287,7 @@ let extractionFieldsAddMenuHome = null;
 let extractionFieldsAddMenuOpenRaf = 0;
 let extractionFieldsAddMenuRepositionHandler = null;
 let extractionFieldsImportRowEl = null;
+let extractionFieldsMatchPatternInspectorToggleEl = null;
 let extractionFieldsCancelEl = null;
 let extractionFieldsApplyEl = null;
 let extractionFieldsTabEls = [];
@@ -18469,8 +18471,11 @@ function bindSettingsPanelRefs(tabId) {
     labelsAddMenuToggleEl = document.getElementById('labels-add-menu-toggle');
     labelsAddMenuEl = document.getElementById('labels-add-menu');
     labelsImportRowEl = document.getElementById('labels-import-row');
+    labelsMatchPatternInspectorToggleEl = document.getElementById('labels-match-pattern-inspector-toggle');
     labelsCancelEl = document.getElementById('labels-cancel');
     labelsApplyEl = document.getElementById('labels-apply');
+    attachMatchPatternInspectorGroupButton(labelsMatchPatternInspectorToggleEl, 'labels');
+    bindMatchPatternInspectorGroupButton(labelsMatchPatternInspectorToggleEl, 'labels');
     labelsAddRowEl.addEventListener('click', () => {
       closeLabelsAddMenu();
       labelsDraft.push(defaultLabel());
@@ -18515,6 +18520,7 @@ function bindSettingsPanelRefs(tabId) {
     extractionFieldsAddMenuToggleEl = document.getElementById('extraction-fields-add-menu-toggle');
     extractionFieldsAddMenuEl = document.getElementById('extraction-fields-add-menu');
     extractionFieldsImportRowEl = document.getElementById('extraction-fields-import-row');
+    extractionFieldsMatchPatternInspectorToggleEl = document.getElementById('extraction-fields-match-pattern-inspector-toggle');
     extractionFieldsCancelEl = document.getElementById('extraction-fields-cancel');
     extractionFieldsApplyEl = document.getElementById('extraction-fields-apply');
     extractionFieldsTabEls = Array.from(document.querySelectorAll('[data-extraction-fields-tab]'));
@@ -18523,6 +18529,9 @@ function bindSettingsPanelRefs(tabId) {
     extractionFieldsViewZonesEl = document.getElementById('extraction-fields-view-zones');
     extractionZonesEditorEl = document.getElementById('extraction-zones-editor');
     extractionFieldsTabDescriptionEl = document.getElementById('extraction-fields-tab-description');
+    bindMatchPatternInspectorGroupButton(extractionFieldsMatchPatternInspectorToggleEl, () => (
+      activeExtractionFieldsTabId === 'zones' ? 'zones' : 'data-fields'
+    ));
     extractionFieldsTabEls.forEach((tabButton) => {
       tabButton.addEventListener('click', () => {
         const nextTabId = tabButton.dataset.extractionFieldsTab;
@@ -23638,6 +23647,7 @@ function createRegexToggleInput(inputEl, options = {}, extraClass = '') {
 }
 
 const matchPatternInspectorStateByKey = new Map();
+const matchPatternInspectorGroups = new Map();
 
 function createMatchPatternCopyButton(onCopy, options = {}) {
   const button = document.createElement('button');
@@ -23673,10 +23683,7 @@ function createMatchPatternCopyButton(onCopy, options = {}) {
   return button;
 }
 
-function createMatchPatternInspector(options = {}) {
-  const stateKey = typeof options.stateKey === 'string' && options.stateKey.trim() !== ''
-    ? options.stateKey.trim()
-    : null;
+function createMatchPatternInspectorToggleButton() {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'match-pattern-inspector-toggle';
@@ -23693,17 +23700,32 @@ function createMatchPatternInspector(options = {}) {
   icon.className = 'match-pattern-inspector-toggle-icon';
   icon.setAttribute('aria-hidden', 'true');
   button.append(label, icon);
+  return button;
+}
+
+function syncMatchPatternInspectorToggleButton(button, open) {
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
+  }
+  const label = open ? 'Visa redigering' : 'Visa matchningsmönster';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-expanded', open ? 'true' : 'false');
+  button.setAttribute('aria-pressed', open ? 'true' : 'false');
+  button.classList.toggle('is-active', open);
+}
+
+function createMatchPatternInspector(options = {}) {
+  const stateKey = typeof options.stateKey === 'string' && options.stateKey.trim() !== ''
+    ? options.stateKey.trim()
+    : null;
+  const button = createMatchPatternInspectorToggleButton();
 
   let open = stateKey ? matchPatternInspectorStateByKey.get(stateKey) === true : false;
   const bindings = [];
 
   const syncButton = () => {
-    const label = open ? 'Visa redigering' : 'Visa matchningsmönster';
-    button.title = label;
-    button.setAttribute('aria-label', label);
-    button.setAttribute('aria-expanded', open ? 'true' : 'false');
-    button.setAttribute('aria-pressed', open ? 'true' : 'false');
-    button.classList.toggle('is-active', open);
+    syncMatchPatternInspectorToggleButton(button, open);
   };
 
   const applyBinding = (binding) => {
@@ -23835,6 +23857,83 @@ function createMatchPatternInspector(options = {}) {
       return open;
     },
   };
+}
+
+function matchPatternInspectorGroup(groupKey) {
+  const normalizedKey = String(groupKey || '').trim();
+  if (normalizedKey === '') {
+    return null;
+  }
+  if (!matchPatternInspectorGroups.has(normalizedKey)) {
+    const stateKey = `match-pattern-inspector-group:${normalizedKey}`;
+    matchPatternInspectorGroups.set(normalizedKey, {
+      key: normalizedKey,
+      stateKey,
+      open: matchPatternInspectorStateByKey.get(stateKey) === true,
+      inspectors: [],
+      buttonEl: null,
+    });
+  }
+  return matchPatternInspectorGroups.get(normalizedKey);
+}
+
+function resetMatchPatternInspectorGroup(groupKey) {
+  const group = matchPatternInspectorGroup(groupKey);
+  if (!group) {
+    return;
+  }
+  group.inspectors = [];
+  syncMatchPatternInspectorToggleButton(group.buttonEl, group.open);
+}
+
+function setMatchPatternInspectorGroupOpen(groupKey, open) {
+  const group = matchPatternInspectorGroup(groupKey);
+  if (!group) {
+    return;
+  }
+  group.open = open === true;
+  matchPatternInspectorStateByKey.set(group.stateKey, group.open);
+  syncMatchPatternInspectorToggleButton(group.buttonEl, group.open);
+  group.inspectors.forEach((inspector) => {
+    if (inspector && typeof inspector.setOpen === 'function') {
+      inspector.setOpen(group.open);
+    }
+  });
+}
+
+function registerMatchPatternInspectorInGroup(groupKey, inspector) {
+  const group = matchPatternInspectorGroup(groupKey);
+  if (!group || !inspector || typeof inspector.setOpen !== 'function') {
+    return;
+  }
+  group.inspectors.push(inspector);
+  inspector.setOpen(group.open);
+}
+
+function bindMatchPatternInspectorGroupButton(buttonEl, groupKeyProvider) {
+  if (!(buttonEl instanceof HTMLButtonElement) || buttonEl.dataset.matchPatternGroupBound === '1') {
+    return;
+  }
+  buttonEl.dataset.matchPatternGroupBound = '1';
+  buttonEl.addEventListener('click', () => {
+    const groupKey = typeof groupKeyProvider === 'function' ? groupKeyProvider() : groupKeyProvider;
+    const group = matchPatternInspectorGroup(groupKey);
+    if (!group) {
+      return;
+    }
+    setMatchPatternInspectorGroupOpen(group.key, !group.open);
+  });
+  const group = matchPatternInspectorGroup(typeof groupKeyProvider === 'function' ? groupKeyProvider() : groupKeyProvider);
+  syncMatchPatternInspectorToggleButton(buttonEl, group ? group.open : false);
+}
+
+function attachMatchPatternInspectorGroupButton(buttonEl, groupKey) {
+  const group = matchPatternInspectorGroup(groupKey);
+  if (!group || !(buttonEl instanceof HTMLButtonElement)) {
+    return;
+  }
+  group.buttonEl = buttonEl;
+  syncMatchPatternInspectorToggleButton(buttonEl, group.open);
 }
 
 if (ocrSearchBarEl instanceof HTMLElement && ocrSearchInputEl instanceof HTMLInputElement && ocrSearchRegexEl instanceof HTMLInputElement) {
@@ -25545,6 +25644,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const matchPatternInspector = createMatchPatternInspector({
         stateKey: `extraction-field:${typeof field.key === 'string' && field.key.trim() !== '' ? field.key.trim() : index}:rule-set:${ruleSetIndex}`,
       });
+      registerMatchPatternInspectorInGroup('data-fields', matchPatternInspector);
 
       const syncSearchTermsToDraft = () => {
         collection[index].ruleSets[ruleSetIndex].searchTerms = sanitizeExtractionFieldSearchTermsInput(searchTermValues);
@@ -25779,8 +25879,6 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       scopeField.appendChild(scopeHelpDisclosure.panel);
       scopeOptionBlock.appendChild(scopeField);
       optionalControls.appendChild(scopeOptionBlock);
-
-      ruleSetActions.appendChild(matchPatternInspector.button);
 
       const valuePatternInput = document.createElement('input');
       valuePatternInput.type = 'text';
@@ -26173,6 +26271,7 @@ function renderExtractionFieldsEditor() {
       return;
     }
 
+    resetMatchPatternInspectorGroup('data-fields');
     extractionFieldsEditorEl.innerHTML = '';
 
     const builtInGroup = createEditorGroup('Fördefinierade', extractionFieldsBuiltInCollapsed, () => {
@@ -26262,6 +26361,7 @@ function renderExtractionZonesEditor() {
     return;
   }
 
+  resetMatchPatternInspectorGroup('zones');
   extractionZonesEditorEl.innerHTML = '';
   const label = document.createElement('div');
   label.className = 'archive-folders-label';
@@ -26310,7 +26410,7 @@ function renderExtractionZonesEditor() {
     const inspector = createMatchPatternInspector({
       stateKey: `extraction-zone:${currentZone.id || index}`,
     });
-    actions.appendChild(inspector.button);
+    registerMatchPatternInspectorInGroup('zones', inspector);
 
     const removeButton = createTrashButton({
       variant: 'node',
@@ -26476,6 +26576,11 @@ function setExtractionFieldsTab(tabId) {
   }
   if (extractionFieldsAddMenuToggleEl instanceof HTMLButtonElement) {
     extractionFieldsAddMenuToggleEl.classList.toggle('hidden', activeExtractionFieldsTabId === 'zones' || activeExtractionFieldsTabId === 'system');
+  }
+  if (extractionFieldsMatchPatternInspectorToggleEl instanceof HTMLButtonElement) {
+    const groupKey = activeExtractionFieldsTabId === 'zones' ? 'zones' : 'data-fields';
+    extractionFieldsMatchPatternInspectorToggleEl.classList.toggle('hidden', activeExtractionFieldsTabId === 'system');
+    attachMatchPatternInspectorGroupButton(extractionFieldsMatchPatternInspectorToggleEl, groupKey);
   }
 }
 
@@ -26962,6 +27067,7 @@ function renderSingleLabelEditor(container, options = {}) {
         ruleMatchPatternInspector = createMatchPatternInspector({
           stateKey: `label:${labelRuleStateKey}:rule:${ruleIndex}`,
         });
+        registerMatchPatternInspectorInGroup('labels', ruleMatchPatternInspector);
         const textCopyButton = createMatchPatternCopyButton(() => {
           const original = String(textInput.value || '').trim();
           const draft = currentLabelDraftForEditor(options);
@@ -27015,7 +27121,6 @@ function renderSingleLabelEditor(container, options = {}) {
             return original !== '' ? buildInspectionMatchPattern(original, !!(currentRule && currentRule.isRegex === true)) : '';
           },
         });
-        ruleNodeActions.appendChild(ruleMatchPatternInspector.button);
         ruleFields.appendChild(textFieldLabel);
       } else {
         ruleFields.appendChild(createFloatingField('Text', textInput));
@@ -27081,6 +27186,7 @@ function renderLabelsEditor() {
       return;
     }
 
+    resetMatchPatternInspectorGroup('labels');
     labelsListEl.innerHTML = '';
     const builtInGroup = createEditorGroup('Fördefinerade', labelsBuiltInCollapsed, () => {
       labelsBuiltInCollapsed = !labelsBuiltInCollapsed;
