@@ -2566,6 +2566,7 @@ function predefined_extraction_field_definitions(): array
                     'requiresSearchTerms' => false,
                     'searchTerms' => [],
                     'valuePattern' => '\bSE(\d{6}[- ]?\d{4})01\b',
+                    'captureGroup' => 1,
                     'normalizationType' => 'none',
                     'normalizationChars' => '',
                 ],
@@ -2976,42 +2977,35 @@ function extraction_field_match_has_semantic_amount_groups(array $match): bool
     return $hasKronor && $hasOren;
 }
 
-function extraction_field_concat_capture_group_value(array $match): ?string
+function normalize_extraction_field_capture_group(mixed $value): ?int
 {
-    $captureIndexes = [];
-    foreach ($match as $key => $value) {
-        if (is_int($key) && $key > 0) {
-            $captureIndexes[] = $key;
-        }
-    }
-
-    if ($captureIndexes === []) {
+    if ($value === null || $value === '') {
         return null;
     }
-
-    sort($captureIndexes, SORT_NUMERIC);
-
-    $parts = [];
-    foreach ($captureIndexes as $captureIndex) {
-        $captureGroup = $match[$captureIndex] ?? null;
-        if (!is_array($captureGroup) || !is_string($captureGroup[0] ?? null)) {
-            continue;
-        }
-
-        $captureValue = (string) $captureGroup[0];
-        if ($captureValue !== '') {
-            $parts[] = $captureValue;
-        }
-    }
-
-    if ($parts === []) {
+    if (!is_numeric($value)) {
         return null;
     }
-
-    return implode('', $parts);
+    $group = (int) $value;
+    return $group >= 0 ? $group : null;
 }
 
-function extraction_field_capture_group_ranges(array $match): array
+function extraction_field_capture_group_value(array $match, int $group): ?string
+{
+    if ($group === 0) {
+        $fullMatch = $match[0] ?? null;
+        return is_array($fullMatch) && is_string($fullMatch[0] ?? null) ? (string) $fullMatch[0] : null;
+    }
+
+    $captureGroup = $match[$group] ?? null;
+    if (!is_array($captureGroup) || !is_string($captureGroup[0] ?? null)) {
+        return null;
+    }
+
+    $value = (string) $captureGroup[0];
+    return $value !== '' ? $value : null;
+}
+
+function extraction_field_capture_group_ranges(array $match, ?array $selectedGroups = null): array
 {
     $fullMatch = $match[0] ?? null;
     if (!is_array($fullMatch) || !is_string($fullMatch[0] ?? null) || !is_int($fullMatch[1] ?? null)) {
@@ -3024,16 +3018,24 @@ function extraction_field_capture_group_ranges(array $match): array
         return [];
     }
 
-    $captureIndexes = [];
-    foreach ($match as $key => $value) {
-        if (is_int($key) && $key > 0) {
-            $captureIndexes[] = $key;
+    $captureIndexes = $selectedGroups !== null
+        ? array_values(array_filter(array_map(
+            static fn ($value): int => (int) $value,
+            $selectedGroups
+        ), static fn (int $value): bool => $value > 0))
+        : [];
+    if ($captureIndexes === []) {
+        foreach ($match as $key => $value) {
+            if (is_int($key) && $key > 0) {
+                $captureIndexes[] = $key;
+            }
         }
     }
     if ($captureIndexes === []) {
         return [];
     }
 
+    $captureIndexes = array_values(array_unique($captureIndexes));
     sort($captureIndexes, SORT_NUMERIC);
 
     $ranges = [];
@@ -3070,6 +3072,95 @@ function extraction_field_capture_group_ranges(array $match): array
     }
 
     return $ranges;
+}
+
+function extraction_field_match_selected_capture_value(array $match, array $captureSelection): ?array
+{
+    $captureGroup = normalize_extraction_field_capture_group($captureSelection['captureGroup'] ?? null);
+    if ($captureGroup === null) {
+        return null;
+    }
+
+    $value = extraction_field_capture_group_value($match, $captureGroup);
+    if ($value === null) {
+        return null;
+    }
+    $group = is_array($match[$captureGroup] ?? null) ? $match[$captureGroup] : null;
+    $start = is_int($group[1] ?? null) ? (int) $group[1] : (is_int($match[0][1] ?? null) ? (int) $match[0][1] : -1);
+
+    return [
+        'value' => $value,
+        'raw' => $value,
+        'start' => $start,
+        'ranges' => $captureGroup > 0 ? extraction_field_capture_group_ranges($match, [$captureGroup]) : [],
+    ];
+}
+
+function extraction_field_match_selected_amount_value(array $match, array $captureSelection): ?array
+{
+    $wholeGroup = normalize_extraction_field_capture_group($captureSelection['amountWholeGroup'] ?? null);
+    $fractionGroup = normalize_extraction_field_capture_group($captureSelection['amountFractionGroup'] ?? null);
+    if ($wholeGroup === null || $fractionGroup === null) {
+        return null;
+    }
+
+    $wholeValue = extraction_field_capture_group_value($match, $wholeGroup);
+    $fractionValue = extraction_field_capture_group_value($match, $fractionGroup);
+    if ($wholeValue === null || $fractionValue === null) {
+        return null;
+    }
+
+    if ($wholeGroup === $fractionGroup) {
+        $amount = normalize_swedish_amount($wholeValue);
+        if (!is_float($amount)) {
+            return null;
+        }
+        $group = is_array($match[$wholeGroup] ?? null) ? $match[$wholeGroup] : null;
+        return [
+            'value' => number_format($amount, 2, '.', ''),
+            'raw' => $wholeValue,
+            'start' => is_int($group[1] ?? null) ? (int) $group[1] : (is_int($match[0][1] ?? null) ? (int) $match[0][1] : -1),
+            'ranges' => $wholeGroup > 0 ? extraction_field_capture_group_ranges($match, [$wholeGroup]) : [],
+        ];
+    }
+
+    $amountValue = normalize_extraction_field_split_amount_value($wholeValue, $fractionValue);
+    if ($amountValue === null) {
+        return null;
+    }
+
+    $ranges = extraction_field_capture_group_ranges($match, [$wholeGroup, $fractionGroup]);
+    $wholeSource = is_array($match[$wholeGroup] ?? null) ? $match[$wholeGroup] : null;
+    $fractionSource = is_array($match[$fractionGroup] ?? null) ? $match[$fractionGroup] : null;
+    $starts = array_values(array_filter([
+        is_int($wholeSource[1] ?? null) ? (int) $wholeSource[1] : null,
+        is_int($fractionSource[1] ?? null) ? (int) $fractionSource[1] : null,
+    ], static fn ($value): bool => is_int($value) && $value >= 0));
+    return [
+        'value' => $amountValue,
+        'raw' => extraction_field_raw_from_capture_ranges($match, $ranges) ?? ($wholeValue . $fractionValue),
+        'start' => $starts !== [] ? min($starts) : (is_int($match[0][1] ?? null) ? (int) $match[0][1] : -1),
+        'ranges' => $ranges,
+    ];
+}
+
+function extraction_field_raw_from_capture_ranges(array $match, array $ranges): ?string
+{
+    $fullMatch = $match[0] ?? null;
+    if (!is_array($fullMatch) || !is_string($fullMatch[0] ?? null) || $ranges === []) {
+        return null;
+    }
+    $raw = (string) $fullMatch[0];
+    $start = min(array_map(static fn (array $range): int => (int) ($range['start'] ?? 0), $ranges));
+    $end = max(array_map(static fn (array $range): int => (int) ($range['end'] ?? 0), $ranges));
+    if ($end <= $start) {
+        return null;
+    }
+    $chars = preg_split('//u', $raw, -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($chars)) {
+        return null;
+    }
+    return implode('', array_slice($chars, $start, $end - $start));
 }
 
 function extraction_field_runtime_rule_set(array $ruleSet, ?string $valueType = null): array
@@ -3149,6 +3240,9 @@ function default_extraction_field_rule_set(array $overrides = []): array
         'normalizationReplacements' => [],
         'datePosition' => 'first',
         'amountPosition' => 'first',
+        'captureGroup' => null,
+        'amountWholeGroup' => null,
+        'amountFractionGroup' => null,
         'scope' => null,
     ];
 
@@ -3200,6 +3294,9 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             'normalizationReplacements' => normalize_extraction_field_normalization_replacements($row['normalizationReplacements'] ?? null),
             'datePosition' => $datePosition,
             'amountPosition' => normalize_extraction_field_position($row['amountPosition'] ?? null),
+            'captureGroup' => normalize_extraction_field_capture_group($row['captureGroup'] ?? null),
+            'amountWholeGroup' => normalize_extraction_field_capture_group($row['amountWholeGroup'] ?? null),
+            'amountFractionGroup' => normalize_extraction_field_capture_group($row['amountFractionGroup'] ?? null),
             'scope' => $scope,
         ]);
     }
@@ -14089,7 +14186,8 @@ function extraction_field_pattern_candidates_from_text(
     bool $isRegex,
     int $offsetBase = 0,
     bool $preferCaptureGroupValue = true,
-    bool $combineSplitAmountParts = false
+    bool $combineSplitAmountParts = false,
+    array $captureSelection = []
 ): array
 {
     $pattern = trim($searchString);
@@ -14137,7 +14235,35 @@ function extraction_field_pattern_candidates_from_text(
         $captureRanges = [];
         $value = $raw;
         $extractedRaw = $raw;
-        if ($isRegex && $combineSplitAmountParts) {
+        $valueStart = $start;
+        $hasExplicitCaptureSelection = false;
+        if ($isRegex && normalize_extraction_field_capture_group($captureSelection['captureGroup'] ?? null) !== null) {
+            $hasExplicitCaptureSelection = true;
+            $selectedCapture = extraction_field_match_selected_capture_value($match, $captureSelection);
+            if ($selectedCapture === null) {
+                continue;
+            }
+            $value = $selectedCapture['value'];
+            $extractedRaw = is_string($selectedCapture['raw'] ?? null) ? (string) $selectedCapture['raw'] : (string) $value;
+            $valueStart = is_int($selectedCapture['start'] ?? null) ? (int) $selectedCapture['start'] : $start;
+            $captureRanges = is_array($selectedCapture['ranges'] ?? null) ? $selectedCapture['ranges'] : [];
+        } elseif (
+            $isRegex
+            && (
+                normalize_extraction_field_capture_group($captureSelection['amountWholeGroup'] ?? null) !== null
+                || normalize_extraction_field_capture_group($captureSelection['amountFractionGroup'] ?? null) !== null
+            )
+        ) {
+            $hasExplicitCaptureSelection = true;
+            $selectedAmount = extraction_field_match_selected_amount_value($match, $captureSelection);
+            if ($selectedAmount === null) {
+                continue;
+            }
+            $value = $selectedAmount['value'];
+            $extractedRaw = is_string($selectedAmount['raw'] ?? null) ? (string) $selectedAmount['raw'] : (string) $value;
+            $valueStart = is_int($selectedAmount['start'] ?? null) ? (int) $selectedAmount['start'] : $start;
+            $captureRanges = is_array($selectedAmount['ranges'] ?? null) ? $selectedAmount['ranges'] : [];
+        } elseif ($isRegex && $combineSplitAmountParts) {
             $semanticAmountSpan = extraction_field_semantic_amount_value_span($match, $text);
             if ($semanticAmountSpan !== null) {
                 $value = is_string($semanticAmountSpan['value'] ?? null) ? (string) $semanticAmountSpan['value'] : null;
@@ -14161,21 +14287,12 @@ function extraction_field_pattern_candidates_from_text(
                 continue;
             }
         }
-        if ($isRegex && $preferCaptureGroupValue) {
-            $captureValue = extraction_field_concat_capture_group_value($match);
-            if ($captureValue !== null) {
-                $value = $captureValue;
-                $extractedRaw = $captureValue;
-                $captureRanges = extraction_field_capture_group_ranges($match);
-            }
-        }
-
         $candidates[] = [
             'value' => $value,
             'raw' => $extractedRaw,
             'matchText' => $raw,
-            'start' => $offsetBase + $start,
-            'spanText' => $raw,
+            'start' => $offsetBase + $valueStart,
+            'spanText' => $hasExplicitCaptureSelection ? $extractedRaw : $raw,
             'matchType' => 'pattern',
             'captureRanges' => $captureRanges,
         ];
@@ -14288,7 +14405,8 @@ function extraction_field_document_pattern_candidates_from_lines(
     bool $isRegex,
     array $lineGeometries = [],
     bool $preferCaptureGroupValue = true,
-    bool $combineSplitAmountParts = false
+    bool $combineSplitAmountParts = false,
+    array $captureSelection = []
 ): array
 {
     $resolvedPattern = trim($searchString);
@@ -14317,7 +14435,8 @@ function extraction_field_document_pattern_candidates_from_lines(
         $isRegex,
         0,
         $preferCaptureGroupValue,
-        $combineSplitAmountParts
+        $combineSplitAmountParts,
+        $captureSelection
     );
     if ($matches === []) {
         return [];
@@ -14359,7 +14478,7 @@ function extraction_field_document_pattern_candidates_from_lines(
             'raw' => $raw,
             'matchText' => $matchText,
             'start' => $candidateStart,
-            'spanText' => $raw,
+            'spanText' => $spanText,
             'matchType' => is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : 'pattern',
             'captureRanges' => is_array($candidate['captureRanges'] ?? null) ? $candidate['captureRanges'] : [],
             'lineIndex' => $lineIndex,
@@ -15346,7 +15465,8 @@ function collect_anchored_pattern_candidate_matches_from_segments(
     array $positionSettings = [],
     array $lineGeometries = [],
     bool $labelsAreRegex = false,
-    bool $combineSplitAmountParts = false
+    bool $combineSplitAmountParts = false,
+    array $captureSelection = []
 ): array {
     $matchesByKey = [];
 
@@ -15384,7 +15504,8 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                 true,
                 0,
                 $preferCaptureGroupValue,
-                $combineSplitAmountParts
+                $combineSplitAmountParts,
+                $captureSelection
             );
             if ($candidates === []) {
                 $lineGeometry = is_array($lineGeometries[$candidateLineIndex] ?? null) ? $lineGeometries[$candidateLineIndex] : null;
@@ -15406,7 +15527,8 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                             true,
                             $segmentStart,
                             $preferCaptureGroupValue,
-                            $combineSplitAmountParts
+                            $combineSplitAmountParts,
+                            $captureSelection
                         );
                         if ($segmentMatches === []) {
                             continue;
@@ -15491,7 +15613,8 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                     is_string($confidenceComponents['invalidReason'] ?? null) ? (string) $confidenceComponents['invalidReason'] : null,
                     is_array($confidenceComponents['labelBbox'] ?? null) ? $confidenceComponents['labelBbox'] : null,
                     is_array($confidenceComponents['valueBbox'] ?? null) ? $confidenceComponents['valueBbox'] : null,
-                    is_numeric($confidenceComponents['pageNumber'] ?? null) ? (int) $confidenceComponents['pageNumber'] : null
+                    is_numeric($confidenceComponents['pageNumber'] ?? null) ? (int) $confidenceComponents['pageNumber'] : null,
+                    is_array($candidate['captureRanges'] ?? null) ? $candidate['captureRanges'] : null
                 );
             }
         }
@@ -15837,6 +15960,20 @@ function extraction_field_rule_set_position(array $ruleSet, string $type): strin
     return 'first';
 }
 
+function extraction_field_rule_set_capture_selection(array $ruleSet, string $valueType): array
+{
+    if ($valueType === 'amount') {
+        return [
+            'amountWholeGroup' => normalize_extraction_field_capture_group($ruleSet['amountWholeGroup'] ?? null),
+            'amountFractionGroup' => normalize_extraction_field_capture_group($ruleSet['amountFractionGroup'] ?? null),
+        ];
+    }
+
+    return [
+        'captureGroup' => normalize_extraction_field_capture_group($ruleSet['captureGroup'] ?? null),
+    ];
+}
+
 function resolve_extraction_field_candidate_value(mixed $value, array $match, array $ruleSet, array $field = []): mixed
 {
     $valueType = $field !== []
@@ -16145,7 +16282,8 @@ function extract_unlabeled_pattern_field_matches(
     string $pattern,
     bool $preferCaptureGroupValue = true,
     array $lineGeometries = [],
-    bool $combineSplitAmountParts = false
+    bool $combineSplitAmountParts = false,
+    array $captureSelection = []
 ): array
 {
     $candidates = extraction_field_document_pattern_candidates_from_lines(
@@ -16154,7 +16292,8 @@ function extract_unlabeled_pattern_field_matches(
         true,
         $lineGeometries,
         $preferCaptureGroupValue,
-        $combineSplitAmountParts
+        $combineSplitAmountParts,
+        $captureSelection
     );
     if ($candidates === []) {
         return [];
@@ -16324,12 +16463,13 @@ function extract_configured_rule_set_field_matches(
     $usesValuePattern = normalize_extraction_field_use_value_pattern($runtimeRuleSet['useValuePattern'] ?? null, $valuePattern)
         && $valuePattern !== '';
     $combineSplitAmountParts = $valueType === 'amount' && extraction_field_value_pattern_uses_semantic_amount_parts($valuePattern);
+    $captureSelection = extraction_field_rule_set_capture_selection($runtimeRuleSet, $valueType);
 
     $preferCaptureGroupValue = true;
     $candidateExtractor = match ($valueType) {
         'amount' => 'amount_candidates_from_text',
-        default => static function (string $text, int $offsetBase) use ($valuePattern, $preferCaptureGroupValue): array {
-            return extraction_field_pattern_candidates_from_text($text, $valuePattern, true, $offsetBase, $preferCaptureGroupValue);
+        default => static function (string $text, int $offsetBase) use ($valuePattern, $preferCaptureGroupValue, $captureSelection): array {
+            return extraction_field_pattern_candidates_from_text($text, $valuePattern, true, $offsetBase, $preferCaptureGroupValue, false, $captureSelection);
         },
     };
 
@@ -16357,7 +16497,8 @@ function extract_configured_rule_set_field_matches(
                     $valuePattern,
                     $preferCaptureGroupValue,
                     $lineGeometries,
-                    $combineSplitAmountParts
+                    $combineSplitAmountParts,
+                    $captureSelection
                 ),
                 $scopeDebug
             );
@@ -16385,7 +16526,8 @@ function extract_configured_rule_set_field_matches(
             $positionSettings,
             $lineGeometries,
             $labelsAreRegex,
-            $combineSplitAmountParts
+            $combineSplitAmountParts,
+            $captureSelection
         ), $scopeDebug);
     }
 
@@ -16705,6 +16847,7 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                             },
                             is_array($match['noiseSegments'] ?? null) ? $match['noiseSegments'] : []
                         ), static fn ($segment): bool => is_array($segment))),
+                        'captureRanges' => is_array($match['captureRanges'] ?? null) ? $match['captureRanges'] : [],
                     ];
                 },
                 array_values(array_filter($matchesForMeta, static fn ($match): bool => is_array($match)))

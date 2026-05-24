@@ -16959,6 +16959,111 @@ function buildInspectionMatchPattern(value, isRegex) {
   }).join('');
 }
 
+function parseRegexCaptureGroups(pattern) {
+  const source = String(pattern || '');
+  const groups = [];
+  let escaped = false;
+  let inClass = false;
+  let captureIndex = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '[') {
+      inClass = true;
+      continue;
+    }
+    if (char === ']' && inClass) {
+      inClass = false;
+      continue;
+    }
+    if (inClass || char !== '(') {
+      continue;
+    }
+
+    const next = source[index + 1] || '';
+    let name = '';
+    let isCapture = true;
+    if (next === '?') {
+      const marker = source[index + 2] || '';
+      if (marker === '<') {
+        const lookMarker = source[index + 3] || '';
+        if (lookMarker === '=' || lookMarker === '!') {
+          isCapture = false;
+        } else {
+          const closeIndex = source.indexOf('>', index + 3);
+          if (closeIndex > index) {
+            name = source.slice(index + 3, closeIndex);
+          }
+        }
+      } else if (marker === "'") {
+        const closeIndex = source.indexOf("'", index + 3);
+        if (closeIndex > index) {
+          name = source.slice(index + 3, closeIndex);
+        }
+      } else {
+        isCapture = false;
+      }
+    }
+    if (!isCapture) {
+      continue;
+    }
+    captureIndex += 1;
+    groups.push({
+      index: captureIndex,
+      name,
+      start: index,
+      end: findRegexGroupEnd(source, index),
+    });
+  }
+  return groups;
+}
+
+function findRegexGroupEnd(source, openIndex) {
+  let escaped = false;
+  let inClass = false;
+  let depth = 0;
+  for (let index = openIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '[') {
+      inClass = true;
+      continue;
+    }
+    if (char === ']' && inClass) {
+      inClass = false;
+      continue;
+    }
+    if (inClass) {
+      continue;
+    }
+    if (char === '(') {
+      depth += 1;
+      continue;
+    }
+    if (char === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+  }
+  return openIndex + 1;
+}
+
 function whitespaceFlexibleRegexPattern(value) {
   const chars = Array.from(String(value || ''));
   let output = '';
@@ -22229,6 +22334,9 @@ function defaultExtractionFieldRuleSet() {
     normalizationReplacements: [],
     datePosition: 'first',
     amountPosition: 'first',
+    captureGroup: null,
+    amountWholeGroup: null,
+    amountFractionGroup: null,
     scope: null,
   };
 }
@@ -22375,6 +22483,14 @@ function sanitizeExtractionFieldPosition(value) {
   return normalized === 'second' || normalized === 'last' ? normalized : 'first';
 }
 
+function sanitizeExtractionFieldCaptureGroup(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function sanitizeExtractionFieldSearchTerm(term, legacyIsRegex = false) {
   if (term && typeof term === 'object' && !Array.isArray(term)) {
     const text = String(term.text || term.value || '').trim();
@@ -22493,6 +22609,9 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
     normalizationReplacements,
     datePosition: sanitizeExtractionFieldPosition(hasExplicitRuleSet ? input.datePosition : legacy.datePosition),
     amountPosition: sanitizeExtractionFieldPosition(hasExplicitRuleSet ? input.amountPosition : legacy.amountPosition),
+    captureGroup: sanitizeExtractionFieldCaptureGroup(hasExplicitRuleSet ? input.captureGroup : legacy.captureGroup),
+    amountWholeGroup: sanitizeExtractionFieldCaptureGroup(hasExplicitRuleSet ? input.amountWholeGroup : legacy.amountWholeGroup),
+    amountFractionGroup: sanitizeExtractionFieldCaptureGroup(hasExplicitRuleSet ? input.amountFractionGroup : legacy.amountFractionGroup),
     scope,
   };
 }
@@ -25889,9 +26008,18 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         return currentPattern !== '' ? buildInspectionMatchPattern(currentPattern, true) : '';
       });
       const valuePatternInputWrap = createInlineInputWithAccessories(valuePatternInput, [valuePatternCopyButton], 'extraction-field-alias-input-wrap');
+      valuePatternInputWrap.classList.add('extraction-field-capture-highlight-wrap');
+      const valuePatternHighlightLayer = document.createElement('div');
+      valuePatternHighlightLayer.className = 'extraction-field-capture-highlight-layer';
+      const valuePatternHighlightText = document.createElement('div');
+      valuePatternHighlightText.className = 'extraction-field-capture-highlight-text';
+      valuePatternHighlightLayer.appendChild(valuePatternHighlightText);
+      valuePatternInputWrap.insertBefore(valuePatternHighlightLayer, valuePatternInput);
       valuePatternInput.addEventListener('input', () => {
         collection[index].ruleSets[ruleSetIndex].valuePattern = valuePatternInput.value;
+        ensureDefaultCaptureSelection();
         matchPatternInspector.refresh();
+        syncRuleSetUi();
         updateSettingsActionButtons();
       });
       const useValuePatternLabel = document.createElement('label');
@@ -25930,7 +26058,18 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       valuePatternField.appendChild(valuePatternLabel);
       valuePatternField.appendChild(valuePatternInputWrap);
       valuePatternField.appendChild(valuePatternHelpDisclosure.panel);
+
+      const valuePatternCaptureField = document.createElement('div');
+      valuePatternCaptureField.className = 'extraction-field-capture-selection';
+      const captureGroupSelect = document.createElement('select');
+      const amountWholeGroupSelect = document.createElement('select');
+      const amountFractionGroupSelect = document.createElement('select');
+      const captureGroupField = createFloatingField('Extrahera', captureGroupSelect, 'extraction-field-capture-select-field');
+      const amountWholeGroupField = createFloatingField('Kronor', amountWholeGroupSelect, 'extraction-field-capture-select-field');
+      const amountFractionGroupField = createFloatingField('Ören', amountFractionGroupSelect, 'extraction-field-capture-select-field');
+      valuePatternCaptureField.append(captureGroupField, amountWholeGroupField, amountFractionGroupField);
       valuePatternOptionBlock.appendChild(valuePatternField);
+      valuePatternOptionBlock.appendChild(valuePatternCaptureField);
       optionalControls.appendChild(valuePatternOptionBlock);
 
       matchPatternInspector.registerInput({
@@ -25948,6 +26087,106 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         },
         getPreviewValue: (original) => (original !== '' ? buildInspectionMatchPattern(original, scopeIsRegex === true) : ''),
       });
+
+      const groupLabel = (group) => `Grupp ${group.index}${group.name ? ` (${group.name})` : ''}`;
+      const replaceSelectOptions = (select, options, selectedValue) => {
+        const nextValue = selectedValue === null || selectedValue === undefined ? '' : String(selectedValue);
+        select.innerHTML = '';
+        options.forEach((optionData) => {
+          const option = document.createElement('option');
+          option.value = String(optionData.value);
+          option.textContent = optionData.label;
+          select.appendChild(option);
+        });
+        select.value = Array.from(select.options).some((option) => option.value === nextValue)
+          ? nextValue
+          : (select.options[0] ? select.options[0].value : '');
+      };
+      const renderCaptureGroupHighlight = (groups, valueType, selectedGroups, pattern) => {
+        valuePatternHighlightText.replaceChildren();
+        const source = String(pattern || '');
+        if (source === '' || groups.length === 0) {
+          valuePatternHighlightText.appendChild(document.createTextNode(source));
+          return;
+        }
+        const selectedSet = new Set(
+          (valueType === 'amount'
+            ? [selectedGroups.amountWholeGroup, selectedGroups.amountFractionGroup]
+            : [selectedGroups.captureGroup])
+            .filter((value) => Number.isInteger(value) && value > 0)
+        );
+        let cursor = 0;
+        groups.forEach((group) => {
+          if (group.start > cursor) {
+            valuePatternHighlightText.appendChild(document.createTextNode(source.slice(cursor, group.start)));
+          }
+          const span = document.createElement('span');
+          span.className = 'extraction-field-capture-highlight-group';
+          span.classList.toggle('is-selected', selectedSet.has(group.index));
+          span.textContent = source.slice(group.start, group.end);
+          span.title = groupLabel(group);
+          valuePatternHighlightText.appendChild(span);
+          cursor = Math.max(cursor, group.end);
+        });
+        if (cursor < source.length) {
+          valuePatternHighlightText.appendChild(document.createTextNode(source.slice(cursor)));
+        }
+      };
+      const syncValuePatternHighlightScroll = () => {
+        valuePatternHighlightText.style.transform = `translateX(${-valuePatternInput.scrollLeft}px)`;
+      };
+      const ensureDefaultCaptureSelection = () => {
+        const groups = parseRegexCaptureGroups(valuePatternInput.value);
+        if (groups.length === 0) {
+          return;
+        }
+        const valueType = sanitizeExtractionFieldValueType(collection[index]?.valueType, collection[index], ruleSet);
+        if (valueType === 'amount') {
+          if (collection[index].ruleSets[ruleSetIndex].amountWholeGroup === null || collection[index].ruleSets[ruleSetIndex].amountWholeGroup === undefined) {
+            collection[index].ruleSets[ruleSetIndex].amountWholeGroup = 1;
+          }
+          if (collection[index].ruleSets[ruleSetIndex].amountFractionGroup === null || collection[index].ruleSets[ruleSetIndex].amountFractionGroup === undefined) {
+            collection[index].ruleSets[ruleSetIndex].amountFractionGroup = groups.length >= 2 ? 2 : 1;
+          }
+        } else if (collection[index].ruleSets[ruleSetIndex].captureGroup === null || collection[index].ruleSets[ruleSetIndex].captureGroup === undefined) {
+          collection[index].ruleSets[ruleSetIndex].captureGroup = 0;
+        }
+      };
+      const syncCaptureGroupUi = (valueType, useValuePattern) => {
+        const previewPattern = valuePatternInput.value;
+        const groups = parseRegexCaptureGroups(previewPattern);
+        const show = useValuePattern && groups.length > 0;
+        valuePatternCaptureField.hidden = !show;
+        if (!show) {
+          renderCaptureGroupHighlight([], valueType, {}, previewPattern);
+          syncValuePatternHighlightScroll();
+          return;
+        }
+
+        const ruleSetDraft = collection[index].ruleSets[ruleSetIndex];
+        if (valueType === 'amount') {
+          captureGroupField.hidden = true;
+          amountWholeGroupField.hidden = false;
+          amountFractionGroupField.hidden = false;
+          const amountOptions = groups.map((group) => ({ value: group.index, label: groupLabel(group) }));
+          replaceSelectOptions(amountWholeGroupSelect, amountOptions, sanitizeExtractionFieldCaptureGroup(ruleSetDraft.amountWholeGroup) ?? 1);
+          replaceSelectOptions(amountFractionGroupSelect, amountOptions, sanitizeExtractionFieldCaptureGroup(ruleSetDraft.amountFractionGroup) ?? (groups.length >= 2 ? 2 : 1));
+        } else {
+          captureGroupField.hidden = false;
+          amountWholeGroupField.hidden = true;
+          amountFractionGroupField.hidden = true;
+          replaceSelectOptions(captureGroupSelect, [
+            { value: 0, label: 'Hela matchningen' },
+            ...groups.map((group) => ({ value: group.index, label: groupLabel(group) })),
+          ], sanitizeExtractionFieldCaptureGroup(ruleSetDraft.captureGroup) ?? 0);
+        }
+        renderCaptureGroupHighlight(groups, valueType, {
+          captureGroup: sanitizeExtractionFieldCaptureGroup(captureGroupSelect.value),
+          amountWholeGroup: sanitizeExtractionFieldCaptureGroup(amountWholeGroupSelect.value),
+          amountFractionGroup: sanitizeExtractionFieldCaptureGroup(amountFractionGroupSelect.value),
+        }, previewPattern);
+        syncValuePatternHighlightScroll();
+      };
       matchPatternInspector.registerInput({
         groupKey: 'static',
         inputEl: valuePatternInput,
@@ -25956,7 +26195,12 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         previewPlaceholder: 'Genererat matchningsmönster',
         getOriginalValue: () => String(collection[index].ruleSets[ruleSetIndex]?.valuePattern || '').trim(),
         getPreviewValue: (original) => (original !== '' ? buildInspectionMatchPattern(original, true) : ''),
+        syncLayout: () => {
+          const valueType = sanitizeExtractionFieldValueType(collection[index]?.valueType, collection[index], ruleSet);
+          syncCaptureGroupUi(valueType, useValuePatternCheckbox.checked);
+        },
       });
+      valuePatternInput.addEventListener('scroll', syncValuePatternHighlightScroll);
 
       const interpretationRow = document.createElement('div');
       interpretationRow.className = 'extraction-field-interpretation-row';
@@ -26154,6 +26398,16 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         searchOptionBlock.classList.toggle('is-active', requiresSearchTermsCheckbox.checked);
         scopeOptionBlock.classList.toggle('is-active', scopeCheckbox.checked);
         valuePatternOptionBlock.classList.toggle('is-active', useValuePatternCheckbox.checked);
+        syncCaptureGroupUi(valueType, useValuePatternCheckbox.checked);
+        collection[index].ruleSets[ruleSetIndex].captureGroup = valueType === 'amount' || valuePatternCaptureField.hidden
+          ? null
+          : sanitizeExtractionFieldCaptureGroup(captureGroupSelect.value);
+        collection[index].ruleSets[ruleSetIndex].amountWholeGroup = valueType === 'amount' && !valuePatternCaptureField.hidden
+          ? sanitizeExtractionFieldCaptureGroup(amountWholeGroupSelect.value)
+          : null;
+        collection[index].ruleSets[ruleSetIndex].amountFractionGroup = valueType === 'amount' && !valuePatternCaptureField.hidden
+          ? sanitizeExtractionFieldCaptureGroup(amountFractionGroupSelect.value)
+          : null;
         const showPatternPositions = !useValuePatternCheckbox.checked && valueType !== 'text';
         datePositionField.hidden = !(showPatternPositions && valueType === 'date');
         amountPositionField.hidden = !(showPatternPositions && valueType === 'amount');
@@ -26201,6 +26455,18 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       normalizationCharsInput.addEventListener('input', syncRuleSetUi);
       datePositionSelect.addEventListener('change', syncRuleSetUi);
       amountPositionSelect.addEventListener('change', syncRuleSetUi);
+      captureGroupSelect.addEventListener('change', () => {
+        collection[index].ruleSets[ruleSetIndex].captureGroup = sanitizeExtractionFieldCaptureGroup(captureGroupSelect.value);
+        syncRuleSetUi();
+      });
+      amountWholeGroupSelect.addEventListener('change', () => {
+        collection[index].ruleSets[ruleSetIndex].amountWholeGroup = sanitizeExtractionFieldCaptureGroup(amountWholeGroupSelect.value);
+        syncRuleSetUi();
+      });
+      amountFractionGroupSelect.addEventListener('change', () => {
+        collection[index].ruleSets[ruleSetIndex].amountFractionGroup = sanitizeExtractionFieldCaptureGroup(amountFractionGroupSelect.value);
+        syncRuleSetUi();
+      });
 
       if (ruleSets.length > 1) {
         removeRuleSetButton = createTrashButton({
@@ -26241,6 +26507,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         useValuePattern: baseRuleSet.useValuePattern,
         datePosition: baseRuleSet.datePosition,
         amountPosition: baseRuleSet.amountPosition,
+        captureGroup: null,
+        amountWholeGroup: null,
+        amountFractionGroup: null,
       });
       collection[index].ruleSets = nextRuleSets;
       renderExtractionFieldsEditor();

@@ -188,6 +188,9 @@ final class ExtractionFieldRepository
                 normalization_type,
                 normalization_chars,
                 normalization_replacements_json,
+                capture_group,
+                amount_whole_group,
+                amount_fraction_group,
                 date_position,
                 amount_position,
                 sort_order,
@@ -204,6 +207,9 @@ final class ExtractionFieldRepository
                 :normalization_type,
                 :normalization_chars,
                 :normalization_replacements_json,
+                :capture_group,
+                :amount_whole_group,
+                :amount_fraction_group,
                 :date_position,
                 :amount_position,
                 :sort_order,
@@ -328,6 +334,9 @@ final class ExtractionFieldRepository
                         ':normalization_type' => is_string($ruleSet['normalizationType'] ?? null) ? trim((string) $ruleSet['normalizationType']) : 'none',
                         ':normalization_chars' => is_string($ruleSet['normalizationChars'] ?? null) ? (string) $ruleSet['normalizationChars'] : '',
                         ':normalization_replacements_json' => $normalizationReplacementsJson,
+                        ':capture_group' => $this->normalizeCaptureGroupForStorage($ruleSet['captureGroup'] ?? null),
+                        ':amount_whole_group' => $this->normalizeCaptureGroupForStorage($ruleSet['amountWholeGroup'] ?? null),
+                        ':amount_fraction_group' => $this->normalizeCaptureGroupForStorage($ruleSet['amountFractionGroup'] ?? null),
                         ':date_position' => is_string($ruleSet['datePosition'] ?? null) && in_array(trim(strtolower((string) $ruleSet['datePosition'])), ['first', 'second', 'last'], true)
                             ? trim(strtolower((string) $ruleSet['datePosition']))
                             : 'first',
@@ -410,6 +419,9 @@ final class ExtractionFieldRepository
                 normalization_type,
                 normalization_chars,
                 normalization_replacements_json,
+                capture_group,
+                amount_whole_group,
+                amount_fraction_group,
                 date_position,
                 amount_position,
                 sort_order,
@@ -475,6 +487,9 @@ final class ExtractionFieldRepository
                 'normalizationType' => is_string($row['normalization_type'] ?? null) ? trim((string) $row['normalization_type']) : 'none',
                 'normalizationChars' => is_string($row['normalization_chars'] ?? null) ? (string) $row['normalization_chars'] : '',
                 'normalizationReplacements' => $this->normalizeNormalizationReplacementsForStorage($normalizationReplacements),
+                'captureGroup' => $this->normalizeCaptureGroupForOutput($row['capture_group'] ?? null),
+                'amountWholeGroup' => $this->normalizeCaptureGroupForOutput($row['amount_whole_group'] ?? null),
+                'amountFractionGroup' => $this->normalizeCaptureGroupForOutput($row['amount_fraction_group'] ?? null),
                 'datePosition' => is_string($row['date_position'] ?? null) ? trim(strtolower((string) $row['date_position'])) : 'first',
                 'amountPosition' => is_string($row['amount_position'] ?? null) ? trim(strtolower((string) $row['amount_position'])) : 'first',
             ];
@@ -571,6 +586,23 @@ final class ExtractionFieldRepository
             'amount' => 'amount',
             default => 'regex',
         };
+    }
+
+    private function normalizeCaptureGroupForStorage(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_numeric($value)) {
+            return null;
+        }
+        $group = (int) $value;
+        return $group >= 0 ? $group : null;
+    }
+
+    private function normalizeCaptureGroupForOutput(mixed $value): ?int
+    {
+        return $this->normalizeCaptureGroupForStorage($value);
     }
 
     private function normalizeScope(string $scope): string
