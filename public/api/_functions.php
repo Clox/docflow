@@ -12853,19 +12853,23 @@ function candidate_confidence_components(
     string $scope,
     array $positionSettings = [],
     array $lineGeometries = [],
-    ?string $candidateSpanText = null
+    ?string $candidateSpanText = null,
+    ?int $contextStart = null,
+    ?string $contextSpanText = null
 ): array
 {
     $settings = normalize_matching_position_adjustment_settings($positionSettings);
 
     $base = 1.0;
     $betweenText = candidate_between_text($hit, $candidateLine, $candidateStart, $candidateLineIndex);
+    $noiseStart = is_int($contextStart) && $contextStart >= 0 ? $contextStart : $candidateStart;
+    $noiseSpanText = is_string($contextSpanText) && $contextSpanText !== '' ? $contextSpanText : $candidateSpanText;
 
     $noiseDetails = candidate_noise_details(
         $hit,
-        $candidateStart,
+        $noiseStart,
         $candidateLineIndex,
-        $candidateSpanText,
+        $noiseSpanText,
         $lineGeometries
     );
     $noiseText = is_string($noiseDetails['text'] ?? null) ? (string) $noiseDetails['text'] : '';
@@ -12925,6 +12929,19 @@ function candidate_confidence_components(
     ];
 }
 
+function extraction_field_candidate_match_context(array $candidate, int $fallbackStart, ?string $fallbackSpanText): array
+{
+    $matchStart = is_int($candidate['matchStart'] ?? null) ? (int) $candidate['matchStart'] : $fallbackStart;
+    $matchText = is_string($candidate['matchText'] ?? null) && (string) $candidate['matchText'] !== ''
+        ? (string) $candidate['matchText']
+        : $fallbackSpanText;
+
+    return [
+        'start' => $matchStart >= 0 ? $matchStart : $fallbackStart,
+        'spanText' => $matchText,
+    ];
+}
+
 function select_best_labeled_candidate(
     array $lines,
     array $labels,
@@ -12973,6 +12990,7 @@ function select_best_labeled_candidate(
                     $spanText = is_string($candidate['spanText'] ?? null)
                         ? (string) $candidate['spanText']
                         : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                    $matchContext = extraction_field_candidate_match_context($candidate, $start, $spanText);
                     $components = candidate_confidence_components(
                         $hit,
                         $line,
@@ -12981,7 +12999,9 @@ function select_best_labeled_candidate(
                         'tail',
                         $positionSettings,
                         $lineGeometries,
-                        $spanText
+                        $spanText,
+                        is_int($matchContext['start'] ?? null) ? (int) $matchContext['start'] : null,
+                        is_string($matchContext['spanText'] ?? null) ? (string) $matchContext['spanText'] : null
                     );
                     $confidence = candidate_confidence_score($components);
                     if ($confidence > (float) $best['confidence']) {
@@ -13015,6 +13035,7 @@ function select_best_labeled_candidate(
                 $spanText = is_string($candidate['spanText'] ?? null)
                     ? (string) $candidate['spanText']
                     : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                $matchContext = extraction_field_candidate_match_context($candidate, $start, $spanText);
                 $components = candidate_confidence_components(
                     $hit,
                     $line,
@@ -13023,7 +13044,9 @@ function select_best_labeled_candidate(
                     'line',
                     $positionSettings,
                     $lineGeometries,
-                    $spanText
+                    $spanText,
+                    is_int($matchContext['start'] ?? null) ? (int) $matchContext['start'] : null,
+                    is_string($matchContext['spanText'] ?? null) ? (string) $matchContext['spanText'] : null
                 );
                 $confidence = candidate_confidence_score($components);
                 if ($confidence > (float) $best['confidence']) {
@@ -13066,6 +13089,7 @@ function select_best_labeled_candidate(
                 $spanText = is_string($candidate['spanText'] ?? null)
                     ? (string) $candidate['spanText']
                     : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                $matchContext = extraction_field_candidate_match_context($candidate, $start, $spanText);
                 $components = candidate_confidence_components(
                     $hit,
                     $nearLine,
@@ -13074,7 +13098,9 @@ function select_best_labeled_candidate(
                     'nearby',
                     $positionSettings,
                     $lineGeometries,
-                    $spanText
+                    $spanText,
+                    is_int($matchContext['start'] ?? null) ? (int) $matchContext['start'] : null,
+                    is_string($matchContext['spanText'] ?? null) ? (string) $matchContext['spanText'] : null
                 );
                 $confidence = candidate_confidence_score($components);
                 if ($confidence > (float) $best['confidence']) {
@@ -14297,6 +14323,7 @@ function extraction_field_pattern_candidates_from_text(
                     'value' => $value,
                     'raw' => $extractedRaw,
                     'matchText' => $raw,
+                    'matchStart' => $offsetBase + $start,
                     'start' => $offsetBase + $valueStart,
                     'spanText' => $extractedRaw,
                     'matchType' => 'pattern',
@@ -14312,6 +14339,7 @@ function extraction_field_pattern_candidates_from_text(
             'value' => $value,
             'raw' => $extractedRaw,
             'matchText' => $raw,
+            'matchStart' => $offsetBase + $start,
             'start' => $offsetBase + $valueStart,
             'spanText' => $hasExplicitCaptureSelection ? $extractedRaw : $raw,
             'matchType' => 'pattern',
@@ -15080,6 +15108,10 @@ function collect_labeled_candidate_matches(
                         continue;
                     }
 
+                    $spanText = is_string($candidate['spanText'] ?? null)
+                        ? (string) $candidate['spanText']
+                        : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                    $matchContext = extraction_field_candidate_match_context($candidate, $start, $spanText);
                     $confidenceComponents = candidate_confidence_components(
                         $hit,
                         $line,
@@ -15088,9 +15120,9 @@ function collect_labeled_candidate_matches(
                         'tail',
                         $positionSettings,
                         $lineGeometries,
-                        is_string($candidate['spanText'] ?? null)
-                            ? (string) $candidate['spanText']
-                            : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null))
+                        $spanText,
+                        is_int($matchContext['start'] ?? null) ? (int) $matchContext['start'] : null,
+                        is_string($matchContext['spanText'] ?? null) ? (string) $matchContext['spanText'] : null
                     );
 
                     add_extraction_field_match(
@@ -15146,6 +15178,10 @@ function collect_labeled_candidate_matches(
                     continue;
                 }
 
+                $spanText = is_string($candidate['spanText'] ?? null)
+                    ? (string) $candidate['spanText']
+                    : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                $matchContext = extraction_field_candidate_match_context($candidate, $start, $spanText);
                 $confidenceComponents = candidate_confidence_components(
                     $hit,
                     $line,
@@ -15154,9 +15190,9 @@ function collect_labeled_candidate_matches(
                     'line',
                     $positionSettings,
                     $lineGeometries,
-                    is_string($candidate['spanText'] ?? null)
-                        ? (string) $candidate['spanText']
-                        : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null))
+                    $spanText,
+                    is_int($matchContext['start'] ?? null) ? (int) $matchContext['start'] : null,
+                    is_string($matchContext['spanText'] ?? null) ? (string) $matchContext['spanText'] : null
                 );
 
                 add_extraction_field_match(
@@ -15221,6 +15257,10 @@ function collect_labeled_candidate_matches(
                     continue;
                 }
 
+                $spanText = is_string($candidate['spanText'] ?? null)
+                    ? (string) $candidate['spanText']
+                    : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                $matchContext = extraction_field_candidate_match_context($candidate, $start, $spanText);
                 $confidenceComponents = candidate_confidence_components(
                     $hit,
                     $nearLine,
@@ -15229,9 +15269,9 @@ function collect_labeled_candidate_matches(
                     'nearby',
                     $positionSettings,
                     $lineGeometries,
-                    is_string($candidate['spanText'] ?? null)
-                        ? (string) $candidate['spanText']
-                        : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null))
+                    $spanText,
+                    is_int($matchContext['start'] ?? null) ? (int) $matchContext['start'] : null,
+                    is_string($matchContext['spanText'] ?? null) ? (string) $matchContext['spanText'] : null
                 );
 
                 add_extraction_field_match(
@@ -15350,6 +15390,7 @@ function add_anchored_extraction_field_match(
     $spanText = is_string($candidate['spanText'] ?? null)
         ? (string) $candidate['spanText']
         : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+    $matchContext = extraction_field_candidate_match_context($candidate, $start, $spanText);
     $hitLineIndex = is_int($hit['index'] ?? null) ? (int) $hit['index'] : $candidateLineIndex;
     $confidenceComponents = candidate_confidence_components(
         $hit,
@@ -15359,7 +15400,9 @@ function add_anchored_extraction_field_match(
         $source,
         $positionSettings,
         $lineGeometries,
-        $spanText
+        $spanText,
+        is_int($matchContext['start'] ?? null) ? (int) $matchContext['start'] : null,
+        is_string($matchContext['spanText'] ?? null) ? (string) $matchContext['spanText'] : null
     );
     $zoneMatches = is_array($positionSettings['zoneMatches'] ?? null) ? $positionSettings['zoneMatches'] : [];
     if (candidate_is_rejected_by_zone_barrier($hit, $start, $candidateLineIndex, $spanText, $lineGeometries, $zoneMatches)) {
@@ -15586,6 +15629,7 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                 $spanText = is_string($candidate['spanText'] ?? null)
                     ? (string) $candidate['spanText']
                     : (is_string($raw) && $raw !== '' ? $raw : (is_scalar($value) ? (string) $value : null));
+                $matchContext = extraction_field_candidate_match_context($candidate, $start, $spanText);
                 $zoneMatches = is_array($positionSettings['zoneMatches'] ?? null) ? $positionSettings['zoneMatches'] : [];
                 if (candidate_is_rejected_by_zone_barrier($hit, $start, $candidateLineIndex, $spanText, $lineGeometries, $zoneMatches)) {
                     continue;
@@ -15598,7 +15642,9 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                     $candidateLineIndex === $hitIndex ? 'line' : 'nearby',
                     $positionSettings,
                     $lineGeometries,
-                    $spanText
+                    $spanText,
+                    is_int($matchContext['start'] ?? null) ? (int) $matchContext['start'] : null,
+                    is_string($matchContext['spanText'] ?? null) ? (string) $matchContext['spanText'] : null
                 );
 
                 add_extraction_field_match(
