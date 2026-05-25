@@ -1721,6 +1721,19 @@ function createJobDataFieldSummaryChip(label, value, title = '') {
   return chipEl;
 }
 
+function createJobDataFieldNameChip(label, title = '') {
+  const chipEl = document.createElement('span');
+  chipEl.className = 'job-labels-summary-chip job-labels-summary-chip--data-field snapshot-compare-task-chip';
+  if (typeof title === 'string' && title.trim() !== '') {
+    chipEl.title = title.trim();
+  }
+  const keyEl = document.createElement('span');
+  keyEl.className = 'job-labels-summary-data-field-key';
+  keyEl.textContent = label;
+  chipEl.appendChild(keyEl);
+  return chipEl;
+}
+
 function jobLabelsSummaryItems(job) {
   const items = [];
   normalizeSelectedLabelIds(effectiveSelectedLabelIds(job))
@@ -7253,12 +7266,32 @@ function createSnapshotCompareValue(value, options = {}) {
   return text;
 }
 
+function appendSnapshotCompareTaskContent(fieldEl, fieldLabel, options = {}) {
+  if (options.taskType === 'dataField') {
+    fieldEl.appendChild(createJobDataFieldNameChip(options.label || fieldLabel));
+    return;
+  }
+  if (options.taskType === 'label') {
+    fieldEl.appendChild(createJobLabelsSummaryChip(options.label || fieldLabel, 'job-labels-summary-chip'));
+    return;
+  }
+  const labelEl = document.createElement('span');
+  labelEl.textContent = fieldLabel;
+  fieldEl.appendChild(labelEl);
+  if (options.unchanged === true) {
+    const badge = document.createElement('span');
+    badge.className = 'snapshot-compare-unchanged-badge';
+    badge.textContent = 'Oförändrat';
+    fieldEl.appendChild(badge);
+  }
+}
+
 function appendSnapshotCompareTableRow(table, fieldLabel, oldValue, newValue, options = {}) {
   const row = document.createElement('div');
   row.className = 'snapshot-compare-table-row';
   const field = document.createElement('div');
   field.className = 'snapshot-compare-table-field';
-  field.textContent = fieldLabel;
+  appendSnapshotCompareTaskContent(field, fieldLabel, options);
   const oldCell = document.createElement('div');
   oldCell.className = 'snapshot-compare-table-cell';
   oldCell.appendChild(createSnapshotCompareValue(oldValue, {
@@ -7276,11 +7309,20 @@ function appendSnapshotCompareTableRow(table, fieldLabel, oldValue, newValue, op
 }
 
 function formatSnapshotCandidateConfidence(candidate) {
-  const confidence = candidate && Number.isFinite(Number(candidate.confidence)) ? Number(candidate.confidence) : null;
+  const confidence = candidate && Number.isFinite(Number(candidate.finalConfidence))
+    ? Number(candidate.finalConfidence)
+    : (candidate && Number.isFinite(Number(candidate.confidence)) ? Number(candidate.confidence) : null);
   if (confidence === null) {
     return '';
   }
   return `${(confidence * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
+}
+
+function createSnapshotCompareCandidateValueChip(value) {
+  const chipEl = document.createElement('span');
+  chipEl.className = 'job-labels-summary-data-field-value snapshot-compare-candidate-value-chip';
+  chipEl.textContent = value;
+  return chipEl;
 }
 
 function createSnapshotCompareCandidateValue(candidate, fieldName) {
@@ -7295,48 +7337,66 @@ function createSnapshotCompareCandidateValue(candidate, fieldName) {
 
   const wrapper = document.createElement('span');
   wrapper.className = 'snapshot-compare-candidate-value';
-  wrapper.appendChild(createJobDataFieldSummaryChip(fieldName || 'Datafält', value));
+  wrapper.appendChild(createSnapshotCompareCandidateValueChip(value));
+  if (candidate.selected === true) {
+    const badge = document.createElement('span');
+    badge.className = 'snapshot-compare-candidate-selected-badge';
+    badge.textContent = '✓';
+    badge.title = 'Vald kandidat';
+    badge.setAttribute('aria-label', 'Vald kandidat');
+    wrapper.appendChild(badge);
+  }
 
-  const details = [];
   const confidence = formatSnapshotCandidateConfidence(candidate);
-  if (confidence !== '') {
-    details.push(confidence);
-  }
   const searchTerm = typeof candidate.searchTerm === 'string' ? candidate.searchTerm.trim() : '';
-  if (searchTerm !== '') {
-    details.push(`söktext: ${searchTerm}`);
-  }
-  const labelText = typeof candidate.labelText === 'string' ? candidate.labelText.trim() : '';
-  if (labelText !== '' && labelText !== searchTerm) {
-    details.push(`etikett: ${labelText}`);
-  }
-  const pageNumber = Number.isInteger(candidate.pageNumber) ? candidate.pageNumber : null;
-  if (pageNumber !== null) {
-    details.push(`sida ${pageNumber}`);
-  }
 
-  if (details.length > 0) {
+  if (confidence !== '') {
     const detailEl = document.createElement('span');
     detailEl.className = 'snapshot-compare-candidate-details';
-    detailEl.textContent = details.join(' · ');
+    if (searchTerm !== '') {
+      detailEl.title = `Matchning: ${searchTerm}`;
+    }
+    detailEl.textContent = confidence;
     wrapper.appendChild(detailEl);
   }
 
   return wrapper;
 }
 
-function appendSnapshotCompareCandidateRow(table, fieldLabel, oldCandidate, newCandidate, options = {}) {
+function createSnapshotCompareCandidateList(candidates, fieldName) {
+  const list = Array.isArray(candidates)
+    ? candidates.filter((candidate) => candidate && typeof candidate === 'object')
+    : [];
+  if (list.length === 0) {
+    return createSnapshotCompareMissingValue();
+  }
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'snapshot-compare-candidate-list';
+  list.forEach((candidate) => {
+    const item = document.createElement('div');
+    item.className = 'snapshot-compare-candidate-list-item';
+    if (candidate.selected === true) {
+      item.classList.add('is-selected');
+    }
+    item.appendChild(createSnapshotCompareCandidateValue(candidate, fieldName));
+    wrapper.appendChild(item);
+  });
+  return wrapper;
+}
+
+function appendSnapshotCompareCandidateListRow(table, fieldLabel, oldCandidates, newCandidates, options = {}) {
   const row = document.createElement('div');
-  row.className = 'snapshot-compare-table-row';
+  row.className = 'snapshot-compare-table-row snapshot-compare-table-row--candidate-list';
   const field = document.createElement('div');
   field.className = 'snapshot-compare-table-field';
-  field.textContent = fieldLabel;
+  appendSnapshotCompareTaskContent(field, fieldLabel, { ...options, taskType: 'dataField' });
   const oldCell = document.createElement('div');
   oldCell.className = 'snapshot-compare-table-cell';
-  oldCell.appendChild(createSnapshotCompareCandidateValue(oldCandidate, options.oldLabel || options.label || fieldLabel));
+  oldCell.appendChild(createSnapshotCompareCandidateList(oldCandidates, options.oldLabel || options.label || fieldLabel));
   const newCell = document.createElement('div');
   newCell.className = 'snapshot-compare-table-cell';
-  newCell.appendChild(createSnapshotCompareCandidateValue(newCandidate, options.newLabel || options.label || fieldLabel));
+  newCell.appendChild(createSnapshotCompareCandidateList(newCandidates, options.newLabel || options.label || fieldLabel));
   row.append(field, oldCell, newCell);
   table.appendChild(row);
 }
@@ -7370,96 +7430,28 @@ function createOcrDebugMetadataDiffRow(diff, sides) {
   });
   table.appendChild(tableHead);
 
-  const oldTitle = snapshotCompareDocumentTitle(diff, oldSide);
-  const newTitle = snapshotCompareDocumentTitle(diff, newSide);
-  if (oldTitle !== '' || newTitle !== '') {
-    appendSnapshotCompareTableRow(table, 'Filnamn', oldTitle, newTitle);
-  }
-
   const scalarDiffs = Array.isArray(diff && diff.metadata) ? diff.metadata : [];
   scalarDiffs.forEach((item) => {
+    if (item && item.key === 'filename') {
+      return;
+    }
     const label = item && typeof item.label === 'string' && item.label.trim() !== ''
       ? item.label.trim()
       : String(item && item.key || 'Uppgift');
     const from = item && typeof item.from === 'string' ? item.from : '';
     const to = item && typeof item.to === 'string' ? item.to : '';
-    appendSnapshotCompareTableRow(table, label, oldSide === 'left' ? from : to, oldSide === 'left' ? to : from);
+    appendSnapshotCompareTableRow(table, label, oldSide === 'left' ? from : to, oldSide === 'left' ? to : from, {
+      unchanged: item && item.unchanged === true,
+    });
   });
 
   const dataFields = Array.isArray(diff && diff.dataFields) ? diff.dataFields : [];
   dataFields.forEach((field) => {
     const name = field && typeof field.name === 'string' && field.name.trim() !== '' ? field.name.trim() : String(field && field.key || '');
-    const canonicalChanged = field && field.canonicalChanged && typeof field.canonicalChanged === 'object'
-      ? field.canonicalChanged
-      : null;
-    if (canonicalChanged) {
-      const from = typeof canonicalChanged.from === 'string' ? canonicalChanged.from : '';
-      const to = typeof canonicalChanged.to === 'string' ? canonicalChanged.to : '';
-      appendSnapshotCompareTableRow(table, `${name}: kanoniskt värde`, oldSide === 'left' ? from : to, oldSide === 'left' ? to : from, {
-        type: 'dataField',
-        label: name,
-      });
-    }
-    const changed = Array.isArray(field && field.changed) ? field.changed : [];
-    changed.forEach((item) => {
-      const from = item && typeof item.from === 'string' ? item.from : '';
-      const to = item && typeof item.to === 'string' ? item.to : '';
-      appendSnapshotCompareTableRow(table, `${name}: värde`, oldSide === 'left' ? from : to, oldSide === 'left' ? to : from, {
-        type: 'dataField',
-        label: name,
-      });
-    });
-    const added = Array.isArray(field && field.added) ? field.added : [];
-    added.forEach((value) => {
-      appendSnapshotCompareTableRow(
-        table,
-        `${name}: värde tillagt`,
-        oldSide === 'left' ? '' : String(value || ''),
-        oldSide === 'left' ? String(value || '') : '',
-        { type: 'dataField', label: name }
-      );
-    });
-    const removed = Array.isArray(field && field.removed) ? field.removed : [];
-    removed.forEach((value) => {
-      appendSnapshotCompareTableRow(
-        table,
-        `${name}: värde borttaget`,
-        oldSide === 'left' ? String(value || '') : '',
-        oldSide === 'left' ? '' : String(value || ''),
-        { type: 'dataField', label: name }
-      );
-    });
-    const candidateAdded = Array.isArray(field && field.candidateAdded) ? field.candidateAdded : [];
-    candidateAdded.forEach((candidate) => {
-      appendSnapshotCompareCandidateRow(
-        table,
-        `${name}: kandidat tillagd`,
-        oldSide === 'left' ? null : candidate,
-        oldSide === 'left' ? candidate : null,
-        { label: name }
-      );
-    });
-    const candidateRemoved = Array.isArray(field && field.candidateRemoved) ? field.candidateRemoved : [];
-    candidateRemoved.forEach((candidate) => {
-      appendSnapshotCompareCandidateRow(
-        table,
-        `${name}: kandidat borttagen`,
-        oldSide === 'left' ? candidate : null,
-        oldSide === 'left' ? null : candidate,
-        { label: name }
-      );
-    });
-    const candidateChanged = Array.isArray(field && field.candidateChanged) ? field.candidateChanged : [];
-    candidateChanged.forEach((item) => {
-      const from = item && item.from && typeof item.from === 'object' ? item.from : null;
-      const to = item && item.to && typeof item.to === 'object' ? item.to : null;
-      appendSnapshotCompareCandidateRow(
-        table,
-        `${name}: kandidat ändrad`,
-        oldSide === 'left' ? from : to,
-        oldSide === 'left' ? to : from,
-        { label: name }
-      );
+    const leftCandidates = Array.isArray(field && field.leftCandidates) ? field.leftCandidates : [];
+    const rightCandidates = Array.isArray(field && field.rightCandidates) ? field.rightCandidates : [];
+    appendSnapshotCompareCandidateListRow(table, name, oldSide === 'left' ? leftCandidates : rightCandidates, oldSide === 'left' ? rightCandidates : leftCandidates, {
+      label: name,
     });
   });
 
@@ -7469,19 +7461,19 @@ function createOcrDebugMetadataDiffRow(diff, sides) {
   addedLabels.forEach((name) => {
     appendSnapshotCompareTableRow(
       table,
-      `Etikett: ${name}`,
+      name,
       oldSide === 'left' ? '' : String(name || ''),
       oldSide === 'left' ? String(name || '') : '',
-      { type: 'label' }
+      { type: 'label', taskType: 'label', label: name }
     );
   });
   removedLabels.forEach((name) => {
     appendSnapshotCompareTableRow(
       table,
-      `Etikett: ${name}`,
+      name,
       oldSide === 'left' ? String(name || '') : '',
       oldSide === 'left' ? '' : String(name || ''),
-      { type: 'label' }
+      { type: 'label', taskType: 'label', label: name }
     );
   });
 

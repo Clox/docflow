@@ -7304,29 +7304,7 @@ function debug_export_label_diff(array $leftLabels, array $rightLabels): array
 
 function debug_export_data_field_diff(array $leftFields, array $rightFields): array
 {
-    $candidateIdentity = static function (array $candidate): string {
-        $parts = [
-            'value=' . debug_export_scalar_text($candidate['value'] ?? ''),
-            'page=' . debug_export_scalar_text($candidate['pageNumber'] ?? ''),
-            'line=' . debug_export_scalar_text($candidate['lineIndex'] ?? ''),
-            'labelLine=' . debug_export_scalar_text($candidate['labelLineIndex'] ?? ''),
-            'start=' . debug_export_scalar_text($candidate['start'] ?? ''),
-            'keyBox=' . debug_export_bbox_signature($candidate['keyBBox'] ?? ($candidate['labelBbox'] ?? null)),
-            'valueBox=' . debug_export_bbox_signature($candidate['valueBBox'] ?? null),
-        ];
-
-        $hasPosition = implode('', array_slice($parts, 1)) !== 'page=line=labelLine=start=keyBox=valueBox=';
-        if (!$hasPosition) {
-            $searchTerm = debug_export_scalar_text($candidate['searchTerm'] ?? '');
-            $labelText = debug_export_scalar_text($candidate['labelText'] ?? '');
-            $parts[] = 'search=' . (function_exists('mb_strtolower') ? mb_strtolower($searchTerm, 'UTF-8') : strtolower($searchTerm));
-            $parts[] = 'label=' . (function_exists('mb_strtolower') ? mb_strtolower($labelText, 'UTF-8') : strtolower($labelText));
-        }
-
-        return implode('|', $parts);
-    };
-
-    $normalizeCandidate = static function (mixed $candidate, int $fallbackIndex) use ($candidateIdentity): ?array {
+    $normalizeCandidate = static function (mixed $candidate, int $fallbackIndex): ?array {
         if (!is_array($candidate)) {
             return null;
         }
@@ -7364,7 +7342,6 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         if ($valueBbox !== null) {
             $normalized['valueBBox'] = $valueBbox;
         }
-        $normalized['identity'] = $candidateIdentity($normalized);
 
         return $normalized;
     };
@@ -7384,31 +7361,67 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             if ($normalized === null) {
                 continue;
             }
-            $identity = $normalized['identity'];
-            if (isset($map[$identity])) {
-                $identity .= '|dup=' . $index;
-                $normalized['identity'] = $identity;
-            }
-            $map[$identity] = $normalized;
+            $map[] = $normalized;
         }
-        ksort($map, SORT_NATURAL);
+        usort($map, static function (array $left, array $right): int {
+            $leftConfidence = debug_export_float_or_null($left['finalConfidence'] ?? null)
+                ?? debug_export_float_or_null($left['confidence'] ?? null)
+                ?? 0.0;
+            $rightConfidence = debug_export_float_or_null($right['finalConfidence'] ?? null)
+                ?? debug_export_float_or_null($right['confidence'] ?? null)
+                ?? 0.0;
+            $confidenceCompare = $rightConfidence <=> $leftConfidence;
+            if ($confidenceCompare !== 0) {
+                return $confidenceCompare;
+            }
+            $valueCompare = strnatcasecmp((string) ($left['value'] ?? ''), (string) ($right['value'] ?? ''));
+            if ($valueCompare !== 0) {
+                return $valueCompare;
+            }
+            $pageCompare = ((int) ($left['pageNumber'] ?? PHP_INT_MAX)) <=> ((int) ($right['pageNumber'] ?? PHP_INT_MAX));
+            if ($pageCompare !== 0) {
+                return $pageCompare;
+            }
+            return strnatcasecmp((string) ($left['searchTerm'] ?? ''), (string) ($right['searchTerm'] ?? ''));
+        });
+
         return $map;
     };
 
-    $candidateComparable = static function (array $candidate): array {
-        $copy = $candidate;
-        unset($copy['identity'], $copy['matchIndex']);
-        foreach (['confidence', 'baseConfidence', 'finalConfidence', 'score'] as $key) {
-            if (isset($copy[$key]) && is_numeric($copy[$key])) {
-                $copy[$key] = round((float) $copy[$key], 6);
-            }
-        }
-        return $copy;
+    $publicCandidate = static function (array $candidate): array {
+        unset($candidate['matchIndex']);
+        return $candidate;
     };
 
-    $publicCandidate = static function (array $candidate): array {
-        unset($candidate['identity']);
-        return $candidate;
+    $markSelectedCandidates = static function (array $candidates) use ($publicCandidate): array {
+        $public = [];
+        $selectedIndex = $candidates !== [] ? 0 : null;
+
+        foreach ($candidates as $index => $candidate) {
+            $candidate['selected'] = $selectedIndex !== null && $index === $selectedIndex;
+            $public[] = $publicCandidate($candidate);
+        }
+
+        return $public;
+    };
+
+    $candidateListComparable = static function (array $candidates): array {
+        return array_map(static function (array $candidate): array {
+            $confidence = debug_export_float_or_null($candidate['finalConfidence'] ?? null)
+                ?? debug_export_float_or_null($candidate['confidence'] ?? null)
+                ?? 0.0;
+            $value = debug_export_scalar_text($candidate['value'] ?? '');
+            $searchTerm = debug_export_scalar_text($candidate['searchTerm'] ?? '');
+            $labelText = debug_export_scalar_text($candidate['labelText'] ?? '');
+            return [
+                'value' => function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value),
+                'confidence' => round(clamp_confidence($confidence), 6),
+                'pageNumber' => debug_export_int_or_null($candidate['pageNumber'] ?? null),
+                'searchTerm' => function_exists('mb_strtolower') ? mb_strtolower($searchTerm, 'UTF-8') : strtolower($searchTerm),
+                'labelText' => function_exists('mb_strtolower') ? mb_strtolower($labelText, 'UTF-8') : strtolower($labelText),
+                'selected' => ($candidate['selected'] ?? false) === true,
+            ];
+        }, $candidates);
     };
 
     $normalize = static function (array $fields): array {
@@ -7456,62 +7469,18 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         $leftField = $left[$key] ?? null;
         $rightField = $right[$key] ?? null;
         $name = is_array($rightField) ? (string) $rightField['name'] : (is_array($leftField) ? (string) $leftField['name'] : $key);
-        $leftValues = is_array($leftField) ? $leftField['values'] : [];
-        $rightValues = is_array($rightField) ? $rightField['values'] : [];
-        $leftCanonical = is_array($leftField) ? (string) $leftField['canonicalValue'] : '';
-        $rightCanonical = is_array($rightField) ? (string) $rightField['canonicalValue'] : '';
-        $added = array_values(array_diff($rightValues, $leftValues));
-        $removed = array_values(array_diff($leftValues, $rightValues));
-        $changed = [];
-        if (count($leftValues) === 1 && count($rightValues) === 1 && count($added) === 1 && count($removed) === 1) {
-            $changed[] = ['from' => $leftValues[0], 'to' => $rightValues[0]];
-            $added = [];
-            $removed = [];
-        }
         $leftCandidates = is_array($leftField) ? $normalizeCandidates($leftField) : [];
         $rightCandidates = is_array($rightField) ? $normalizeCandidates($rightField) : [];
-        $candidateKeys = array_values(array_unique(array_merge(array_keys($leftCandidates), array_keys($rightCandidates))));
-        sort($candidateKeys, SORT_NATURAL);
-        $candidateAdded = [];
-        $candidateRemoved = [];
-        $candidateChanged = [];
-        foreach ($candidateKeys as $candidateKey) {
-            $leftCandidate = $leftCandidates[$candidateKey] ?? null;
-            $rightCandidate = $rightCandidates[$candidateKey] ?? null;
-            if (!is_array($leftCandidate) && is_array($rightCandidate)) {
-                $candidateAdded[] = $publicCandidate($rightCandidate);
-                continue;
-            }
-            if (is_array($leftCandidate) && !is_array($rightCandidate)) {
-                $candidateRemoved[] = $publicCandidate($leftCandidate);
-                continue;
-            }
-            if (!is_array($leftCandidate) || !is_array($rightCandidate)) {
-                continue;
-            }
-            if ($candidateComparable($leftCandidate) !== $candidateComparable($rightCandidate)) {
-                $candidateChanged[] = [
-                    'from' => $publicCandidate($leftCandidate),
-                    'to' => $publicCandidate($rightCandidate),
-                ];
-            }
-        }
-        $canonicalChanged = $leftCanonical !== $rightCanonical
-            ? ['from' => $leftCanonical, 'to' => $rightCanonical]
-            : null;
-        if ($added === [] && $removed === [] && $changed === [] && $candidateAdded === [] && $candidateRemoved === [] && $candidateChanged === [] && $canonicalChanged === null) {
+        $leftCandidates = $markSelectedCandidates($leftCandidates);
+        $rightCandidates = $markSelectedCandidates($rightCandidates);
+        if ($candidateListComparable($leftCandidates) === $candidateListComparable($rightCandidates)) {
             continue;
         }
         $diffs[] = [
             'key' => $key,
             'name' => $name,
-            'added' => $added,
-            'removed' => $removed,
-            'changed' => $changed,
-            'canonicalChanged' => $canonicalChanged,
-            'candidateAdded' => $candidateAdded,
-            'candidateRemoved' => $candidateRemoved,
-            'candidateChanged' => $candidateChanged,
+            'leftCandidates' => $leftCandidates,
+            'rightCandidates' => $rightCandidates,
         ];
     }
     return $diffs;
@@ -7570,6 +7539,32 @@ function debug_export_metadata_scalar_diff(array $leftMetadata, array $rightMeta
     return $diffs;
 }
 
+function debug_export_metadata_scalar_value(array $metadata, string $key): ?array
+{
+    foreach ($metadata as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $itemKey = is_string($item['key'] ?? null) ? trim((string) $item['key']) : '';
+        if ($itemKey !== $key) {
+            continue;
+        }
+        $label = is_string($item['label'] ?? null) && trim((string) $item['label']) !== ''
+            ? trim((string) $item['label'])
+            : $key;
+        $value = is_scalar($item['value'] ?? null) || ($item['value'] ?? null) === null
+            ? trim((string) ($item['value'] ?? ''))
+            : '';
+        return [
+            'key' => $key,
+            'label' => $label,
+            'value' => $value,
+        ];
+    }
+
+    return null;
+}
+
 function compare_debug_export_document_metadata(string $leftDirectory, string $rightDirectory): array
 {
     $leftFiles = debug_export_metadata_files($leftDirectory);
@@ -7596,6 +7591,31 @@ function compare_debug_export_document_metadata(string $leftDirectory, string $r
         $metadataDiff = $leftHasScalarMetadata && $rightHasScalarMetadata
             ? debug_export_metadata_scalar_diff($left['metadata'], $right['metadata'])
             : [];
+        if ($leftHasScalarMetadata && $rightHasScalarMetadata) {
+            $leftProposed = debug_export_metadata_scalar_value($left['metadata'], 'proposedFilename');
+            $rightProposed = debug_export_metadata_scalar_value($right['metadata'], 'proposedFilename');
+            $leftProposedValue = is_array($leftProposed) ? (string) ($leftProposed['value'] ?? '') : '';
+            $rightProposedValue = is_array($rightProposed) ? (string) ($rightProposed['value'] ?? '') : '';
+            $alreadyChanged = array_filter(
+                $metadataDiff,
+                static fn (array $item): bool => (string) ($item['key'] ?? '') === 'proposedFilename'
+            ) !== [];
+            $hasOtherDiff = $metadataDiff !== []
+                || ($labelDiff['added'] ?? []) !== []
+                || ($labelDiff['removed'] ?? []) !== []
+                || $fieldDiff !== [];
+            if (!$alreadyChanged && $hasOtherDiff && ($leftProposedValue !== '' || $rightProposedValue !== '')) {
+                $metadataDiff[] = [
+                    'key' => 'proposedFilename',
+                    'label' => is_array($rightProposed) && (string) ($rightProposed['label'] ?? '') !== ''
+                        ? (string) $rightProposed['label']
+                        : (is_array($leftProposed) ? (string) ($leftProposed['label'] ?? 'Föreslaget arkivnamn') : 'Föreslaget arkivnamn'),
+                    'from' => $leftProposedValue,
+                    'to' => $rightProposedValue,
+                    'unchanged' => $leftProposedValue === $rightProposedValue,
+                ];
+            }
+        }
         if (($labelDiff['added'] ?? []) === [] && ($labelDiff['removed'] ?? []) === [] && $fieldDiff === [] && $metadataDiff === []) {
             continue;
         }
