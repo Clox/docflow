@@ -26129,25 +26129,25 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       };
       const ensureDefaultCaptureSelection = () => {
         const groups = parseRegexCaptureGroups(valuePatternInput.value);
-        if (groups.length === 0) {
-          return;
-        }
         const valueType = sanitizeExtractionFieldValueType(collection[index]?.valueType, collection[index], ruleSet);
         if (valueType === 'amount') {
           if (collection[index].ruleSets[ruleSetIndex].amountWholeGroup === null || collection[index].ruleSets[ruleSetIndex].amountWholeGroup === undefined) {
-            collection[index].ruleSets[ruleSetIndex].amountWholeGroup = 1;
+            collection[index].ruleSets[ruleSetIndex].amountWholeGroup = groups.length > 0 ? 1 : 0;
           }
           if (collection[index].ruleSets[ruleSetIndex].amountFractionGroup === null || collection[index].ruleSets[ruleSetIndex].amountFractionGroup === undefined) {
-            collection[index].ruleSets[ruleSetIndex].amountFractionGroup = groups.length >= 2 ? 2 : 1;
+            collection[index].ruleSets[ruleSetIndex].amountFractionGroup = groups.length >= 2 ? 2 : (groups.length > 0 ? 1 : 0);
           }
         } else if (collection[index].ruleSets[ruleSetIndex].captureGroup === null || collection[index].ruleSets[ruleSetIndex].captureGroup === undefined) {
+          if (groups.length === 0) {
+            return;
+          }
           collection[index].ruleSets[ruleSetIndex].captureGroup = 0;
         }
       };
       const syncCaptureGroupUi = (valueType, useValuePattern) => {
         const previewPattern = valuePatternInput.value;
         const groups = parseRegexCaptureGroups(previewPattern);
-        const show = useValuePattern && groups.length > 0;
+        const show = useValuePattern && (valueType === 'amount' || groups.length > 0);
         valuePatternCaptureField.hidden = !show;
         if (!show) {
           captureGroupField.hidden = true;
@@ -26163,9 +26163,12 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
           captureGroupField.hidden = true;
           amountWholeGroupField.hidden = false;
           amountFractionGroupField.hidden = false;
-          const amountOptions = groups.map((group) => ({ value: group.index, label: groupLabel(group) }));
-          replaceSelectOptions(amountWholeGroupSelect, amountOptions, sanitizeExtractionFieldCaptureGroup(ruleSetDraft.amountWholeGroup) ?? 1);
-          replaceSelectOptions(amountFractionGroupSelect, amountOptions, sanitizeExtractionFieldCaptureGroup(ruleSetDraft.amountFractionGroup) ?? (groups.length >= 2 ? 2 : 1));
+          const amountOptions = [
+            { value: 0, label: 'Hela matchningen' },
+            ...groups.map((group) => ({ value: group.index, label: groupLabel(group) })),
+          ];
+          replaceSelectOptions(amountWholeGroupSelect, amountOptions, sanitizeExtractionFieldCaptureGroup(ruleSetDraft.amountWholeGroup) ?? (groups.length > 0 ? 1 : 0));
+          replaceSelectOptions(amountFractionGroupSelect, amountOptions, sanitizeExtractionFieldCaptureGroup(ruleSetDraft.amountFractionGroup) ?? (groups.length >= 2 ? 2 : (groups.length > 0 ? 1 : 0)));
         } else {
           captureGroupField.hidden = false;
           amountWholeGroupField.hidden = true;
