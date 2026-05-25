@@ -3176,6 +3176,7 @@ function extraction_field_runtime_rule_set(array $ruleSet, ?string $valueType = 
         $datePosition = extraction_field_rule_set_position($ruleSet, 'date');
         $runtimeRuleSet['valuePattern'] = extraction_field_date_value_pattern($datePosition);
         $runtimeRuleSet['useValuePattern'] = true;
+        $runtimeRuleSet['captureGroup'] = 1;
     }
 
     return $runtimeRuleSet;

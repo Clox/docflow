@@ -26150,6 +26150,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         const show = useValuePattern && groups.length > 0;
         valuePatternCaptureField.hidden = !show;
         if (!show) {
+          captureGroupField.hidden = true;
+          amountWholeGroupField.hidden = true;
+          amountFractionGroupField.hidden = true;
           renderCaptureGroupHighlight([], valueType, {}, previewPattern);
           syncValuePatternHighlightScroll();
           return;
