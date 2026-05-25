@@ -4538,6 +4538,21 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   padding-right: 4px;
 }
 
+.snapshot-current-row {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.snapshot-current-row .settings-backup-row-title {
+  color: #0f172a;
+}
+
+.snapshot-current-row .settings-backup-row-kind {
+  border-color: #0f766e;
+  background: #ccfbf1;
+  color: #115e59;
+}
+
 .snapshot-dialog-footer {
   flex: 0 0 auto;
   border-top: 1px solid #e5e7eb;
@@ -4890,6 +4905,11 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   border-radius: 8px;
   background: #fff;
   overflow-wrap: anywhere;
+}
+
+.ocr-debug-compare-snapshot.is-live {
+  border-color: #99f6e4;
+  background: #f0fdfa;
 }
 
 .ocr-debug-compare-snapshot-label {

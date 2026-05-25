@@ -27,12 +27,14 @@ if ($leftFolderName === '' || $rightFolderName === '') {
     json_response(['error' => 'Välj två snapshots att jämföra.'], 400);
     exit;
 }
+$jobIds = array_key_exists('jobIds', $payload) && is_array($payload['jobIds']) ? $payload['jobIds'] : [];
+$scope = array_key_exists('scope', $payload) && is_string($payload['scope']) ? trim((string) $payload['scope']) : 'jobs';
 
 try {
     $config = load_config();
     json_response([
         'ok' => true,
-        'comparison' => compare_ocr_debug_exports($config, $leftFolderName, $rightFolderName),
+        'comparison' => compare_ocr_debug_exports_with_live($config, $leftFolderName, $rightFolderName, $jobIds, $scope),
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

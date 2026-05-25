@@ -6651,6 +6651,16 @@ function ocr_debug_export_scope_label(string $scope): string
     };
 }
 
+function ocr_debug_export_live_folder_name(): string
+{
+    return '__current__';
+}
+
+function ocr_debug_export_is_live_reference(string $folderName): bool
+{
+    return trim($folderName) === ocr_debug_export_live_folder_name();
+}
+
 function ocr_debug_export_normalize_folder_name(string $folderName): ?string
 {
     $basename = basename(trim($folderName));
@@ -7649,6 +7659,27 @@ function compare_ocr_debug_exports(array $config, string $leftFolderName, string
 
     $leftDirectory = normalized_realpath($leftDirectory) ?? $leftDirectory;
     $rightDirectory = normalized_realpath($rightDirectory) ?? $rightDirectory;
+    return compare_ocr_debug_export_directories($leftDirectory, $rightDirectory);
+}
+
+function compare_ocr_debug_export_directories(
+    string $leftDirectory,
+    string $rightDirectory,
+    array $leftInfo = [],
+    array $rightInfo = []
+): array {
+    if (!is_dir($leftDirectory)) {
+        throw new RuntimeException('Export A hittades inte.');
+    }
+    if (!is_dir($rightDirectory)) {
+        throw new RuntimeException('Export B hittades inte.');
+    }
+    if ($leftDirectory === $rightDirectory) {
+        throw new RuntimeException('Välj två olika snapshots att jämföra.');
+    }
+
+    $leftDirectory = normalized_realpath($leftDirectory) ?? $leftDirectory;
+    $rightDirectory = normalized_realpath($rightDirectory) ?? $rightDirectory;
     $leftFiles = ocr_debug_export_relative_files($leftDirectory);
     $rightFiles = ocr_debug_export_relative_files($rightDirectory);
     $metadataDiffs = compare_debug_export_document_metadata($leftDirectory, $rightDirectory);
@@ -7684,9 +7715,11 @@ function compare_ocr_debug_exports(array $config, string $leftFolderName, string
             'status' => $status,
             'leftPath' => $leftDisplayPath,
             'rightPath' => $rightDisplayPath,
-            'meldCommand' => $leftDisplayPath !== null && $rightDisplayPath !== null
+            'meldCommand' => (($leftInfo['isLive'] ?? false) === true || ($rightInfo['isLive'] ?? false) === true)
+                ? null
+                : ($leftDisplayPath !== null && $rightDisplayPath !== null
                 ? ocr_debug_export_meld_command($leftDisplayPath, $rightDisplayPath)
-                : null,
+                : null),
         ];
     }
 
@@ -7707,26 +7740,100 @@ function compare_ocr_debug_exports(array $config, string $leftFolderName, string
 
     $leftManifest = ocr_debug_export_manifest_from_directory($leftDirectory);
     $rightManifest = ocr_debug_export_manifest_from_directory($rightDirectory);
+    $leftIsLive = ($leftInfo['isLive'] ?? false) === true;
+    $rightIsLive = ($rightInfo['isLive'] ?? false) === true;
 
     return [
         'left' => [
-            'folderName' => basename($leftDirectory),
-            'exportDirectory' => $leftDirectory,
-            'exportedAt' => is_array($leftManifest) ? ($leftManifest['exportedAt'] ?? null) : null,
-            'filterLabel' => is_array($leftManifest) ? ($leftManifest['filterLabel'] ?? null) : null,
+            'folderName' => is_string($leftInfo['folderName'] ?? null) ? (string) $leftInfo['folderName'] : basename($leftDirectory),
+            'exportDirectory' => $leftIsLive ? null : $leftDirectory,
+            'exportedAt' => is_string($leftInfo['exportedAt'] ?? null) ? (string) $leftInfo['exportedAt'] : (is_array($leftManifest) ? ($leftManifest['exportedAt'] ?? null) : null),
+            'filterLabel' => is_string($leftInfo['filterLabel'] ?? null) ? (string) $leftInfo['filterLabel'] : (is_array($leftManifest) ? ($leftManifest['filterLabel'] ?? null) : null),
+            'isLive' => $leftIsLive,
         ],
         'right' => [
-            'folderName' => basename($rightDirectory),
-            'exportDirectory' => $rightDirectory,
-            'exportedAt' => is_array($rightManifest) ? ($rightManifest['exportedAt'] ?? null) : null,
-            'filterLabel' => is_array($rightManifest) ? ($rightManifest['filterLabel'] ?? null) : null,
+            'folderName' => is_string($rightInfo['folderName'] ?? null) ? (string) $rightInfo['folderName'] : basename($rightDirectory),
+            'exportDirectory' => $rightIsLive ? null : $rightDirectory,
+            'exportedAt' => is_string($rightInfo['exportedAt'] ?? null) ? (string) $rightInfo['exportedAt'] : (is_array($rightManifest) ? ($rightManifest['exportedAt'] ?? null) : null),
+            'filterLabel' => is_string($rightInfo['filterLabel'] ?? null) ? (string) $rightInfo['filterLabel'] : (is_array($rightManifest) ? ($rightManifest['filterLabel'] ?? null) : null),
+            'isLive' => $rightIsLive,
         ],
         'counts' => $counts,
         'files' => $files,
         'metadataDiffs' => $metadataDiffs,
         'metadataChanged' => count($metadataDiffs),
-        'meldDirectoryCommand' => ocr_debug_export_meld_command($leftDirectory, $rightDirectory),
+        'meldDirectoryCommand' => ($leftIsLive || $rightIsLive) ? null : ocr_debug_export_meld_command($leftDirectory, $rightDirectory),
     ];
+}
+
+function create_ocr_debug_live_export_directory(): string
+{
+    $base = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'docflow-current-snapshot-' . bin2hex(random_bytes(6));
+    ensure_directory($base);
+    return $base;
+}
+
+function compare_ocr_debug_exports_with_live(
+    array $config,
+    string $leftFolderName,
+    string $rightFolderName,
+    array $jobIds,
+    string $scope = ''
+): array {
+    $leftIsLive = ocr_debug_export_is_live_reference($leftFolderName);
+    $rightIsLive = ocr_debug_export_is_live_reference($rightFolderName);
+    if (!$leftIsLive && !$rightIsLive) {
+        return compare_ocr_debug_exports($config, $leftFolderName, $rightFolderName);
+    }
+    if ($leftIsLive && $rightIsLive) {
+        throw new RuntimeException('Välj en sparad snapshot och Aktuellt läge.');
+    }
+
+    $tempDirectories = [];
+    try {
+        if ($leftIsLive) {
+            $leftDirectory = create_ocr_debug_live_export_directory();
+            $tempDirectories[] = $leftDirectory;
+            export_ocr_debug_data($config, $jobIds, $scope, $leftDirectory);
+        } else {
+            $leftDirectory = ocr_debug_export_directory_path_from_name($config, $leftFolderName);
+            if ($leftDirectory === null || !is_dir($leftDirectory)) {
+                throw new RuntimeException('Export A hittades inte.');
+            }
+        }
+
+        if ($rightIsLive) {
+            $rightDirectory = create_ocr_debug_live_export_directory();
+            $tempDirectories[] = $rightDirectory;
+            export_ocr_debug_data($config, $jobIds, $scope, $rightDirectory);
+        } else {
+            $rightDirectory = ocr_debug_export_directory_path_from_name($config, $rightFolderName);
+            if ($rightDirectory === null || !is_dir($rightDirectory)) {
+                throw new RuntimeException('Export B hittades inte.');
+            }
+        }
+
+        return compare_ocr_debug_export_directories(
+            normalized_realpath($leftDirectory) ?? $leftDirectory,
+            normalized_realpath($rightDirectory) ?? $rightDirectory,
+            $leftIsLive ? [
+                'folderName' => ocr_debug_export_live_folder_name(),
+                'filterLabel' => ocr_debug_export_scope_label($scope),
+                'isLive' => true,
+            ] : [],
+            $rightIsLive ? [
+                'folderName' => ocr_debug_export_live_folder_name(),
+                'filterLabel' => ocr_debug_export_scope_label($scope),
+                'isLive' => true,
+            ] : []
+        );
+    } finally {
+        foreach ($tempDirectories as $tempDirectory) {
+            if (is_string($tempDirectory) && is_dir($tempDirectory)) {
+                delete_directory_recursive($tempDirectory);
+            }
+        }
+    }
 }
 
 function ocr_debug_export_safe_relative_file_path(string $relativePath): ?string
@@ -7809,7 +7916,7 @@ function launch_ocr_debug_export_meld(
     ];
 }
 
-function export_ocr_debug_data(array $config, array $jobIds, string $scope = ''): array
+function export_ocr_debug_data(array $config, array $jobIds, string $scope = '', ?string $targetDirectory = null): array
 {
     $jobsDirectory = is_string($config['jobsDirectory'] ?? null) ? trim((string) $config['jobsDirectory']) : '';
     if ($jobsDirectory === '' || !is_dir($jobsDirectory)) {
@@ -7832,7 +7939,10 @@ function export_ocr_debug_data(array $config, array $jobIds, string $scope = '')
         throw new RuntimeException('Inga jobb valda för export.');
     }
 
-    $exportDirectory = create_ocr_debug_export_directory($config, $scope);
+    $exportDirectory = is_string($targetDirectory) && trim($targetDirectory) !== ''
+        ? rtrim($targetDirectory, DIRECTORY_SEPARATOR)
+        : create_ocr_debug_export_directory($config, $scope);
+    ensure_directory($exportDirectory);
     ensure_directory($exportDirectory . DIRECTORY_SEPARATOR . 'text');
     ensure_directory($exportDirectory . DIRECTORY_SEPARATOR . 'merged_objects');
     ensure_directory($exportDirectory . DIRECTORY_SEPARATOR . 'document_metadata');
