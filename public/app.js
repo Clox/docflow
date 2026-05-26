@@ -353,16 +353,20 @@ let ocrDebugExportDialogLayout = null;
 let ocrDebugExportFilterSelectEl = null;
 let ocrDebugExportCreateShellEl = null;
 let ocrDebugExportCreateButtonEl = null;
+let ocrDebugExportCreateMenuButtonEl = null;
+let ocrDebugExportCreateFastButtonEl = null;
 let ocrDebugExportCreateSpinnerEl = null;
 let ocrDebugExportCreateLabelEl = null;
 let ocrDebugExportStatusEl = null;
 let ocrDebugExportListEl = null;
 let ocrDebugExportCompareButtonEl = null;
+let ocrDebugExportCloseCompareButtonEl = null;
 let ocrDebugExportCompareResultEl = null;
 let ocrDebugExportShowIdenticalEl = null;
 let ocrDebugExportItems = [];
 let ocrDebugExportSelectedFolderNames = [];
 let ocrDebugExportCompareResult = null;
+let ocrDebugExportComparisonRun = null;
 const OCR_DEBUG_EXPORT_LIVE_FOLDER_NAME = '__current__';
 let ocrDebugExportListLoading = false;
 let ocrDebugExportListError = '';
@@ -6805,6 +6809,15 @@ function renderOcrDebugExportCreateState() {
   ocrDebugExportCreateButtonEl.disabled = disabled;
   ocrDebugExportCreateButtonEl.classList.toggle('is-loading', loading);
   ocrDebugExportCreateButtonEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+  if (ocrDebugExportCreateFastButtonEl instanceof HTMLButtonElement) {
+    ocrDebugExportCreateFastButtonEl.disabled = disabled;
+    ocrDebugExportCreateFastButtonEl.title = disabled && !canCreate
+      ? (ocrDebugExportCreateDisabledReason || 'Inga dokument i den här filtreringen.')
+      : 'Expertläge: skapa snapshot från redan sparad analysdata utan ny omanalys.';
+  }
+  if (ocrDebugExportCreateMenuButtonEl instanceof HTMLButtonElement) {
+    ocrDebugExportCreateMenuButtonEl.disabled = disabled;
+  }
 
   if (ocrDebugExportCreateSpinnerEl instanceof HTMLElement) {
     ocrDebugExportCreateSpinnerEl.classList.toggle('hidden', !loading);
@@ -6858,6 +6871,12 @@ function renderOcrDebugExportCompareState() {
     ocrDebugExportCompareButtonEl.title = selectedCount === 2
       ? 'Jämför de två markerade lägena.'
       : 'Markera exakt två lägen att jämföra.';
+  }
+  if (ocrDebugExportCloseCompareButtonEl instanceof HTMLButtonElement) {
+    const hasCompareResult = (ocrDebugExportCompareResult && typeof ocrDebugExportCompareResult === 'object')
+      || (ocrDebugExportComparisonRun && typeof ocrDebugExportComparisonRun === 'object');
+    ocrDebugExportCloseCompareButtonEl.classList.toggle('hidden', !hasCompareResult);
+    ocrDebugExportCloseCompareButtonEl.disabled = ocrDebugExportCompareLoading;
   }
 }
 
@@ -6936,6 +6955,7 @@ function ocrDebugExportComparisonSides(result) {
 
 function closeOcrDebugExportCompareResult() {
   ocrDebugExportCompareResult = null;
+  ocrDebugExportComparisonRun = null;
   ocrDebugExportShowIdenticalEl = null;
   renderOcrDebugExportCompareResult();
 }
@@ -7700,6 +7720,42 @@ function renderOcrDebugExportCompareResult() {
 
   const result = ocrDebugExportCompareResult;
   if (!result || typeof result !== 'object') {
+    if (ocrDebugExportComparisonRun && typeof ocrDebugExportComparisonRun === 'object') {
+      ocrDebugExportCompareResultEl.classList.remove('hidden');
+      const heading = document.createElement('div');
+      heading.className = 'ocr-debug-compare-heading';
+      const title = document.createElement('div');
+      title.className = 'settings-backup-history-title';
+      title.textContent = ocrDebugExportComparisonRun.status === 'failed'
+        ? 'Jämförelse misslyckades'
+        : 'Förbereder jämförelse';
+      heading.appendChild(title);
+      ocrDebugExportCompareResultEl.appendChild(heading);
+
+      const totalJobs = Number.isFinite(Number(ocrDebugExportComparisonRun.totalJobs)) ? Number(ocrDebugExportComparisonRun.totalJobs) : 0;
+      const completedJobs = Number.isFinite(Number(ocrDebugExportComparisonRun.completedJobs)) ? Number(ocrDebugExportComparisonRun.completedJobs) : 0;
+      const failedJobs = Number.isFinite(Number(ocrDebugExportComparisonRun.failedJobs)) ? Number(ocrDebugExportComparisonRun.failedJobs) : 0;
+      const progressPanel = document.createElement('div');
+      progressPanel.className = 'snapshot-progress-panel';
+      const progressText = document.createElement('div');
+      progressText.className = 'settings-backup-row-meta';
+      progressText.textContent = ocrDebugExportComparisonRun.status === 'failed'
+        ? (typeof ocrDebugExportComparisonRun.errorMessage === 'string' && ocrDebugExportComparisonRun.errorMessage.trim() !== ''
+          ? ocrDebugExportComparisonRun.errorMessage.trim()
+          : 'Jämförelsen kunde inte färdigställas.')
+        : `Bearbetar dokument ${completedJobs} / ${totalJobs}${failedJobs > 0 ? `, ${failedJobs} misslyckades` : ''}`;
+      const progress = document.createElement('div');
+      progress.className = 'snapshot-progress';
+      const bar = document.createElement('div');
+      bar.className = 'snapshot-progress-bar';
+      const ratio = totalJobs > 0 ? Math.max(0, Math.min(1, (completedJobs + failedJobs) / totalJobs)) : 0;
+      bar.style.width = `${Math.round(ratio * 100)}%`;
+      progress.appendChild(bar);
+      progressPanel.append(progressText, progress);
+      ocrDebugExportCompareResultEl.appendChild(progressPanel);
+      renderOcrDebugExportCompareState();
+      return;
+    }
     ocrDebugExportCompareResultEl.classList.add('hidden');
     return;
   }
@@ -7713,12 +7769,6 @@ function renderOcrDebugExportCompareResult() {
   title.className = 'settings-backup-history-title';
   title.textContent = 'Jämförelse';
   heading.appendChild(title);
-
-  const closeCompareButton = document.createElement('button');
-  closeCompareButton.type = 'button';
-  closeCompareButton.className = 'settings-backup-row-button';
-  closeCompareButton.textContent = 'Stäng jämförelse';
-  closeCompareButton.addEventListener('click', closeOcrDebugExportCompareResult);
 
   const folderCommand = typeof result.meldDirectoryCommand === 'string' ? result.meldDirectoryCommand : '';
   const headingActions = document.createElement('div');
@@ -7742,7 +7792,6 @@ function renderOcrDebugExportCompareResult() {
     });
     headingActions.appendChild(refreshButton);
   }
-  headingActions.appendChild(closeCompareButton);
   heading.appendChild(headingActions);
   ocrDebugExportCompareResultEl.appendChild(heading);
 
@@ -7900,10 +7949,17 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
       return;
     }
     const isLive = item.isLive === true;
+    const isProcessing = !isLive && item.status === 'processing';
+    const isCompletedWithErrors = !isLive && item.status === 'completed_with_errors';
+    const isFailed = !isLive && item.status === 'failed';
+    const totalJobs = Number.isFinite(Number(item.totalJobs ?? item.jobCount)) ? Number(item.totalJobs ?? item.jobCount) : 0;
+    const completedJobs = Number.isFinite(Number(item.completedJobs)) ? Number(item.completedJobs) : 0;
+    const failedJobs = Number.isFinite(Number(item.failedJobs)) ? Number(item.failedJobs) : 0;
 
     const row = document.createElement('div');
     row.className = 'settings-backup-row';
     row.classList.toggle('snapshot-current-row', isLive);
+    row.classList.toggle('snapshot-processing-row', isProcessing);
     row.dataset.snapshotFolderName = item.folderName;
 
     const selection = document.createElement('label');
@@ -7916,6 +7972,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
       || ocrDebugExportCreateLoading
       || ocrDebugExportCompareLoading
       || !liveHasJobs
+      || isProcessing
       || (!checkbox.checked && ocrDebugExportSelectedFolderNames.length >= 2);
     checkbox.setAttribute('aria-label', isLive ? 'Markera aktuellt läge för jämförelse' : 'Markera snapshot för jämförelse');
     checkbox.addEventListener('change', () => {
@@ -7931,6 +7988,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
       }
       ocrDebugExportSelectedFolderNames = Array.from(selected).slice(0, 2);
       ocrDebugExportCompareResult = null;
+      ocrDebugExportComparisonRun = null;
       renderOcrDebugExportList();
       renderOcrDebugExportCompareResult();
     });
@@ -7944,7 +8002,9 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
 
     const title = document.createElement('div');
     title.className = 'settings-backup-row-title';
-    title.textContent = isLive ? 'Aktuellt läge' : formatOcrDebugExportDateTime(item.exportedAt || '');
+    title.textContent = isLive
+      ? 'Aktuellt läge'
+      : (isProcessing ? 'Snapshot bearbetas' : (isFailed ? 'Snapshot misslyckades' : formatOcrDebugExportDateTime(item.exportedAt || '')));
     titleRow.appendChild(title);
 
     const kind = document.createElement('span');
@@ -7960,16 +8020,33 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
     meta.className = 'settings-backup-row-meta';
     meta.textContent = isLive
       ? `Nuvarande filer och analysresultat · ${Number.isFinite(Number(item.jobCount)) ? Number(item.jobCount) : 0} dokument (${typeof item.filterLabel === 'string' ? item.filterLabel : jobListModeLabel(item.filter)})`
-      : `${Number.isFinite(Number(item.jobCount)) ? Number(item.jobCount) : 0} dokument`;
+      : (isProcessing
+        ? `Bearbetar dokument ${completedJobs} / ${totalJobs}${failedJobs > 0 ? `, ${failedJobs} misslyckades` : ''}`
+        : (isFailed
+          ? (typeof item.errorMessage === 'string' && item.errorMessage.trim() !== '' ? item.errorMessage.trim() : 'Snapshotten kunde inte färdigställas.')
+          : `${Number.isFinite(Number(item.jobCount)) ? Number(item.jobCount) : 0} dokument${isCompletedWithErrors ? `, ${failedJobs} misslyckades` : ''}`));
 
     const filename = document.createElement('div');
     filename.id = `snapshot-path-${item.folderName}`;
     filename.className = 'settings-backup-row-filename';
-    filename.textContent = isLive ? 'Skapas temporärt vid jämförelse och sparas inte.' : item.exportDirectory;
+    filename.textContent = isLive
+      ? 'Skapas temporärt vid jämförelse och sparas inte.'
+      : (isProcessing ? 'Snapshotten blir valbar när omanalysen är klar.' : (isFailed ? 'Ingen färdig snapshot skapades.' : item.exportDirectory));
 
     const comment = isLive ? null : createOcrDebugExportCommentEditor(item);
 
-    main.append(titleRow, meta, filename);
+    main.append(titleRow, meta);
+    if (isProcessing) {
+      const progress = document.createElement('div');
+      progress.className = 'snapshot-progress';
+      const bar = document.createElement('div');
+      bar.className = 'snapshot-progress-bar';
+      const ratio = totalJobs > 0 ? Math.max(0, Math.min(1, (completedJobs + failedJobs) / totalJobs)) : 0;
+      bar.style.width = `${Math.round(ratio * 100)}%`;
+      progress.appendChild(bar);
+      main.appendChild(progress);
+    }
+    main.appendChild(filename);
     if (comment instanceof HTMLElement) {
       main.appendChild(comment);
     }
@@ -7983,7 +8060,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
       downloadButton.className = 'icon-button settings-backup-row-icon-button';
       downloadButton.title = 'Ladda ner zip';
       downloadButton.setAttribute('aria-label', 'Ladda ner zip');
-      downloadButton.disabled = ocrDebugExportBusy || ocrDebugExportCreateLoading || ocrDebugExportCompareLoading;
+      downloadButton.disabled = ocrDebugExportBusy || ocrDebugExportCreateLoading || ocrDebugExportCompareLoading || isProcessing || isFailed;
       downloadButton.addEventListener('click', () => {
         downloadOcrDebugExport(item.folderName);
       });
@@ -7997,7 +8074,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
       copyButton.type = 'button';
       copyButton.className = 'settings-backup-row-button';
       copyButton.textContent = 'Kopiera sökväg';
-      copyButton.disabled = ocrDebugExportBusy || ocrDebugExportCreateLoading || ocrDebugExportCompareLoading;
+      copyButton.disabled = ocrDebugExportBusy || ocrDebugExportCreateLoading || ocrDebugExportCompareLoading || isProcessing || isFailed;
       copyButton.addEventListener('click', async () => {
         const copied = await copyTextToClipboard(item.exportDirectory);
         if (!copied) {
@@ -8102,6 +8179,7 @@ async function loadOcrDebugExports() {
       return;
     }
     ocrDebugExportListLoading = false;
+    updateOcrDebugComparisonRunFromServer(payload.comparisonRuns);
     renderOcrDebugExportList(payload.exports);
   } catch (error) {
     if (requestToken !== ocrDebugExportListRequestToken) {
@@ -8123,7 +8201,73 @@ function updateOcrDebugExportCreateAvailability() {
   renderOcrDebugExportCreateState();
 }
 
-async function createOcrDebugExport() {
+function ocrDebugRunIsProcessing(run) {
+  return run && typeof run === 'object' && run.status === 'processing';
+}
+
+function updateOcrDebugSnapshotRunsFromServer(runs) {
+  if (!Array.isArray(runs) || runs.length === 0) {
+    return;
+  }
+  const byFolderName = new Map();
+  ocrDebugExportItems.forEach((item, index) => {
+    if (item && typeof item.folderName === 'string' && item.folderName !== '') {
+      byFolderName.set(item.folderName, { item, index });
+    }
+  });
+
+  let changed = false;
+  runs.forEach((run) => {
+    if (!run || typeof run !== 'object' || typeof run.folderName !== 'string' || run.folderName.trim() === '') {
+      return;
+    }
+    const folderName = run.folderName.trim();
+    const existing = byFolderName.get(folderName) || null;
+    if (existing) {
+      ocrDebugExportItems[existing.index] = {
+        ...existing.item,
+        ...run,
+      };
+    } else {
+      ocrDebugExportItems.unshift(run);
+    }
+    changed = true;
+  });
+
+  if (changed && ocrDebugExportListEl instanceof HTMLElement) {
+    renderOcrDebugExportList(ocrDebugExportItems);
+  }
+}
+
+function updateOcrDebugComparisonRunFromServer(runs) {
+  const runList = Array.isArray(runs) ? runs : [];
+  if (ocrDebugExportComparisonRun && typeof ocrDebugExportComparisonRun === 'object') {
+    const currentId = Number(ocrDebugExportComparisonRun.id);
+    const updated = runList.find((run) => Number(run && run.id) === currentId) || null;
+    if (updated) {
+      ocrDebugExportComparisonRun = updated;
+      if (updated.result && typeof updated.result === 'object') {
+        ocrDebugExportCompareResult = updated.result;
+        ocrDebugExportComparisonRun = null;
+      }
+      renderOcrDebugExportCompareResult();
+      return;
+    }
+  }
+
+  const activeRun = runList.find((run) => ocrDebugRunIsProcessing(run)) || null;
+  if (!ocrDebugExportCompareResult && activeRun) {
+    ocrDebugExportComparisonRun = activeRun;
+    renderOcrDebugExportCompareResult();
+  }
+}
+
+function updateOcrDebugRunsFromState(snapshotRuns, comparisonRuns) {
+  updateOcrDebugSnapshotRunsFromServer(snapshotRuns);
+  updateOcrDebugComparisonRunFromServer(comparisonRuns);
+}
+
+async function createOcrDebugExport(options = {}) {
   if (ocrDebugExportBusy || ocrDebugExportCreateLoading) {
     return;
   }
@@ -8142,6 +8286,7 @@ async function createOcrDebugExport() {
   setOcrDebugExportStatus('', 'info');
 
   try {
+    const requiresReanalysis = options.requiresReanalysis !== false;
     const response = await fetch('/api/export-ocr-debug.php', {
       method: 'POST',
       headers: {
@@ -8150,21 +8295,31 @@ async function createOcrDebugExport() {
       body: JSON.stringify({
         jobIds,
         scope: selectedFilter,
+        requiresReanalysis,
       })
     });
     const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok !== true || typeof payload.exportDirectory !== 'string') {
+    if (!response.ok || !payload || payload.ok !== true || (!payload.snapshot && typeof payload.exportDirectory !== 'string')) {
       throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte skapa snapshot.');
     }
     if (requestToken !== ocrDebugExportCreateRequestToken) {
       return;
     }
 
-    const skippedCount = Number.isInteger(payload.skippedCount) ? payload.skippedCount : 0;
-    setOcrDebugExportStatus(
-      `Snapshot skapad för ${jobIds.length} dokument${skippedCount > 0 ? `, ${skippedCount} hoppades över` : ''} (${jobListModeLabel(selectedFilter)}).`,
-      'success'
-    );
+    const snapshot = payload.snapshot && typeof payload.snapshot === 'object' ? payload.snapshot : null;
+    if (snapshot && snapshot.status === 'processing') {
+      setOcrDebugExportStatus(
+        `Snapshot startad. Bearbetar dokument 0 / ${Number(snapshot.totalJobs || jobIds.length)}.`,
+        'info'
+      );
+      requestStateRefresh(0, { force: true });
+    } else {
+      const skippedCount = Number.isInteger(payload.skippedCount) ? payload.skippedCount : 0;
+      setOcrDebugExportStatus(
+        `Snapshot skapad för ${jobIds.length} dokument${skippedCount > 0 ? `, ${skippedCount} hoppades över` : ''} (${jobListModeLabel(selectedFilter)}).`,
+        'success'
+      );
+    }
     await loadOcrDebugExports();
     if (typeof payload.folderName === 'string' && payload.folderName.trim() !== '') {
       highlightOcrDebugExport(payload.folderName.trim());
@@ -8266,13 +8421,20 @@ async function compareSelectedOcrDebugExports() {
       }),
     });
     const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.ok !== true || !payload.comparison) {
+    if (!response.ok || !payload || payload.ok !== true || (!payload.comparison && !payload.comparisonRun)) {
       throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte jämföra snapshots.');
     }
     if (requestToken !== ocrDebugExportCompareRequestToken) {
       return;
     }
-    ocrDebugExportCompareResult = payload.comparison;
+    if (payload.comparisonRun && typeof payload.comparisonRun === 'object') {
+      ocrDebugExportComparisonRun = payload.comparisonRun;
+      ocrDebugExportCompareResult = null;
+      requestStateRefresh(0, { force: true });
+    } else {
+      ocrDebugExportComparisonRun = null;
+      ocrDebugExportCompareResult = payload.comparison;
+    }
     renderOcrDebugExportCompareResult();
   } catch (error) {
     if (requestToken !== ocrDebugExportCompareRequestToken) {
@@ -8298,6 +8460,7 @@ function openOcrDebugExportDialog() {
   ocrDebugExportCompareRequestToken += 1;
   ocrDebugExportCreateLoading = false;
   ocrDebugExportCompareLoading = false;
+  ocrDebugExportComparisonRun = null;
   ocrDebugExportBusy = false;
   ocrDebugExportHighlightedFolderName = '';
   if (!ocrDebugExportHasOpened) {
@@ -8368,11 +8531,12 @@ function openOcrDebugExportDialog() {
   });
   filterField.append(filterLabel, filterSelect);
 
-  const createShell = document.createElement('span');
-  createShell.className = 'settings-backup-export-shell';
+  const createShell = document.createElement('div');
+  createShell.className = 'split-button snapshot-create-split-button';
   const createButton = document.createElement('button');
   createButton.type = 'button';
   createButton.id = 'snapshot-create';
+  createButton.className = 'split-button-main';
   createButton.setAttribute('aria-busy', 'false');
   const createSpinner = document.createElement('span');
   createSpinner.className = 'spinner settings-backup-export-spinner hidden';
@@ -8381,7 +8545,25 @@ function openOcrDebugExportDialog() {
   createLabel.className = 'settings-backup-export-label';
   createLabel.textContent = 'Skapa snapshot';
   createButton.append(createSpinner, createLabel);
-  createShell.appendChild(createButton);
+  const createMenuButton = document.createElement('button');
+  createMenuButton.type = 'button';
+  createMenuButton.className = 'split-button-toggle';
+  createMenuButton.setAttribute('aria-haspopup', 'menu');
+  createMenuButton.setAttribute('aria-label', 'Fler snapshotalternativ');
+  createMenuButton.setAttribute('aria-expanded', 'false');
+  createMenuButton.title = 'Fler snapshotalternativ';
+  createMenuButton.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 6.5 L8 10.5 L12 6.5" /></svg>';
+  const createMenu = document.createElement('div');
+  createMenu.className = 'split-button-menu hidden';
+  createMenu.setAttribute('role', 'menu');
+  createMenu.setAttribute('aria-label', 'Snapshotalternativ');
+  const createFastButton = document.createElement('button');
+  createFastButton.type = 'button';
+  createFastButton.setAttribute('role', 'menuitem');
+  createFastButton.textContent = 'Skapa snapshot utan omanalys';
+  createFastButton.title = 'Expertläge: skapa snapshot från redan sparad analysdata utan ny omanalys.';
+  createMenu.appendChild(createFastButton);
+  createShell.append(createButton, createMenuButton, createMenu);
 
   controls.append(filterField, createShell);
 
@@ -8389,7 +8571,7 @@ function openOcrDebugExportDialog() {
   compareActions.className = 'snapshot-compare-actions';
   const compareButton = document.createElement('button');
   compareButton.type = 'button';
-  compareButton.className = 'settings-backup-row-button';
+  compareButton.className = 'snapshot-compare-button';
   compareButton.textContent = 'Jämför snapshots';
   compareButton.disabled = true;
   compareActions.appendChild(compareButton);
@@ -8411,10 +8593,14 @@ function openOcrDebugExportDialog() {
 
   const actions = document.createElement('div');
   actions.className = 'panel-actions snapshot-dialog-footer';
+  const closeCompareButton = document.createElement('button');
+  closeCompareButton.type = 'button';
+  closeCompareButton.className = 'settings-backup-row-button hidden';
+  closeCompareButton.textContent = 'Stäng jämförelse';
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
   closeButton.textContent = 'Stäng';
-  actions.appendChild(closeButton);
+  actions.append(closeCompareButton, closeButton);
 
   const resizeHandle = document.createElement('button');
   resizeHandle.type = 'button';
@@ -8462,6 +8648,17 @@ function openOcrDebugExportDialog() {
     document.removeEventListener('pointerup', onSnapshotPointerUp, true);
     document.removeEventListener('pointercancel', onSnapshotPointerUp, true);
   };
+  const closeSnapshotCreateMenu = () => {
+    createMenu.classList.add('hidden');
+    createMenuButton.setAttribute('aria-expanded', 'false');
+    createMenuButton.classList.remove('is-open');
+  };
+  const onSnapshotDialogClick = (event) => {
+    if (!(event.target instanceof Node) || createShell.contains(event.target)) {
+      return;
+    }
+    closeSnapshotCreateMenu();
+  };
   const ensureSnapshotPointerListeners = () => {
     document.addEventListener('pointermove', onSnapshotPointerMove, true);
     document.addEventListener('pointerup', onSnapshotPointerUp, true);
@@ -8499,11 +8696,15 @@ function openOcrDebugExportDialog() {
   const finish = () => {
     stopSnapshotDialogInteractions();
     document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('click', onSnapshotDialogClick, true);
     overlay.remove();
     if (ocrDebugExportDialogOverlayEl === overlay) {
       ocrDebugExportDialogOverlayEl = null;
       ocrDebugExportDialogEl = null;
       ocrDebugExportCompareButtonEl = null;
+      ocrDebugExportCreateMenuButtonEl = null;
+      ocrDebugExportCreateFastButtonEl = null;
+      ocrDebugExportCloseCompareButtonEl = null;
       ocrDebugExportCompareResultEl = null;
       ocrDebugExportShowIdenticalEl = null;
     }
@@ -8562,6 +8763,7 @@ function openOcrDebugExportDialog() {
     event.preventDefault();
   });
   titlebarCloseButton.addEventListener('click', finish);
+  closeCompareButton.addEventListener('click', closeOcrDebugExportCompareResult);
   closeButton.addEventListener('click', finish);
   filterSelect.addEventListener('change', () => {
     ocrDebugExportCurrentFilter = VALID_JOB_LIST_MODES.has(filterSelect.value) ? filterSelect.value : 'ready';
@@ -8573,10 +8775,23 @@ function openOcrDebugExportDialog() {
   createButton.addEventListener('click', async () => {
     await createOcrDebugExport();
   });
+  createMenuButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const shouldOpen = createMenu.classList.contains('hidden');
+    createMenu.classList.toggle('hidden', !shouldOpen);
+    createMenuButton.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+    createMenuButton.classList.toggle('is-open', shouldOpen);
+  });
+  createFastButton.addEventListener('click', async () => {
+    closeSnapshotCreateMenu();
+    await createOcrDebugExport({ requiresReanalysis: false });
+  });
   compareButton.addEventListener('click', async () => {
     await compareSelectedOcrDebugExports();
   });
   document.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener('click', onSnapshotDialogClick, true);
   document.body.appendChild(overlay);
   applySnapshotDialogLayout(ocrDebugExportDialogLayout || snapshotResolvedLayoutOptions().fallback);
 
@@ -8585,11 +8800,14 @@ function openOcrDebugExportDialog() {
   ocrDebugExportFilterSelectEl = filterSelect;
   ocrDebugExportCreateShellEl = createShell;
   ocrDebugExportCreateButtonEl = createButton;
+  ocrDebugExportCreateMenuButtonEl = createMenuButton;
+  ocrDebugExportCreateFastButtonEl = createFastButton;
   ocrDebugExportCreateSpinnerEl = createSpinner;
   ocrDebugExportCreateLabelEl = createLabel;
   ocrDebugExportStatusEl = null;
   ocrDebugExportListEl = list;
   ocrDebugExportCompareButtonEl = compareButton;
+  ocrDebugExportCloseCompareButtonEl = closeCompareButton;
   ocrDebugExportCompareResultEl = compareResult;
   ocrDebugExportShowIdenticalEl = null;
 
@@ -32478,7 +32696,10 @@ async function fetchState(options = {}) {
     }
 
     const nextState = await response.json();
-    if (!nextState || !Array.isArray(nextState.readyJobs) || !Array.isArray(nextState.archivedJobs)) {
+    if (!nextState || (
+      !Array.isArray(nextState.events)
+      && (!Array.isArray(nextState.readyJobs) || !Array.isArray(nextState.archivedJobs))
+    )) {
       throw new Error('Ogiltigt statussvar');
     }
     console.info(
@@ -32497,6 +32718,7 @@ async function fetchState(options = {}) {
 
     if (Array.isArray(nextState.events)) {
       applyJobEvents(nextState.events);
+      updateOcrDebugRunsFromState(nextState.snapshotRuns, nextState.comparisonRuns);
       const lastEventId = Number.parseInt(String(nextState.lastEventId || ''), 10);
       if (Number.isInteger(lastEventId) && lastEventId > stateEventCursor) {
         stateEventCursor = lastEventId;
@@ -32524,6 +32746,7 @@ async function fetchState(options = {}) {
       senders: includeSenders && Array.isArray(nextState.senders) ? nextState.senders : undefined,
       archiveFolders: includeArchiveStructure && Array.isArray(nextState.archiveFolders) ? nextState.archiveFolders : undefined,
     });
+    updateOcrDebugRunsFromState(nextState.snapshotRuns, nextState.comparisonRuns);
 
     const lastEventId = Number.parseInt(String(nextState.lastEventId || ''), 10);
     if (Number.isInteger(lastEventId) && lastEventId >= 0) {
@@ -32658,6 +32881,7 @@ function startStateStream() {
           ? payload.archivingRules
           : undefined,
       });
+      updateOcrDebugRunsFromState(payload.snapshotRuns, payload.comparisonRuns);
       const lastEventId = Number.parseInt(String(payload.lastEventId || ''), 10);
       if (Number.isInteger(lastEventId) && lastEventId > stateEventCursor) {
         stateEventCursor = lastEventId;

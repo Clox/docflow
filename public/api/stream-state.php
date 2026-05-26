@@ -39,6 +39,8 @@ $emitStateSupplement = static function (array $config) use (&$lastSupplementHash
         'senderPayeeLookupQueue' => build_sender_payee_lookup_queue_state_payload(1),
         'senderOrganizationLookupQueue' => build_sender_organization_lookup_queue_state_payload(1),
         'archivingRules' => build_archiving_rules_state_payload($config),
+        'snapshotRuns' => list_processing_ocr_debug_snapshots(),
+        'comparisonRuns' => list_ocr_debug_comparison_runs(),
         'lastEventId' => latest_job_event_id(),
         'stateUpdateTransport' => (string) ($config['stateUpdateTransport'] ?? 'polling'),
     ];

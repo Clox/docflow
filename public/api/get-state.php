@@ -34,6 +34,8 @@ try {
             'events' => $events,
             'lastEventId' => $lastEventId,
             'stateUpdateTransport' => (string) $config['stateUpdateTransport'],
+            'snapshotRuns' => list_processing_ocr_debug_snapshots(),
+            'comparisonRuns' => list_ocr_debug_comparison_runs(),
         ]);
         exit;
     }
@@ -51,6 +53,8 @@ try {
         'senderPayeeLookupQueue' => build_sender_payee_lookup_queue_state_payload(1),
         'senderOrganizationLookupQueue' => build_sender_organization_lookup_queue_state_payload(1),
         'archivingRules' => build_archiving_rules_state_payload($config),
+        'snapshotRuns' => list_processing_ocr_debug_snapshots(),
+        'comparisonRuns' => list_ocr_debug_comparison_runs(),
         'lastEventId' => latest_job_event_id(),
         'stateUpdateTransport' => (string) $config['stateUpdateTransport'],
     ];
@@ -102,6 +106,8 @@ try {
             ],
             'signature' => '',
         ],
+        'snapshotRuns' => [],
+        'comparisonRuns' => [],
         'lastEventId' => 0,
         'stateUpdateTransport' => 'polling',
         'error' => $e->getMessage(),

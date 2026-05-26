@@ -6992,6 +6992,824 @@ function list_ocr_debug_exports(array $config): array
     }, $entries);
 }
 
+function ocr_debug_runs_pdo(): PDO
+{
+    static $pdo = null;
+    if ($pdo instanceof PDO) {
+        return $pdo;
+    }
+    $pdo = \Docflow\Database\Connection::make();
+    ocr_debug_runs_ensure_schema($pdo);
+    return $pdo;
+}
+
+function ocr_debug_runs_ensure_schema(PDO $pdo): void
+{
+    static $ensured = false;
+    if ($ensured) {
+        return;
+    }
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS analysis_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            folder_name TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT 'jobs',
+            filter_label TEXT NOT NULL DEFAULT 'Jobb',
+            export_directory TEXT NOT NULL,
+            job_ids_json TEXT NOT NULL DEFAULT '[]',
+            skipped_job_ids_json TEXT NOT NULL DEFAULT '[]',
+            total_jobs INTEGER NOT NULL DEFAULT 0,
+            completed_jobs INTEGER NOT NULL DEFAULT 0,
+            failed_jobs INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            completed_at TEXT NULL,
+            created_from_rules_version INTEGER NULL,
+            requires_reanalysis INTEGER NOT NULL DEFAULT 1,
+            error_message TEXT NULL
+        )"
+    );
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS analysis_snapshot_jobs (
+            snapshot_id INTEGER NOT NULL,
+            job_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error_message TEXT NULL,
+            completed_at TEXT NULL,
+            PRIMARY KEY (snapshot_id, job_id),
+            FOREIGN KEY (snapshot_id) REFERENCES analysis_snapshots(id) ON DELETE CASCADE
+        )"
+    );
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_analysis_snapshot_jobs_job_status ON analysis_snapshot_jobs (job_id, status)');
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS comparison_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            left_folder_name TEXT NOT NULL,
+            right_folder_name TEXT NOT NULL,
+            live_side TEXT NOT NULL,
+            status TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT 'jobs',
+            filter_label TEXT NOT NULL DEFAULT 'Jobb',
+            job_ids_json TEXT NOT NULL DEFAULT '[]',
+            total_jobs INTEGER NOT NULL DEFAULT 0,
+            completed_jobs INTEGER NOT NULL DEFAULT 0,
+            failed_jobs INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            completed_at TEXT NULL,
+            result_json TEXT NULL,
+            error_message TEXT NULL
+        )"
+    );
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS comparison_run_jobs (
+            comparison_run_id INTEGER NOT NULL,
+            job_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error_message TEXT NULL,
+            completed_at TEXT NULL,
+            PRIMARY KEY (comparison_run_id, job_id),
+            FOREIGN KEY (comparison_run_id) REFERENCES comparison_runs(id) ON DELETE CASCADE
+        )"
+    );
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_comparison_run_jobs_job_status ON comparison_run_jobs (job_id, status)');
+    $ensured = true;
+}
+
+function ocr_debug_json_encode_array(array $value): string
+{
+    $json = json_encode(array_values($value), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($json)) {
+        throw new RuntimeException('Kunde inte serialisera snapshotdata.');
+    }
+    return $json;
+}
+
+function ocr_debug_json_decode_array(mixed $value): array
+{
+    if (!is_string($value) || trim($value) === '') {
+        return [];
+    }
+    $decoded = json_decode($value, true);
+    return is_array($decoded) ? array_values($decoded) : [];
+}
+
+function ocr_debug_normalize_existing_job_ids(array $config, array $jobIds): array
+{
+    $jobsDirectory = is_string($config['jobsDirectory'] ?? null) ? trim((string) $config['jobsDirectory']) : '';
+    if ($jobsDirectory === '' || !is_dir($jobsDirectory)) {
+        throw new RuntimeException('Jobbkatalogen är inte tillgänglig.');
+    }
+
+    $normalized = [];
+    foreach ($jobIds as $jobId) {
+        if (!is_string($jobId) && !is_numeric($jobId)) {
+            continue;
+        }
+        $normalizedJobId = trim((string) $jobId);
+        if ($normalizedJobId === '' || !is_valid_job_id($normalizedJobId)) {
+            continue;
+        }
+        if (!is_file(rtrim($jobsDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $normalizedJobId . DIRECTORY_SEPARATOR . 'job.json')) {
+            continue;
+        }
+        $normalized[$normalizedJobId] = true;
+    }
+
+    $result = array_keys($normalized);
+    sort($result, SORT_NATURAL);
+    if ($result === []) {
+        throw new RuntimeException('Inga jobb valda.');
+    }
+    return $result;
+}
+
+function ocr_debug_snapshot_public_row(array $row): array
+{
+    $status = is_string($row['status'] ?? null) ? (string) $row['status'] : 'processing';
+    $jobIds = ocr_debug_json_decode_array($row['job_ids_json'] ?? null);
+    $skippedJobIds = ocr_debug_json_decode_array($row['skipped_job_ids_json'] ?? null);
+    return [
+        'id' => isset($row['id']) ? (int) $row['id'] : null,
+        'folderName' => is_string($row['folder_name'] ?? null) ? (string) $row['folder_name'] : '',
+        'exportDirectory' => is_string($row['export_directory'] ?? null) ? (string) $row['export_directory'] : '',
+        'exportedAt' => is_string($row['completed_at'] ?? null) && trim((string) $row['completed_at']) !== ''
+            ? (string) $row['completed_at']
+            : (is_string($row['created_at'] ?? null) ? (string) $row['created_at'] : null),
+        'filter' => is_string($row['scope'] ?? null) ? (string) $row['scope'] : 'jobs',
+        'filterLabel' => is_string($row['filter_label'] ?? null) ? (string) $row['filter_label'] : ocr_debug_export_scope_label((string) ($row['scope'] ?? 'jobs')),
+        'jobCount' => isset($row['total_jobs']) ? (int) $row['total_jobs'] : count($jobIds),
+        'jobIds' => $jobIds,
+        'createdFiles' => [],
+        'layers' => ['text', 'merged_objects', 'document_metadata'],
+        'fileCount' => 0,
+        'skippedJobIds' => $skippedJobIds,
+        'sortTimestamp' => strtotime((string) ($row['created_at'] ?? '')) ?: time(),
+        'legacy' => false,
+        'status' => $status,
+        'totalJobs' => isset($row['total_jobs']) ? (int) $row['total_jobs'] : count($jobIds),
+        'completedJobs' => isset($row['completed_jobs']) ? (int) $row['completed_jobs'] : 0,
+        'failedJobs' => isset($row['failed_jobs']) ? (int) $row['failed_jobs'] : 0,
+        'requiresReanalysis' => ((int) ($row['requires_reanalysis'] ?? 1)) === 1,
+        'completedAt' => is_string($row['completed_at'] ?? null) ? (string) $row['completed_at'] : null,
+        'errorMessage' => is_string($row['error_message'] ?? null) ? (string) $row['error_message'] : '',
+    ];
+}
+
+function list_processing_ocr_debug_snapshots(): array
+{
+    $pdo = ocr_debug_runs_pdo();
+    $rows = $pdo->query(
+        "SELECT *
+        FROM analysis_snapshots
+        ORDER BY created_at DESC"
+    )->fetchAll();
+    if (!is_array($rows)) {
+        return [];
+    }
+    return array_map(
+        static fn (array $row): array => ocr_debug_snapshot_public_row($row),
+        array_values(array_filter($rows, static fn ($row): bool => is_array($row)))
+    );
+}
+
+function list_ocr_debug_exports_with_runs(array $config): array
+{
+    $exports = list_ocr_debug_exports($config);
+    $processing = list_processing_ocr_debug_snapshots();
+    if ($processing === []) {
+        return $exports;
+    }
+    $folderNames = [];
+    foreach ($exports as $index => $entry) {
+        if (is_string($entry['folderName'] ?? null)) {
+            $folderNames[(string) $entry['folderName']] = $index;
+        }
+    }
+    foreach ($processing as $entry) {
+        $folderName = is_string($entry['folderName'] ?? null) ? (string) $entry['folderName'] : '';
+        if ($folderName !== '' && isset($folderNames[$folderName])) {
+            $exports[$folderNames[$folderName]] = array_merge($exports[$folderNames[$folderName]], $entry);
+            continue;
+        }
+        if ($folderName !== '') {
+            $exports[] = $entry;
+        }
+    }
+    usort($exports, static fn (array $left, array $right): int => ((int) ($right['sortTimestamp'] ?? 0)) <=> ((int) ($left['sortTimestamp'] ?? 0)));
+    return $exports;
+}
+
+function ocr_debug_queue_reanalysis_for_run_jobs(array $config, array $jobIds, string $mode = 'post-ocr'): array
+{
+    $failed = [];
+    foreach ($jobIds as $jobId) {
+        try {
+            reprocess_job_by_id($config, $jobId, $mode, false, true);
+        } catch (Throwable $e) {
+            $failed[$jobId] = $e->getMessage();
+        }
+    }
+    return $failed;
+}
+
+function create_ocr_debug_snapshot_run(array $config, array $jobIds, string $scope = '', bool $requiresReanalysis = true): array
+{
+    if (!$requiresReanalysis) {
+        $result = export_ocr_debug_data($config, $jobIds, $scope);
+        ocr_debug_record_completed_snapshot_run($result, $scope, false);
+        return [
+            'snapshot' => [
+                ...$result,
+                'status' => 'completed',
+                'totalJobs' => (int) ($result['exportedCount'] ?? 0),
+                'completedJobs' => (int) ($result['exportedCount'] ?? 0),
+                'failedJobs' => (int) ($result['skippedCount'] ?? 0),
+                'requiresReanalysis' => false,
+            ],
+            'completed' => true,
+        ];
+    }
+
+    $normalizedJobIds = ocr_debug_normalize_existing_job_ids($config, $jobIds);
+    $exportDirectory = create_ocr_debug_export_directory($config, $scope);
+    $folderName = basename($exportDirectory);
+    $now = now_iso();
+    $scopeSlug = ocr_debug_export_scope_slug($scope);
+    $filterLabel = ocr_debug_export_scope_label($scopeSlug);
+    $pdo = ocr_debug_runs_pdo();
+
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare(
+            "INSERT INTO analysis_snapshots (
+                folder_name, status, scope, filter_label, export_directory, job_ids_json,
+                total_jobs, completed_jobs, failed_jobs, created_at, created_from_rules_version,
+                requires_reanalysis
+            ) VALUES (
+                :folder_name, 'processing', :scope, :filter_label, :export_directory, :job_ids_json,
+                :total_jobs, 0, 0, :created_at, :created_from_rules_version, 1
+            )"
+        );
+        $statement->execute([
+            ':folder_name' => $folderName,
+            ':scope' => $scopeSlug,
+            ':filter_label' => $filterLabel,
+            ':export_directory' => $exportDirectory,
+            ':job_ids_json' => ocr_debug_json_encode_array($normalizedJobIds),
+            ':total_jobs' => count($normalizedJobIds),
+            ':created_at' => $now,
+            ':created_from_rules_version' => active_archiving_rules_version(),
+        ]);
+        $snapshotId = (int) $pdo->lastInsertId();
+        $jobStatement = $pdo->prepare(
+            "INSERT INTO analysis_snapshot_jobs (snapshot_id, job_id, status)
+            VALUES (:snapshot_id, :job_id, 'processing')"
+        );
+        foreach ($normalizedJobIds as $jobId) {
+            $jobStatement->execute([
+                ':snapshot_id' => $snapshotId,
+                ':job_id' => $jobId,
+            ]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    $queueFailures = ocr_debug_queue_reanalysis_for_run_jobs($config, $normalizedJobIds);
+    foreach ($queueFailures as $jobId => $message) {
+        ocr_debug_mark_snapshot_job_failed($config, $jobId, $message);
+    }
+
+    $snapshot = ocr_debug_snapshot_by_id($snapshotId);
+    return [
+        'snapshot' => is_array($snapshot) ? $snapshot : [
+            'id' => $snapshotId,
+            'folderName' => $folderName,
+            'exportDirectory' => $exportDirectory,
+            'status' => 'processing',
+            'totalJobs' => count($normalizedJobIds),
+            'completedJobs' => 0,
+            'failedJobs' => count($queueFailures),
+        ],
+        'completed' => false,
+    ];
+}
+
+function ocr_debug_record_completed_snapshot_run(array $result, string $scope, bool $requiresReanalysis): void
+{
+    $folderName = is_string($result['folderName'] ?? null) ? (string) $result['folderName'] : '';
+    $exportDirectory = is_string($result['exportDirectory'] ?? null) ? (string) $result['exportDirectory'] : '';
+    if ($folderName === '' || $exportDirectory === '') {
+        return;
+    }
+    $jobIds = array_values(array_filter(
+        is_array($result['exportedJobIds'] ?? null) ? $result['exportedJobIds'] : [],
+        static fn ($jobId): bool => is_string($jobId) && $jobId !== ''
+    ));
+    $skippedJobIds = array_values(array_filter(
+        is_array($result['skippedJobIds'] ?? null) ? $result['skippedJobIds'] : [],
+        static fn ($jobId): bool => is_string($jobId) && $jobId !== ''
+    ));
+    $now = now_iso();
+    $pdo = ocr_debug_runs_pdo();
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare(
+            "INSERT OR IGNORE INTO analysis_snapshots (
+                folder_name, status, scope, filter_label, export_directory, job_ids_json, skipped_job_ids_json,
+                total_jobs, completed_jobs, failed_jobs, created_at, completed_at, created_from_rules_version,
+                requires_reanalysis
+            ) VALUES (
+                :folder_name, 'completed', :scope, :filter_label, :export_directory, :job_ids_json, :skipped_job_ids_json,
+                :total_jobs, :completed_jobs, :failed_jobs, :created_at, :completed_at, :created_from_rules_version,
+                :requires_reanalysis
+            )"
+        );
+        $statement->execute([
+            ':folder_name' => $folderName,
+            ':scope' => ocr_debug_export_scope_slug($scope),
+            ':filter_label' => ocr_debug_export_scope_label($scope),
+            ':export_directory' => $exportDirectory,
+            ':job_ids_json' => ocr_debug_json_encode_array($jobIds),
+            ':skipped_job_ids_json' => ocr_debug_json_encode_array($skippedJobIds),
+            ':total_jobs' => count($jobIds) + count($skippedJobIds),
+            ':completed_jobs' => count($jobIds),
+            ':failed_jobs' => count($skippedJobIds),
+            ':created_at' => $now,
+            ':completed_at' => $now,
+            ':created_from_rules_version' => active_archiving_rules_version(),
+            ':requires_reanalysis' => $requiresReanalysis ? 1 : 0,
+        ]);
+        $snapshotId = (int) $pdo->lastInsertId();
+        if ($snapshotId > 0) {
+            $jobStatement = $pdo->prepare(
+                "INSERT OR IGNORE INTO analysis_snapshot_jobs (snapshot_id, job_id, status, completed_at)
+                VALUES (:snapshot_id, :job_id, 'completed', :completed_at)"
+            );
+            foreach ($jobIds as $jobId) {
+                $jobStatement->execute([
+                    ':snapshot_id' => $snapshotId,
+                    ':job_id' => $jobId,
+                    ':completed_at' => $now,
+                ]);
+            }
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+    }
+}
+
+function ocr_debug_snapshot_by_id(int $snapshotId): ?array
+{
+    $pdo = ocr_debug_runs_pdo();
+    $statement = $pdo->prepare('SELECT * FROM analysis_snapshots WHERE id = :id LIMIT 1');
+    $statement->execute([':id' => $snapshotId]);
+    $row = $statement->fetch();
+    return is_array($row) ? ocr_debug_snapshot_public_row($row) : null;
+}
+
+function ocr_debug_mark_snapshot_job_failed(array $config, string $jobId, string $message): void
+{
+    unset($config);
+    $pdo = ocr_debug_runs_pdo();
+    $statement = $pdo->prepare(
+        "UPDATE analysis_snapshot_jobs
+        SET status = 'failed', error_message = :error_message, completed_at = :completed_at
+        WHERE job_id = :job_id AND status IN ('queued', 'processing')"
+    );
+    $statement->execute([
+        ':job_id' => $jobId,
+        ':error_message' => $message,
+        ':completed_at' => now_iso(),
+    ]);
+    ocr_debug_refresh_all_snapshot_run_statuses();
+}
+
+function ocr_debug_mark_snapshot_job_completed(array $config, string $jobId): void
+{
+    unset($config);
+    $pdo = ocr_debug_runs_pdo();
+    $statement = $pdo->prepare(
+        "UPDATE analysis_snapshot_jobs
+        SET status = 'completed', error_message = NULL, completed_at = :completed_at
+        WHERE job_id = :job_id AND status IN ('queued', 'processing')"
+    );
+    $statement->execute([
+        ':job_id' => $jobId,
+        ':completed_at' => now_iso(),
+    ]);
+    ocr_debug_refresh_all_snapshot_run_statuses();
+}
+
+function ocr_debug_refresh_all_snapshot_run_statuses(): void
+{
+    $pdo = ocr_debug_runs_pdo();
+    $rows = $pdo->query("SELECT id FROM analysis_snapshots WHERE status = 'processing'")->fetchAll();
+    if (!is_array($rows)) {
+        return;
+    }
+    foreach ($rows as $row) {
+        if (isset($row['id'])) {
+            ocr_debug_refresh_snapshot_run_status((int) $row['id']);
+        }
+    }
+}
+
+function ocr_debug_refresh_snapshot_run_status(int $snapshotId): void
+{
+    $pdo = ocr_debug_runs_pdo();
+    $countsStatement = $pdo->prepare(
+        "SELECT
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_jobs,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_jobs,
+            COUNT(*) AS total_jobs
+        FROM analysis_snapshot_jobs
+        WHERE snapshot_id = :snapshot_id"
+    );
+    $countsStatement->execute([':snapshot_id' => $snapshotId]);
+    $counts = $countsStatement->fetch();
+    if (!is_array($counts)) {
+        return;
+    }
+    $completedJobs = (int) ($counts['completed_jobs'] ?? 0);
+    $failedJobs = (int) ($counts['failed_jobs'] ?? 0);
+    $totalJobs = (int) ($counts['total_jobs'] ?? 0);
+    $status = 'processing';
+    $completedAt = null;
+    if ($totalJobs > 0 && ($completedJobs + $failedJobs) >= $totalJobs) {
+        $status = $failedJobs > 0 ? ($completedJobs > 0 ? 'completed_with_errors' : 'failed') : 'completed';
+        $completedAt = now_iso();
+    }
+
+    if ($status === 'completed' || $status === 'completed_with_errors') {
+        ocr_debug_finalize_snapshot_run($snapshotId);
+        $statusStatement = $pdo->prepare('SELECT status FROM analysis_snapshots WHERE id = :id LIMIT 1');
+        $statusStatement->execute([':id' => $snapshotId]);
+        $statusRow = $statusStatement->fetch();
+        if (is_array($statusRow) && ($statusRow['status'] ?? null) === 'failed') {
+            return;
+        }
+    }
+
+    $statement = $pdo->prepare(
+        "UPDATE analysis_snapshots
+        SET status = :status,
+            completed_jobs = :completed_jobs,
+            failed_jobs = :failed_jobs,
+            total_jobs = :total_jobs,
+            completed_at = COALESCE(completed_at, :completed_at)
+        WHERE id = :id"
+    );
+    $statement->execute([
+        ':id' => $snapshotId,
+        ':status' => $status,
+        ':completed_jobs' => $completedJobs,
+        ':failed_jobs' => $failedJobs,
+        ':total_jobs' => $totalJobs,
+        ':completed_at' => $completedAt,
+    ]);
+}
+
+function ocr_debug_finalize_snapshot_run(int $snapshotId): void
+{
+    $pdo = ocr_debug_runs_pdo();
+    $snapshotStatement = $pdo->prepare('SELECT * FROM analysis_snapshots WHERE id = :id LIMIT 1');
+    $snapshotStatement->execute([':id' => $snapshotId]);
+    $snapshot = $snapshotStatement->fetch();
+    if (!is_array($snapshot) || is_string($snapshot['completed_at'] ?? null)) {
+        return;
+    }
+    $jobStatement = $pdo->prepare(
+        "SELECT job_id
+        FROM analysis_snapshot_jobs
+        WHERE snapshot_id = :snapshot_id AND status = 'completed'
+        ORDER BY job_id"
+    );
+    $jobStatement->execute([':snapshot_id' => $snapshotId]);
+    $jobIds = array_values(array_filter(
+        array_map(static fn (array $row): string => is_string($row['job_id'] ?? null) ? (string) $row['job_id'] : '', $jobStatement->fetchAll() ?: []),
+        static fn (string $jobId): bool => $jobId !== ''
+    ));
+    if ($jobIds === []) {
+        return;
+    }
+
+    try {
+        export_ocr_debug_data(
+            load_config(),
+            $jobIds,
+            is_string($snapshot['scope'] ?? null) ? (string) $snapshot['scope'] : 'jobs',
+            is_string($snapshot['export_directory'] ?? null) ? (string) $snapshot['export_directory'] : null
+        );
+    } catch (Throwable $e) {
+        $statement = $pdo->prepare("UPDATE analysis_snapshots SET status = 'failed', error_message = :error_message WHERE id = :id");
+        $statement->execute([
+            ':id' => $snapshotId,
+            ':error_message' => $e->getMessage(),
+        ]);
+    }
+}
+
+function ocr_debug_comparison_public_row(array $row): array
+{
+    $result = null;
+    if (is_string($row['result_json'] ?? null) && trim((string) $row['result_json']) !== '') {
+        $decoded = json_decode((string) $row['result_json'], true);
+        $result = is_array($decoded) ? $decoded : null;
+    }
+    return [
+        'id' => isset($row['id']) ? (int) $row['id'] : null,
+        'leftFolderName' => is_string($row['left_folder_name'] ?? null) ? (string) $row['left_folder_name'] : '',
+        'rightFolderName' => is_string($row['right_folder_name'] ?? null) ? (string) $row['right_folder_name'] : '',
+        'liveSide' => is_string($row['live_side'] ?? null) ? (string) $row['live_side'] : '',
+        'status' => is_string($row['status'] ?? null) ? (string) $row['status'] : 'processing',
+        'scope' => is_string($row['scope'] ?? null) ? (string) $row['scope'] : 'jobs',
+        'filterLabel' => is_string($row['filter_label'] ?? null) ? (string) $row['filter_label'] : ocr_debug_export_scope_label((string) ($row['scope'] ?? 'jobs')),
+        'jobIds' => ocr_debug_json_decode_array($row['job_ids_json'] ?? null),
+        'totalJobs' => isset($row['total_jobs']) ? (int) $row['total_jobs'] : 0,
+        'completedJobs' => isset($row['completed_jobs']) ? (int) $row['completed_jobs'] : 0,
+        'failedJobs' => isset($row['failed_jobs']) ? (int) $row['failed_jobs'] : 0,
+        'createdAt' => is_string($row['created_at'] ?? null) ? (string) $row['created_at'] : '',
+        'completedAt' => is_string($row['completed_at'] ?? null) ? (string) $row['completed_at'] : null,
+        'errorMessage' => is_string($row['error_message'] ?? null) ? (string) $row['error_message'] : '',
+        'result' => $result,
+    ];
+}
+
+function list_ocr_debug_comparison_runs(): array
+{
+    $pdo = ocr_debug_runs_pdo();
+    $rows = $pdo->query(
+        "SELECT *
+        FROM comparison_runs
+        WHERE status IN ('processing', 'completed', 'completed_with_errors', 'failed')
+        ORDER BY created_at DESC
+        LIMIT 5"
+    )->fetchAll();
+    if (!is_array($rows)) {
+        return [];
+    }
+    return array_map(
+        static fn (array $row): array => ocr_debug_comparison_public_row($row),
+        array_values(array_filter($rows, static fn ($row): bool => is_array($row)))
+    );
+}
+
+function ocr_debug_comparison_run_by_id(int $comparisonRunId): ?array
+{
+    $pdo = ocr_debug_runs_pdo();
+    $statement = $pdo->prepare('SELECT * FROM comparison_runs WHERE id = :id LIMIT 1');
+    $statement->execute([':id' => $comparisonRunId]);
+    $row = $statement->fetch();
+    return is_array($row) ? ocr_debug_comparison_public_row($row) : null;
+}
+
+function create_ocr_debug_comparison_run(array $config, string $leftFolderName, string $rightFolderName, array $jobIds, string $scope = ''): array
+{
+    $leftIsLive = ocr_debug_export_is_live_reference($leftFolderName);
+    $rightIsLive = ocr_debug_export_is_live_reference($rightFolderName);
+    if (!$leftIsLive && !$rightIsLive) {
+        return [
+            'comparison' => compare_ocr_debug_exports($config, $leftFolderName, $rightFolderName),
+            'completed' => true,
+        ];
+    }
+    if ($leftIsLive && $rightIsLive) {
+        throw new RuntimeException('Välj en sparad snapshot och Aktuellt läge.');
+    }
+
+    $normalizedJobIds = ocr_debug_normalize_existing_job_ids($config, $jobIds);
+    $scopeSlug = ocr_debug_export_scope_slug($scope);
+    $now = now_iso();
+    $pdo = ocr_debug_runs_pdo();
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare(
+            "INSERT INTO comparison_runs (
+                left_folder_name, right_folder_name, live_side, status, scope, filter_label,
+                job_ids_json, total_jobs, completed_jobs, failed_jobs, created_at
+            ) VALUES (
+                :left_folder_name, :right_folder_name, :live_side, 'processing', :scope, :filter_label,
+                :job_ids_json, :total_jobs, 0, 0, :created_at
+            )"
+        );
+        $statement->execute([
+            ':left_folder_name' => $leftFolderName,
+            ':right_folder_name' => $rightFolderName,
+            ':live_side' => $leftIsLive ? 'left' : 'right',
+            ':scope' => $scopeSlug,
+            ':filter_label' => ocr_debug_export_scope_label($scopeSlug),
+            ':job_ids_json' => ocr_debug_json_encode_array($normalizedJobIds),
+            ':total_jobs' => count($normalizedJobIds),
+            ':created_at' => $now,
+        ]);
+        $runId = (int) $pdo->lastInsertId();
+        $jobStatement = $pdo->prepare(
+            "INSERT INTO comparison_run_jobs (comparison_run_id, job_id, status)
+            VALUES (:comparison_run_id, :job_id, 'processing')"
+        );
+        foreach ($normalizedJobIds as $jobId) {
+            $jobStatement->execute([
+                ':comparison_run_id' => $runId,
+                ':job_id' => $jobId,
+            ]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    $queueFailures = ocr_debug_queue_reanalysis_for_run_jobs($config, $normalizedJobIds);
+    foreach ($queueFailures as $jobId => $message) {
+        ocr_debug_mark_comparison_job_failed($config, $jobId, $message);
+    }
+
+    return [
+        'comparisonRun' => ocr_debug_comparison_run_by_id($runId),
+        'completed' => false,
+    ];
+}
+
+function ocr_debug_mark_comparison_job_failed(array $config, string $jobId, string $message): void
+{
+    unset($config);
+    $pdo = ocr_debug_runs_pdo();
+    $statement = $pdo->prepare(
+        "UPDATE comparison_run_jobs
+        SET status = 'failed', error_message = :error_message, completed_at = :completed_at
+        WHERE job_id = :job_id AND status IN ('queued', 'processing')"
+    );
+    $statement->execute([
+        ':job_id' => $jobId,
+        ':error_message' => $message,
+        ':completed_at' => now_iso(),
+    ]);
+    ocr_debug_refresh_all_comparison_run_statuses();
+}
+
+function ocr_debug_mark_comparison_job_completed(array $config, string $jobId): void
+{
+    unset($config);
+    $pdo = ocr_debug_runs_pdo();
+    $statement = $pdo->prepare(
+        "UPDATE comparison_run_jobs
+        SET status = 'completed', error_message = NULL, completed_at = :completed_at
+        WHERE job_id = :job_id AND status IN ('queued', 'processing')"
+    );
+    $statement->execute([
+        ':job_id' => $jobId,
+        ':completed_at' => now_iso(),
+    ]);
+    ocr_debug_refresh_all_comparison_run_statuses();
+}
+
+function ocr_debug_refresh_all_comparison_run_statuses(): void
+{
+    $pdo = ocr_debug_runs_pdo();
+    $rows = $pdo->query("SELECT id FROM comparison_runs WHERE status = 'processing'")->fetchAll();
+    if (!is_array($rows)) {
+        return;
+    }
+    foreach ($rows as $row) {
+        if (isset($row['id'])) {
+            ocr_debug_refresh_comparison_run_status((int) $row['id']);
+        }
+    }
+}
+
+function ocr_debug_refresh_comparison_run_status(int $runId): void
+{
+    $pdo = ocr_debug_runs_pdo();
+    $countsStatement = $pdo->prepare(
+        "SELECT
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_jobs,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_jobs,
+            COUNT(*) AS total_jobs
+        FROM comparison_run_jobs
+        WHERE comparison_run_id = :comparison_run_id"
+    );
+    $countsStatement->execute([':comparison_run_id' => $runId]);
+    $counts = $countsStatement->fetch();
+    if (!is_array($counts)) {
+        return;
+    }
+    $completedJobs = (int) ($counts['completed_jobs'] ?? 0);
+    $failedJobs = (int) ($counts['failed_jobs'] ?? 0);
+    $totalJobs = (int) ($counts['total_jobs'] ?? 0);
+    $status = 'processing';
+    $completedAt = null;
+    if ($totalJobs > 0 && ($completedJobs + $failedJobs) >= $totalJobs) {
+        $status = $failedJobs > 0 ? ($completedJobs > 0 ? 'completed_with_errors' : 'failed') : 'completed';
+        $completedAt = now_iso();
+    }
+
+    if ($status === 'completed' || $status === 'completed_with_errors') {
+        ocr_debug_finalize_comparison_run($runId);
+        $statusStatement = $pdo->prepare('SELECT status FROM comparison_runs WHERE id = :id LIMIT 1');
+        $statusStatement->execute([':id' => $runId]);
+        $statusRow = $statusStatement->fetch();
+        if (is_array($statusRow) && ($statusRow['status'] ?? null) === 'failed') {
+            return;
+        }
+    }
+
+    $statement = $pdo->prepare(
+        "UPDATE comparison_runs
+        SET status = :status,
+            completed_jobs = :completed_jobs,
+            failed_jobs = :failed_jobs,
+            total_jobs = :total_jobs,
+            completed_at = COALESCE(completed_at, :completed_at)
+        WHERE id = :id"
+    );
+    $statement->execute([
+        ':id' => $runId,
+        ':status' => $status,
+        ':completed_jobs' => $completedJobs,
+        ':failed_jobs' => $failedJobs,
+        ':total_jobs' => $totalJobs,
+        ':completed_at' => $completedAt,
+    ]);
+}
+
+function ocr_debug_finalize_comparison_run(int $runId): void
+{
+    $pdo = ocr_debug_runs_pdo();
+    $runStatement = $pdo->prepare('SELECT * FROM comparison_runs WHERE id = :id LIMIT 1');
+    $runStatement->execute([':id' => $runId]);
+    $run = $runStatement->fetch();
+    if (!is_array($run) || is_string($run['result_json'] ?? null)) {
+        return;
+    }
+
+    $jobStatement = $pdo->prepare(
+        "SELECT job_id
+        FROM comparison_run_jobs
+        WHERE comparison_run_id = :comparison_run_id AND status = 'completed'
+        ORDER BY job_id"
+    );
+    $jobStatement->execute([':comparison_run_id' => $runId]);
+    $jobIds = array_values(array_filter(
+        array_map(static fn (array $row): string => is_string($row['job_id'] ?? null) ? (string) $row['job_id'] : '', $jobStatement->fetchAll() ?: []),
+        static fn (string $jobId): bool => $jobId !== ''
+    ));
+    if ($jobIds === []) {
+        return;
+    }
+
+    try {
+        $config = load_config();
+        $result = compare_ocr_debug_exports_with_live(
+            $config,
+            is_string($run['left_folder_name'] ?? null) ? (string) $run['left_folder_name'] : '',
+            is_string($run['right_folder_name'] ?? null) ? (string) $run['right_folder_name'] : '',
+            $jobIds,
+            is_string($run['scope'] ?? null) ? (string) $run['scope'] : 'jobs'
+        );
+        $json = json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($json)) {
+            throw new RuntimeException('Kunde inte serialisera jämförelseresultat.');
+        }
+        $statement = $pdo->prepare('UPDATE comparison_runs SET result_json = :result_json WHERE id = :id');
+        $statement->execute([
+            ':id' => $runId,
+            ':result_json' => $json,
+        ]);
+    } catch (Throwable $e) {
+        $statement = $pdo->prepare("UPDATE comparison_runs SET status = 'failed', error_message = :error_message WHERE id = :id");
+        $statement->execute([
+            ':id' => $runId,
+            ':error_message' => $e->getMessage(),
+        ]);
+    }
+}
+
+function ocr_debug_handle_job_processing_finished(array $config, string $jobId, bool $success, ?string $errorMessage = null): void
+{
+    try {
+        if ($success) {
+            ocr_debug_mark_snapshot_job_completed($config, $jobId);
+            ocr_debug_mark_comparison_job_completed($config, $jobId);
+            return;
+        }
+        $message = is_string($errorMessage) && trim($errorMessage) !== '' ? trim($errorMessage) : 'Omanalys misslyckades.';
+        ocr_debug_mark_snapshot_job_failed($config, $jobId, $message);
+        ocr_debug_mark_comparison_job_failed($config, $jobId, $message);
+    } catch (Throwable $e) {
+        // Snapshot/comparison progress is best-effort relative to the job state itself.
+    }
+}
+
 function update_ocr_debug_export_comment(array $config, string $folderName, string $comment): array
 {
     $exportDirectory = ocr_debug_export_directory_path_from_name($config, $folderName);
@@ -20607,6 +21425,7 @@ function process_job_by_id(
         );
         write_json_file($jobJsonPath, $jobData);
         queue_job_upsert_event($config, $jobId);
+        ocr_debug_handle_job_processing_finished($config, $jobId, true);
     } catch (Throwable $e) {
         if (!is_dir($jobDir) || !is_file($jobJsonPath)) {
             return;
@@ -20624,6 +21443,7 @@ function process_job_by_id(
         );
         write_json_file($jobJsonPath, $jobData);
         queue_job_upsert_event($config, $jobId);
+        ocr_debug_handle_job_processing_finished($config, $jobId, false, $e->getMessage());
     }
 }
 

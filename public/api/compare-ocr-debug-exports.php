@@ -32,10 +32,17 @@ $scope = array_key_exists('scope', $payload) && is_string($payload['scope']) ? t
 
 try {
     $config = load_config();
-    json_response([
+    $result = create_ocr_debug_comparison_run($config, $leftFolderName, $rightFolderName, $jobIds, $scope);
+    $response = [
         'ok' => true,
-        'comparison' => compare_ocr_debug_exports_with_live($config, $leftFolderName, $rightFolderName, $jobIds, $scope),
-    ]);
+    ];
+    if (is_array($result['comparison'] ?? null)) {
+        $response['comparison'] = $result['comparison'];
+    }
+    if (is_array($result['comparisonRun'] ?? null)) {
+        $response['comparisonRun'] = $result['comparisonRun'];
+    }
+    json_response($response);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);
 }

@@ -23,19 +23,22 @@ if (!is_array($payload)) {
 
 $jobIds = array_key_exists('jobIds', $payload) && is_array($payload['jobIds']) ? $payload['jobIds'] : [];
 $scope = array_key_exists('scope', $payload) && is_string($payload['scope']) ? trim($payload['scope']) : 'jobs';
+$requiresReanalysis = !array_key_exists('requiresReanalysis', $payload) || ($payload['requiresReanalysis'] ?? true) === true;
 
 try {
     $config = load_config();
-    $result = export_ocr_debug_data($config, $jobIds, $scope);
+    $run = create_ocr_debug_snapshot_run($config, $jobIds, $scope, $requiresReanalysis);
+    $snapshot = is_array($run['snapshot'] ?? null) ? $run['snapshot'] : [];
     json_response([
         'ok' => true,
-        'exportDirectory' => $result['exportDirectory'],
-        'folderName' => $result['folderName'],
-        'exportedCount' => $result['exportedCount'],
-        'skippedCount' => $result['skippedCount'],
-        'skippedJobIds' => $result['skippedJobIds'],
-        'scope' => $result['scope'],
-        'scopeLabel' => $result['scopeLabel'],
+        'snapshot' => $snapshot,
+        'exportDirectory' => is_string($snapshot['exportDirectory'] ?? null) ? (string) $snapshot['exportDirectory'] : '',
+        'folderName' => is_string($snapshot['folderName'] ?? null) ? (string) $snapshot['folderName'] : '',
+        'exportedCount' => isset($snapshot['completedJobs']) ? (int) $snapshot['completedJobs'] : (int) ($snapshot['exportedCount'] ?? 0),
+        'skippedCount' => isset($snapshot['failedJobs']) ? (int) $snapshot['failedJobs'] : (int) ($snapshot['skippedCount'] ?? 0),
+        'skippedJobIds' => is_array($snapshot['skippedJobIds'] ?? null) ? $snapshot['skippedJobIds'] : [],
+        'scope' => is_string($snapshot['scope'] ?? null) ? (string) $snapshot['scope'] : $scope,
+        'scopeLabel' => is_string($snapshot['scopeLabel'] ?? null) ? (string) $snapshot['scopeLabel'] : (string) ($snapshot['filterLabel'] ?? ''),
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);
