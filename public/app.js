@@ -14600,6 +14600,10 @@ function ocrDataFieldWordIndexListForPage(page, row, kind, pageMatches = null) {
   const hasKey = ocrDataFieldMatchHasKey(row);
   const directBBox = kind === 'key' ? row.keyBbox : row.valueBbox;
   const directWordIndexes = ocrWordIndexesForBBox(page, directBBox);
+  if (directWordIndexes.size > 0) {
+    return directWordIndexes;
+  }
+
   const matches = Array.isArray(pageMatches) ? pageMatches : ocrDataFieldPageMatchesForPage(page);
   const matchedWordIndexes = new Set();
   matches.forEach((match) => {
@@ -14613,10 +14617,6 @@ function ocrDataFieldWordIndexListForPage(page, row, kind, pageMatches = null) {
 
   if (kind === 'value' && !hasKey && matchedWordIndexes.size > 0) {
     return matchedWordIndexes;
-  }
-
-  if (directWordIndexes.size > 0) {
-    return directWordIndexes;
   }
 
   matchedWordIndexes.forEach((wordIndex) => {
@@ -16219,7 +16219,10 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
     markerEl.setAttribute('markerUnits', 'strokeWidth');
     const markerPathEl = document.createElementNS(svgNS, 'path');
     markerPathEl.setAttribute('d', 'M0,0 L6,3 L0,6 Z');
-    markerPathEl.setAttribute('fill', 'currentColor');
+    markerPathEl.setAttribute('fill', '#0f172a');
+    markerPathEl.setAttribute('stroke', '#fff');
+    markerPathEl.setAttribute('stroke-width', '0.75');
+    markerPathEl.setAttribute('stroke-linejoin', 'round');
     markerEl.appendChild(markerPathEl);
     defsEl.appendChild(markerEl);
     connectionSvg.appendChild(defsEl);
@@ -16243,6 +16246,37 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
       valueBBox.x1.toFixed(1),
       valueBBox.y1.toFixed(1),
     ].join('|');
+    const appendDataFieldConnection = (connection, isActive = false) => {
+      const path = `M ${Math.max(0, connection.x1 * objectScale)} ${Math.max(0, connection.y1 * objectScale)} L ${Math.max(0, connection.x2 * objectScale)} ${Math.max(0, connection.y2 * objectScale)}`;
+      const borderEl = document.createElementNS(svgNS, 'path');
+      borderEl.classList.add('ocr-datafield-connection-border');
+      if (isActive) {
+        borderEl.classList.add('is-active');
+      }
+      borderEl.setAttribute('d', path);
+      connectionSvg.appendChild(borderEl);
+
+      const connectionEl = document.createElementNS(svgNS, 'path');
+      connectionEl.classList.add('ocr-datafield-connection');
+      if (isActive) {
+        connectionEl.classList.add('is-active');
+      }
+      connectionEl.setAttribute('d', path);
+      connectionSvg.appendChild(connectionEl);
+    };
+    const appendDataFieldBox = (kind, bbox, isActive = false) => {
+      if (!bbox) {
+        return;
+      }
+      const padding = 3 / Math.max(0.0001, objectScale);
+      const highlightEl = document.createElement('div');
+      highlightEl.className = `ocr-datafield-box ocr-datafield-box--${kind}${isActive ? ' is-active' : ''}`;
+      highlightEl.style.left = `${Math.max(0, (bbox.x0 - padding) * objectScale)}px`;
+      highlightEl.style.top = `${Math.max(0, (bbox.y0 - padding) * objectScale)}px`;
+      highlightEl.style.width = `${Math.max(1, ((bbox.x1 - bbox.x0) + (padding * 2)) * objectScale)}px`;
+      highlightEl.style.height = `${Math.max(1, ((bbox.y1 - bbox.y0) + (padding * 2)) * objectScale)}px`;
+      surfaceEl.appendChild(highlightEl);
+    };
 
     dataFieldRows.forEach((row) => {
       const keyWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'key', dataFieldPageMatches);
@@ -16258,48 +16292,25 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
         });
       }
       [
-        ['key', keyWordIndexes],
-        ['value', valueWordIndexes],
-      ].forEach(([kind, wordIndexes]) => {
-        if (!(wordIndexes instanceof Set) || wordIndexes.size === 0) {
+        ['key', keyBBox],
+        ['value', valueBBox],
+      ].forEach(([kind, bbox]) => {
+        if (!bbox) {
           return;
         }
-
-        wordIndexes.forEach((wordIndex) => {
-          const word = page.words.find((entry) => entry.index === wordIndex) || null;
-          const wordBBox = word?.rect || null;
-          if (!wordBBox) {
-            return;
-          }
-          const key = bboxKey(kind, wordBBox);
-          if (!boxByKey.has(key)) {
-            boxByKey.set(key, {
-              kind,
-              bbox: wordBBox,
-            });
-          }
-        });
+        const key = bboxKey(kind, bbox);
+        if (!boxByKey.has(key)) {
+          boxByKey.set(key, { kind, bbox });
+        }
       });
     });
 
     connectionByKey.forEach(({ connection }) => {
-      const connectionEl = document.createElementNS(svgNS, 'path');
-      connectionEl.classList.add('ocr-datafield-connection');
-      connectionEl.setAttribute(
-        'd',
-        `M ${Math.max(0, connection.x1 * objectScale)} ${Math.max(0, connection.y1 * objectScale)} L ${Math.max(0, connection.x2 * objectScale)} ${Math.max(0, connection.y2 * objectScale)}`
-      );
-      connectionSvg.appendChild(connectionEl);
+      appendDataFieldConnection(connection);
     });
 
     boxByKey.forEach(({ kind, bbox }) => {
-      const highlightEl = document.createElement('div');
-      highlightEl.className = `ocr-datafield-box ocr-datafield-box--${kind}`;
-      highlightEl.style.left = `${Math.max(0, bbox.x0 * objectScale)}px`;
-      highlightEl.style.top = `${Math.max(0, bbox.y0 * objectScale)}px`;
-      highlightEl.style.width = `${Math.max(1, (bbox.x1 - bbox.x0) * objectScale)}px`;
-      highlightEl.style.height = `${Math.max(1, (bbox.y1 - bbox.y0) * objectScale)}px`;
-      surfaceEl.appendChild(highlightEl);
+      appendDataFieldBox(kind, bbox);
     });
 
     const activeRow = dataFieldRows.find((row) => row.matchIndex === ocrDataFieldSelection.matchIndex) || null;
@@ -16310,35 +16321,13 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
       const activeValueBBox = ocrDataFieldBBoxFromWordIndexes(page, activeValueWordIndexes);
       const activeConnection = ocrDataFieldConnectionPathForBoxes(activeKeyBBox, activeValueBBox);
       if (activeConnection) {
-        const activeConnectionEl = document.createElementNS(svgNS, 'path');
-        activeConnectionEl.classList.add('ocr-datafield-connection', 'is-active');
-        activeConnectionEl.setAttribute(
-          'd',
-          `M ${Math.max(0, activeConnection.x1 * objectScale)} ${Math.max(0, activeConnection.y1 * objectScale)} L ${Math.max(0, activeConnection.x2 * objectScale)} ${Math.max(0, activeConnection.y2 * objectScale)}`
-        );
-        connectionSvg.appendChild(activeConnectionEl);
+        appendDataFieldConnection(activeConnection, true);
       }
       [
-        ['key', activeKeyWordIndexes],
-        ['value', activeValueWordIndexes],
-      ].forEach(([kind, wordIndexes]) => {
-        if (!(wordIndexes instanceof Set) || wordIndexes.size === 0) {
-          return;
-        }
-        wordIndexes.forEach((wordIndex) => {
-          const word = page.words.find((entry) => entry.index === wordIndex) || null;
-          const wordBBox = word?.rect || null;
-          if (!wordBBox) {
-            return;
-          }
-          const activeHighlightEl = document.createElement('div');
-          activeHighlightEl.className = `ocr-datafield-box ocr-datafield-box--${kind} is-active`;
-          activeHighlightEl.style.left = `${Math.max(0, wordBBox.x0 * objectScale)}px`;
-          activeHighlightEl.style.top = `${Math.max(0, wordBBox.y0 * objectScale)}px`;
-          activeHighlightEl.style.width = `${Math.max(1, (wordBBox.x1 - wordBBox.x0) * objectScale)}px`;
-          activeHighlightEl.style.height = `${Math.max(1, (wordBBox.y1 - wordBBox.y0) * objectScale)}px`;
-          surfaceEl.appendChild(activeHighlightEl);
-        });
+        ['key', activeKeyBBox],
+        ['value', activeValueBBox],
+      ].forEach(([kind, bbox]) => {
+        appendDataFieldBox(kind, bbox, true);
       });
     }
     surfaceEl.appendChild(connectionSvg);
