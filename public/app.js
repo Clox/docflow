@@ -7366,6 +7366,17 @@ function appendSnapshotCompareTableRow(table, fieldLabel, oldValue, newValue, op
   appendSnapshotCompareTaskContent(field, fieldLabel, options);
   const oldCell = document.createElement('div');
   oldCell.className = 'snapshot-compare-table-cell';
+  if (options.unchanged === true) {
+    oldCell.classList.add('snapshot-compare-table-cell--shared');
+    oldCell.appendChild(createSnapshotCompareValue(oldValue || newValue, {
+      ...options,
+      unchanged: false,
+      label: options.oldLabel || options.newLabel || options.label || fieldLabel,
+    }));
+    row.append(field, oldCell);
+    table.appendChild(row);
+    return;
+  }
   oldCell.appendChild(createSnapshotCompareValue(oldValue, {
     ...options,
     label: options.oldLabel || options.label || fieldLabel,

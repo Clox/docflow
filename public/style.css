@@ -5131,6 +5131,10 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   overflow-wrap: anywhere;
 }
 
+.snapshot-compare-table-cell--shared {
+  grid-column: 2 / span 2;
+}
+
 .snapshot-compare-table-row--candidate-list .snapshot-compare-table-cell {
   align-items: flex-start;
 }
