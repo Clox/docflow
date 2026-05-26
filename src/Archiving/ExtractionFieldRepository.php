@@ -181,7 +181,6 @@ final class ExtractionFieldRepository
                 data_field_id,
                 requires_search_terms,
                 search_terms_json,
-                rule_type,
                 use_value_pattern,
                 value_pattern,
                 scope_json,
@@ -200,7 +199,6 @@ final class ExtractionFieldRepository
                 :data_field_id,
                 :requires_search_terms,
                 :search_terms_json,
-                :rule_type,
                 :use_value_pattern,
                 :value_pattern,
                 :scope_json,
@@ -327,7 +325,6 @@ final class ExtractionFieldRepository
                         ':data_field_id' => $fieldId,
                         ':requires_search_terms' => ($ruleSet['requiresSearchTerms'] ?? true) ? 1 : 0,
                         ':search_terms_json' => $searchTermsJson,
-                        ':rule_type' => $this->legacyRuleTypeForValueType($valueType),
                         ':use_value_pattern' => ($ruleSet['useValuePattern'] ?? false) ? 1 : 0,
                         ':value_pattern' => is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '',
                         ':scope_json' => $scopeJson,
@@ -412,7 +409,6 @@ final class ExtractionFieldRepository
                 data_field_id,
                 requires_search_terms,
                 search_terms_json,
-                rule_type,
                 use_value_pattern,
                 value_pattern,
                 scope_json,
@@ -478,7 +474,6 @@ final class ExtractionFieldRepository
             }
 
             $byFieldId[$fieldId][] = [
-                'type' => is_string($row['rule_type'] ?? null) ? trim(strtolower((string) $row['rule_type'])) : 'regex',
                 'requiresSearchTerms' => ((int) ($row['requires_search_terms'] ?? 1)) === 1,
                 'searchTerms' => $resolvedSearchTerms,
                 'useValuePattern' => ((int) ($row['use_value_pattern'] ?? 0)) === 1,

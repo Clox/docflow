@@ -2440,8 +2440,8 @@ function predefined_extraction_field_definitions(): array
     return [
         'amount' => [
             'name' => 'Belopp',
+            'valueType' => 'amount',
             'ruleSets' => [[
-                'type' => 'amount',
                 'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['att betala', 'fakturabelopp', 'summa att betala', 'belopp att betala', 'total att betala'],
@@ -2453,8 +2453,8 @@ function predefined_extraction_field_definitions(): array
         ],
         'due_date' => [
             'name' => 'Förfallodatum',
+            'valueType' => 'date',
             'ruleSets' => [[
-                'type' => 'date',
                 'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['förfallodatum', 'förfallodag', 'att betala senast'],
@@ -2467,7 +2467,6 @@ function predefined_extraction_field_definitions(): array
             'normalizationChars' => '0123456789',
             'normalizationReplacements' => [],
             'ruleSets' => [[
-                'type' => 'regex',
                 'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['bankgiro', 'bg'],
@@ -2479,7 +2478,6 @@ function predefined_extraction_field_definitions(): array
         'plusgiro' => [
             'name' => 'Plusgiro',
             'ruleSets' => [[
-                'type' => 'regex',
                 'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['plusgiro', 'pg'],
@@ -2491,7 +2489,6 @@ function predefined_extraction_field_definitions(): array
         'supplier' => [
             'name' => 'Leverantör',
             'ruleSets' => [[
-                'type' => 'regex',
                 'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['leverantör', 'leverantor'],
@@ -2503,7 +2500,6 @@ function predefined_extraction_field_definitions(): array
         'payment_receiver' => [
             'name' => 'Betalningsmottagare',
             'ruleSets' => [[
-                'type' => 'regex',
                 'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['betalningsmottagare', 'mottagare'],
@@ -2515,7 +2511,6 @@ function predefined_extraction_field_definitions(): array
         'iban' => [
             'name' => 'IBAN',
             'ruleSets' => [[
-                'type' => 'regex',
                 'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['iban'],
@@ -2527,7 +2522,6 @@ function predefined_extraction_field_definitions(): array
         'swift' => [
             'name' => 'SWIFT',
             'ruleSets' => [[
-                'type' => 'regex',
                 'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['swift', 'bic'],
@@ -2539,7 +2533,6 @@ function predefined_extraction_field_definitions(): array
         'ocr' => [
             'name' => 'OCR',
             'ruleSets' => [[
-                'type' => 'regex',
                 'useSearchText' => true,
                 'requiresSearchTerms' => true,
                 'searchTerms' => ['ocr-nummer', 'ocr nummer', 'ocr'],
@@ -2552,7 +2545,6 @@ function predefined_extraction_field_definitions(): array
             'name' => 'Organisationsnummer',
             'ruleSets' => [
                 [
-                    'type' => 'regex',
                     'useSearchText' => true,
                     'requiresSearchTerms' => true,
                     'searchTerms' => ['organisationsnr', 'org.nr', 'org nr'],
@@ -2561,7 +2553,6 @@ function predefined_extraction_field_definitions(): array
                     'normalizationChars' => '0123456789',
                 ],
                 [
-                    'type' => 'regex',
                     'useSearchText' => false,
                     'requiresSearchTerms' => false,
                     'searchTerms' => [],
@@ -2831,9 +2822,7 @@ function normalize_extraction_field_value_type(mixed $value, ?array $legacyField
         return $legacyRuleValueType;
     }
 
-    $legacyTypeValue = is_array($legacyRuleSet) && array_key_exists('type', $legacyRuleSet)
-        ? $legacyRuleSet['type']
-        : (is_array($legacyField) && array_key_exists('type', $legacyField) ? $legacyField['type'] : null);
+    $legacyTypeValue = is_array($legacyField) && array_key_exists('type', $legacyField) ? $legacyField['type'] : null;
     $legacyType = normalize_extraction_field_type($legacyTypeValue, $legacyField, $legacyRuleSet);
 
     return match ($legacyType) {
@@ -3229,7 +3218,6 @@ function normalize_extraction_field_use_search_text(mixed $value, bool $fallback
 function default_extraction_field_rule_set(array $overrides = []): array
 {
     $defaults = [
-        'type' => 'regex',
         'useSearchText' => true,
         'requiresSearchTerms' => true,
         'searchTerms' => [],
@@ -3260,8 +3248,6 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             continue;
         }
 
-        $fieldValueType = normalize_extraction_field_value_type($legacyField['valueType'] ?? null, $legacyField, $row);
-        $type = legacy_extraction_field_type_for_value_type($fieldValueType);
         $requiresSearchTerms = array_key_exists('useSearchText', $row)
             ? normalize_extraction_field_use_search_text($row['useSearchText'] ?? null, true)
             : (
@@ -3283,7 +3269,6 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             );
 
         $normalized[] = default_extraction_field_rule_set([
-            'type' => $type,
             'useSearchText' => $requiresSearchTerms,
             'requiresSearchTerms' => $requiresSearchTerms,
             'searchTerms' => $searchTerms,
@@ -3313,14 +3298,11 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
     $legacyIsRegex = normalize_extraction_field_is_regex($legacy['isRegex'] ?? false);
     $legacyAliases = normalize_extraction_field_search_terms($legacy['aliases'] ?? null, $legacyIsRegex, $legacyPattern);
     $requiresSearchTerms = $legacyAliases !== [];
-    $valueType = normalize_extraction_field_value_type($legacy['valueType'] ?? null, $legacy);
-    $type = legacy_extraction_field_type_for_value_type($valueType);
     $normalizationType = normalize_extraction_field_normalization_type($legacy['normalizationType'] ?? null);
     $normalizationReplacements = normalize_extraction_field_normalization_replacements($legacy['normalizationReplacements'] ?? null);
     if ($legacyPattern !== '' || $legacyAliases !== [] || $legacy !== []) {
         $datePosition = normalize_extraction_field_position($legacy['datePosition'] ?? null);
         return [default_extraction_field_rule_set([
-            'type' => $type,
             'useSearchText' => $requiresSearchTerms,
             'requiresSearchTerms' => $requiresSearchTerms,
             'searchTerms' => $requiresSearchTerms ? $legacyAliases : [],
@@ -6932,6 +6914,11 @@ function debug_export_scalar_text(mixed $value): string
     return is_string($value) || is_numeric($value) ? trim((string) $value) : '';
 }
 
+function debug_export_scalar_string(mixed $value): string
+{
+    return is_string($value) || is_numeric($value) ? (string) $value : '';
+}
+
 function debug_export_float_or_null(mixed $value): ?float
 {
     return is_numeric($value) ? (float) $value : null;
@@ -6984,23 +6971,61 @@ function debug_export_accepted_candidate(array $match, int $matchIndex): array
         'value' => debug_export_scalar_text($match['value'] ?? ''),
         'confidence' => clamp_confidence($confidence),
         'matchIndex' => $matchIndex,
+        'raw' => debug_export_scalar_string($match['raw'] ?? ''),
+        'extractedRaw' => debug_export_scalar_string($match['extractedRaw'] ?? ''),
         'searchTerm' => debug_export_scalar_text($match['searchTerm'] ?? ''),
         'labelText' => debug_export_scalar_text($match['labelText'] ?? ''),
-        'matchText' => debug_export_scalar_text($match['matchText'] ?? ($match['raw'] ?? '')),
+        'matchText' => debug_export_scalar_string($match['matchText'] ?? ($match['raw'] ?? '')),
         'source' => debug_export_scalar_text($match['source'] ?? ''),
+        'between' => debug_export_scalar_string($match['between'] ?? ''),
+        'noiseText' => debug_export_scalar_string($match['noiseText'] ?? ''),
+        'matchType' => debug_export_scalar_text($match['matchType'] ?? ''),
+        'scopeType' => debug_export_scalar_text($match['scopeType'] ?? ''),
+        'scopeText' => debug_export_scalar_string($match['scopeText'] ?? ''),
+        'scopeMatchedText' => debug_export_scalar_string($match['scopeMatchedText'] ?? ''),
     ];
 
-    foreach (['baseConfidence', 'finalConfidence', 'score'] as $key) {
+    foreach ([
+        'baseConfidence',
+        'finalConfidence',
+        'score',
+        'noisePenalty',
+        'trailingDelimiterPenalty',
+        'positionPenalty',
+        'verticalDistancePenalty',
+        'verticalDistance',
+        'verticalNormalizedDistance',
+        'otherMatchKeyPenalty',
+        'positionDiff',
+        'positionNormalizedDiff',
+    ] as $key) {
         $number = debug_export_float_or_null($match[$key] ?? null);
         if ($number !== null) {
-            $candidate[$key] = $key === 'score' ? $number : clamp_confidence($number);
+            $candidate[$key] = in_array($key, ['score', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                ? $number
+                : clamp_confidence($number);
         }
     }
-    foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex'] as $key) {
+    foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex'] as $key) {
         $number = debug_export_int_or_null($match[$key] ?? null);
         if ($number !== null) {
             $candidate[$key] = $number;
         }
+    }
+    foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason'] as $key) {
+        $text = debug_export_scalar_text($match[$key] ?? '');
+        if ($text !== '') {
+            $candidate[$key] = $text;
+        }
+    }
+    if (array_key_exists('scopeIsRegex', $match)) {
+        $candidate['scopeIsRegex'] = ($match['scopeIsRegex'] ?? false) === true;
+    }
+    if (is_array($match['noiseSegments'] ?? null)) {
+        $candidate['noiseSegments'] = array_values($match['noiseSegments']);
+    }
+    if (is_array($match['captureRanges'] ?? null)) {
+        $candidate['captureRanges'] = array_values($match['captureRanges']);
     }
     if ($labelBbox !== null) {
         $candidate['keyBBox'] = $labelBbox;
@@ -7328,22 +7353,60 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'value' => $value,
             'confidence' => clamp_confidence(debug_export_float_or_null($candidate['confidence'] ?? null) ?? 0.0),
             'matchIndex' => debug_export_int_or_null($candidate['matchIndex'] ?? null) ?? $fallbackIndex,
+            'raw' => debug_export_scalar_string($candidate['raw'] ?? ''),
+            'extractedRaw' => debug_export_scalar_string($candidate['extractedRaw'] ?? ''),
             'searchTerm' => debug_export_scalar_text($candidate['searchTerm'] ?? ''),
             'labelText' => debug_export_scalar_text($candidate['labelText'] ?? ''),
-            'matchText' => debug_export_scalar_text($candidate['matchText'] ?? ''),
+            'matchText' => debug_export_scalar_string($candidate['matchText'] ?? ''),
             'source' => debug_export_scalar_text($candidate['source'] ?? ''),
+            'between' => debug_export_scalar_string($candidate['between'] ?? ''),
+            'noiseText' => debug_export_scalar_string($candidate['noiseText'] ?? ''),
+            'matchType' => debug_export_scalar_text($candidate['matchType'] ?? ''),
+            'scopeType' => debug_export_scalar_text($candidate['scopeType'] ?? ''),
+            'scopeText' => debug_export_scalar_string($candidate['scopeText'] ?? ''),
+            'scopeMatchedText' => debug_export_scalar_string($candidate['scopeMatchedText'] ?? ''),
         ];
-        foreach (['baseConfidence', 'finalConfidence', 'score'] as $key) {
+        foreach ([
+            'baseConfidence',
+            'finalConfidence',
+            'score',
+            'noisePenalty',
+            'trailingDelimiterPenalty',
+            'positionPenalty',
+            'verticalDistancePenalty',
+            'verticalDistance',
+            'verticalNormalizedDistance',
+            'otherMatchKeyPenalty',
+            'positionDiff',
+            'positionNormalizedDiff',
+        ] as $key) {
             $number = debug_export_float_or_null($candidate[$key] ?? null);
             if ($number !== null) {
-                $normalized[$key] = $key === 'score' ? $number : clamp_confidence($number);
+                $normalized[$key] = in_array($key, ['score', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                    ? $number
+                    : clamp_confidence($number);
             }
         }
-        foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex'] as $key) {
+        foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex'] as $key) {
             $number = debug_export_int_or_null($candidate[$key] ?? null);
             if ($number !== null) {
                 $normalized[$key] = $number;
             }
+        }
+        foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason'] as $key) {
+            $text = debug_export_scalar_text($candidate[$key] ?? '');
+            if ($text !== '') {
+                $normalized[$key] = $text;
+            }
+        }
+        if (array_key_exists('scopeIsRegex', $candidate)) {
+            $normalized['scopeIsRegex'] = ($candidate['scopeIsRegex'] ?? false) === true;
+        }
+        if (is_array($candidate['noiseSegments'] ?? null)) {
+            $normalized['noiseSegments'] = array_values($candidate['noiseSegments']);
+        }
+        if (is_array($candidate['captureRanges'] ?? null)) {
+            $normalized['captureRanges'] = array_values($candidate['captureRanges']);
         }
         $keyBbox = debug_export_bbox_or_null($candidate['keyBBox'] ?? ($candidate['labelBbox'] ?? null));
         $valueBbox = debug_export_bbox_or_null($candidate['valueBBox'] ?? null);
@@ -15964,7 +16027,7 @@ function apply_extraction_field_acceptance_threshold(array $results, float $acce
             static fn (array $match): bool => ($match['finalConfidence'] ?? 0) >= $resolvedThreshold
         ));
         $selectionRuleSet = configured_field_selection_rule_set($result);
-        $selectionType = extraction_field_rule_set_type($selectionRuleSet);
+        $selectionType = extraction_field_rule_set_type($selectionRuleSet, $result);
         if ($selectionType === 'date') {
             $selectedMatch = is_array($acceptedMatches[0] ?? null) ? $acceptedMatches[0] : null;
             $result['candidateMatches'] = $acceptedMatches;
@@ -16102,7 +16165,8 @@ function document_date_result_matches(array $result, array $lineGeometries = [])
 
 function extraction_field_rule_set_type(array $ruleSet, ?array $legacyField = null): string
 {
-    return normalize_extraction_field_type($ruleSet['type'] ?? null, $legacyField, $ruleSet);
+    $valueType = normalize_extraction_field_value_type($legacyField['valueType'] ?? null, $legacyField, null);
+    return legacy_extraction_field_type_for_value_type($valueType);
 }
 
 function legacy_extraction_field_type_for_value_type(string $valueType): string
@@ -16955,7 +17019,7 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
         $matchesForMeta = is_array($result['matches'] ?? null) ? $result['matches'] : null;
         $selectionRuleSet = configured_field_selection_rule_set($result);
         if (
-            extraction_field_rule_set_type($selectionRuleSet) === 'amount'
+            extraction_field_rule_set_type($selectionRuleSet, $result) === 'amount'
             && is_array($result['candidateMatches'] ?? null)
             && $result['candidateMatches'] !== []
         ) {

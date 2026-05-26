@@ -7364,6 +7364,112 @@ function createSnapshotCompareCandidateValueChip(value) {
   return chipEl;
 }
 
+function formatSnapshotCompareCandidateNumber(value, options = {}) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return '';
+  }
+  if (options.percent === true) {
+    return `${(numeric * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %`;
+  }
+  return numeric.toLocaleString('sv-SE', {
+    minimumFractionDigits: options.minimumFractionDigits ?? 0,
+    maximumFractionDigits: options.maximumFractionDigits ?? 4,
+  });
+}
+
+function formatSnapshotCompareCandidateBbox(bbox) {
+  if (!bbox || typeof bbox !== 'object') {
+    return '';
+  }
+  const parts = ['x0', 'y0', 'x1', 'y1'].map((key) => {
+    const value = Number(bbox[key]);
+    return Number.isFinite(value) ? `${key} ${value.toLocaleString('sv-SE', { maximumFractionDigits: 2 })}` : '';
+  }).filter(Boolean);
+  return parts.length === 4 ? parts.join(', ') : '';
+}
+
+function snapshotCompareCandidateDetailsText(candidate) {
+  if (!candidate || typeof candidate !== 'object') {
+    return '';
+  }
+  const lines = [];
+  const add = (label, value) => {
+    const text = typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+    if (text !== '') {
+      lines.push(`${label}: ${text}`);
+    }
+  };
+  const addPercent = (label, value) => {
+    const text = formatSnapshotCompareCandidateNumber(value, { percent: true });
+    if (text !== '') {
+      add(label, text);
+    }
+  };
+  add('Värde', candidate.value);
+  add('Råvärde', candidate.raw);
+  add('Extraherat råvärde', candidate.extractedRaw);
+  add('Matchning', candidate.matchText);
+  add('Söktext', candidate.searchTerm);
+  add('Etikett', candidate.labelText);
+  add('Mellantext', candidate.between);
+  addPercent('Säkerhet', candidate.finalConfidence ?? candidate.confidence);
+  addPercent('Bassäkerhet', candidate.baseConfidence);
+  addPercent('Brusstraff', candidate.noisePenalty);
+  add('Brustext', candidate.noiseText);
+  addPercent('Positionsstraff', candidate.positionPenalty);
+  add('Positionsaxel', candidate.positionPenaltyAxis);
+  add('Riktning', candidate.mainDirection);
+  add('Positionsdiff', formatSnapshotCompareCandidateNumber(candidate.positionDiff));
+  add('Normaliserad positionsdiff', formatSnapshotCompareCandidateNumber(candidate.positionNormalizedDiff));
+  addPercent('Vertikalt avståndsstraff', candidate.verticalDistancePenalty);
+  add('Vertikalt avstånd', formatSnapshotCompareCandidateNumber(candidate.verticalDistance));
+  add('Normaliserat vertikalt avstånd', formatSnapshotCompareCandidateNumber(candidate.verticalNormalizedDistance));
+  addPercent('Avslutsteckenstraff', candidate.trailingDelimiterPenalty);
+  addPercent('Annan nyckel-straff', candidate.otherMatchKeyPenalty);
+  add('Ogiltighetsorsak', candidate.invalidReason);
+  add('Källa', candidate.source);
+  add('Matchtyp', candidate.matchType);
+  add('Regeluppsättning', Number.isInteger(candidate.ruleSetIndex) ? String(candidate.ruleSetIndex + 1) : '');
+  add('Sida', candidate.pageNumber);
+  add('Rad', candidate.lineIndex);
+  add('Etikettrad', candidate.labelLineIndex);
+  add('Start', candidate.start);
+  add('Scope-typ', candidate.scopeType);
+  add('Scope-text', candidate.scopeText);
+  add('Scope-matchning', candidate.scopeMatchedText);
+  add('Scope-rad', candidate.scopeLineIndex);
+  add('Nyckel-bbox', formatSnapshotCompareCandidateBbox(candidate.keyBBox));
+  add('Värde-bbox', formatSnapshotCompareCandidateBbox(candidate.valueBBox));
+  if (Array.isArray(candidate.captureRanges) && candidate.captureRanges.length > 0) {
+    add('Capture ranges', candidate.captureRanges.map((range) => `${range.start ?? '?'}-${range.end ?? '?'}`).join(', '));
+  }
+  if (Array.isArray(candidate.noiseSegments) && candidate.noiseSegments.length > 0) {
+    add('Brussegment', candidate.noiseSegments.map((segment) => {
+      const text = typeof segment?.text === 'string' ? segment.text : '';
+      return `${text} (${segment?.lineIndex ?? '?'}, ${segment?.start ?? '?'}-${segment?.end ?? '?'})`;
+    }).join('; '));
+  }
+  return lines.join('\n');
+}
+
+function createSnapshotCompareCandidateDetailsButton(candidate) {
+  const details = snapshotCompareCandidateDetailsText(candidate);
+  if (details === '') {
+    return null;
+  }
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'snapshot-compare-candidate-info-button';
+  button.textContent = 'i';
+  button.title = details;
+  button.setAttribute('aria-label', 'Visa kandidatdetaljer');
+  button.addEventListener('click', () => {
+    alert(details);
+  });
+  return button;
+}
+
 function createSnapshotCompareCandidateValue(candidate, fieldName) {
   if (!candidate || typeof candidate !== 'object') {
     return createSnapshotCompareMissingValue();
@@ -7384,6 +7490,10 @@ function createSnapshotCompareCandidateValue(candidate, fieldName) {
     badge.title = 'Vald kandidat';
     badge.setAttribute('aria-label', 'Vald kandidat');
     wrapper.appendChild(badge);
+  }
+  const detailsButton = createSnapshotCompareCandidateDetailsButton(candidate);
+  if (detailsButton instanceof HTMLButtonElement) {
+    wrapper.appendChild(detailsButton);
   }
 
   const confidence = formatSnapshotCandidateConfidence(candidate);
@@ -22395,7 +22505,6 @@ function sanitizeExtractionZones(zones) {
 
 function defaultExtractionFieldRuleSet() {
   return {
-    type: 'regex',
     useSearchText: true,
     requiresSearchTerms: true,
     searchTerms: [{ text: '', isRegex: false }],
@@ -22527,10 +22636,7 @@ function sanitizeExtractionFieldValueType(value, legacyField = null, legacyRuleS
   if (legacyRuleValueType === 'text' || legacyRuleValueType === 'date' || legacyRuleValueType === 'amount') {
     return legacyRuleValueType;
   }
-  const legacyType = sanitizeExtractionFieldType(
-    Object.prototype.hasOwnProperty.call(legacyRule, 'type') ? legacyRule.type : legacy.type,
-    legacyField
-  );
+  const legacyType = sanitizeExtractionFieldType(legacy.type, legacyField);
   if (legacyType === 'date') {
     return 'date';
   }
@@ -22649,7 +22755,6 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
     legacyIsRegex
   );
   const fieldValueType = sanitizeExtractionFieldValueType(legacy.valueType, legacy, hasExplicitRuleSet ? input : null);
-  const type = legacyExtractionFieldTypeForValueType(fieldValueType);
   const scope = sanitizeExtractionFieldRuleScope(hasExplicitRuleSet ? input.scope : legacy.scope);
   const useSearchText = hasExplicitRuleSet
     ? input.useSearchText !== false && input.requiresSearchTerms !== false
@@ -22668,7 +22773,6 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
   );
 
   return {
-    type,
     useSearchText,
     requiresSearchTerms: useSearchText,
     searchTerms,
@@ -22731,8 +22835,7 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
   if (isSystemField) {
     const valueType = sanitizeExtractionFieldValueType(
       typeof input.valueType === 'string' ? input.valueType : '',
-      input,
-      { type: input.type }
+      input
     );
     let searchString = typeof input.searchString === 'string'
       ? input.searchString
@@ -22767,7 +22870,7 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
 
   const firstRuleSet = Array.isArray(input.ruleSets) && input.ruleSets[0] && typeof input.ruleSets[0] === 'object'
     ? input.ruleSets[0]
-    : { type: input.type };
+    : null;
   const valueType = sanitizeExtractionFieldValueType(
     typeof input.valueType === 'string'
       ? input.valueType
@@ -26443,13 +26546,12 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       ruleFields.appendChild(interpretationRow);
 
       const syncRuleSetUi = () => {
-        const valueType = sanitizeExtractionFieldValueType(collection[index]?.valueType, collection[index], ruleSet);
-        const type = legacyExtractionFieldTypeForValueType(valueType);
-        const normalizationType = sanitizeExtractionFieldNormalizationType(normalizationTypeSelect.value);
+      const valueType = sanitizeExtractionFieldValueType(collection[index]?.valueType, collection[index], ruleSet);
+      const type = legacyExtractionFieldTypeForValueType(valueType);
+      const normalizationType = sanitizeExtractionFieldNormalizationType(normalizationTypeSelect.value);
         if (!requiresSearchTermsCheckbox.checked && !useValuePatternCheckbox.checked) {
           requiresSearchTermsCheckbox.checked = true;
         }
-        collection[index].ruleSets[ruleSetIndex].type = type;
         collection[index].type = type;
         collection[index].valueType = valueType;
         collection[index].ruleSets[ruleSetIndex].useSearchText = requiresSearchTermsCheckbox.checked;
@@ -26580,7 +26682,6 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const baseRuleSet = sanitizeExtractionFieldRuleSet(nextRuleSets[0] || null, collection[index]);
       nextRuleSets.push({
         ...defaultExtractionFieldRuleSet(),
-        type: baseRuleSet.type,
         useSearchText: baseRuleSet.useSearchText,
         requiresSearchTerms: baseRuleSet.requiresSearchTerms,
         useValuePattern: baseRuleSet.useValuePattern,

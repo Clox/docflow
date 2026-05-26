@@ -5204,6 +5204,32 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   line-height: 1;
 }
 
+.snapshot-compare-candidate-info-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: help;
+}
+
+.snapshot-compare-candidate-info-button:hover,
+.snapshot-compare-candidate-info-button:focus-visible {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
 .snapshot-compare-candidate-details {
   color: #64748b;
   font-size: 12px;
