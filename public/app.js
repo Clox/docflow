@@ -14974,7 +14974,6 @@ function renderOcrWordTooltipMeta(section, tooltipData) {
       rowEl.appendChild(valueEl);
       metaEl.appendChild(rowEl);
     });
-    return;
   }
 
   if (metaText !== '') {
