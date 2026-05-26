@@ -5876,6 +5876,13 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   overflow: auto;
 }
 
+#matching-list {
+  flex: 0 0 auto;
+  min-height: 72px;
+  border-color: #e5e7eb;
+  background: #fbfdff;
+}
+
 #ocr-pdf-substitutions-list {
   max-height: none;
   overflow: visible;
