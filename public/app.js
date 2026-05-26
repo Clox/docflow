@@ -22794,7 +22794,7 @@ function defaultFilenameTemplatePart(type = 'text') {
   if (type === 'systemField') {
     return {
       type: 'systemField',
-      key: filenameTemplateSystemFieldOptions()[0]?.key || 'document_date',
+      key: filenameTemplateSystemFieldOptions()[0]?.key || 'primary_date',
       prefixParts: [],
       suffixParts: [],
     };
@@ -23077,7 +23077,7 @@ function sanitizeExtractionFieldType(value, legacyField = null) {
   if (legacyKey === 'amount' || legacyExtractor === 'amount') {
     return 'amount';
   }
-  if (legacyKey === 'due_date' || legacyKey === 'document_date' || legacyExtractor === 'due_date' || legacyExtractor === 'document_date') {
+  if (legacyKey === 'due_date' || legacyKey === 'primary_date' || legacyExtractor === 'due_date' || legacyExtractor === 'primary_date') {
     return 'date';
   }
   return 'regex';
@@ -23588,8 +23588,8 @@ function sanitizeExtractionFields(fields) {
 function filenameTemplateSystemFieldTitle(fieldKey, fieldName) {
   const key = typeof fieldKey === 'string' ? fieldKey.trim() : '';
   const name = typeof fieldName === 'string' ? fieldName.trim() : '';
-  if (key === 'document_date') {
-    return 'Dokumentdatum är systemets bästa gissning på dokumentets huvuddatum när inget tydligt datumfält finns.';
+  if (key === 'primary_date') {
+    return 'Huvuddatum är systemets bästa gissning på dokumentets huvuddatum när inget tydligt datumfält finns.';
   }
   if (key === 'sender') {
     return 'Lägger till avsändarens namn i filnamnet.';
@@ -26163,8 +26163,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   const showLock = options.showLock === true;
   const allowRemove = options.allowRemove !== false;
   const readOnly = options.readOnly === true;
-  const isDocumentDateField = field.extractor === 'document_date'
-    || field.systemFieldKey === 'document_date';
+  const isPrimaryDateField = field.extractor === 'primary_date'
+    || field.systemFieldKey === 'primary_date';
   const lockedFieldNormalization = bankgiroFieldNormalizationOverride(field);
   if (lockedFieldNormalization) {
     collection[index] = {
@@ -27230,12 +27230,12 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   } else {
     const queryInput = document.createElement('input');
     queryInput.type = 'text';
-    queryInput.placeholder = isDocumentDateField ? 'Särskild intern heuristik' : 'Ex: "\\d{6}[- ]?\\d{4}"';
-    queryInput.value = isDocumentDateField
+    queryInput.placeholder = isPrimaryDateField ? 'Särskild intern heuristik' : 'Ex: "\\d{6}[- ]?\\d{4}"';
+    queryInput.value = isPrimaryDateField
       ? 'Ort + datum / brevhuvud / fristående datum'
       : field.searchString;
     queryInput.disabled = true;
-    fields.appendChild(createFloatingField(isDocumentDateField ? 'Extraktion' : 'Söksträng', queryInput));
+    fields.appendChild(createFloatingField(isPrimaryDateField ? 'Extraktion' : 'Söksträng', queryInput));
   }
 
   fieldRow.appendChild(fieldBody);

@@ -2426,7 +2426,7 @@ function valid_extraction_field_extractor(string $extractor, string $fallback = 
         'generic_label',
         'amount',
         'due_date',
-        'document_date',
+        'primary_date',
         'bankgiro',
         'plusgiro',
         'supplier',
@@ -2572,14 +2572,14 @@ function predefined_extraction_field_definitions(): array
 function system_extraction_field_definitions(): array
 {
     return [
-        'document_date' => [
-            'name' => 'Dokumentdatum',
+        'primary_date' => [
+            'name' => 'Huvuddatum',
             'aliases' => [],
             'searchString' => '',
             'isRegex' => false,
             'normalizationType' => 'none',
             'normalizationChars' => '',
-            'extractor' => 'document_date',
+            'extractor' => 'primary_date',
         ],
     ];
 }
@@ -3204,7 +3204,7 @@ function normalize_extraction_field_type(mixed $value, ?array $legacyField = nul
         return 'amount';
     }
 
-    if (in_array($legacyKey, ['due_date', 'document_date'], true) || in_array($legacyExtractor, ['due_date', 'document_date'], true)) {
+    if (in_array($legacyKey, ['due_date', 'primary_date'], true) || in_array($legacyExtractor, ['due_date', 'primary_date'], true)) {
         return 'date';
     }
 
@@ -14519,7 +14519,7 @@ function due_date_candidates_from_text(string $text, int $offsetBase = 0): array
     return $candidates;
 }
 
-function document_date_month_lookup(): array
+function primary_date_month_lookup(): array
 {
     return [
         'jan' => 1,
@@ -14558,7 +14558,7 @@ function document_date_month_lookup(): array
     ];
 }
 
-function add_document_date_candidate(array &$candidates, array &$seen, ?string $value, string $raw, int $start, string $format): void
+function add_primary_date_candidate(array &$candidates, array &$seen, ?string $value, string $raw, int $start, string $format): void
 {
     $value = is_string($value) ? trim($value) : '';
     $raw = trim($raw);
@@ -14581,7 +14581,7 @@ function add_document_date_candidate(array &$candidates, array &$seen, ?string $
     ];
 }
 
-function document_date_candidates_from_text(string $text, int $offsetBase = 0): array
+function primary_date_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $candidates = [];
     $seen = [];
@@ -14602,7 +14602,7 @@ function document_date_candidates_from_text(string $text, int $offsetBase = 0): 
             $value = checkdate($month, $day, $year)
                 ? sprintf('%04d-%02d-%02d', $year, $month, $day)
                 : null;
-            add_document_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'ymd_numeric');
+            add_primary_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'ymd_numeric');
         }
     }
 
@@ -14620,7 +14620,7 @@ function document_date_candidates_from_text(string $text, int $offsetBase = 0): 
             $value = ($month >= 1 && $month <= 12)
                 ? sprintf('%04d-%02d', $year, $month)
                 : null;
-            add_document_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'ym_numeric');
+            add_primary_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'ym_numeric');
         }
     }
 
@@ -14639,7 +14639,7 @@ function document_date_candidates_from_text(string $text, int $offsetBase = 0): 
             $value = checkdate($month, $day, $year)
                 ? sprintf('%04d-%02d-%02d', $year, $month, $day)
                 : null;
-            add_document_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'dmy_numeric');
+            add_primary_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'dmy_numeric');
         }
     }
 
@@ -14647,7 +14647,7 @@ function document_date_candidates_from_text(string $text, int $offsetBase = 0): 
     $matches = [];
     if (@preg_match_all('/\b((?:den\s+)?(\d{1,2})\s+(' . $monthPattern . ')\s+(20\d{2}))\b/iu', $text, $matches, PREG_OFFSET_CAPTURE) >= 1) {
         $all = is_array($matches[1] ?? null) ? $matches[1] : [];
-        $monthLookup = document_date_month_lookup();
+        $monthLookup = primary_date_month_lookup();
         foreach ($all as $index => $group) {
             if (!is_array($group) || count($group) < 2) {
                 continue;
@@ -14661,14 +14661,14 @@ function document_date_candidates_from_text(string $text, int $offsetBase = 0): 
             $value = ($month > 0 && checkdate($month, $day, $year))
                 ? sprintf('%04d-%02d-%02d', $year, $month, $day)
                 : null;
-            add_document_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'd_mon_y');
+            add_primary_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'd_mon_y');
         }
     }
 
     $matches = [];
     if (@preg_match_all('/\b((' . $monthPattern . ')\s+(20\d{2}))\b/iu', $text, $matches, PREG_OFFSET_CAPTURE) >= 1) {
         $all = is_array($matches[1] ?? null) ? $matches[1] : [];
-        $monthLookup = document_date_month_lookup();
+        $monthLookup = primary_date_month_lookup();
         foreach ($all as $index => $group) {
             if (!is_array($group) || count($group) < 2) {
                 continue;
@@ -14681,7 +14681,7 @@ function document_date_candidates_from_text(string $text, int $offsetBase = 0): 
             $value = ($month > 0 && $year >= 2000)
                 ? sprintf('%04d-%02d', $year, $month)
                 : null;
-            add_document_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'mon_y');
+            add_primary_date_candidate($candidates, $seen, $value, $raw, $offsetBase + $start, 'mon_y');
         }
     }
 
@@ -14697,7 +14697,7 @@ function document_date_candidates_from_text(string $text, int $offsetBase = 0): 
     return $candidates;
 }
 
-function normalize_document_date_lookup_text(string $text): string
+function normalize_primary_date_lookup_text(string $text): string
 {
     $normalized = lowercase_text(trim($text));
     $normalized = strtr($normalized, [
@@ -14755,7 +14755,7 @@ function normalize_document_date_lookup_text(string $text): string
     return normalize_inline_whitespace($normalized);
 }
 
-function document_date_reference_localities(): array
+function primary_date_reference_localities(): array
 {
     static $cached = null;
     if (is_array($cached)) {
@@ -14781,7 +14781,7 @@ function document_date_reference_localities(): array
         if ($name === '') {
             continue;
         }
-        $normalized = normalize_document_date_lookup_text($name);
+        $normalized = normalize_primary_date_lookup_text($name);
         if ($normalized === '') {
             continue;
         }
@@ -14799,7 +14799,7 @@ function document_date_reference_localities(): array
     return $cached;
 }
 
-function document_date_label_definitions(): array
+function primary_date_label_definitions(): array
 {
     return [
         [
@@ -14875,14 +14875,14 @@ function previous_nonempty_line_index(array $lines, int $index, int $distance = 
     return null;
 }
 
-function document_date_context_label_signals(string $normalizedContext, string $contextKey): array
+function primary_date_context_label_signals(string $normalizedContext, string $contextKey): array
 {
     if ($normalizedContext === '') {
         return [];
     }
 
     $matches = [];
-    foreach (document_date_label_definitions() as $definition) {
+    foreach (primary_date_label_definitions() as $definition) {
         if (!is_array($definition)) {
             continue;
         }
@@ -14910,15 +14910,15 @@ function document_date_context_label_signals(string $normalizedContext, string $
     return $matches;
 }
 
-function document_date_place_match(string $prefixText): ?array
+function primary_date_place_match(string $prefixText): ?array
 {
-    $normalizedPrefix = normalize_document_date_lookup_text($prefixText);
+    $normalizedPrefix = normalize_primary_date_lookup_text($prefixText);
     if ($normalizedPrefix === '') {
         return null;
     }
 
     $best = null;
-    foreach (document_date_reference_localities() as $normalizedPlace => $rawPlace) {
+    foreach (primary_date_reference_localities() as $normalizedPlace => $rawPlace) {
         $quoted = preg_quote($normalizedPlace, '/');
         if (@preg_match('/\b' . $quoted . '\b(?:\s+\w+){0,3}\s*$/u', $normalizedPrefix, $matches) !== 1) {
             continue;
@@ -14972,7 +14972,7 @@ function is_document_title_line(string $text): bool
     if (count_pattern_matches('/\pL/u', $normalized) < 3) {
         return false;
     }
-    $lookup = normalize_document_date_lookup_text($normalized);
+    $lookup = normalize_primary_date_lookup_text($normalized);
     $headerishPatterns = [
         'fakturanummer',
         'org nr',
@@ -14993,7 +14993,7 @@ function is_document_title_line(string $text): bool
     return true;
 }
 
-function score_document_date_candidate(array $candidate, array $lines): array
+function score_primary_date_candidate(array $candidate, array $lines): array
 {
     $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
     $line = is_string($candidate['line'] ?? null) ? (string) $candidate['line'] : '';
@@ -15020,10 +15020,10 @@ function score_document_date_candidate(array $candidate, array $lines): array
     $previousLine = $previousLineIndex !== null && is_string($lines[$previousLineIndex] ?? null)
         ? (string) $lines[$previousLineIndex]
         : '';
-    $normalizedPrefix = normalize_document_date_lookup_text($prefix);
-    $normalizedLine = normalize_document_date_lookup_text($line);
-    $normalizedSuffix = normalize_document_date_lookup_text($suffix);
-    $previousNormalized = normalize_document_date_lookup_text($previousLine);
+    $normalizedPrefix = normalize_primary_date_lookup_text($prefix);
+    $normalizedLine = normalize_primary_date_lookup_text($line);
+    $normalizedSuffix = normalize_primary_date_lookup_text($suffix);
+    $previousNormalized = normalize_primary_date_lookup_text($previousLine);
     $result['sameLinePrefix'] = normalize_inline_whitespace($prefix);
     $result['sameLineSuffix'] = normalize_inline_whitespace($suffix);
     $result['previousLine'] = normalize_inline_whitespace($previousLine);
@@ -15031,7 +15031,7 @@ function score_document_date_candidate(array $candidate, array $lines): array
     $score = 0;
     $signals = [];
 
-    $placeMatch = document_date_place_match($prefix);
+    $placeMatch = primary_date_place_match($prefix);
     if (is_array($placeMatch)) {
         $score += 100;
         $signals[] = [
@@ -15044,7 +15044,7 @@ function score_document_date_candidate(array $candidate, array $lines): array
         $result['matchedPlaceGapWords'] = (int) ($placeMatch['gapWords'] ?? 0);
     }
 
-    $placeAboveMatch = $previousLine !== '' ? document_date_place_match($previousLine) : null;
+    $placeAboveMatch = $previousLine !== '' ? primary_date_place_match($previousLine) : null;
     if (is_array($placeAboveMatch)) {
         $score += 90;
         $signals[] = [
@@ -15083,7 +15083,7 @@ function score_document_date_candidate(array $candidate, array $lines): array
     $headerMatched = null;
     for ($i = $headerWindowStart; $i <= $headerWindowEnd; $i++) {
         $windowLine = is_string($lines[$i] ?? null) ? (string) $lines[$i] : '';
-        $normalizedWindowLine = normalize_document_date_lookup_text($windowLine);
+        $normalizedWindowLine = normalize_primary_date_lookup_text($windowLine);
         foreach ($headerPatterns as $pattern) {
             if (@preg_match('/\b' . preg_quote($pattern, '/') . '\b/u', $normalizedWindowLine) === 1) {
                 $headerMatched = $pattern;
@@ -15126,16 +15126,16 @@ function score_document_date_candidate(array $candidate, array $lines): array
     }
 
     $contextSignals = [];
-    foreach (document_date_context_label_signals($normalizedPrefix, 'same_line_prefix') as $signal) {
+    foreach (primary_date_context_label_signals($normalizedPrefix, 'same_line_prefix') as $signal) {
         $contextSignals[$signal['code'] . '::' . $signal['context']] = $signal;
     }
-    foreach (document_date_context_label_signals($normalizedSuffix, 'same_line_suffix') as $signal) {
+    foreach (primary_date_context_label_signals($normalizedSuffix, 'same_line_suffix') as $signal) {
         $contextSignals[$signal['code'] . '::' . $signal['context']] = $signal;
     }
-    foreach (document_date_context_label_signals($previousNormalized, 'line_above') as $signal) {
+    foreach (primary_date_context_label_signals($previousNormalized, 'line_above') as $signal) {
         $contextSignals[$signal['code'] . '::' . $signal['context']] = $signal;
     }
-    foreach (document_date_context_label_signals($normalizedLine, 'same_line') as $signal) {
+    foreach (primary_date_context_label_signals($normalizedLine, 'same_line') as $signal) {
         $existingPrefix = $signal['code'] . '::same_line_prefix';
         $existingSuffix = $signal['code'] . '::same_line_suffix';
         $existingAbove = $signal['code'] . '::line_above';
@@ -15185,7 +15185,7 @@ function score_document_date_candidate(array $candidate, array $lines): array
     return $result;
 }
 
-function extract_document_date_field_result(array $lines): array
+function extract_primary_date_field_result(array $lines): array
 {
     $candidates = [];
     foreach ($lines as $lineIndex => $line) {
@@ -15196,11 +15196,11 @@ function extract_document_date_field_result(array $lines): array
         if ($trimmedLine === '') {
             continue;
         }
-        $lineCandidates = document_date_candidates_from_text($line, 0);
+        $lineCandidates = primary_date_candidates_from_text($line, 0);
         foreach ($lineCandidates as $candidate) {
             $candidate['lineIndex'] = is_int($lineIndex) ? $lineIndex : 0;
             $candidate['line'] = $line;
-            $candidates[] = score_document_date_candidate($candidate, $lines);
+            $candidates[] = score_primary_date_candidate($candidate, $lines);
         }
     }
 
@@ -15234,7 +15234,7 @@ function extract_document_date_field_result(array $lines): array
             'value' => null,
             'confidence' => 0.0,
             'lineIndex' => null,
-            'source' => 'document_date_heuristic',
+            'source' => 'primary_date_heuristic',
             'raw' => null,
             'selectedValue' => null,
             'selectedCandidate' => null,
@@ -15246,7 +15246,7 @@ function extract_document_date_field_result(array $lines): array
         'value' => is_string($selected['value'] ?? null) ? (string) $selected['value'] : null,
         'confidence' => isset($selected['confidence']) ? clamp_confidence((float) $selected['confidence']) : 0.0,
         'lineIndex' => is_int($selected['lineIndex'] ?? null) ? (int) $selected['lineIndex'] : null,
-        'source' => 'document_date_heuristic',
+        'source' => 'primary_date_heuristic',
         'raw' => is_string($selected['raw'] ?? null) ? (string) $selected['raw'] : null,
         'selectedValue' => is_string($selected['value'] ?? null) ? (string) $selected['value'] : null,
         'selectedCandidate' => $selected,
@@ -15907,7 +15907,7 @@ function extract_plusgiro_from_text(string $text): ?string
 
 function extract_date_from_text(string $text): ?string
 {
-    $candidates = document_date_candidates_from_text($text, 0);
+    $candidates = primary_date_candidates_from_text($text, 0);
     foreach ($candidates as $candidate) {
         $value = is_string($candidate['value'] ?? null) ? trim((string) $candidate['value']) : '';
         if (@preg_match('/^20\d{2}-\d{2}-\d{2}$/', $value) === 1) {
@@ -17150,7 +17150,7 @@ function apply_extraction_field_acceptance_threshold(array $results, float $acce
     return $results;
 }
 
-function document_date_result_matches(array $result, array $lineGeometries = []): array
+function primary_date_result_matches(array $result, array $lineGeometries = []): array
 {
     $matchesByKey = [];
     $candidates = is_array($result['candidates'] ?? null) ? $result['candidates'] : [];
@@ -17185,9 +17185,9 @@ function document_date_result_matches(array $result, array $lineGeometries = [])
             value: $value,
             raw: $raw,
             matchText: $raw,
-            source: 'document_date_heuristic',
+            source: 'primary_date_heuristic',
             confidence: $confidence,
-            matchType: 'document_date_heuristic',
+            matchType: 'primary_date_heuristic',
             score: is_numeric($candidate['rawScore'] ?? null)
                 ? (float) $candidate['rawScore']
                 : (float) ((int) ($candidate['score'] ?? 0)),
@@ -17215,9 +17215,9 @@ function document_date_result_matches(array $result, array $lineGeometries = [])
                 value: $result['value'],
                 raw: is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
                 matchText: is_string($result['raw'] ?? null) ? (string) $result['raw'] : null,
-                source: is_string($result['source'] ?? null) ? (string) $result['source'] : 'document_date_heuristic',
+                source: is_string($result['source'] ?? null) ? (string) $result['source'] : 'primary_date_heuristic',
                 confidence: $confidence,
-                matchType: 'document_date_heuristic',
+                matchType: 'primary_date_heuristic',
                 score: $rawScore,
                 baseConfidence: $confidence,
                 finalConfidence: $confidence,
@@ -17899,10 +17899,10 @@ function extract_configured_text_field_results(
         $matchedRuleSetIndex = null;
         $matchedRuleSet = default_extraction_field_rule_set();
         $matches = [];
-        if ($extractor === 'document_date') {
-        $result = extract_document_date_field_result($lines);
-        $ruleSets = [];
-            $matches = document_date_result_matches($result, $lineGeometries);
+        if ($extractor === 'primary_date') {
+            $result = extract_primary_date_field_result($lines);
+            $ruleSets = [];
+            $matches = primary_date_result_matches($result, $lineGeometries);
         } else {
             $result = empty_extraction_field_result();
             foreach ($ruleSets as $ruleSetIndex => $ruleSet) {
@@ -18669,7 +18669,7 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
         'date',
         'swift',
         'iban',
-        'document_date',
+        'primary_date',
     ] as $fieldKey) {
         $lookupKey = $fieldKey === 'date' ? 'due_date' : $fieldKey;
         if (array_key_exists($lookupKey, $allFields)) {

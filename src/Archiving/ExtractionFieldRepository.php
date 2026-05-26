@@ -582,7 +582,7 @@ final class ExtractionFieldRepository
         if ($legacyType === 'amount' || $legacyKey === 'amount' || $legacyExtractor === 'amount') {
             return 'amount';
         }
-        if ($legacyType === 'date' || in_array($legacyKey, ['due_date', 'document_date'], true) || in_array($legacyExtractor, ['due_date', 'document_date'], true)) {
+        if ($legacyType === 'date' || in_array($legacyKey, ['due_date', 'primary_date'], true) || in_array($legacyExtractor, ['due_date', 'primary_date'], true)) {
             return 'date';
         }
 
