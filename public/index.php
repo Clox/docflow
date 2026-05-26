@@ -416,6 +416,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <button class="settings-tab" data-settings-tab="archiving-review" type="button">Uppdatera arkiverade dokument <span class="settings-tab-indicator" aria-hidden="true">●</span></button>
           <button class="settings-tab" data-settings-tab="archive-structure" type="button">Arkivstruktur</button>
           <button class="settings-tab" data-settings-tab="labels" type="button">Etiketter</button>
+          <button class="settings-tab" data-settings-tab="value-patterns" type="button">Värdemönster</button>
           <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
         </div>
         <div class="settings-nav-section">
@@ -436,6 +437,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         <div id="settings-panel-ocr-processing" class="settings-panel hidden"></div>
         <div id="settings-panel-archive-structure" class="settings-panel hidden"></div>
         <div id="settings-panel-labels" class="settings-panel hidden"></div>
+        <div id="settings-panel-value-patterns" class="settings-panel hidden"></div>
         <div id="settings-panel-data-fields" class="settings-panel hidden"></div>
         <div id="settings-panel-archiving-review" class="settings-panel hidden"></div>
         <div id="settings-panel-paths" class="settings-panel hidden"></div>
@@ -851,6 +853,52 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <div class="panel-actions">
       <button id="extraction-fields-cancel" class="button-danger" type="button">Avbryt</button>
       <button id="extraction-fields-apply" class="button-success" type="button">Spara</button>
+    </div>
+  </template>
+
+  <template id="settings-template-value-patterns">
+    <h3>Värdemönster</h3>
+    <p>Definiera återanvändbara OCR-mönster för datafält och zoner.</p>
+    <div id="value-patterns-list" class="categories-list"></div>
+    <div class="settings-section-actions value-patterns-section-actions">
+      <div id="value-patterns-split-button" class="split-button">
+        <button id="value-patterns-add-row" class="split-button-main" type="button">Lägg till värdemönster</button>
+        <button
+          id="value-patterns-add-menu-toggle"
+          class="split-button-toggle"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-label="Fler värdemönsteråtgärder"
+          title="Fler värdemönsteråtgärder"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4 6.5 L8 10.5 L12 6.5" />
+          </svg>
+        </button>
+        <div id="value-patterns-add-menu" class="split-button-menu hidden" role="menu" aria-label="Värdemönsteråtgärder">
+          <button id="value-patterns-import-row" type="button" role="menuitem">Importera från JSON</button>
+        </div>
+      </div>
+      <button
+        id="value-patterns-match-pattern-inspector-toggle"
+        type="button"
+        class="match-pattern-inspector-toggle"
+        title="Visa matchningsmönster"
+        aria-label="Visa matchningsmönster"
+        aria-expanded="false"
+        aria-pressed="false"
+      >
+        <span class="match-pattern-inspector-toggle-label">
+          <span class="match-pattern-inspector-toggle-label-dot">.</span>
+          <span class="match-pattern-inspector-toggle-label-star">*</span>
+        </span>
+        <span class="match-pattern-inspector-toggle-icon" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="panel-actions">
+      <button id="value-patterns-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="value-patterns-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 

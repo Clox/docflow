@@ -7,10 +7,6 @@ try {
     $config = load_config();
     $rules = load_active_archiving_rules();
     json_response([
-        'fields' => is_array($rules['fields'] ?? null) ? $rules['fields'] : [],
-        'predefinedFields' => is_array($rules['predefinedFields'] ?? null) ? $rules['predefinedFields'] : [],
-        'systemFields' => is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [],
-        'zones' => is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
         'valuePatterns' => is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : [],
         'archivingRules' => build_archiving_rules_state_payload($config),
         'lastEventId' => latest_job_event_id(),
@@ -18,10 +14,6 @@ try {
     ]);
 } catch (Throwable $e) {
     json_response([
-        'fields' => [],
-        'predefinedFields' => [],
-        'systemFields' => [],
-        'zones' => [],
         'valuePatterns' => [],
         'error' => $e->getMessage(),
     ], 500);

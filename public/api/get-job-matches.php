@@ -67,7 +67,8 @@ try {
                 split_lines_for_matching($ocrText),
                 is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
                 $replacementMap,
-                build_matching_line_geometries_for_job($job, $ocrText)
+                build_matching_line_geometries_for_job($job, $ocrText),
+                is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : []
             );
             $zoneMatches = $liveZoneMatches;
         }

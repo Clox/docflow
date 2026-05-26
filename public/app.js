@@ -135,6 +135,7 @@ const settingsPanelTemplateIds = {
   'ocr-processing': 'settings-template-ocr-processing',
   'archive-structure': 'settings-template-archive-structure',
   labels: 'settings-template-labels',
+  'value-patterns': 'settings-template-value-patterns',
   'data-fields': 'settings-template-data-fields',
   'archiving-review': 'settings-template-archiving-review',
   paths: 'settings-template-paths',
@@ -278,6 +279,14 @@ let labelsImportRowEl = null;
 let labelsMatchPatternInspectorToggleEl = null;
 let labelsCancelEl = null;
 let labelsApplyEl = null;
+let valuePatternsListEl = null;
+let valuePatternsAddRowEl = null;
+let valuePatternsAddMenuToggleEl = null;
+let valuePatternsAddMenuEl = null;
+let valuePatternsImportRowEl = null;
+let valuePatternsMatchPatternInspectorToggleEl = null;
+let valuePatternsCancelEl = null;
+let valuePatternsApplyEl = null;
 let extractionFieldsEditorEl = null;
 let systemExtractionFieldsEditorEl = null;
 let extractionFieldsAddRowEl = null;
@@ -502,6 +511,7 @@ let archiveFoldersDraft = [];
 let archiveStructureFolderSortMode = 'path';
 let labelsDraft = [];
 let systemLabelsDraft = createDefaultSystemLabels();
+let valuePatternsDraft = [];
 let labelsBuiltInCollapsed = true;
 let labelsCustomCollapsed = false;
 let sendersDraft = [];
@@ -541,6 +551,7 @@ let labelsBaselineJson = JSON.stringify({
   labels: [],
   systemLabels: systemLabelsDraft,
 });
+let valuePatternsBaselineJson = '[]';
 let extractionFieldsBaselineJson = JSON.stringify({
   fields: [],
   predefinedFields: [],
@@ -619,6 +630,7 @@ let archivedJobReviewPayload = null;
 let archivedReviewRequestSeq = 0;
 let activeSidebarSplitPointerId = null;
 let renderedArchivingReviewSignature = '';
+let valuePatternsCustomCollapsed = false;
 let extractionFieldsDraft = [];
 let predefinedExtractionFieldsDraft = [];
 let systemExtractionFieldsDraft = [];
@@ -5444,6 +5456,27 @@ function toggleExtractionFieldsAddMenu(forceOpen = null) {
   });
   document.addEventListener('scroll', extractionFieldsAddMenuRepositionHandler, true);
   window.addEventListener('resize', extractionFieldsAddMenuRepositionHandler);
+}
+
+function closeValuePatternsAddMenu() {
+  if (!(valuePatternsAddMenuToggleEl instanceof HTMLButtonElement) || !(valuePatternsAddMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  valuePatternsAddMenuToggleEl.setAttribute('aria-expanded', 'false');
+  valuePatternsAddMenuToggleEl.classList.remove('is-open');
+  valuePatternsAddMenuEl.classList.add('hidden');
+}
+
+function toggleValuePatternsAddMenu(forceOpen = null) {
+  if (!(valuePatternsAddMenuToggleEl instanceof HTMLButtonElement) || !(valuePatternsAddMenuEl instanceof HTMLElement)) {
+    return;
+  }
+  const nextOpen = forceOpen === null
+    ? valuePatternsAddMenuEl.classList.contains('hidden')
+    : forceOpen === true;
+  valuePatternsAddMenuToggleEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+  valuePatternsAddMenuToggleEl.classList.toggle('is-open', nextOpen);
+  valuePatternsAddMenuEl.classList.toggle('hidden', !nextOpen);
 }
 
 function updateSelectedJobActionsMenu(job) {
@@ -13189,6 +13222,7 @@ function renderConfigurationBackups(items = settingsBackupItems) {
           `${Number(item.summary.labels || 0)} etiketter`,
           `${Number(item.summary.dataFields || 0)} datafält`,
           `${Number(item.summary.zones || 0)} ${Number(item.summary.zones || 0) === 1 ? 'zon' : 'zoner'}`,
+          `${Number(item.summary.valuePatterns || 0)} värdemönster`,
         ].join(' · ')
       : '';
     meta.textContent = summary ? `${version} · ${summary}` : version;
@@ -18801,6 +18835,53 @@ function bindSettingsPanelRefs(tabId) {
         alert(error.message || 'Kunde inte spara etiketter.');
       }
     });
+  } else if (tabId === 'value-patterns') {
+    valuePatternsListEl = document.getElementById('value-patterns-list');
+    valuePatternsAddRowEl = document.getElementById('value-patterns-add-row');
+    valuePatternsAddMenuToggleEl = document.getElementById('value-patterns-add-menu-toggle');
+    valuePatternsAddMenuEl = document.getElementById('value-patterns-add-menu');
+    valuePatternsImportRowEl = document.getElementById('value-patterns-import-row');
+    valuePatternsMatchPatternInspectorToggleEl = document.getElementById('value-patterns-match-pattern-inspector-toggle');
+    valuePatternsCancelEl = document.getElementById('value-patterns-cancel');
+    valuePatternsApplyEl = document.getElementById('value-patterns-apply');
+    attachMatchPatternInspectorGroupButton(valuePatternsMatchPatternInspectorToggleEl, 'value-patterns');
+    bindMatchPatternInspectorGroupButton(valuePatternsMatchPatternInspectorToggleEl, 'value-patterns');
+    valuePatternsAddRowEl.addEventListener('click', () => {
+      closeValuePatternsAddMenu();
+      valuePatternsDraft.push(defaultValuePattern());
+      renderValuePatternsEditor();
+      updateSettingsActionButtons();
+    });
+    valuePatternsAddMenuToggleEl.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleValuePatternsAddMenu();
+    });
+    valuePatternsImportRowEl.addEventListener('click', async () => {
+      closeValuePatternsAddMenu();
+      try {
+        await importSingleValuePatternFromJson();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Kunde inte importera värdemönstret.');
+      }
+    });
+    valuePatternsCancelEl.addEventListener('click', () => {
+      let parsed = [];
+      try {
+        parsed = JSON.parse(valuePatternsBaselineJson);
+      } catch (error) {
+        parsed = [];
+      }
+      valuePatternsDraft = sanitizeValuePatterns(parsed);
+      renderValuePatternsEditor();
+      updateSettingsActionButtons();
+    });
+    valuePatternsApplyEl.addEventListener('click', async () => {
+      try {
+        await saveValuePatterns();
+      } catch (error) {
+        alert(error.message || 'Kunde inte spara värdemönster.');
+      }
+    });
   } else if (tabId === 'data-fields') {
     extractionFieldsEditorEl = document.getElementById('extraction-fields-editor');
     systemExtractionFieldsEditorEl = document.getElementById('system-extraction-fields-editor');
@@ -19120,6 +19201,8 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
       renderArchiveStructureEditor();
     } else if (tabId === 'labels') {
       await loadLabels();
+    } else if (tabId === 'value-patterns') {
+      await loadValuePatterns();
     } else if (tabId === 'data-fields') {
       await loadExtractionFields();
     } else if (tabId === 'archiving-review') {
@@ -19268,6 +19351,7 @@ function closeSettingsModal(force = false) {
 
   stopSettingsDialogInteractions();
   closeLabelsAddMenu();
+  closeValuePatternsAddMenu();
   closeExtractionFieldsAddMenu();
   restoreSettingsFooterActions(activeSettingsFooterPanelId);
   restoreSettingsSectionFooterActions(activeSettingsSectionFooterPanelId);
@@ -19295,6 +19379,9 @@ function setSettingsTab(tabId) {
   if (tabId !== 'labels') {
     closeLabelsAddMenu();
   }
+  if (tabId !== 'value-patterns') {
+    closeValuePatternsAddMenu();
+  }
   if (tabId !== 'data-fields') {
     closeExtractionFieldsAddMenu();
   }
@@ -19307,7 +19394,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'archive-structure', 'labels', 'data-fields', 'archiving-review', 'paths', 'system', 'extensions', 'backup'];
+  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'archive-structure', 'labels', 'value-patterns', 'data-fields', 'archiving-review', 'paths', 'system', 'extensions', 'backup'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -19328,6 +19415,7 @@ function isEditableSettingsTab(tabId) {
     || tabId === 'ocr-processing'
     || tabId === 'archive-structure'
     || tabId === 'labels'
+    || tabId === 'value-patterns'
     || tabId === 'data-fields'
     || tabId === 'paths';
 }
@@ -19384,6 +19472,10 @@ function normalizedLabelsJson(labels, systemLabels = systemLabelsDraft) {
   });
 }
 
+function normalizedValuePatternsJson(patterns = valuePatternsDraft) {
+  return JSON.stringify(sanitizeValuePatterns(patterns));
+}
+
 function normalizedExtractionFieldsJson(
   extractionFields,
   predefinedExtractionFields = predefinedExtractionFieldsDraft,
@@ -19396,6 +19488,7 @@ function normalizedExtractionFieldsJson(
       predefinedFields: sanitizeExtractionFields(predefinedExtractionFields),
       systemFields: sanitizeExtractionFields(systemExtractionFields),
       zones: sanitizeExtractionZones(zones),
+      valuePatterns: sanitizeValuePatterns(valuePatternsDraft),
     }
   );
 }
@@ -19418,6 +19511,10 @@ function isArchiveStructureDirty() {
 
 function isLabelsDirty() {
   return normalizedLabelsJson(labelsDraft, systemLabelsDraft) !== labelsBaselineJson;
+}
+
+function isValuePatternsDirty() {
+  return normalizedValuePatternsJson(valuePatternsDraft) !== valuePatternsBaselineJson;
 }
 
 function isExtractionFieldsDirty() {
@@ -19459,6 +19556,9 @@ function isSettingsTabDirty(tabId) {
   if (tabId === 'labels') {
     return isLabelsDirty();
   }
+  if (tabId === 'value-patterns') {
+    return isValuePatternsDirty();
+  }
   if (tabId === 'data-fields') {
     return isExtractionFieldsDirty();
   }
@@ -19472,7 +19572,7 @@ function isSettingsTabDirty(tabId) {
 }
 
 function hasAnyUnsavedSettingsChanges() {
-  return isClientsDirty() || isSendersDirty() || isMatchingDirty() || isOcrProcessingDirty() || isArchiveStructureDirty() || isLabelsDirty() || isExtractionFieldsDirty() || isPathsDirty();
+  return isClientsDirty() || isSendersDirty() || isMatchingDirty() || isOcrProcessingDirty() || isArchiveStructureDirty() || isLabelsDirty() || isValuePatternsDirty() || isExtractionFieldsDirty() || isPathsDirty();
 }
 
 function panelActionButtonsForTab(tabId) {
@@ -19490,6 +19590,9 @@ function panelActionButtonsForTab(tabId) {
   }
   if (tabId === 'labels') {
     return [labelsCancelEl, labelsApplyEl];
+  }
+  if (tabId === 'value-patterns') {
+    return [valuePatternsCancelEl, valuePatternsApplyEl];
   }
   if (tabId === 'data-fields') {
     return [extractionFieldsCancelEl, extractionFieldsApplyEl];
@@ -19511,6 +19614,7 @@ function updateSettingsActionButtons() {
   const ocrProcessingLoading = loadingSettingsPanels.has('ocr-processing');
   const archiveStructureLoading = loadingSettingsPanels.has('archive-structure');
   const labelsLoading = loadingSettingsPanels.has('labels');
+  const valuePatternsLoading = loadingSettingsPanels.has('value-patterns');
   const extractionFieldsLoading = loadingSettingsPanels.has('data-fields');
   const archivingReviewLoading = loadingSettingsPanels.has('archiving-review');
   const pathsLoading = loadingSettingsPanels.has('paths');
@@ -19522,6 +19626,7 @@ function updateSettingsActionButtons() {
   const archiveStructureError = archiveStructureValidationError();
   const labelsDirty = isLabelsDirty();
   const labelsError = labelsValidationError();
+  const valuePatternsDirty = isValuePatternsDirty();
   const extractionFieldsDirty = isExtractionFieldsDirty();
   const pathsDirty = isPathsDirty();
   if (clientsCancelEl && clientsApplyEl) {
@@ -19554,6 +19659,11 @@ function updateSettingsActionButtons() {
     labelsCancelEl.disabled = labelsLoading || !labelsDirty;
     labelsApplyEl.disabled = labelsLoading || !labelsDirty || labelsError !== '';
     labelsApplyEl.title = labelsError || '';
+  }
+
+  if (valuePatternsCancelEl && valuePatternsApplyEl) {
+    valuePatternsCancelEl.disabled = valuePatternsLoading || !valuePatternsDirty;
+    valuePatternsApplyEl.disabled = valuePatternsLoading || !valuePatternsDirty;
   }
 
   if (extractionFieldsCancelEl && extractionFieldsApplyEl) {
@@ -21983,6 +22093,35 @@ async function importSingleExtractionFieldFromJson() {
   }
 }
 
+async function importSingleValuePatternFromJson() {
+  const text = window.prompt('Klistra in värdemönster som JSON:');
+  if (typeof text !== 'string' || text.trim() === '') {
+    return;
+  }
+  let parsed = null;
+  try {
+    parsed = parseImportJsonSource(text);
+  } catch (error) {
+    throw new Error('JSON kunde inte tolkas.');
+  }
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  const imported = rows.map((row, index) => sanitizeValuePattern(row, valuePatternsDraft.length + index))
+    .filter((row) => row.name.trim() !== '' && row.pattern.trim() !== '');
+  if (imported.length === 0) {
+    throw new Error('Importen måste innehålla name och pattern.');
+  }
+  imported.forEach((row) => {
+    const existingIndex = valuePatternsDraft.findIndex((existing) => sanitizeValuePattern(existing).id === row.id);
+    if (existingIndex >= 0) {
+      valuePatternsDraft.splice(existingIndex, 1, row);
+    } else {
+      valuePatternsDraft.push(row);
+    }
+  });
+  renderValuePatternsEditor();
+  updateSettingsActionButtons();
+}
+
 function archiveStructureFolderOptions() {
   return archiveFoldersDraft
     .map((folder, index) => sanitizeArchiveFolder(folder, index))
@@ -22486,6 +22625,8 @@ function sanitizeExtractionZone(zone, fallbackIndex = 0) {
   const input = zone && typeof zone === 'object' ? zone : {};
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   const pattern = typeof input.pattern === 'string' ? input.pattern : '';
+  const patternSource = String(input.patternSource || '').trim().toLowerCase() === 'reference' ? 'reference' : 'manual';
+  const valuePatternId = typeof input.valuePatternId === 'string' ? input.valuePatternId.trim() : '';
   const fallbackId = normalizeConfigKey(name || `zone_${fallbackIndex + 1}`);
   const id = typeof input.id === 'string' && input.id.trim() !== ''
     ? input.id.trim()
@@ -22496,11 +22637,93 @@ function sanitizeExtractionZone(zone, fallbackIndex = 0) {
     enabled: input.enabled !== false,
     pattern,
     isRegex: true,
+    patternSource,
+    valuePatternId: patternSource === 'reference' ? valuePatternId : '',
   };
 }
 
 function sanitizeExtractionZones(zones) {
   return Array.isArray(zones) ? zones.map((zone, index) => sanitizeExtractionZone(zone, index)) : [];
+}
+
+function defaultValuePattern() {
+  return {
+    id: '',
+    name: '',
+    pattern: '',
+    isRegex: true,
+    enabled: true,
+    description: '',
+  };
+}
+
+function sanitizeValuePattern(row, fallbackIndex = 0) {
+  const input = row && typeof row === 'object' ? row : {};
+  const name = typeof input.name === 'string' ? input.name : '';
+  const id = typeof input.id === 'string' && input.id.trim() !== ''
+    ? input.id.trim()
+    : normalizeConfigKey(name || `value_pattern_${fallbackIndex + 1}`);
+  return {
+    id,
+    name,
+    pattern: typeof input.pattern === 'string' ? input.pattern : '',
+    isRegex: input.isRegex !== false,
+    enabled: input.enabled !== false,
+    description: typeof input.description === 'string' ? input.description : '',
+  };
+}
+
+function sanitizeValuePatterns(rows) {
+  return Array.isArray(rows) ? rows.map((row, index) => sanitizeValuePattern(row, index)) : [];
+}
+
+function enabledValuePatterns() {
+  return sanitizeValuePatterns(valuePatternsDraft).filter((row) => row.enabled !== false && String(row.pattern || '').trim() !== '');
+}
+
+function valuePatternById(id) {
+  const normalizedId = String(id || '').trim();
+  if (normalizedId === '') {
+    return null;
+  }
+  return sanitizeValuePatterns(valuePatternsDraft).find((row) => row.id === normalizedId) || null;
+}
+
+function effectiveRuleSetValuePattern(ruleSet) {
+  const source = String(ruleSet?.patternSource || '').trim().toLowerCase() === 'reference' ? 'reference' : 'manual';
+  if (source === 'reference') {
+    const pattern = valuePatternById(ruleSet?.valuePatternId);
+    return pattern && pattern.enabled !== false ? String(pattern.pattern || '') : '';
+  }
+  return String(ruleSet?.valuePattern || '');
+}
+
+function effectiveRuleSetValuePatternIsRegex(ruleSet) {
+  const source = String(ruleSet?.patternSource || '').trim().toLowerCase() === 'reference' ? 'reference' : 'manual';
+  if (source === 'reference') {
+    const pattern = valuePatternById(ruleSet?.valuePatternId);
+    return !pattern || pattern.isRegex !== false;
+  }
+  return true;
+}
+
+function populateValuePatternSelect(selectEl, selectedId = '') {
+  if (!(selectEl instanceof HTMLSelectElement)) {
+    return;
+  }
+  selectEl.replaceChildren();
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = 'Välj värdemönster...';
+  selectEl.appendChild(empty);
+  sanitizeValuePatterns(valuePatternsDraft).forEach((pattern) => {
+    const option = document.createElement('option');
+    option.value = pattern.id;
+    option.textContent = pattern.enabled === false ? `${pattern.name || pattern.id} (inaktiv)` : (pattern.name || pattern.id);
+    option.disabled = pattern.enabled === false;
+    selectEl.appendChild(option);
+  });
+  selectEl.value = String(selectedId || '');
 }
 
 function defaultExtractionFieldRuleSet() {
@@ -22510,6 +22733,8 @@ function defaultExtractionFieldRuleSet() {
     searchTerms: [{ text: '', isRegex: false }],
     isRegex: false,
     useValuePattern: false,
+    patternSource: 'manual',
+    valuePatternId: '',
     valuePattern: '',
     normalizationType: 'none',
     normalizationChars: '',
@@ -22762,6 +22987,7 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
   const valuePattern = typeof input.valuePattern === 'string'
     ? input.valuePattern
     : (typeof input.searchString === 'string' ? input.searchString : '');
+  const patternSource = String(input.patternSource || '').trim().toLowerCase() === 'reference' ? 'reference' : 'manual';
   const useValuePattern = hasExplicitRuleSet && Object.prototype.hasOwnProperty.call(input, 'useValuePattern')
     ? input.useValuePattern === true
     : String(valuePattern || '').trim() !== '';
@@ -22778,6 +23004,8 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
     searchTerms,
     isRegex: false,
     useValuePattern,
+    patternSource,
+    valuePatternId: patternSource === 'reference' && typeof input.valuePatternId === 'string' ? input.valuePatternId.trim() : '',
     valuePattern,
     normalizationType,
     normalizationChars: typeof (hasExplicitRuleSet ? input.normalizationChars : legacy.normalizationChars) === 'string'
@@ -26178,10 +26406,11 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const valuePatternInput = document.createElement('input');
       valuePatternInput.type = 'text';
       valuePatternInput.placeholder = 'Ex: ansökt om ekonomiskt bistånd för {DATUM}';
-      valuePatternInput.value = ruleSet.valuePattern || '';
+      valuePatternInput.value = effectiveRuleSetValuePattern(ruleSet);
       const valuePatternCopyButton = createMatchPatternCopyButton(() => {
-        const currentPattern = String(collection[index].ruleSets[ruleSetIndex]?.valuePattern || '').trim();
-        return currentPattern !== '' ? buildInspectionMatchPattern(currentPattern, true) : '';
+        const currentRuleSet = collection[index].ruleSets[ruleSetIndex];
+        const currentPattern = String(effectiveRuleSetValuePattern(currentRuleSet) || '').trim();
+        return currentPattern !== '' ? buildInspectionMatchPattern(currentPattern, effectiveRuleSetValuePatternIsRegex(currentRuleSet)) : '';
       });
       const valuePatternInputWrap = createInlineInputWithAccessories(valuePatternInput, [valuePatternCopyButton], 'extraction-field-alias-input-wrap');
       valuePatternInputWrap.classList.add('extraction-field-capture-highlight-wrap');
@@ -26192,7 +26421,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       valuePatternHighlightLayer.appendChild(valuePatternHighlightText);
       valuePatternInputWrap.insertBefore(valuePatternHighlightLayer, valuePatternInput);
       valuePatternInput.addEventListener('input', () => {
-        collection[index].ruleSets[ruleSetIndex].valuePattern = valuePatternInput.value;
+        if (String(collection[index].ruleSets[ruleSetIndex]?.patternSource || 'manual') !== 'reference') {
+          collection[index].ruleSets[ruleSetIndex].valuePattern = valuePatternInput.value;
+        }
         ensureDefaultCaptureSelection();
         matchPatternInspector.refresh();
         syncRuleSetUi();
@@ -26214,6 +26445,43 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const valuePatternOptionBlock = document.createElement('div');
       valuePatternOptionBlock.className = 'extraction-field-rule-set-option';
       valuePatternOptionBlock.appendChild(useValuePatternField);
+
+      const patternSourceSelect = document.createElement('select');
+      [
+        ['manual', 'Manuellt värdemönster'],
+        ['reference', 'Befintligt värdemönster'],
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        patternSourceSelect.appendChild(option);
+      });
+      patternSourceSelect.value = String(ruleSet.patternSource || '').trim().toLowerCase() === 'reference' ? 'reference' : 'manual';
+      const patternSourceField = createFloatingField('Typ', patternSourceSelect, 'extraction-field-pattern-source-field');
+
+      const valuePatternReferenceSelect = document.createElement('select');
+      populateValuePatternSelect(valuePatternReferenceSelect, ruleSet.valuePatternId);
+      const valuePatternReferenceField = createFloatingField('Befintligt värdemönster', valuePatternReferenceSelect, 'extraction-field-pattern-reference-field');
+
+      const editValuePatternButton = document.createElement('button');
+      editValuePatternButton.type = 'button';
+      editValuePatternButton.className = 'extraction-field-value-pattern-edit-button';
+      editValuePatternButton.textContent = 'Öppna värdemönster';
+      editValuePatternButton.addEventListener('click', async () => {
+        setSettingsTab('value-patterns');
+        await ensureSettingsPanelReady('value-patterns');
+        const selectedId = String(collection[index].ruleSets[ruleSetIndex]?.valuePatternId || '').trim();
+        const target = selectedId !== '' && valuePatternsListEl instanceof HTMLElement
+          ? valuePatternsListEl.querySelector(`[data-value-pattern-id="${escapeCssAttributeValue(selectedId)}"]`)
+          : null;
+        if (target instanceof HTMLElement) {
+          target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          highlightSettingsElement(target);
+        }
+      });
+      valuePatternOptionBlock.appendChild(patternSourceField);
+      valuePatternOptionBlock.appendChild(valuePatternReferenceField);
+      valuePatternOptionBlock.appendChild(editValuePatternButton);
 
       const valuePatternField = document.createElement('div');
       valuePatternField.className = 'floating-input-group extraction-field-value-pattern-field';
@@ -26312,7 +26580,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         valuePatternHighlightText.style.transform = `translateX(${-valuePatternInput.scrollLeft}px)`;
       };
       const ensureDefaultCaptureSelection = () => {
-        const groups = parseRegexCaptureGroups(valuePatternInput.value);
+        const groups = effectiveRuleSetValuePatternIsRegex(collection[index].ruleSets[ruleSetIndex])
+          ? parseRegexCaptureGroups(effectiveRuleSetValuePattern(collection[index].ruleSets[ruleSetIndex]))
+          : [];
         const valueType = sanitizeExtractionFieldValueType(collection[index]?.valueType, collection[index], ruleSet);
         if (valueType === 'amount') {
           if (collection[index].ruleSets[ruleSetIndex].amountWholeGroup === null || collection[index].ruleSets[ruleSetIndex].amountWholeGroup === undefined) {
@@ -26329,8 +26599,14 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         }
       };
       const syncCaptureGroupUi = (valueType, useValuePattern) => {
-        const previewPattern = valuePatternInput.value;
-        const groups = parseRegexCaptureGroups(previewPattern);
+        const effectivePattern = effectiveRuleSetValuePattern(collection[index].ruleSets[ruleSetIndex]);
+        const previewPattern = matchPatternInspector.isOpen ? valuePatternInput.value : effectivePattern;
+        if (!matchPatternInspector.isOpen && valuePatternInput.value !== effectivePattern) {
+          valuePatternInput.value = effectivePattern;
+        }
+        const groups = effectiveRuleSetValuePatternIsRegex(collection[index].ruleSets[ruleSetIndex])
+          ? parseRegexCaptureGroups(previewPattern)
+          : [];
         const show = useValuePattern && (valueType === 'amount' || groups.length > 0);
         valuePatternCaptureField.hidden = !show;
         if (!show) {
@@ -26375,8 +26651,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         copyButtonEl: valuePatternCopyButton,
         placeholder: 'Ex: ansökt om ekonomiskt bistånd för {DATUM}',
         previewPlaceholder: 'Genererat matchningsmönster',
-        getOriginalValue: () => String(collection[index].ruleSets[ruleSetIndex]?.valuePattern || '').trim(),
-        getPreviewValue: (original) => (original !== '' ? buildInspectionMatchPattern(original, true) : ''),
+        getOriginalValue: () => String(effectiveRuleSetValuePattern(collection[index].ruleSets[ruleSetIndex]) || '').trim(),
+        getPreviewValue: (original) => (original !== '' ? buildInspectionMatchPattern(original, effectiveRuleSetValuePatternIsRegex(collection[index].ruleSets[ruleSetIndex])) : ''),
         syncLayout: () => {
           const valueType = sanitizeExtractionFieldValueType(collection[index]?.valueType, collection[index], ruleSet);
           syncCaptureGroupUi(valueType, useValuePatternCheckbox.checked);
@@ -26557,6 +26833,13 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         collection[index].ruleSets[ruleSetIndex].useSearchText = requiresSearchTermsCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].requiresSearchTerms = requiresSearchTermsCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].useValuePattern = useValuePatternCheckbox.checked;
+        collection[index].ruleSets[ruleSetIndex].patternSource = patternSourceSelect.value === 'reference' ? 'reference' : 'manual';
+        collection[index].ruleSets[ruleSetIndex].valuePatternId = collection[index].ruleSets[ruleSetIndex].patternSource === 'reference'
+          ? valuePatternReferenceSelect.value
+          : '';
+        if (collection[index].ruleSets[ruleSetIndex].patternSource !== 'reference') {
+          collection[index].ruleSets[ruleSetIndex].valuePattern = valuePatternInput.value;
+        }
         collection[index].ruleSets[ruleSetIndex].normalizationType = normalizationType;
         collection[index].ruleSets[ruleSetIndex].normalizationChars = normalizationCharsInput.value;
         collection[index].ruleSets[ruleSetIndex].normalizationReplacements = normalizationReplacementsValues.map((replacement) => ({
@@ -26576,6 +26859,11 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         searchTermsField.hidden = !requiresSearchTermsCheckbox.checked;
         scopeField.hidden = !scopeCheckbox.checked;
         valuePatternField.hidden = !useValuePatternCheckbox.checked;
+        patternSourceField.hidden = !useValuePatternCheckbox.checked;
+        valuePatternReferenceField.hidden = !useValuePatternCheckbox.checked || collection[index].ruleSets[ruleSetIndex].patternSource !== 'reference';
+        editValuePatternButton.hidden = valuePatternReferenceField.hidden;
+        valuePatternInput.readOnly = collection[index].ruleSets[ruleSetIndex].patternSource === 'reference';
+        valuePatternInput.setAttribute('aria-readonly', valuePatternInput.readOnly ? 'true' : 'false');
         searchOptionBlock.classList.toggle('is-active', requiresSearchTermsCheckbox.checked);
         scopeOptionBlock.classList.toggle('is-active', scopeCheckbox.checked);
         valuePatternOptionBlock.classList.toggle('is-active', useValuePatternCheckbox.checked);
@@ -26630,6 +26918,11 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
       requiresSearchTermsCheckbox.addEventListener('change', syncRuleSetUi);
       useValuePatternCheckbox.addEventListener('change', syncRuleSetUi);
+      patternSourceSelect.addEventListener('change', syncRuleSetUi);
+      valuePatternReferenceSelect.addEventListener('change', () => {
+        ensureDefaultCaptureSelection();
+        syncRuleSetUi();
+      });
       scopeCheckbox.addEventListener('change', syncRuleSetUi);
       scopeInput.addEventListener('input', syncRuleSetUi);
       normalizationTypeSelect.addEventListener('change', syncRuleSetUi);
@@ -26685,6 +26978,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         useSearchText: baseRuleSet.useSearchText,
         requiresSearchTerms: baseRuleSet.requiresSearchTerms,
         useValuePattern: baseRuleSet.useValuePattern,
+        patternSource: baseRuleSet.patternSource,
+        valuePatternId: baseRuleSet.valuePatternId,
+        valuePattern: baseRuleSet.valuePattern,
         datePosition: baseRuleSet.datePosition,
         amountPosition: baseRuleSet.amountPosition,
         captureGroup: null,
@@ -26805,6 +27101,206 @@ function createZoneHelpContent() {
   return wrapper;
 }
 
+function renderValuePatternHighlight(inputEl, textEl, selectedGroup = null) {
+  if (!(inputEl instanceof HTMLInputElement) || !(textEl instanceof HTMLElement)) {
+    return;
+  }
+  const value = String(inputEl.value || '');
+  const groups = parseRegexCaptureGroups(value);
+  textEl.replaceChildren();
+  if (groups.length === 0) {
+    textEl.textContent = value || ' ';
+    return;
+  }
+  let cursor = 0;
+  groups.forEach((group) => {
+    const start = Math.max(0, Number(group.start) || 0);
+    const end = Math.max(start, Number(group.end) || start);
+    if (start > cursor) {
+      textEl.appendChild(document.createTextNode(value.slice(cursor, start)));
+    }
+    const span = document.createElement('span');
+    span.className = 'extraction-field-capture-highlight-group';
+    span.classList.toggle('is-selected', selectedGroup !== null && Number(group.index) === Number(selectedGroup));
+    span.textContent = value.slice(start, end);
+    textEl.appendChild(span);
+    cursor = end;
+  });
+  if (cursor < value.length) {
+    textEl.appendChild(document.createTextNode(value.slice(cursor)));
+  }
+}
+
+function renderValuePatternsEditor() {
+  if (!valuePatternsListEl) {
+    return;
+  }
+  resetMatchPatternInspectorGroup('value-patterns');
+  valuePatternsListEl.innerHTML = '';
+  const label = document.createElement('div');
+  label.className = 'archive-folders-label';
+  label.textContent = 'Värdemönster';
+  valuePatternsListEl.appendChild(label);
+  if (valuePatternsDraft.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'categories-empty';
+    empty.textContent = 'Inga värdemönster ännu.';
+    valuePatternsListEl.appendChild(empty);
+    return;
+  }
+  valuePatternsDraft.forEach((pattern, index) => {
+    const current = sanitizeValuePattern(pattern, index);
+    valuePatternsDraft[index] = current;
+    const node = document.createElement('div');
+    node.className = 'tree-node tree-category value-pattern-node';
+    node.dataset.valuePatternId = current.id;
+    const row = createTreeRow({ markerless: true });
+    const body = document.createElement('div');
+    body.className = 'tree-body category-body extraction-field-editor-body value-pattern-body';
+    appendTreeBodyIcon(body, 'tree-body-icon tree-body-icon-zone');
+    const actions = document.createElement('div');
+    actions.className = 'extraction-field-editor-actions';
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.className = 'extraction-field-copy-button';
+    copyButton.textContent = '⧉';
+    copyButton.title = 'Kopiera värdemönster som JSON';
+    copyButton.addEventListener('click', async () => {
+      const original = copyButton.textContent || '⧉';
+      const copied = await copyTextToClipboard(JSON.stringify(sanitizeValuePattern(valuePatternsDraft[index], index), null, 2));
+      copyButton.textContent = copied ? 'Kopierad' : 'Fel';
+      window.setTimeout(() => { copyButton.textContent = original; }, 1200);
+    });
+    actions.appendChild(copyButton);
+    const removeButton = createTrashButton({
+      variant: 'node',
+      title: 'Ta bort värdemönster',
+      onClick: () => {
+        valuePatternsDraft.splice(index, 1);
+        renderValuePatternsEditor();
+        updateSettingsActionButtons();
+      },
+    });
+    actions.appendChild(removeButton);
+
+    const inspector = createMatchPatternInspector({ stateKey: `value-pattern:${current.id || index}` });
+    registerMatchPatternInspectorInGroup('value-patterns', inspector);
+
+    const enabledLabel = document.createElement('label');
+    enabledLabel.className = 'extraction-field-rule-set-toggle extraction-zone-enabled';
+    const enabledCheckbox = document.createElement('input');
+    enabledCheckbox.type = 'checkbox';
+    enabledCheckbox.checked = current.enabled !== false;
+    const enabledText = document.createElement('span');
+    enabledText.textContent = 'Aktiv';
+    enabledLabel.append(enabledCheckbox, enabledText);
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Ex: Bankgiroavi';
+    nameInput.value = current.name;
+    const idInput = document.createElement('input');
+    idInput.type = 'text';
+    idInput.placeholder = 'bankgiro_avi';
+    idInput.value = current.id;
+    const descriptionInput = document.createElement('input');
+    descriptionInput.type = 'text';
+    descriptionInput.placeholder = 'Kort beskrivning';
+    descriptionInput.value = current.description;
+    const patternInput = document.createElement('input');
+    patternInput.type = 'text';
+    patternInput.placeholder = 'Ex: VAR GOD GÖR INGA ÄNDRINGAR ...';
+    patternInput.value = current.pattern;
+    const patternCopyButton = createMatchPatternCopyButton(() => {
+      const patternText = String(valuePatternsDraft[index]?.pattern || '').trim();
+      return patternText !== '' ? buildInspectionMatchPattern(patternText, valuePatternsDraft[index]?.isRegex !== false) : '';
+    });
+    const regexButton = createRegexToggleButton({
+      getActive: () => valuePatternsDraft[index]?.isRegex !== false,
+      setActive: (next) => {
+        valuePatternsDraft[index].isRegex = next === true;
+        updateSettingsActionButtons();
+      },
+    });
+    regexButton.title = 'Regex';
+    regexButton.setAttribute('aria-label', 'Regex');
+    const patternWrap = createInlineInputWithAccessories(patternInput, [regexButton, patternCopyButton], 'extraction-field-alias-input-wrap');
+    patternWrap.classList.add('extraction-field-capture-highlight-wrap');
+    const highlightLayer = document.createElement('div');
+    highlightLayer.className = 'extraction-field-capture-highlight-layer';
+    const highlightText = document.createElement('div');
+    highlightText.className = 'extraction-field-capture-highlight-text';
+    highlightLayer.appendChild(highlightText);
+    patternWrap.insertBefore(highlightLayer, patternInput);
+    const syncHighlight = () => {
+      renderValuePatternHighlight(patternInput, highlightText, null);
+      highlightText.style.transform = `translateX(${-patternInput.scrollLeft}px)`;
+    };
+    patternInput.addEventListener('scroll', syncHighlight);
+
+    const patternField = document.createElement('div');
+    patternField.className = 'floating-input-group extraction-field-value-pattern-field';
+    const patternLabel = document.createElement('label');
+    patternLabel.className = 'floating-input-label floating-input-label--with-help';
+    const patternLabelText = document.createElement('span');
+    patternLabelText.textContent = 'Mönster (Regex)';
+    const helpDisclosure = createFloatingHelpToggle(createValuePatternHelpContent(), {
+      helpId: `value-pattern-help-${current.id || index}`,
+      buttonLabel: 'Visa hjälp för värdemönster',
+    });
+    patternLabel.append(patternLabelText, helpDisclosure.button);
+    helpDisclosure.attachLabel(patternLabel);
+    patternField.append(patternLabel, patternWrap, helpDisclosure.panel);
+
+    inspector.registerInput({
+      groupKey: 'valuePattern',
+      inputEl: patternInput,
+      copyButtonEl: patternCopyButton,
+      regexButtonEl: regexButton,
+      placeholder: 'Ex: VAR GOD GÖR INGA ÄNDRINGAR ...',
+      previewPlaceholder: 'Genererat matchningsmönster',
+      getOriginalValue: () => String(valuePatternsDraft[index]?.pattern || '').trim(),
+      getPreviewValue: (original) => (original !== '' ? buildInspectionMatchPattern(original, valuePatternsDraft[index]?.isRegex !== false) : ''),
+      syncLayout: syncHighlight,
+    });
+
+    const syncPattern = () => {
+      valuePatternsDraft[index] = sanitizeValuePattern({
+        ...valuePatternsDraft[index],
+        id: idInput.value,
+        name: nameInput.value,
+        enabled: enabledCheckbox.checked,
+        description: descriptionInput.value,
+        pattern: patternInput.value,
+        isRegex: valuePatternsDraft[index]?.isRegex !== false,
+      }, index);
+      inspector.refresh();
+      syncHighlight();
+      updateSettingsActionButtons();
+    };
+    [enabledCheckbox, nameInput, idInput, descriptionInput, patternInput].forEach((input) => {
+      input.addEventListener('input', syncPattern);
+      input.addEventListener('change', syncPattern);
+    });
+
+    const fields = document.createElement('div');
+    fields.className = 'extraction-field-header-fields value-pattern-header-fields';
+    fields.append(
+      enabledLabel,
+      createFloatingField('Namn', nameInput),
+      createFloatingField('Id', idInput),
+      createFloatingField('Beskrivning', descriptionInput),
+      patternField
+    );
+    body.append(actions, fields);
+    row.appendChild(body);
+    node.appendChild(row);
+    valuePatternsListEl.appendChild(node);
+    inspector.refresh();
+    syncHighlight();
+  });
+}
+
 function renderExtractionZonesEditor() {
   if (!extractionZonesEditorEl) {
     return;
@@ -26889,12 +27385,35 @@ function renderExtractionZonesEditor() {
     const patternInput = document.createElement('input');
     patternInput.type = 'text';
     patternInput.placeholder = 'Ex: Du kan också skanna nedan med din bankapp';
-    patternInput.value = currentZone.pattern;
+    patternInput.value = currentZone.patternSource === 'reference'
+      ? String(valuePatternById(currentZone.valuePatternId)?.pattern || '')
+      : currentZone.pattern;
     const copyButton = createMatchPatternCopyButton(() => {
-      const pattern = String(extractionZonesDraft[index]?.pattern || '').trim();
-      return pattern !== '' ? buildInspectionMatchPattern(pattern, true) : '';
+      const zone = sanitizeExtractionZone(extractionZonesDraft[index], index);
+      const valuePattern = zone.patternSource === 'reference' ? valuePatternById(zone.valuePatternId) : null;
+      const pattern = zone.patternSource === 'reference'
+        ? String(valuePattern?.pattern || '').trim()
+        : String(zone.pattern || '').trim();
+      const isRegex = zone.patternSource === 'reference' ? valuePattern?.isRegex !== false : true;
+      return pattern !== '' ? buildInspectionMatchPattern(pattern, isRegex) : '';
     });
     const patternWrap = createInlineInputWithAccessories(patternInput, [copyButton], 'extraction-field-alias-input-wrap');
+
+    const patternSourceSelect = document.createElement('select');
+    [
+      ['manual', 'Manuellt värdemönster'],
+      ['reference', 'Befintligt värdemönster'],
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      patternSourceSelect.appendChild(option);
+    });
+    patternSourceSelect.value = currentZone.patternSource === 'reference' ? 'reference' : 'manual';
+    const patternSourceField = createFloatingField('Typ', patternSourceSelect, 'extraction-field-pattern-source-field');
+    const valuePatternReferenceSelect = document.createElement('select');
+    populateValuePatternSelect(valuePatternReferenceSelect, currentZone.valuePatternId);
+    const valuePatternReferenceField = createFloatingField('Befintligt värdemönster', valuePatternReferenceSelect, 'extraction-field-pattern-reference-field');
 
     const patternField = document.createElement('div');
     patternField.className = 'floating-input-group extraction-field-value-pattern-field';
@@ -26917,15 +27436,34 @@ function renderExtractionZonesEditor() {
       placeholder: 'Ex: Du kan också skanna nedan med din bankapp',
       previewPlaceholder: 'Genererat matchningsmönster',
       getOriginalValue: () => String(extractionZonesDraft[index]?.pattern || '').trim(),
-      getPreviewValue: (original) => (original !== '' ? buildInspectionMatchPattern(original, true) : ''),
+      getPreviewValue: () => {
+        const zone = sanitizeExtractionZone(extractionZonesDraft[index], index);
+        const valuePattern = zone.patternSource === 'reference' ? valuePatternById(zone.valuePatternId) : null;
+        const pattern = zone.patternSource === 'reference'
+          ? String(valuePattern?.pattern || '')
+          : String(zone.pattern || '');
+        const isRegex = zone.patternSource === 'reference' ? valuePattern?.isRegex !== false : true;
+        return pattern !== '' ? buildInspectionMatchPattern(pattern, isRegex) : '';
+      },
     });
 
     const syncZone = () => {
+      const nextSource = patternSourceSelect.value === 'reference' ? 'reference' : 'manual';
+      const referencePattern = nextSource === 'reference'
+        ? String(valuePatternById(valuePatternReferenceSelect.value)?.pattern || '')
+        : '';
+      if (nextSource === 'reference' && patternInput.value !== referencePattern) {
+        patternInput.value = referencePattern;
+      }
+      patternInput.readOnly = nextSource === 'reference';
+      valuePatternReferenceField.hidden = nextSource !== 'reference';
       extractionZonesDraft[index] = sanitizeExtractionZone({
         ...extractionZonesDraft[index],
         name: nameInput.value,
         enabled: enabledCheckbox.checked,
-        pattern: patternInput.value,
+        patternSource: nextSource,
+        valuePatternId: nextSource === 'reference' ? valuePatternReferenceSelect.value : '',
+        pattern: nextSource === 'reference' ? extractionZonesDraft[index]?.pattern || '' : patternInput.value,
       }, index);
       inspector.refresh();
       updateSettingsActionButtons();
@@ -26933,11 +27471,15 @@ function renderExtractionZonesEditor() {
     enabledCheckbox.addEventListener('change', syncZone);
     nameInput.addEventListener('input', syncZone);
     patternInput.addEventListener('input', syncZone);
+    patternSourceSelect.addEventListener('change', syncZone);
+    valuePatternReferenceSelect.addEventListener('change', syncZone);
 
     const fields = document.createElement('div');
     fields.className = 'extraction-field-header-fields extraction-zone-header-fields';
     fields.appendChild(enabledLabel);
     fields.appendChild(createFloatingField('Namn', nameInput));
+    fields.appendChild(patternSourceField);
+    fields.appendChild(valuePatternReferenceField);
     fields.appendChild(patternField);
 
     body.appendChild(actions);
@@ -26945,6 +27487,7 @@ function renderExtractionZonesEditor() {
     row.appendChild(body);
     node.appendChild(row);
     extractionZonesEditorEl.appendChild(node);
+    syncZone();
     inspector.refresh();
   });
 }
@@ -30253,6 +30796,8 @@ async function loadExtractionFields() {
   predefinedExtractionFieldsDraft = payload.predefinedFields.map((field, index) => sanitizeExtractionField(field, index));
   systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
   extractionZonesDraft = payload.zones.map((zone, index) => sanitizeExtractionZone(zone, index));
+  valuePatternsDraft = sanitizeValuePatterns(payload.valuePatterns);
+  valuePatternsBaselineJson = normalizedValuePatternsJson(valuePatternsDraft);
   extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
   applyArchivingRulesPayloadFromResponse(payload, {
     forceRender: true,
@@ -30264,6 +30809,30 @@ async function loadExtractionFields() {
   renderExtractionZonesEditor();
   if (archiveStructureListEl) {
     renderArchiveStructureEditor();
+  }
+  updateSettingsActionButtons();
+}
+
+async function loadValuePatterns() {
+  const requestLocalRevision = archivingRulesLocalRevision;
+  const response = await fetch('/api/get-value-patterns.php', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('Kunde inte ladda värdemönster');
+  }
+  const payload = await response.json();
+  if (!payload || !Array.isArray(payload.valuePatterns)) {
+    throw new Error('Ogiltigt svar för värdemönster');
+  }
+  valuePatternsDraft = sanitizeValuePatterns(payload.valuePatterns);
+  valuePatternsBaselineJson = normalizedValuePatternsJson(valuePatternsDraft);
+  applyArchivingRulesPayloadFromResponse(payload, {
+    forceRender: true,
+    expectedLocalRevision: requestLocalRevision,
+  });
+  renderValuePatternsEditor();
+  if (extractionFieldsEditorEl) {
+    renderExtractionFieldsEditor();
+    renderExtractionZonesEditor();
   }
   updateSettingsActionButtons();
 }
@@ -30450,11 +31019,44 @@ async function saveLabels() {
   await refreshConfigurationBackupCreateState();
 }
 
+async function saveValuePatterns() {
+  const normalized = sanitizeValuePatterns(valuePatternsDraft);
+  const response = await fetch('/api/save-value-patterns.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ valuePatterns: normalized })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.valuePatterns)) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : 'Kunde inte spara värdemönster';
+    throw new Error(message);
+  }
+
+  valuePatternsDraft = sanitizeValuePatterns(payload.valuePatterns);
+  valuePatternsBaselineJson = normalizedValuePatternsJson(valuePatternsDraft);
+  renderValuePatternsEditor();
+  if (extractionFieldsEditorEl) {
+    renderExtractionFieldsEditor();
+    renderExtractionZonesEditor();
+  }
+  applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
+  watchReprocessedJobIdsFromPayload(payload);
+  await invalidateAnalysisViews();
+  updateSettingsActionButtons();
+  await refreshConfigurationBackupCreateState();
+}
+
 async function saveExtractionFields() {
   const normalizedExtractionFields = extractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const normalizedPredefinedExtractionFields = predefinedExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const normalizedSystemExtractionFields = systemExtractionFieldsDraft.map((field, index) => sanitizeExtractionField(field, index));
   const normalizedExtractionZones = extractionZonesDraft.map((zone, index) => sanitizeExtractionZone(zone, index));
+  const normalizedValuePatterns = sanitizeValuePatterns(valuePatternsDraft);
   const response = await fetch('/api/save-extraction-fields.php', {
     method: 'POST',
     headers: {
@@ -30465,6 +31067,7 @@ async function saveExtractionFields() {
       predefinedFields: normalizedPredefinedExtractionFields,
       systemFields: normalizedSystemExtractionFields,
       zones: normalizedExtractionZones,
+      valuePatterns: normalizedValuePatterns,
     })
   });
 
@@ -30481,6 +31084,8 @@ async function saveExtractionFields() {
   predefinedExtractionFieldsDraft = payload.predefinedFields.map((field, index) => sanitizeExtractionField(field, index));
   systemExtractionFieldsDraft = payload.systemFields.map((field, index) => sanitizeExtractionField(field, index));
   extractionZonesDraft = payload.zones.map((zone, index) => sanitizeExtractionZone(zone, index));
+  valuePatternsDraft = sanitizeValuePatterns(payload.valuePatterns);
+  valuePatternsBaselineJson = normalizedValuePatternsJson(valuePatternsDraft);
   extractionFieldsBaselineJson = normalizedExtractionFieldsJson(extractionFieldsDraft, predefinedExtractionFieldsDraft, systemExtractionFieldsDraft);
   renderExtractionFieldsEditor();
   renderSystemExtractionFieldsEditor();
@@ -31305,6 +31910,11 @@ settingsTabEls.forEach((tabButton) => {
         systemLabelsDraft = createDefaultSystemLabels();
         labelsBaselineJson = normalizedLabelsJson(labelsDraft, systemLabelsDraft);
         renderLabelsEditor();
+      } else if (tabId === 'value-patterns') {
+        alert('Kunde inte ladda värdemönster.');
+        valuePatternsDraft = [];
+        valuePatternsBaselineJson = normalizedValuePatternsJson(valuePatternsDraft);
+        renderValuePatternsEditor();
       } else if (tabId === 'data-fields') {
         alert('Kunde inte ladda datafält.');
         extractionFieldsDraft = [];
@@ -31646,6 +32256,16 @@ document.addEventListener('pointerdown', (event) => {
       closeExtractionFieldsAddMenu();
     }
 
+    if (
+      valuePatternsAddMenuToggleEl instanceof HTMLButtonElement
+      && valuePatternsAddMenuEl instanceof HTMLElement
+      && !valuePatternsAddMenuEl.classList.contains('hidden')
+      && !(event.target instanceof Node && valuePatternsAddMenuToggleEl.contains(event.target))
+      && !(event.target instanceof Node && valuePatternsAddMenuEl.contains(event.target))
+    ) {
+      closeValuePatternsAddMenu();
+    }
+
   if (
     appNoticesEl instanceof HTMLElement
     && appNoticesOverflowOpen
@@ -31736,6 +32356,11 @@ document.addEventListener('keydown', (event) => {
 
   if (event.key === 'Escape' && extractionFieldsAddMenuEl instanceof HTMLElement && !extractionFieldsAddMenuEl.classList.contains('hidden')) {
     closeExtractionFieldsAddMenu();
+    return;
+  }
+
+  if (event.key === 'Escape' && valuePatternsAddMenuEl instanceof HTMLElement && !valuePatternsAddMenuEl.classList.contains('hidden')) {
+    closeValuePatternsAddMenu();
     return;
   }
 

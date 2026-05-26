@@ -182,6 +182,8 @@ final class ExtractionFieldRepository
                 requires_search_terms,
                 search_terms_json,
                 use_value_pattern,
+                pattern_source,
+                value_pattern_id,
                 value_pattern,
                 scope_json,
                 normalization_type,
@@ -200,6 +202,8 @@ final class ExtractionFieldRepository
                 :requires_search_terms,
                 :search_terms_json,
                 :use_value_pattern,
+                :pattern_source,
+                :value_pattern_id,
                 :value_pattern,
                 :scope_json,
                 :normalization_type,
@@ -326,6 +330,8 @@ final class ExtractionFieldRepository
                         ':requires_search_terms' => ($ruleSet['requiresSearchTerms'] ?? true) ? 1 : 0,
                         ':search_terms_json' => $searchTermsJson,
                         ':use_value_pattern' => ($ruleSet['useValuePattern'] ?? false) ? 1 : 0,
+                        ':pattern_source' => $this->normalizePatternSource($ruleSet['patternSource'] ?? null),
+                        ':value_pattern_id' => is_string($ruleSet['valuePatternId'] ?? null) ? trim((string) $ruleSet['valuePatternId']) : '',
                         ':value_pattern' => is_string($ruleSet['valuePattern'] ?? null) ? trim((string) $ruleSet['valuePattern']) : '',
                         ':scope_json' => $scopeJson,
                         ':normalization_type' => is_string($ruleSet['normalizationType'] ?? null) ? trim((string) $ruleSet['normalizationType']) : 'none',
@@ -410,6 +416,8 @@ final class ExtractionFieldRepository
                 requires_search_terms,
                 search_terms_json,
                 use_value_pattern,
+                pattern_source,
+                value_pattern_id,
                 value_pattern,
                 scope_json,
                 normalization_type,
@@ -477,6 +485,8 @@ final class ExtractionFieldRepository
                 'requiresSearchTerms' => ((int) ($row['requires_search_terms'] ?? 1)) === 1,
                 'searchTerms' => $resolvedSearchTerms,
                 'useValuePattern' => ((int) ($row['use_value_pattern'] ?? 0)) === 1,
+                'patternSource' => $this->normalizePatternSource($row['pattern_source'] ?? null),
+                'valuePatternId' => is_string($row['value_pattern_id'] ?? null) ? trim((string) $row['value_pattern_id']) : '',
                 'valuePattern' => is_string($row['value_pattern'] ?? null) ? trim((string) $row['value_pattern']) : '',
                 'scope' => $this->normalizeRuleSetScopeForStorage(is_array($scope) ? $scope : null) ?: null,
                 'normalizationType' => is_string($row['normalization_type'] ?? null) ? trim((string) $row['normalization_type']) : 'none',
@@ -512,6 +522,11 @@ final class ExtractionFieldRepository
                 || ($scope['isRegex'] ?? false) === 1
                 || ($scope['isRegex'] ?? false) === '1',
         ];
+    }
+
+    private function normalizePatternSource(mixed $value): string
+    {
+        return is_string($value) && trim(strtolower($value)) === 'reference' ? 'reference' : 'manual';
     }
 
     private function normalizeNormalizationType(mixed $value): string

@@ -8536,6 +8536,27 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   opacity: 1;
 }
 
+.value-pattern-header-fields,
+.extraction-zone-header-fields {
+  gap: 10px;
+}
+
+.value-pattern-node .extraction-field-value-pattern-field,
+.value-pattern-header-fields .extraction-field-value-pattern-field {
+  grid-column: 1 / -1;
+}
+
+.extraction-field-pattern-reference-field[hidden],
+.extraction-field-value-pattern-edit-button[hidden] {
+  display: none !important;
+}
+
+.extraction-field-value-pattern-edit-button {
+  align-self: end;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
 body.is-dragging-settings-dialog,
 body.is-resizing-settings-dialog {
   user-select: none;

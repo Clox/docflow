@@ -25,7 +25,7 @@ final class ZoneRepository
     {
         $resolvedScope = $this->normalizeScope($scope);
         $statement = $this->pdo->prepare(
-            'SELECT zone_key, name, enabled, pattern, is_regex
+            'SELECT zone_key, name, enabled, pattern, is_regex, pattern_source, value_pattern_id
             FROM archiving_zones
             WHERE rules_scope = :rules_scope
             ORDER BY sort_order ASC, id ASC'
@@ -40,7 +40,9 @@ final class ZoneRepository
             $id = is_string($row['zone_key'] ?? null) ? trim((string) $row['zone_key']) : '';
             $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
             $pattern = is_string($row['pattern'] ?? null) ? trim((string) $row['pattern']) : '';
-            if ($id === '' || $name === '' || $pattern === '') {
+            $patternSource = $this->normalizePatternSource($row['pattern_source'] ?? null);
+            $valuePatternId = is_string($row['value_pattern_id'] ?? null) ? trim((string) $row['value_pattern_id']) : '';
+            if ($id === '' || $name === '' || ($patternSource === 'manual' && $pattern === '') || ($patternSource === 'reference' && $valuePatternId === '')) {
                 continue;
             }
             $zones[] = [
@@ -49,6 +51,8 @@ final class ZoneRepository
                 'enabled' => ((int) ($row['enabled'] ?? 1)) === 1,
                 'pattern' => $pattern,
                 'isRegex' => true,
+                'patternSource' => $patternSource,
+                'valuePatternId' => $valuePatternId,
             ];
         }
 
@@ -85,6 +89,8 @@ final class ZoneRepository
                 enabled,
                 pattern,
                 is_regex,
+                pattern_source,
+                value_pattern_id,
                 sort_order,
                 created_at,
                 updated_at
@@ -95,6 +101,8 @@ final class ZoneRepository
                 :enabled,
                 :pattern,
                 :is_regex,
+                :pattern_source,
+                :value_pattern_id,
                 :sort_order,
                 :created_at,
                 :updated_at
@@ -109,7 +117,9 @@ final class ZoneRepository
             $id = is_string($zone['id'] ?? null) ? trim((string) $zone['id']) : '';
             $name = is_string($zone['name'] ?? null) ? trim((string) $zone['name']) : '';
             $pattern = is_string($zone['pattern'] ?? null) ? trim((string) $zone['pattern']) : '';
-            if ($id === '' || $name === '' || $pattern === '') {
+            $patternSource = $this->normalizePatternSource($zone['patternSource'] ?? null);
+            $valuePatternId = is_string($zone['valuePatternId'] ?? null) ? trim((string) $zone['valuePatternId']) : '';
+            if ($id === '' || $name === '' || ($patternSource === 'manual' && $pattern === '') || ($patternSource === 'reference' && $valuePatternId === '')) {
                 continue;
             }
             if (!$insert->execute([
@@ -119,6 +129,8 @@ final class ZoneRepository
                 ':enabled' => ($zone['enabled'] ?? true) ? 1 : 0,
                 ':pattern' => $pattern,
                 ':is_regex' => ($zone['isRegex'] ?? false) ? 1 : 0,
+                ':pattern_source' => $patternSource,
+                ':value_pattern_id' => $valuePatternId,
                 ':sort_order' => $sortOrder,
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
@@ -136,5 +148,10 @@ final class ZoneRepository
             throw new RuntimeException('Invalid zone scope.');
         }
         return $resolved;
+    }
+
+    private function normalizePatternSource(mixed $value): string
+    {
+        return is_string($value) && trim(strtolower($value)) === 'reference' ? 'reference' : 'manual';
     }
 }

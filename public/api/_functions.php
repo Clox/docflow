@@ -453,6 +453,7 @@ function configuration_backup_summary(array $payload): array
         'labels' => is_array($payload['labels'] ?? null) ? count($payload['labels']) : 0,
         'dataFields' => is_array($payload['dataFields']['fields'] ?? null) ? count($payload['dataFields']['fields']) : 0,
         'zones' => is_array($payload['dataFields']['zones'] ?? null) ? count($payload['dataFields']['zones']) : 0,
+        'valuePatterns' => is_array($payload['valuePatterns'] ?? null) ? count($payload['valuePatterns']) : 0,
         'archiveFolders' => is_array($payload['archiveStructure']['archiveFolders'] ?? null) ? count($payload['archiveStructure']['archiveFolders']) : 0,
     ];
 }
@@ -609,6 +610,7 @@ function build_configuration_export_payload(): array
         'archiveStructure' => [
             'archiveFolders' => is_array($activeRules['archiveFolders'] ?? null) ? $activeRules['archiveFolders'] : [],
         ],
+        'valuePatterns' => is_array($activeRules['valuePatterns'] ?? null) ? $activeRules['valuePatterns'] : [],
         'dataFields' => [
             'fields' => is_array($activeRules['fields'] ?? null) ? $activeRules['fields'] : [],
             'predefinedFields' => is_array($activeRules['predefinedFields'] ?? null) ? $activeRules['predefinedFields'] : [],
@@ -874,6 +876,7 @@ function apply_configuration_import_payload(array $payload): array
         'archiveFolders' => is_array($payload['archiveStructure']['archiveFolders'] ?? null)
             ? $payload['archiveStructure']['archiveFolders']
             : [],
+        'valuePatterns' => is_array($payload['valuePatterns'] ?? null) ? $payload['valuePatterns'] : [],
         'labels' => is_array($payload['labels'] ?? null) ? $payload['labels'] : [],
         'systemLabels' => is_array($payload['systemLabels'] ?? null) ? $payload['systemLabels'] : [],
         'fields' => is_array($payload['dataFields']['fields'] ?? null) ? $payload['dataFields']['fields'] : [],
@@ -3152,11 +3155,19 @@ function extraction_field_raw_from_capture_ranges(array $match, array $ranges): 
     return implode('', array_slice($chars, $start, $end - $start));
 }
 
-function extraction_field_runtime_rule_set(array $ruleSet, ?string $valueType = null): array
+function extraction_field_runtime_rule_set(array $ruleSet, ?string $valueType = null, array $valuePatternsById = []): array
 {
     $runtimeRuleSet = $ruleSet;
     $resolvedValueType = normalize_extraction_field_value_type($valueType, null, $ruleSet);
     $valuePattern = is_string($runtimeRuleSet['valuePattern'] ?? null) ? trim((string) $runtimeRuleSet['valuePattern']) : '';
+    $referencedPattern = resolve_reusable_value_pattern($runtimeRuleSet, $valuePatternsById);
+    if ($referencedPattern !== null) {
+        $valuePattern = reusable_value_pattern_regex_source($referencedPattern);
+        $runtimeRuleSet['valuePattern'] = $valuePattern;
+        $runtimeRuleSet['isRegex'] = true;
+    } elseif (normalize_value_pattern_source($runtimeRuleSet['patternSource'] ?? null) === 'reference') {
+        $runtimeRuleSet['valuePattern'] = '';
+    }
     $usesValuePattern = normalize_extraction_field_use_value_pattern($runtimeRuleSet['useValuePattern'] ?? null, $valuePattern);
 
     if ($usesValuePattern && $valuePattern !== '') {
@@ -3223,6 +3234,8 @@ function default_extraction_field_rule_set(array $overrides = []): array
         'searchTerms' => [],
         'isRegex' => false,
         'useValuePattern' => false,
+        'patternSource' => 'manual',
+        'valuePatternId' => '',
         'valuePattern' => '',
         'normalizationType' => 'none',
         'normalizationChars' => '',
@@ -3274,6 +3287,8 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             'searchTerms' => $searchTerms,
             'isRegex' => false,
             'useValuePattern' => normalize_extraction_field_use_value_pattern($row['useValuePattern'] ?? null, $valuePattern),
+            'patternSource' => normalize_value_pattern_source($row['patternSource'] ?? null),
+            'valuePatternId' => is_string($row['valuePatternId'] ?? null) ? trim((string) $row['valuePatternId']) : '',
             'valuePattern' => $valuePattern,
             'normalizationType' => normalize_extraction_field_normalization_type($row['normalizationType'] ?? null),
             'normalizationChars' => normalize_extraction_field_normalization_chars($row['normalizationChars'] ?? null),
@@ -3308,6 +3323,8 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             'searchTerms' => $requiresSearchTerms ? $legacyAliases : [],
             'isRegex' => false,
             'useValuePattern' => $legacyPattern !== '',
+            'patternSource' => 'manual',
+            'valuePatternId' => '',
             'valuePattern' => $legacyPattern,
             'normalizationType' => $normalizationType,
             'normalizationChars' => normalize_extraction_field_normalization_chars($legacy['normalizationChars'] ?? null),
@@ -4176,7 +4193,9 @@ function normalize_archiving_zone(mixed $input, int $fallbackIndex = 0): ?array
 
     $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
     $pattern = is_string($input['pattern'] ?? null) ? trim((string) $input['pattern']) : '';
-    if ($name === '' || $pattern === '') {
+    $patternSource = normalize_value_pattern_source($input['patternSource'] ?? null);
+    $valuePatternId = is_string($input['valuePatternId'] ?? null) ? trim((string) $input['valuePatternId']) : '';
+    if ($name === '' || ($patternSource === 'manual' && $pattern === '') || ($patternSource === 'reference' && $valuePatternId === '')) {
         return null;
     }
 
@@ -4194,6 +4213,8 @@ function normalize_archiving_zone(mixed $input, int $fallbackIndex = 0): ?array
         'enabled' => ($input['enabled'] ?? true) !== false,
         'pattern' => $pattern,
         'isRegex' => true,
+        'patternSource' => $patternSource,
+        'valuePatternId' => $patternSource === 'reference' ? $valuePatternId : '',
     ];
 }
 
@@ -4220,6 +4241,106 @@ function normalize_archiving_zones(mixed $input): array
     }
 
     return $zones;
+}
+
+function normalize_value_pattern_source(mixed $value): string
+{
+    return is_string($value) && trim(strtolower($value)) === 'reference' ? 'reference' : 'manual';
+}
+
+function normalize_value_pattern_definition(mixed $input, int $fallbackIndex = 0): ?array
+{
+    if (!is_array($input)) {
+        return null;
+    }
+    $name = is_string($input['name'] ?? null) ? trim((string) $input['name']) : '';
+    $pattern = is_string($input['pattern'] ?? null) ? trim((string) $input['pattern']) : '';
+    if ($name === '' || $pattern === '') {
+        return null;
+    }
+    $id = is_string($input['id'] ?? null) ? trim((string) $input['id']) : '';
+    if ($id === '') {
+        $id = normalize_config_key($name !== '' ? $name : ('value_pattern_' . ($fallbackIndex + 1)));
+    }
+    if ($id === '') {
+        $id = 'value_pattern_' . ($fallbackIndex + 1);
+    }
+    return [
+        'id' => $id,
+        'name' => $name,
+        'pattern' => $pattern,
+        'isRegex' => ($input['isRegex'] ?? true) !== false,
+        'enabled' => ($input['enabled'] ?? true) !== false,
+        'description' => is_string($input['description'] ?? null) ? trim((string) $input['description']) : '',
+    ];
+}
+
+function normalize_value_pattern_definitions(mixed $input): array
+{
+    $rows = is_array($input) ? $input : [];
+    $patterns = [];
+    $seen = [];
+    foreach ($rows as $index => $row) {
+        $pattern = normalize_value_pattern_definition($row, is_int($index) ? $index : count($patterns));
+        if ($pattern === null) {
+            continue;
+        }
+        $baseId = $pattern['id'];
+        $id = $baseId;
+        $suffix = 2;
+        while (isset($seen[$id])) {
+            $id = $baseId . '_' . $suffix;
+            $suffix++;
+        }
+        $seen[$id] = true;
+        $pattern['id'] = $id;
+        $patterns[] = $pattern;
+    }
+    return $patterns;
+}
+
+function value_pattern_definitions_by_id(array $patterns): array
+{
+    $byId = [];
+    foreach ($patterns as $pattern) {
+        if (!is_array($pattern)) {
+            continue;
+        }
+        $id = is_string($pattern['id'] ?? null) ? trim((string) $pattern['id']) : '';
+        if ($id !== '') {
+            $byId[$id] = $pattern;
+        }
+    }
+    return $byId;
+}
+
+function resolve_reusable_value_pattern(array $owner, array $valuePatternsById): ?array
+{
+    if (normalize_value_pattern_source($owner['patternSource'] ?? null) !== 'reference') {
+        return null;
+    }
+    $id = is_string($owner['valuePatternId'] ?? null) ? trim((string) $owner['valuePatternId']) : '';
+    if ($id === '' || !is_array($valuePatternsById[$id] ?? null)) {
+        return null;
+    }
+    $pattern = $valuePatternsById[$id];
+    if (($pattern['enabled'] ?? true) === false) {
+        return null;
+    }
+    $text = is_string($pattern['pattern'] ?? null) ? trim((string) $pattern['pattern']) : '';
+    if ($text === '') {
+        return null;
+    }
+    return $pattern;
+}
+
+function reusable_value_pattern_regex_source(array $pattern): string
+{
+    $text = is_string($pattern['pattern'] ?? null) ? trim((string) $pattern['pattern']) : '';
+    if (($pattern['isRegex'] ?? true) === false) {
+        return literal_pattern_with_whitespace_wildcards($text, '/');
+    }
+    return $text;
 }
 
 function normalize_archiving_rules_set(mixed $input): array
@@ -4271,6 +4392,7 @@ function normalize_archiving_rules_set(mixed $input): array
 
     return [
         'archiveFolders' => $archiveStructure['archiveFolders'],
+        'valuePatterns' => normalize_value_pattern_definitions($decoded['valuePatterns'] ?? []),
         'labels' => normalize_labels(
             is_array($decoded['labels'] ?? null) ? $decoded['labels'] : []
         ),
@@ -4297,6 +4419,7 @@ function normalize_archiving_rules_state(mixed $input): array
         'predefinedFields' => predefined_extraction_fields_template(),
         'systemFields' => system_extraction_fields_template(),
         'zones' => [],
+        'valuePatterns' => [],
     ]);
     $active = array_key_exists('activeArchivingRules', $decoded)
         ? normalize_archiving_rules_set($decoded['activeArchivingRules'])
@@ -4664,6 +4787,7 @@ function archiving_rules_changed_sections(array $active, array $draft): array
     $changedSections = [];
     foreach ([
         'archiveFolders' => 'Arkivstruktur',
+        'valuePatterns' => 'Värdemönster',
         'labels' => 'Etiketter',
         'systemLabels' => 'Fördefinierade etiketter',
         'fields' => 'Egna datafält',
@@ -7156,7 +7280,8 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
                 split_lines_for_matching($ocrText),
                 is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
                 $replacementMap,
-                build_matching_line_geometries_for_job($jobData, $ocrText)
+                build_matching_line_geometries_for_job($jobData, $ocrText),
+                is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : []
             );
         }
     } catch (Throwable $e) {
@@ -11755,13 +11880,11 @@ function union_bboxes(?array $left, ?array $right): ?array
     ];
 }
 
-function detect_configured_zone_matches(array $lines, array $zones, array $replacementMap, array $lineGeometries): array
+function detect_configured_zone_matches(array $lines, array $zones, array $replacementMap, array $lineGeometries, array $valuePatterns = []): array
 {
+    $valuePatternsById = value_pattern_definitions_by_id($valuePatterns);
     $activeZones = array_values(array_filter($zones, static function ($zone): bool {
-        return is_array($zone)
-            && ($zone['enabled'] ?? true) !== false
-            && is_string($zone['pattern'] ?? null)
-            && trim((string) $zone['pattern']) !== '';
+        return is_array($zone) && ($zone['enabled'] ?? true) !== false;
     }));
     if ($activeZones === [] || $lineGeometries === []) {
         return [];
@@ -11769,7 +11892,15 @@ function detect_configured_zone_matches(array $lines, array $zones, array $repla
 
     $compiled = [];
     foreach ($activeZones as $zone) {
-        $pattern = build_archiving_zone_regex((string) ($zone['pattern'] ?? ''));
+        $referencedPattern = resolve_reusable_value_pattern($zone, $valuePatternsById);
+        if ($referencedPattern !== null) {
+            $patternText = reusable_value_pattern_regex_source($referencedPattern);
+        } elseif (normalize_value_pattern_source($zone['patternSource'] ?? null) === 'reference') {
+            continue;
+        } else {
+            $patternText = (string) ($zone['pattern'] ?? '');
+        }
+        $pattern = build_archiving_zone_regex($patternText);
         if (!is_string($pattern)) {
             continue;
         }
@@ -16683,7 +16814,11 @@ function extract_configured_rule_set_field_matches(
     $valueType = $field !== []
         ? extraction_field_value_type($field)
         : extraction_field_rule_set_value_type($ruleSet);
-    $runtimeRuleSet = extraction_field_runtime_rule_set($ruleSet, $valueType);
+    $runtimeRuleSet = extraction_field_runtime_rule_set(
+        $ruleSet,
+        $valueType,
+        value_pattern_definitions_by_id(is_array($field['_valuePatterns'] ?? null) ? $field['_valuePatterns'] : [])
+    );
     $scope = normalize_extraction_field_rule_scope($runtimeRuleSet['scope'] ?? null);
     $scopeDebug = null;
     if ($scope !== null) {
@@ -16890,7 +17025,11 @@ function extract_configured_text_field_results(
             if ($matchRuleSetIndex !== null && is_array($ruleSets[$matchRuleSetIndex] ?? null)) {
                 $normalizationRuleSet = $ruleSets[$matchRuleSetIndex];
             }
-            $normalizationRuleSet = extraction_field_runtime_rule_set($normalizationRuleSet, extraction_field_value_type($field));
+            $normalizationRuleSet = extraction_field_runtime_rule_set(
+                $normalizationRuleSet,
+                extraction_field_value_type($field),
+                value_pattern_definitions_by_id(is_array($field['_valuePatterns'] ?? null) ? $field['_valuePatterns'] : [])
+            );
 
             $resolvedValue = $match['value'] ?? null;
             $resolvedValue = resolve_extraction_field_candidate_value($resolvedValue, $match, $normalizationRuleSet, $field);
@@ -17895,11 +18034,13 @@ function calculate_auto_archiving_result_from_text(
         is_array($resolvedMatchingPayload['positionAdjustment'] ?? null) ? $resolvedMatchingPayload['positionAdjustment'] : []
     );
     $lineGeometries = build_matching_line_geometries_for_job($job, $ocrText);
+    $valuePatterns = is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : [];
     $zoneMatches = detect_configured_zone_matches(
         split_lines_for_matching($ocrText),
         is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
         $replacementMap,
-        $lineGeometries
+        $lineGeometries,
+        $valuePatterns
     );
     $positionSettings['zoneMatches'] = $zoneMatches;
     $systemLabels = is_array($rules['systemLabels'] ?? null) ? $rules['systemLabels'] : [];
@@ -17910,6 +18051,10 @@ function calculate_auto_archiving_result_from_text(
         is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [],
         is_array($rules['fields'] ?? null) ? $rules['fields'] : []
     ));
+    $configuredFields = array_map(static function (array $field) use ($valuePatterns): array {
+        $field['_valuePatterns'] = $valuePatterns;
+        return $field;
+    }, $configuredFields);
 
     $configuredFieldResults = extract_configured_text_field_results(
         split_lines_for_matching($ocrText),
