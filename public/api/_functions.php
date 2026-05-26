@@ -7083,7 +7083,74 @@ function debug_export_bbox_signature(mixed $bbox): string
     ));
 }
 
-function debug_export_accepted_candidate(array $match, int $matchIndex): array
+function debug_export_bbox_word_indexes_for_page(array $page, mixed $bbox): array
+{
+    $normalizedBbox = debug_export_bbox_or_null($bbox);
+    $words = is_array($page['words'] ?? null) ? $page['words'] : [];
+    if ($normalizedBbox === null || $words === []) {
+        return [];
+    }
+
+    $indexes = [];
+    foreach ($words as $fallbackIndex => $word) {
+        if (!is_array($word)) {
+            continue;
+        }
+        $wordBbox = debug_export_bbox_or_null($word['bbox'] ?? $word);
+        if ($wordBbox === null) {
+            continue;
+        }
+
+        $wordIndex = debug_export_int_or_null($word['index'] ?? null);
+        if ($wordIndex === null) {
+            $wordIndex = is_int($fallbackIndex) ? $fallbackIndex : null;
+        }
+        if ($wordIndex === null || $wordIndex < 0) {
+            continue;
+        }
+
+        $centerX = ($wordBbox['x0'] + $wordBbox['x1']) / 2;
+        $centerY = ($wordBbox['y0'] + $wordBbox['y1']) / 2;
+        if (
+            $centerX >= $normalizedBbox['x0']
+            && $centerX <= $normalizedBbox['x1']
+            && $centerY >= $normalizedBbox['y0']
+            && $centerY <= $normalizedBbox['y1']
+        ) {
+            $indexes[$wordIndex + 1] = true;
+            continue;
+        }
+
+        $overlapWidth = max(0.0, min($wordBbox['x1'], $normalizedBbox['x1']) - max($wordBbox['x0'], $normalizedBbox['x0']));
+        $overlapHeight = max(0.0, min($wordBbox['y1'], $normalizedBbox['y1']) - max($wordBbox['y0'], $normalizedBbox['y0']));
+        $overlapArea = $overlapWidth * $overlapHeight;
+        $wordArea = max(1.0, ($wordBbox['x1'] - $wordBbox['x0']) * ($wordBbox['y1'] - $wordBbox['y0']));
+        if (($overlapArea / $wordArea) >= 0.35) {
+            $indexes[$wordIndex + 1] = true;
+        }
+    }
+
+    $result = array_keys($indexes);
+    sort($result, SORT_NUMERIC);
+    return array_values($result);
+}
+
+function debug_export_page_for_match(array $pagesByNumber, array $match): ?array
+{
+    $pageNumber = debug_export_int_or_null($match['pageNumber'] ?? null);
+    if ($pageNumber !== null && is_array($pagesByNumber[$pageNumber] ?? null)) {
+        return $pagesByNumber[$pageNumber];
+    }
+
+    if (count($pagesByNumber) === 1) {
+        $page = reset($pagesByNumber);
+        return is_array($page) ? $page : null;
+    }
+
+    return null;
+}
+
+function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $page = null): array
 {
     $confidence = debug_export_float_or_null($match['finalConfidence'] ?? null)
         ?? debug_export_float_or_null($match['confidence'] ?? null)
@@ -7153,9 +7220,21 @@ function debug_export_accepted_candidate(array $match, int $matchIndex): array
     }
     if ($labelBbox !== null) {
         $candidate['keyBBox'] = $labelBbox;
+        if (is_array($page)) {
+            $keyBBoxIndexes = debug_export_bbox_word_indexes_for_page($page, $labelBbox);
+            if ($keyBBoxIndexes !== []) {
+                $candidate['keyBBoxIndexes'] = $keyBBoxIndexes;
+            }
+        }
     }
     if ($valueBbox !== null) {
         $candidate['valueBBox'] = $valueBbox;
+        if (is_array($page)) {
+            $valueBBoxIndexes = debug_export_bbox_word_indexes_for_page($page, $valueBbox);
+            if ($valueBBoxIndexes !== []) {
+                $candidate['valueBBoxIndexes'] = $valueBBoxIndexes;
+            }
+        }
     }
 
     return $candidate;
@@ -7183,7 +7262,7 @@ function debug_export_match_rejected_by_zone_barrier(array $match, array $zoneMa
     );
 }
 
-function debug_export_data_field_snapshot(string $fieldKey, mixed $values, array $meta, float $acceptanceThreshold, array $zoneMatches = []): array
+function debug_export_data_field_snapshot(string $fieldKey, mixed $values, array $meta, float $acceptanceThreshold, array $zoneMatches = [], array $pagesByNumber = []): array
 {
     $name = is_string($meta['name'] ?? null) && trim((string) $meta['name']) !== ''
         ? trim((string) $meta['name'])
@@ -7206,7 +7285,7 @@ function debug_export_data_field_snapshot(string $fieldKey, mixed $values, array
         if (!$accepted) {
             continue;
         }
-        $candidate = debug_export_accepted_candidate($match, $matchIndex);
+        $candidate = debug_export_accepted_candidate($match, $matchIndex, debug_export_page_for_match($pagesByNumber, $match));
         if ($candidate['value'] === '') {
             continue;
         }
@@ -7332,6 +7411,20 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
     $fields = [];
     $extractionFields = is_array($extractedData['extractionFields'] ?? null) ? $extractedData['extractionFields'] : [];
     $fieldMeta = is_array($extractedData['extractionFieldMeta'] ?? null) ? $extractedData['extractionFieldMeta'] : [];
+    $pagesByNumber = [];
+    $mergedObjectPages = stored_merged_objects_pages($jobId);
+    if ($mergedObjectPages === []) {
+        $mergedObjectPages = fallback_merged_objects_pages_from_job_debug($jobId);
+    }
+    foreach ($mergedObjectPages as $page) {
+        if (!is_array($page)) {
+            continue;
+        }
+        $pageNumber = debug_export_int_or_null($page['pageNumber'] ?? null);
+        if ($pageNumber !== null && $pageNumber > 0) {
+            $pagesByNumber[$pageNumber] = $page;
+        }
+    }
     foreach ($extractionFields as $fieldKey => $values) {
         if (!is_string($fieldKey) && !is_numeric($fieldKey)) {
             continue;
@@ -7341,7 +7434,7 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
             continue;
         }
         $meta = is_array($fieldMeta[$normalizedKey] ?? null) ? $fieldMeta[$normalizedKey] : [];
-        $fields[] = debug_export_data_field_snapshot($normalizedKey, $values, $meta, $dataFieldAcceptanceThreshold, $zoneMatches);
+        $fields[] = debug_export_data_field_snapshot($normalizedKey, $values, $meta, $dataFieldAcceptanceThreshold, $zoneMatches, $pagesByNumber);
     }
     usort($fields, static fn (array $left, array $right): int => strnatcasecmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? '')));
 
@@ -7465,7 +7558,23 @@ function debug_export_label_diff(array $leftLabels, array $rightLabels): array
 
 function debug_export_data_field_diff(array $leftFields, array $rightFields): array
 {
-    $normalizeCandidate = static function (mixed $candidate, int $fallbackIndex): ?array {
+    $normalizeBBoxIndexes = static function (mixed $indexes): array {
+        if (!is_array($indexes)) {
+            return [];
+        }
+        $normalized = [];
+        foreach ($indexes as $index) {
+            $number = debug_export_int_or_null($index);
+            if ($number !== null && $number > 0) {
+                $normalized[$number] = true;
+            }
+        }
+        $result = array_keys($normalized);
+        sort($result, SORT_NUMERIC);
+        return array_values($result);
+    };
+
+    $normalizeCandidate = static function (mixed $candidate, int $fallbackIndex) use ($normalizeBBoxIndexes): ?array {
         if (!is_array($candidate)) {
             return null;
         }
@@ -7540,6 +7649,14 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         }
         if ($valueBbox !== null) {
             $normalized['valueBBox'] = $valueBbox;
+        }
+        $keyBBoxIndexes = $normalizeBBoxIndexes($candidate['keyBBoxIndexes'] ?? null);
+        if ($keyBBoxIndexes !== []) {
+            $normalized['keyBBoxIndexes'] = $keyBBoxIndexes;
+        }
+        $valueBBoxIndexes = $normalizeBBoxIndexes($candidate['valueBBoxIndexes'] ?? null);
+        if ($valueBBoxIndexes !== []) {
+            $normalized['valueBBoxIndexes'] = $valueBBoxIndexes;
         }
 
         return $normalized;

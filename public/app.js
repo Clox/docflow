@@ -7422,6 +7422,20 @@ function formatSnapshotCompareCandidateBbox(bbox) {
   return parts.length === 4 ? parts.join(', ') : '';
 }
 
+function formatSnapshotCompareCandidateBboxIndexes(indexes) {
+  if (!Array.isArray(indexes) || indexes.length === 0) {
+    return '';
+  }
+  const normalizedIndexes = Array.from(new Set(indexes
+    .map((index) => Number(index))
+    .filter((index) => Number.isInteger(index) && index > 0)))
+    .sort((left, right) => left - right);
+  if (normalizedIndexes.length === 0) {
+    return '';
+  }
+  return normalizedIndexes.map((index) => `#${index}`).join(', ');
+}
+
 function snapshotCompareCandidateDetailsText(candidate) {
   if (!candidate || typeof candidate !== 'object') {
     return '';
@@ -7473,7 +7487,9 @@ function snapshotCompareCandidateDetailsText(candidate) {
   add('Scope-matchning', candidate.scopeMatchedText);
   add('Scope-rad', candidate.scopeLineIndex);
   add('Nyckel-bbox', formatSnapshotCompareCandidateBbox(candidate.keyBBox));
+  add('Nyckel-bbox-index', formatSnapshotCompareCandidateBboxIndexes(candidate.keyBBoxIndexes));
   add('Värde-bbox', formatSnapshotCompareCandidateBbox(candidate.valueBBox));
+  add('Värde-bbox-index', formatSnapshotCompareCandidateBboxIndexes(candidate.valueBBoxIndexes));
   if (Array.isArray(candidate.captureRanges) && candidate.captureRanges.length > 0) {
     add('Capture ranges', candidate.captureRanges.map((range) => `${range.start ?? '?'}-${range.end ?? '?'}`).join(', '));
   }
