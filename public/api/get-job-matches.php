@@ -60,6 +60,7 @@ try {
             $rules = load_active_archiving_rules();
             $matchingPayload = load_matching_settings_payload();
             $ocrText = load_job_analysis_text($jobDir, null);
+            $lineGeometries = build_matching_line_geometries_for_job($job, $ocrText);
             $replacementMap = replacement_map(
                 is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []
             );
@@ -67,10 +68,48 @@ try {
                 split_lines_for_matching($ocrText),
                 is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
                 $replacementMap,
-                build_matching_line_geometries_for_job($job, $ocrText),
+                $lineGeometries,
                 is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : []
             );
             $zoneMatches = $liveZoneMatches;
+
+            foreach (is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [] as $systemField) {
+                if (!is_array($systemField)) {
+                    continue;
+                }
+                $extractor = is_string($systemField['extractor'] ?? null) ? trim((string) $systemField['extractor']) : '';
+                $systemFieldKey = is_string($systemField['systemFieldKey'] ?? null) ? trim((string) $systemField['systemFieldKey']) : '';
+                $key = is_string($systemField['key'] ?? null) ? trim((string) $systemField['key']) : '';
+                if ($extractor !== 'primary_date' && $systemFieldKey !== 'primary_date' && $key !== 'primary_date') {
+                    continue;
+                }
+
+                $primaryDateResult = extract_primary_date_field_result(
+                    split_lines_for_matching($ocrText),
+                    $lineGeometries,
+                    is_array($systemField['primaryDateHeuristics'] ?? null) ? $systemField['primaryDateHeuristics'] : []
+                );
+                $primaryDateMatches = primary_date_result_matches($primaryDateResult, $lineGeometries);
+                if (is_string($primaryDateResult['value'] ?? null) && (string) $primaryDateResult['value'] !== '') {
+                    $fieldValues['primary_date'] = [(string) $primaryDateResult['value']];
+                }
+                $fieldMeta['primary_date'] = [
+                    'key' => 'primary_date',
+                    'name' => is_string($systemField['name'] ?? null) && trim((string) $systemField['name']) !== ''
+                        ? trim((string) $systemField['name'])
+                        : 'Huvuddatum',
+                    'extractor' => 'primary_date',
+                    'value' => is_string($primaryDateResult['value'] ?? null) ? (string) $primaryDateResult['value'] : null,
+                    'raw' => is_string($primaryDateResult['raw'] ?? null) ? (string) $primaryDateResult['raw'] : null,
+                    'confidence' => isset($primaryDateResult['confidence']) && is_numeric($primaryDateResult['confidence']) ? (float) $primaryDateResult['confidence'] : 0.0,
+                    'baseConfidence' => isset($primaryDateResult['confidence']) && is_numeric($primaryDateResult['confidence']) ? (float) $primaryDateResult['confidence'] : 0.0,
+                    'finalConfidence' => isset($primaryDateResult['confidence']) && is_numeric($primaryDateResult['confidence']) ? (float) $primaryDateResult['confidence'] : 0.0,
+                    'score' => is_numeric($primaryDateResult['selectedCandidate']['score'] ?? null) ? (float) $primaryDateResult['selectedCandidate']['score'] : null,
+                    'fullConfidenceScore' => is_numeric($primaryDateResult['fullConfidenceScore'] ?? null) ? (float) $primaryDateResult['fullConfidenceScore'] : null,
+                    'matches' => $primaryDateMatches,
+                ];
+                break;
+            }
         }
     } catch (Throwable $e) {
         // Keep the stored match payload usable even if live zone overlay calculation fails.
@@ -283,6 +322,12 @@ try {
                         is_array($match['noiseSegments'] ?? null) ? $match['noiseSegments'] : []
                     ), static fn ($segment): bool => is_array($segment))),
                     'score' => $score,
+                    'fullConfidenceScore' => is_numeric($match['fullConfidenceScore'] ?? null) ? (float) $match['fullConfidenceScore'] : null,
+                    'yRatio' => is_numeric($match['yRatio'] ?? null) ? (float) $match['yRatio'] : null,
+                    'signals' => is_array($match['signals'] ?? null) ? array_values(array_filter(
+                        $match['signals'],
+                        static fn($signal): bool => is_array($signal)
+                    )) : [],
                     'lineIndex' => is_int($match['lineIndex'] ?? null) ? (int) $match['lineIndex'] : PHP_INT_MAX,
                     'labelLineIndex' => is_int($match['labelLineIndex'] ?? null) ? (int) $match['labelLineIndex'] : null,
                     'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : PHP_INT_MAX,
@@ -415,6 +460,12 @@ try {
                         ), static fn ($segment): bool => is_array($segment)))
                         : [],
                     'score' => $fallbackScore,
+                    'fullConfidenceScore' => $index === 0 && is_numeric($firstMatch['fullConfidenceScore'] ?? null) ? (float) $firstMatch['fullConfidenceScore'] : null,
+                    'yRatio' => $index === 0 && is_numeric($firstMatch['yRatio'] ?? null) ? (float) $firstMatch['yRatio'] : null,
+                    'signals' => $index === 0 && is_array($firstMatch['signals'] ?? null) ? array_values(array_filter(
+                        $firstMatch['signals'],
+                        static fn($signal): bool => is_array($signal)
+                    )) : [],
                     'lineIndex' => $index === 0 && is_int($firstMatch['lineIndex'] ?? null) ? (int) $firstMatch['lineIndex'] : PHP_INT_MAX,
                     'labelLineIndex' => $index === 0 && is_int($firstMatch['labelLineIndex'] ?? null) ? (int) $firstMatch['labelLineIndex'] : null,
                     'start' => $index === 0 && is_int($firstMatch['start'] ?? null) ? (int) $firstMatch['start'] : PHP_INT_MAX,

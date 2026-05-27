@@ -3983,6 +3983,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                     .filter((segment) => segment && segment.text !== '' && Number.isInteger(segment.lineIndex) && Number.isInteger(segment.start) && Number.isInteger(segment.end) && segment.end > segment.start)
                   : [],
                 score: Number.isFinite(Number(match.score)) ? Number(match.score) : null,
+                fullConfidenceScore: Number.isFinite(Number(match.fullConfidenceScore)) ? Number(match.fullConfidenceScore) : null,
+                yRatio: Number.isFinite(Number(match.yRatio)) ? Number(match.yRatio) : null,
+                signals: normalizePrimaryDateSignals(match.signals),
                 matchType: typeof match.matchType === 'string' ? match.matchType : '',
                 lineIndex: Number.isInteger(match.lineIndex) ? match.lineIndex : Number.MAX_SAFE_INTEGER,
                 labelLineIndex: Number.isInteger(match.labelLineIndex) ? match.labelLineIndex : null,
@@ -4042,6 +4045,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 .filter((segment) => segment && segment.text !== '' && Number.isInteger(segment.lineIndex) && Number.isInteger(segment.start) && Number.isInteger(segment.end) && segment.end > segment.start)
               : [],
             score: Number.isFinite(Number(field.score)) ? Number(field.score) : null,
+            fullConfidenceScore: Number.isFinite(Number(field.fullConfidenceScore)) ? Number(field.fullConfidenceScore) : null,
+            yRatio: Number.isFinite(Number(field.yRatio)) ? Number(field.yRatio) : null,
+            signals: normalizePrimaryDateSignals(field.signals),
             matchType: typeof field.matchType === 'string' ? field.matchType : '',
             lineIndex: Number.MAX_SAFE_INTEGER,
             labelLineIndex: Number.isInteger(field.labelLineIndex) ? field.labelLineIndex : null,
@@ -4196,7 +4202,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Datafält', 'Värde', 'Träff', 'Straff', 'Säkerhet'].forEach((label) => {
+  ['Datafält', 'Värde', 'Träff', 'Justeringar', 'Säkerhet'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     if (label === 'Säkerhet') {
@@ -4228,6 +4234,68 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
     }
     span.textContent = text;
     container.appendChild(span);
+  };
+  const matchHasPrimaryDateScoreDetails = (row, fieldKey = '') => (
+    fieldKey === 'primary_date'
+    && (primaryDateSignalRows(row?.signals).length > 0
+    || Number.isFinite(Number(row?.score))
+    || Number.isFinite(Number(row?.fullConfidenceScore)))
+  );
+  const createPrimaryDateScoreRow = (signal) => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'matches-primary-date-score-row';
+    const valueEl = document.createElement('span');
+    valueEl.className = `matches-primary-date-score-value ${signal.score >= 0 ? 'is-positive' : 'is-negative'}`;
+    valueEl.textContent = formatPrimaryDateSignalScore(signal.score);
+    const textEl = document.createElement('span');
+    textEl.className = 'matches-primary-date-score-text';
+    textEl.appendChild(document.createTextNode(formatPrimaryDateSignalLabel(signal.code)));
+    const detail = formatPrimaryDateSignalDetail(signal);
+    if (detail !== '') {
+      const muted = document.createElement('span');
+      muted.className = 'matches-primary-date-score-muted';
+      muted.textContent = ` (${detail})`;
+      textEl.appendChild(muted);
+    }
+    rowEl.append(valueEl, textEl);
+    return rowEl;
+  };
+  const appendPrimaryDateScoreDetails = (cell, row, fieldKey = '') => {
+    if (!matchHasPrimaryDateScoreDetails(row, fieldKey)) {
+      return false;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'matches-primary-date-scores';
+
+    primaryDateSignalRows(row?.signals, 'positive').forEach((signal) => {
+      wrapper.appendChild(createPrimaryDateScoreRow(signal));
+    });
+
+    primaryDateSignalRows(row?.signals, 'negative').forEach((signal, index) => {
+      const scoreRow = createPrimaryDateScoreRow(signal);
+      if (index === 0 && wrapper.childElementCount > 0) {
+        scoreRow.classList.add('matches-primary-date-score-row--penalty-start');
+      }
+      wrapper.appendChild(scoreRow);
+    });
+
+    const score = Number(row?.score);
+    const fullConfidenceScore = Number(row?.fullConfidenceScore);
+    if (Number.isFinite(score)) {
+      const total = document.createElement('div');
+      total.className = 'matches-primary-date-score-total';
+      total.textContent = Number.isFinite(fullConfidenceScore)
+        ? `${formatPrimaryDateScoreNumber(score)} / ${formatPrimaryDateScoreNumber(fullConfidenceScore)}`
+        : formatPrimaryDateScoreNumber(score);
+      wrapper.appendChild(total);
+    }
+
+    if (wrapper.childElementCount > 0) {
+      cell.appendChild(wrapper);
+      return true;
+    }
+    return false;
   };
   const normalizeWhitespaceForMatch = (text) => {
     if (typeof text !== 'string' || text === '') {
@@ -4572,7 +4640,11 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       cell.appendChild(scopeBadge);
     }
   };
-  const appendMatchPenalties = (cell, row) => {
+  const appendMatchPenalties = (cell, row, fieldKey = '') => {
+    if (appendPrimaryDateScoreDetails(cell, row, fieldKey)) {
+      return;
+    }
+
     const parts = [];
     const formatPenaltyPercent = (value) =>
       `${(value * 100).toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`;
@@ -4700,7 +4772,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       tr.appendChild(hitCell);
 
       const penaltiesCell = document.createElement('td');
-      appendMatchPenalties(penaltiesCell, row);
+      appendMatchPenalties(penaltiesCell, row, fieldGroup.key);
       tr.appendChild(penaltiesCell);
 
       const confidenceCell = document.createElement('td');
@@ -7467,6 +7539,148 @@ function formatSnapshotCompareCandidateBboxIndexes(indexes) {
   return normalizedIndexes.map((index) => `#${index}`).join(', ');
 }
 
+function formatPrimaryDateSignalLabel(code) {
+  const labels = {
+    place_before_date: 'Ort före datum',
+    place_above_date: 'Ort ovanför datum',
+    top_of_first_page: 'Högt i dokument',
+    context_above_date: 'Kontext ovanför datum',
+    letterhead_context: 'Brevhuvud/header',
+    single_date_line: 'Ensam datumrad',
+    near_title: 'Nära dokumenttitel',
+    date_word_nearby: 'Ordet datum i närheten',
+    identifier_row: 'Identifierarrad',
+    late_in_document: 'Sent i dokument',
+    page_after_first: 'Sida efter första',
+    running_text: 'Löpande text',
+  };
+  return labels[code] || code;
+}
+
+function formatPrimaryDateSignalScore(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return '';
+  }
+  const formatted = numericValue.toLocaleString('sv-SE', {
+    minimumFractionDigits: Number.isInteger(numericValue) ? 0 : 1,
+    maximumFractionDigits: 1,
+  });
+  return numericValue > 0 ? `+${formatted}` : formatted;
+}
+
+function formatPrimaryDateScoreNumber(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return '';
+  }
+  return numericValue.toLocaleString('sv-SE', {
+    minimumFractionDigits: Number.isInteger(numericValue) ? 0 : 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+function normalizePrimaryDateSignals(signals) {
+  if (!Array.isArray(signals)) {
+    return [];
+  }
+  return signals
+    .map((signal) => {
+      if (!signal || typeof signal !== 'object') {
+        return null;
+      }
+      const code = typeof signal.code === 'string' ? signal.code.trim() : '';
+      const score = Number(signal.score);
+      if (code === '' || !Number.isFinite(score)) {
+        return null;
+      }
+      return {
+        type: typeof signal.type === 'string' ? signal.type : (score >= 0 ? 'positive' : 'negative'),
+        code,
+        score,
+        detail: typeof signal.detail === 'string' ? signal.detail : '',
+        context: typeof signal.context === 'string' ? signal.context : '',
+      };
+    })
+    .filter(Boolean);
+}
+
+function formatPrimaryDateSignalsText(signals, type = null) {
+  const rows = normalizePrimaryDateSignals(signals)
+    .filter((signal) => type === null || signal.type === type || (type === 'positive' && signal.score > 0) || (type === 'negative' && signal.score < 0));
+  if (rows.length === 0) {
+    return '';
+  }
+  return rows
+    .map((signal) => {
+      const detailText = formatPrimaryDateSignalDetail(signal);
+      const detail = detailText ? ` (${detailText})` : '';
+      return `${formatPrimaryDateSignalLabel(signal.code)} ${formatPrimaryDateSignalScore(signal.score)}${detail}`;
+    })
+    .join('; ');
+}
+
+function primaryDateSignalRows(signals, type = null) {
+  return normalizePrimaryDateSignals(signals)
+    .filter((signal) => type === null
+      || signal.type === type
+      || (type === 'positive' && signal.score > 0)
+      || (type === 'negative' && signal.score < 0));
+}
+
+function appendPrimaryDateSignalTextLines(lines, title, signals, type = null) {
+  if (!Array.isArray(lines)) {
+    return;
+  }
+  const rows = primaryDateSignalRows(signals, type);
+  if (rows.length === 0) {
+    return;
+  }
+  lines.push('');
+  lines.push(`${title}:`);
+  rows.forEach((signal) => {
+    const detail = formatPrimaryDateSignalDetail(signal);
+    lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
+  });
+}
+
+function formatPrimaryDateSignalDetail(signal) {
+  const detail = typeof signal?.detail === 'string' ? signal.detail.trim() : '';
+  if (detail === '') {
+    return '';
+  }
+  const yRatioMatch = detail.match(/\by_ratio:([0-9.]+)/u);
+  if (yRatioMatch) {
+    const ratio = Number(yRatioMatch[1]);
+    if (Number.isFinite(ratio)) {
+      return `${formatPrimaryDateScoreNumber(ratio * 100)} % ner på sidan`;
+    }
+  }
+  const wordsMatch = detail.match(/\bwords:(\d+)/u);
+  if (wordsMatch) {
+    return `${Number(wordsMatch[1]).toLocaleString('sv-SE')} ord`;
+  }
+  const lineMatch = detail.match(/\bline:(\d+)/u);
+  if (lineMatch) {
+    return `rad ${Number(lineMatch[1]).toLocaleString('sv-SE')}`;
+  }
+  const pageMatch = detail.match(/\bpage:(\d+)/u);
+  if (pageMatch) {
+    return `sida ${Number(pageMatch[1]).toLocaleString('sv-SE')}`;
+  }
+  const identifierMatch = detail.match(/\blong_identifiers:(\d+)/u);
+  if (identifierMatch) {
+    return `${Number(identifierMatch[1]).toLocaleString('sv-SE')} långa nummer`;
+  }
+  const contextLabels = {
+    direct_before: 'direkt före datumet',
+    same_line: 'samma rad',
+    line_above: 'raden ovanför',
+    no_bbox: 'saknar bbox',
+  };
+  return contextLabels[detail] || detail;
+}
+
 function snapshotCompareCandidateDetailsText(candidate) {
   if (!candidate || typeof candidate !== 'object') {
     return '';
@@ -7505,6 +7719,12 @@ function snapshotCompareCandidateDetailsText(candidate) {
   add('Normaliserat vertikalt avstånd', formatSnapshotCompareCandidateNumber(candidate.verticalNormalizedDistance));
   addPercent('Avslutsteckenstraff', candidate.trailingDelimiterPenalty);
   addPercent('Annan nyckel-straff', candidate.otherMatchKeyPenalty);
+  add('Poäng', Number.isFinite(Number(candidate.score)) && Number.isFinite(Number(candidate.fullConfidenceScore))
+    ? `${formatPrimaryDateScoreNumber(candidate.score)} / ${formatPrimaryDateScoreNumber(candidate.fullConfidenceScore)}`
+    : formatPrimaryDateScoreNumber(candidate.score));
+  appendPrimaryDateSignalTextLines(lines, 'Pluspoäng', candidate.signals, 'positive');
+  appendPrimaryDateSignalTextLines(lines, 'Straff', candidate.signals, 'negative');
+  add('Position på sidan', Number.isFinite(Number(candidate.yRatio)) ? `${formatPrimaryDateScoreNumber(Number(candidate.yRatio) * 100)} % ner på sidan` : '');
   add('Ogiltighetsorsak', candidate.invalidReason);
   add('Källa', candidate.source);
   add('Matchtyp', candidate.matchType);
@@ -14775,6 +14995,10 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
       ? row.raw.trim()
       : valueText);
   const confidenceText = ocrDataFieldConfidenceTooltip(row, { includeHint: false });
+  const primaryDateSignals = normalizePrimaryDateSignals(row?.signals);
+  const hasPrimaryDateScoreDetails = primaryDateSignals.length > 0
+    || Number.isFinite(Number(row?.score))
+    || Number.isFinite(Number(row?.fullConfidenceScore));
   const copyPayload = {
     fieldKey: typeof group?.fieldKey === 'string' ? group.fieldKey : '',
     fieldName: typeof group?.name === 'string' ? group.name : '',
@@ -14805,6 +15029,9 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     'verticalDistancePenalty',
     'trailingDelimiterPenalty',
     'otherMatchKeyPenalty',
+    'score',
+    'fullConfidenceScore',
+    'yRatio',
   ].forEach((key) => {
     const numericValue = Number(row?.[key]);
     if (Number.isFinite(numericValue)) {
@@ -14820,6 +15047,9 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   if (Number.isInteger(row?.pageNumber)) {
     copyPayload.pageNumber = row.pageNumber;
   }
+  if (Array.isArray(row?.signals) && row.signals.length > 0) {
+    copyPayload.signals = normalizePrimaryDateSignals(row.signals);
+  }
 
   const bboxCopyPayload = {
     ...copyPayload,
@@ -14829,34 +15059,66 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     bboxCopyPayload.keyBBoxes = keyWordBboxes;
   }
   const metaRows = [];
-  String(confidenceText || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '')
-    .forEach((line) => {
-      const colonMatch = line.match(/^(.+?):\s*(.+)$/u);
-      if (colonMatch) {
-        metaRows.push({
-          label: colonMatch[1] || '',
-          value: colonMatch[2] || '',
-        });
-        return;
-      }
+  if (!hasPrimaryDateScoreDetails) {
+    String(confidenceText || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '')
+      .forEach((line) => {
+        const colonMatch = line.match(/^(.+?):\s*(.+)$/u);
+        if (colonMatch) {
+          metaRows.push({
+            label: colonMatch[1] || '',
+            value: colonMatch[2] || '',
+          });
+          return;
+        }
 
-      const spacedMatch = line.match(/^(.+?)\s+([−-].+)$/u);
-      if (spacedMatch) {
-        metaRows.push({
-          label: spacedMatch[1] || '',
-          value: spacedMatch[2] || '',
-        });
-        return;
-      }
+        const spacedMatch = line.match(/^(.+?)\s+([−-].+)$/u);
+        if (spacedMatch) {
+          metaRows.push({
+            label: spacedMatch[1] || '',
+            value: spacedMatch[2] || '',
+          });
+          return;
+        }
 
-      metaRows.push({
-        value: line,
-        raw: true,
+        metaRows.push({
+          value: line,
+          raw: true,
+        });
       });
-    });
+  }
+
+  const scoreSummary = [];
+  if (hasPrimaryDateScoreDetails) {
+    if (confidenceValue !== null) {
+      scoreSummary.push({ label: 'Säkerhet', value: formatOcrPercent(confidenceValue, { spaced: true }) });
+    }
+    const score = Number(row?.score);
+    const fullConfidenceScore = Number(row?.fullConfidenceScore);
+    if (Number.isFinite(score)) {
+      scoreSummary.push({
+        label: 'Poäng',
+        value: Number.isFinite(fullConfidenceScore)
+          ? `${formatPrimaryDateScoreNumber(score)} / ${formatPrimaryDateScoreNumber(fullConfidenceScore)}`
+          : formatPrimaryDateScoreNumber(score),
+      });
+    }
+  }
+
+  const toScoreRow = (signal) => ({
+    value: formatPrimaryDateSignalScore(signal.score),
+    text: formatPrimaryDateSignalLabel(signal.code),
+    detail: formatPrimaryDateSignalDetail(signal),
+    type: signal.score >= 0 ? 'positive' : 'negative',
+  });
+  const plusRows = primaryDateSignals.filter((signal) => signal.score > 0).map(toScoreRow);
+  const penaltyRows = primaryDateSignals.filter((signal) => signal.score < 0).map(toScoreRow);
+  const scoreGroups = [
+    ...(plusRows.length > 0 ? [{ title: 'Pluspoäng', rows: plusRows }] : []),
+    ...(penaltyRows.length > 0 ? [{ title: 'Straff', rows: penaltyRows }] : []),
+  ];
 
   const securityRowIndex = metaRows.findIndex((row) => row && row.raw !== true && typeof row.label === 'string' && row.label.trim() === 'Säkerhet');
   if (securityRowIndex >= 0) {
@@ -14872,6 +15134,8 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
       `Värde-BBoxar: ${formatOcrWordIndexList(valueWordIndexes)}`,
     ].join('\n'),
     metaRows,
+    scoreSummary,
+    scoreGroups,
     copyText: `${JSON.stringify(copyPayload, null, 2)}\n`,
     copyTitle: 'Kopiera träff som JSON',
     bboxCopyText: `${JSON.stringify(bboxCopyPayload, null, 2)}\n`,
@@ -15179,13 +15443,92 @@ function renderOcrWordTooltipMeta(section, tooltipData) {
   const metaDiagram = tooltipData?.metaDiagram && typeof tooltipData.metaDiagram === 'object'
     ? tooltipData.metaDiagram
     : null;
+  const scoreSummary = Array.isArray(tooltipData?.scoreSummary) ? tooltipData.scoreSummary : [];
+  const scoreGroups = Array.isArray(tooltipData?.scoreGroups) ? tooltipData.scoreGroups : [];
 
-  if (metaText === '' && metaRows.length === 0 && !metaDiagram) {
+  if (metaText === '' && metaRows.length === 0 && scoreSummary.length === 0 && scoreGroups.length === 0 && !metaDiagram) {
     metaEl.hidden = true;
     return;
   }
 
   metaEl.hidden = false;
+
+  if (scoreSummary.length > 0) {
+    const summaryEl = document.createElement('div');
+    summaryEl.className = 'ocr-word-tooltip-score-summary';
+    scoreSummary.forEach((row) => {
+      if (!row || typeof row !== 'object') {
+        return;
+      }
+      const label = typeof row.label === 'string' ? row.label.trim() : '';
+      const value = typeof row.value === 'string' ? row.value.trim() : '';
+      if (label === '' || value === '') {
+        return;
+      }
+      const rowEl = document.createElement('div');
+      rowEl.className = 'ocr-word-tooltip-score-summary-row';
+      const labelEl = document.createElement('span');
+      labelEl.className = 'ocr-word-tooltip-score-summary-label';
+      labelEl.textContent = `${label}:`;
+      const valueEl = document.createElement('span');
+      valueEl.className = 'ocr-word-tooltip-score-summary-value';
+      valueEl.textContent = value;
+      rowEl.append(labelEl, valueEl);
+      summaryEl.appendChild(rowEl);
+    });
+    if (summaryEl.childNodes.length > 0) {
+      metaEl.appendChild(summaryEl);
+    }
+  }
+
+  scoreGroups.forEach((group) => {
+    if (!group || typeof group !== 'object' || !Array.isArray(group.rows) || group.rows.length === 0) {
+      return;
+    }
+    const groupEl = document.createElement('div');
+    groupEl.className = 'ocr-word-tooltip-score-group';
+    const titleEl = document.createElement('div');
+    titleEl.className = 'ocr-word-tooltip-score-group-title';
+    titleEl.textContent = typeof group.title === 'string' ? group.title : '';
+    if (titleEl.textContent !== '') {
+      groupEl.appendChild(titleEl);
+    }
+    group.rows.forEach((row) => {
+      if (!row || typeof row !== 'object') {
+        return;
+      }
+      const value = typeof row.value === 'string' ? row.value.trim() : '';
+      const text = typeof row.text === 'string' ? row.text.trim() : '';
+      if (value === '' || text === '') {
+        return;
+      }
+      const rowEl = document.createElement('div');
+      rowEl.className = 'ocr-word-tooltip-score-row';
+      const valueEl = document.createElement('span');
+      valueEl.className = 'ocr-word-tooltip-score-value';
+      if (row.type === 'positive') {
+        valueEl.classList.add('is-positive');
+      } else if (row.type === 'negative') {
+        valueEl.classList.add('is-negative');
+      }
+      valueEl.textContent = value;
+      const textEl = document.createElement('span');
+      textEl.className = 'ocr-word-tooltip-score-text';
+      textEl.appendChild(document.createTextNode(text));
+      const detail = typeof row.detail === 'string' ? row.detail.trim() : '';
+      if (detail !== '') {
+        const mutedEl = document.createElement('span');
+        mutedEl.className = 'ocr-word-tooltip-score-muted';
+        mutedEl.textContent = ` (${detail})`;
+        textEl.appendChild(mutedEl);
+      }
+      rowEl.append(valueEl, textEl);
+      groupEl.appendChild(rowEl);
+    });
+    if (groupEl.querySelector('.ocr-word-tooltip-score-row')) {
+      metaEl.appendChild(groupEl);
+    }
+  });
 
   if (metaRows.length > 0) {
     metaRows.forEach((row) => {
@@ -16818,6 +17161,34 @@ function ocrDataFieldConfidenceTooltip(row, options = {}) {
   appendPenalty('Vertikalt avstånd', row && typeof row.verticalDistancePenalty === 'number' ? row.verticalDistancePenalty : null);
   appendPenalty('Avslutstecken', row && typeof row.trailingDelimiterPenalty === 'number' ? row.trailingDelimiterPenalty : null);
   appendPenalty('Annan nyckel', row && typeof row.otherMatchKeyPenalty === 'number' ? row.otherMatchKeyPenalty : null);
+  const score = Number(row?.score);
+  const fullConfidenceScore = Number(row?.fullConfidenceScore);
+  if (Number.isFinite(score)) {
+    const scoreText = Number.isFinite(fullConfidenceScore)
+      ? `${formatPrimaryDateScoreNumber(score)} / ${formatPrimaryDateScoreNumber(fullConfidenceScore)}`
+      : formatPrimaryDateScoreNumber(score);
+    lines.push(`Poäng: ${scoreText}`);
+  }
+  const bonusText = formatPrimaryDateSignalsText(row?.signals, 'positive');
+  if (bonusText !== '') {
+    lines.push('Pluspoäng:');
+    normalizePrimaryDateSignals(row?.signals)
+      .filter((signal) => signal.score > 0)
+      .forEach((signal) => {
+        const detail = formatPrimaryDateSignalDetail(signal);
+        lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
+      });
+  }
+  const penaltyText = formatPrimaryDateSignalsText(row?.signals, 'negative');
+  if (penaltyText !== '') {
+    lines.push('Straff:');
+    normalizePrimaryDateSignals(row?.signals)
+      .filter((signal) => signal.score < 0)
+      .forEach((signal) => {
+        const detail = formatPrimaryDateSignalDetail(signal);
+        lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
+      });
+  }
 
   if (includeHint) {
     lines.push('');
@@ -23276,6 +23647,180 @@ function extractionFieldSearchTermsForEditor(ruleSet) {
   return searchTerms;
 }
 
+function defaultPrimaryDateHeuristics() {
+  return {
+    full_confidence_score: 130,
+    bonuses: {
+      place_before_date: {
+        enabled: true,
+        points: 100,
+        description: 'Bonus när en svensk ort/tätort står före datumet på samma rad.',
+      },
+      place_above_date: {
+        enabled: true,
+        points: 90,
+        description: 'Bonus när en svensk ort/tätort står på raden ovanför datumet.',
+      },
+      top_of_first_page: {
+        enabled: true,
+        max_points: 50,
+        full_until_y_ratio: 0.08,
+        zero_after_y_ratio: 0.35,
+        description: 'Maxbonus för datum högt upp på första sidan. Bonusen minskar gradvis längre ner.',
+      },
+      context_above_date: {
+        enabled: true,
+        points: 10,
+        max_y_ratio: 0.35,
+        description: 'Liten bonus när det finns meningsfull kontext ovanför datumet i övre delen av dokumentet.',
+      },
+      letterhead_context: {
+        enabled: true,
+        max_points: 40,
+        zero_after_y_ratio: 0.40,
+        keywords: ['till', 'från', 'fran', 'handläggare', 'handlaggare', 'diarienummer', 'avdelning'],
+        description: 'Bonus när närliggande brevhuvud/header innehåller typiska brevhuvudord.',
+      },
+      single_date_line: {
+        enabled: true,
+        points: 30,
+        description: 'Bonus när raden bara består av datumet, eller av "den" följt av datumet.',
+      },
+      near_title: {
+        enabled: true,
+        points: 30,
+        description: 'Bonus när föregående rad ser ut som en dokumenttitel.',
+      },
+    },
+    penalties: {
+      date_word_nearby: {
+        enabled: true,
+        max_points: -40,
+        direct_before_points: -40,
+        same_line_points: -30,
+        line_above_points: -20,
+        description: 'Straff när ordet "datum" finns nära kandidatdatumet.',
+      },
+      identifier_row: {
+        enabled: true,
+        points: -60,
+        description: 'Straff när raden ser ut som en identifierarrad med flera långa nummer och saknar stöd från ort eller header.',
+      },
+      late_in_document: {
+        enabled: true,
+        max_points: -30,
+        starts_at_y_ratio: 0.65,
+        full_after_y_ratio: 0.90,
+        description: 'Glidande straff för datum långt ner på sidan.',
+      },
+      page_after_first: {
+        enabled: true,
+        points_per_page: -60,
+        max_points: -120,
+        description: 'Straff för datum som inte ligger på första sidan.',
+      },
+      running_text: {
+        enabled: true,
+        max_points: -60,
+        no_penalty_until_words: 4,
+        full_penalty_from_words: 12,
+        middle_of_sentence_extra_ratio: 0.25,
+        sentence_punctuation_extra_ratio: 0.15,
+        description: 'Glidande straff när datumet verkar ligga i löpande text.',
+      },
+    },
+  };
+}
+
+function sanitizePrimaryDateNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function sanitizePrimaryDateRatio(value, fallback) {
+  return Math.max(0, Math.min(1, sanitizePrimaryDateNumber(value, fallback)));
+}
+
+function sanitizePrimaryDateKeywords(value, fallback) {
+  const source = Array.isArray(value) ? value : fallback;
+  const seen = new Set();
+  const normalized = [];
+  source.forEach((item) => {
+    const keyword = String(item || '').trim();
+    const key = keyword.toLocaleLowerCase('sv-SE');
+    if (!keyword || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    normalized.push(keyword);
+  });
+  return normalized.length > 0 ? normalized : [...fallback];
+}
+
+function sanitizePrimaryDateHeuristics(input) {
+  const defaults = defaultPrimaryDateHeuristics();
+  const source = input && typeof input === 'object' ? input : {};
+  const result = defaultPrimaryDateHeuristics();
+  result.full_confidence_score = Math.max(1, sanitizePrimaryDateNumber(
+    source.full_confidence_score,
+    defaults.full_confidence_score
+  ));
+
+  Object.entries(defaults.bonuses).forEach(([key, defaultsForRule]) => {
+    const raw = source.bonuses && source.bonuses[key] && typeof source.bonuses[key] === 'object'
+      ? source.bonuses[key]
+      : {};
+    result.bonuses[key].enabled = typeof raw.enabled === 'boolean' ? raw.enabled : defaultsForRule.enabled;
+    ['points', 'max_points'].forEach((prop) => {
+      if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
+        result.bonuses[key][prop] = sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop]);
+      }
+    });
+    ['full_until_y_ratio', 'zero_after_y_ratio', 'max_y_ratio'].forEach((prop) => {
+      if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
+        result.bonuses[key][prop] = sanitizePrimaryDateRatio(raw[prop], defaultsForRule[prop]);
+      }
+    });
+    if (Object.prototype.hasOwnProperty.call(defaultsForRule, 'keywords')) {
+      result.bonuses[key].keywords = sanitizePrimaryDateKeywords(raw.keywords, defaultsForRule.keywords);
+    }
+  });
+
+  Object.entries(defaults.penalties).forEach(([key, defaultsForRule]) => {
+    const raw = source.penalties && source.penalties[key] && typeof source.penalties[key] === 'object'
+      ? source.penalties[key]
+      : {};
+    result.penalties[key].enabled = typeof raw.enabled === 'boolean' ? raw.enabled : defaultsForRule.enabled;
+    ['points', 'max_points', 'direct_before_points', 'same_line_points', 'line_above_points', 'points_per_page'].forEach((prop) => {
+      if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
+        result.penalties[key][prop] = sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop]);
+      }
+    });
+    ['starts_at_y_ratio', 'full_after_y_ratio', 'middle_of_sentence_extra_ratio', 'sentence_punctuation_extra_ratio'].forEach((prop) => {
+      if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
+        result.penalties[key][prop] = sanitizePrimaryDateRatio(raw[prop], defaultsForRule[prop]);
+      }
+    });
+    ['no_penalty_until_words', 'full_penalty_from_words'].forEach((prop) => {
+      if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
+        result.penalties[key][prop] = Math.max(0, Math.round(sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop])));
+      }
+    });
+  });
+
+  if (result.bonuses.top_of_first_page.zero_after_y_ratio <= result.bonuses.top_of_first_page.full_until_y_ratio) {
+    result.bonuses.top_of_first_page.zero_after_y_ratio = Math.min(1, result.bonuses.top_of_first_page.full_until_y_ratio + 0.01);
+  }
+  if (result.penalties.late_in_document.full_after_y_ratio <= result.penalties.late_in_document.starts_at_y_ratio) {
+    result.penalties.late_in_document.full_after_y_ratio = Math.min(1, result.penalties.late_in_document.starts_at_y_ratio + 0.01);
+  }
+  if (result.penalties.running_text.full_penalty_from_words <= result.penalties.running_text.no_penalty_until_words) {
+    result.penalties.running_text.full_penalty_from_words = result.penalties.running_text.no_penalty_until_words + 1;
+  }
+
+  return result;
+}
+
 function sanitizeExtractionField(field, fallbackIndex = 0) {
   const input = field && typeof field === 'object' ? field : {};
   const name = typeof input.name === 'string' ? input.name : '';
@@ -23325,7 +23870,10 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
       predefinedFieldKey: typeof input.predefinedFieldKey === 'string' ? input.predefinedFieldKey : '',
       isPredefinedField,
       systemFieldKey: typeof input.systemFieldKey === 'string' ? input.systemFieldKey : '',
-      isSystemField: input.isSystemField === true,
+      isSystemField,
+      ...(normalizedKey === 'primary_date' || input.systemFieldKey === 'primary_date' || extractor === 'primary_date'
+        ? { primaryDateHeuristics: sanitizePrimaryDateHeuristics(input.primaryDateHeuristics) }
+        : {}),
     };
   }
 
@@ -26338,6 +26886,10 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
     fieldBody.appendChild(fieldNormalization);
   }
 
+  if (isPrimaryDateField) {
+    fieldBody.appendChild(createPrimaryDateHeuristicsEditor(collection, index));
+  }
+
   if (!readOnly) {
     const ruleSetList = createTreeChildren({ markerless: true });
     const ruleSetsLabel = document.createElement('div');
@@ -27292,6 +27844,204 @@ function renderExtractionFieldsEditor() {
       });
     });
   });
+}
+
+const primaryDateHeuristicLabels = {
+  place_before_date: 'Ort före datum',
+  place_above_date: 'Ort ovanför datum',
+  top_of_first_page: 'Högt i dokument',
+  context_above_date: 'Kontext ovanför datum',
+  letterhead_context: 'Brevhuvud/header',
+  single_date_line: 'Ensam datumrad',
+  near_title: 'Nära dokumenttitel',
+  date_word_nearby: 'Ordet datum i närheten',
+  identifier_row: 'Identifierarrad',
+  late_in_document: 'Sent i dokument',
+  page_after_first: 'Sida efter första',
+  running_text: 'Löpande text',
+};
+
+function primaryDateHeuristicPropertyLabel(prop) {
+  const labels = {
+    points: 'Poäng',
+    max_points: 'Maxpoäng',
+    direct_before_points: 'Direkt före',
+    same_line_points: 'Samma rad',
+    line_above_points: 'Raden ovanför',
+    points_per_page: 'Poäng per sida',
+    full_until_y_ratio: 'Full till y-ratio',
+    zero_after_y_ratio: 'Noll efter y-ratio',
+    max_y_ratio: 'Max y-ratio',
+    starts_at_y_ratio: 'Start vid y-ratio',
+    full_after_y_ratio: 'Full efter y-ratio',
+    no_penalty_until_words: 'Utan straff t.o.m. ord',
+    full_penalty_from_words: 'Fullt straff från ord',
+    middle_of_sentence_extra_ratio: 'Mitt i mening extra',
+    sentence_punctuation_extra_ratio: 'Meningspunktion extra',
+  };
+  return labels[prop] || prop;
+}
+
+function createPrimaryDateHeuristicNumberInput({
+  heuristics,
+  section,
+  ruleKey,
+  prop,
+  collection,
+  index,
+  integer = false,
+}) {
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.step = integer ? '1' : '0.01';
+  input.value = String(heuristics[section][ruleKey][prop]);
+  input.addEventListener('input', () => {
+    const next = sanitizePrimaryDateHeuristics(collection[index].primaryDateHeuristics);
+    const value = Number(input.value);
+    if (Number.isFinite(value)) {
+      next[section][ruleKey][prop] = integer ? Math.max(0, Math.round(value)) : value;
+      collection[index].primaryDateHeuristics = sanitizePrimaryDateHeuristics(next);
+      updateSettingsActionButtons();
+    }
+  });
+  return createFloatingField(primaryDateHeuristicPropertyLabel(prop), input, 'primary-date-heuristic-number-field');
+}
+
+function createPrimaryDateHeuristicRuleEditor({
+  heuristics,
+  section,
+  ruleKey,
+  collection,
+  index,
+}) {
+  const rule = heuristics[section][ruleKey];
+  const row = document.createElement('div');
+  row.className = 'primary-date-heuristic-rule';
+
+  const header = document.createElement('label');
+  header.className = 'primary-date-heuristic-rule-header';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = rule.enabled !== false;
+  checkbox.addEventListener('change', () => {
+    const next = sanitizePrimaryDateHeuristics(collection[index].primaryDateHeuristics);
+    next[section][ruleKey].enabled = checkbox.checked;
+    collection[index].primaryDateHeuristics = sanitizePrimaryDateHeuristics(next);
+    updateSettingsActionButtons();
+  });
+  const title = document.createElement('span');
+  title.textContent = primaryDateHeuristicLabels[ruleKey] || ruleKey;
+  const maxHint = document.createElement('span');
+  maxHint.className = 'primary-date-heuristic-max';
+  const maxValue = Number.isFinite(Number(rule.max_points)) ? Number(rule.max_points) : Number(rule.points || 0);
+  maxHint.textContent = `${maxValue > 0 ? '+' : ''}${maxValue}`;
+  header.append(checkbox, title, maxHint);
+
+  const help = document.createElement('p');
+  help.className = 'primary-date-heuristic-help';
+  help.textContent = rule.description || '';
+
+  const fields = document.createElement('div');
+  fields.className = 'primary-date-heuristic-fields';
+  Object.keys(rule).forEach((prop) => {
+    if (prop === 'enabled' || prop === 'description') {
+      return;
+    }
+    if (prop === 'keywords') {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '';
+      input.addEventListener('input', () => {
+        const next = sanitizePrimaryDateHeuristics(collection[index].primaryDateHeuristics);
+        next[section][ruleKey].keywords = input.value.split(',').map((item) => item.trim()).filter(Boolean);
+        collection[index].primaryDateHeuristics = sanitizePrimaryDateHeuristics(next);
+        updateSettingsActionButtons();
+      });
+      fields.appendChild(createFloatingField('Nyckelord', input, 'primary-date-heuristic-keywords-field'));
+      return;
+    }
+    if (typeof rule[prop] === 'number') {
+      fields.appendChild(createPrimaryDateHeuristicNumberInput({
+        heuristics,
+        section,
+        ruleKey,
+        prop,
+        collection,
+        index,
+        integer: prop === 'no_penalty_until_words' || prop === 'full_penalty_from_words',
+      }));
+    }
+  });
+
+  row.append(header, help, fields);
+  return row;
+}
+
+function createPrimaryDateHeuristicsEditor(collection, index) {
+  const field = sanitizeExtractionField(collection[index], index);
+  const heuristics = sanitizePrimaryDateHeuristics(field.primaryDateHeuristics);
+  collection[index].primaryDateHeuristics = heuristics;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'primary-date-heuristics-editor';
+
+  const intro = document.createElement('p');
+  intro.className = 'primary-date-heuristics-intro';
+  intro.textContent = 'Huvuddatum är dokumentets primära, visuellt representativa datum. Det ska normalt vara naket, fristående och högt upp i dokumentet, inte ett datum i löpande text eller ett tydligt etiketterat datumfält.';
+  wrapper.appendChild(intro);
+
+  const confidenceCard = document.createElement('section');
+  confidenceCard.className = 'primary-date-confidence-card';
+  const confidenceTitle = document.createElement('div');
+  confidenceTitle.className = 'primary-date-confidence-card-title';
+  confidenceTitle.textContent = 'Säkerhetsnivå';
+  const confidenceHelp = document.createElement('p');
+  confidenceHelp.className = 'primary-date-heuristic-help';
+  confidenceHelp.textContent = 'Hur många poäng en kandidat behöver för att räknas som 100 % säker. Detta är inte summan av alla möjliga pluspoäng, utan en praktisk nivå för en mycket stark träff.';
+  const confidenceInput = document.createElement('input');
+  confidenceInput.type = 'number';
+  confidenceInput.step = '1';
+  confidenceInput.min = '1';
+  confidenceInput.value = String(heuristics.full_confidence_score);
+  confidenceInput.addEventListener('input', () => {
+    const next = sanitizePrimaryDateHeuristics(collection[index].primaryDateHeuristics);
+    const value = Number(confidenceInput.value);
+    if (Number.isFinite(value)) {
+      next.full_confidence_score = Math.max(1, value);
+      collection[index].primaryDateHeuristics = sanitizePrimaryDateHeuristics(next);
+      updateSettingsActionButtons();
+    }
+  });
+  confidenceCard.append(
+    confidenceTitle,
+    confidenceHelp,
+    createFloatingField('Poäng för full säkerhet', confidenceInput, 'primary-date-full-confidence-field')
+  );
+  wrapper.appendChild(confidenceCard);
+
+  [
+    ['bonuses', 'Pluspoäng'],
+    ['penalties', 'Straff'],
+  ].forEach(([section, title]) => {
+    const sectionEl = document.createElement('section');
+    sectionEl.className = 'primary-date-heuristic-section';
+    const heading = document.createElement('div');
+    heading.className = 'archive-level-label';
+    heading.textContent = title;
+    sectionEl.appendChild(heading);
+    Object.keys(heuristics[section]).forEach((ruleKey) => {
+      sectionEl.appendChild(createPrimaryDateHeuristicRuleEditor({
+        heuristics,
+        section,
+        ruleKey,
+        collection,
+        index,
+      }));
+    });
+    wrapper.appendChild(sectionEl);
+  });
+
+  return wrapper;
 }
 
 function renderSystemExtractionFieldsEditor() {
