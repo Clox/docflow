@@ -3491,10 +3491,13 @@ function parseHashState() {
 }
 
 function updateHashState() {
-  preferredJobIdFromHash = selectedJobId;
+  const hashJobId = selectedJobId || (!hasLoadedInitialJobsState ? preferredJobIdFromHash : '');
+  if (selectedJobId || hasLoadedInitialJobsState) {
+    preferredJobIdFromHash = selectedJobId;
+  }
   const params = new URLSearchParams();
-  if (selectedJobId) {
-    params.set('job', selectedJobId);
+  if (hashJobId) {
+    params.set('job', hashJobId);
   }
   params.set('view', currentViewMode);
   const nextHash = params.toString();
