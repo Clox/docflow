@@ -39,9 +39,7 @@ try {
     $ocrText = load_job_analysis_text($jobDir, $analysisPdfPath);
     $matchingPayload = load_matching_settings_payload();
     $replacementMap = replacement_map(is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []);
-    $positionSettings = normalize_matching_position_adjustment_settings(
-        is_array($matchingPayload['positionAdjustment'] ?? null) ? $matchingPayload['positionAdjustment'] : []
-    );
+    $positionSettings = matching_position_settings_from_payload($matchingPayload);
     $lineGeometries = build_matching_line_geometries_for_job($job, $ocrText);
     $acceptanceThreshold = is_numeric($matchingPayload['dataFieldAcceptanceThreshold'] ?? null)
         ? (float) $matchingPayload['dataFieldAcceptanceThreshold']

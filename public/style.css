@@ -5971,11 +5971,13 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .matching-threshold-section,
+.matching-bbox-span-section,
 .matching-acceptance-threshold-section {
   margin: 0 0 10px;
 }
 
 .matching-threshold-section h4,
+.matching-bbox-span-section h4,
 .matching-acceptance-threshold-section h4,
 .matching-replacements-section h4 {
   margin: 0 0 8px;
@@ -5984,9 +5986,31 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .matching-threshold-section p,
+.matching-bbox-span-section p,
 .matching-acceptance-threshold-section p,
 .matching-replacements-section p {
   margin: 0 0 6px;
+}
+
+.matching-bbox-span-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.matching-bbox-span-section input {
+  width: 100%;
+  font: inherit;
+  padding: 7px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.settings-help-text {
+  color: #64748b;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
 .matching-threshold-row {
@@ -7591,6 +7615,45 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 
 .extraction-field-value-pattern-field .inline-input-wrap.is-readonly .inline-input-control {
   color: #475569;
+}
+
+.extraction-field-span-building-settings {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #d7dfeb;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.extraction-field-span-building-settings > summary {
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 650;
+  color: #334155;
+}
+
+.extraction-field-span-building-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.extraction-field-span-help {
+  margin-top: 4px;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: #64748b;
+}
+
+.extraction-field-span-unbounded-field {
+  align-self: stretch;
+}
+
+.extraction-field-span-unbounded-toggle {
+  width: fit-content;
+  background: #fff;
 }
 
 .extraction-field-alias-row input {

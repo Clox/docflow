@@ -194,6 +194,7 @@ final class ExtractionFieldRepository
                 amount_fraction_group,
                 date_position,
                 amount_position,
+                unbounded_value_pattern_span,
                 sort_order,
                 created_at,
                 updated_at
@@ -214,6 +215,7 @@ final class ExtractionFieldRepository
                 :amount_fraction_group,
                 :date_position,
                 :amount_position,
+                :unbounded_value_pattern_span,
                 :sort_order,
                 :created_at,
                 :updated_at
@@ -346,6 +348,12 @@ final class ExtractionFieldRepository
                         ':amount_position' => is_string($ruleSet['amountPosition'] ?? null) && in_array(trim(strtolower((string) $ruleSet['amountPosition'])), ['first', 'second', 'last'], true)
                             ? trim(strtolower((string) $ruleSet['amountPosition']))
                             : 'first',
+                        ':unbounded_value_pattern_span' => (($ruleSet['unboundedValuePatternSpan'] ?? false) === true
+                            || ($ruleSet['unboundedValuePatternSpan'] ?? false) === 1
+                            || ($ruleSet['unboundedValuePatternSpan'] ?? false) === '1'
+                            || (($ruleSet['spanBuilding']['unboundedValuePatternSpan'] ?? false) === true)
+                            || (($ruleSet['spanBuilding']['unboundedValuePatternSpan'] ?? false) === 1)
+                            || (($ruleSet['spanBuilding']['unboundedValuePatternSpan'] ?? false) === '1')) ? 1 : 0,
                         ':sort_order' => $ruleOrder,
                         ':created_at' => $timestamp,
                         ':updated_at' => $timestamp,
@@ -428,6 +436,7 @@ final class ExtractionFieldRepository
                 amount_fraction_group,
                 date_position,
                 amount_position,
+                unbounded_value_pattern_span,
                 sort_order,
                 created_at,
                 updated_at
@@ -497,6 +506,7 @@ final class ExtractionFieldRepository
                 'amountFractionGroup' => $this->normalizeCaptureGroupForOutput($row['amount_fraction_group'] ?? null),
                 'datePosition' => is_string($row['date_position'] ?? null) ? trim(strtolower((string) $row['date_position'])) : 'first',
                 'amountPosition' => is_string($row['amount_position'] ?? null) ? trim(strtolower((string) $row['amount_position'])) : 'first',
+                'unboundedValuePatternSpan' => ((int) ($row['unbounded_value_pattern_span'] ?? 0)) === 1,
             ];
         }
 

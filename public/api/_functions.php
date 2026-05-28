@@ -622,6 +622,9 @@ function build_configuration_export_payload(): array
             'positionAdjustment' => normalize_matching_position_adjustment_settings(
                 is_array($matching['positionAdjustment'] ?? null) ? $matching['positionAdjustment'] : []
             ),
+            'bboxSpanBuilding' => normalize_matching_bbox_span_building_settings(
+                is_array($matching['bboxSpanBuilding'] ?? null) ? $matching['bboxSpanBuilding'] : []
+            ),
             'dataFieldAcceptanceThreshold' => isset($matching['dataFieldAcceptanceThreshold']) && is_numeric($matching['dataFieldAcceptanceThreshold'])
                 ? clamp_confidence((float) $matching['dataFieldAcceptanceThreshold'])
                 : 0.5,
@@ -911,6 +914,9 @@ function apply_configuration_import_payload(array $payload): array
                 ? $payload['matching']['positionAdjustment']
                 : default_matching_position_adjustment_settings()
         ),
+        'bboxSpanBuilding' => normalize_matching_bbox_span_building_settings(
+            is_array($payload['matching']['bboxSpanBuilding'] ?? null) ? $payload['matching']['bboxSpanBuilding'] : []
+        ),
         'dataFieldAcceptanceThreshold' => isset($payload['matching']['dataFieldAcceptanceThreshold']) && is_numeric($payload['matching']['dataFieldAcceptanceThreshold'])
             ? clamp_confidence((float) $payload['matching']['dataFieldAcceptanceThreshold'])
             : 0.5,
@@ -988,6 +994,9 @@ function apply_configuration_import_payload(array $payload): array
         'replacements' => is_array($currentMatching['replacements'] ?? null) ? $currentMatching['replacements'] : [],
         'positionAdjustment' => normalize_matching_position_adjustment_settings(
             is_array($currentMatching['positionAdjustment'] ?? null) ? $currentMatching['positionAdjustment'] : []
+        ),
+        'bboxSpanBuilding' => normalize_matching_bbox_span_building_settings(
+            is_array($currentMatching['bboxSpanBuilding'] ?? null) ? $currentMatching['bboxSpanBuilding'] : []
         ),
         'dataFieldAcceptanceThreshold' => isset($currentMatching['dataFieldAcceptanceThreshold']) && is_numeric($currentMatching['dataFieldAcceptanceThreshold'])
             ? clamp_confidence((float) $currentMatching['dataFieldAcceptanceThreshold'])
@@ -2961,12 +2970,12 @@ function extraction_field_date_atom_pattern(): string
 
 function extraction_field_amount_atom_pattern(): string
 {
-    return '-?(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+)(?:[.,]\\d{2})?';
+    return '-?(?:\\d{1,3}(?:[\\s\\x{00A0}.]+\\d{3})+|\\d+)(?:[.,]\\d{2})?';
 }
 
 function extraction_field_split_kronor_atom_pattern(): string
 {
-    return '(?:\\d{1,3}(?:[ \\x{00A0}.]\\d{3})+|\\d+)';
+    return '(?:\\d{1,3}(?:[\\s\\x{00A0}.]+\\d{3})+|\\d+)';
 }
 
 function extraction_field_split_oren_atom_pattern(): string
@@ -3348,6 +3357,7 @@ function extraction_field_raw_from_capture_ranges(array $match, array $ranges): 
 function extraction_field_runtime_rule_set(array $ruleSet, ?string $valueType = null, array $valuePatternsById = []): array
 {
     $runtimeRuleSet = $ruleSet;
+    $runtimeRuleSet['unboundedValuePatternSpan'] = normalize_extraction_field_unbounded_value_pattern_span($runtimeRuleSet);
     $resolvedValueType = normalize_extraction_field_value_type($valueType, null, $ruleSet);
     $valuePattern = is_string($runtimeRuleSet['valuePattern'] ?? null) ? trim((string) $runtimeRuleSet['valuePattern']) : '';
     $referencedPattern = resolve_reusable_value_pattern($runtimeRuleSet, $valuePatternsById);
@@ -3416,6 +3426,24 @@ function normalize_extraction_field_use_search_text(mixed $value, bool $fallback
     return $value === true || $value === 1 || $value === '1';
 }
 
+function default_extraction_field_span_building(): array
+{
+    return [
+        'unboundedValuePatternSpan' => false,
+    ];
+}
+
+function normalize_extraction_field_unbounded_value_pattern_span(mixed $input): bool
+{
+    $row = is_array($input) ? $input : [];
+    $value = $row['unboundedValuePatternSpan'] ?? null;
+    if ($value === null && is_array($row['spanBuilding'] ?? null)) {
+        $value = $row['spanBuilding']['unboundedValuePatternSpan'] ?? null;
+    }
+
+    return $value === true || $value === 1 || $value === '1';
+}
+
 function default_extraction_field_rule_set(array $overrides = []): array
 {
     $defaults = [
@@ -3436,6 +3464,7 @@ function default_extraction_field_rule_set(array $overrides = []): array
         'amountWholeGroup' => null,
         'amountFractionGroup' => null,
         'scope' => null,
+        'unboundedValuePatternSpan' => false,
     ];
 
     return array_merge($defaults, $overrides);
@@ -3489,6 +3518,7 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             'amountWholeGroup' => normalize_extraction_field_capture_group($row['amountWholeGroup'] ?? null),
             'amountFractionGroup' => normalize_extraction_field_capture_group($row['amountFractionGroup'] ?? null),
             'scope' => $scope,
+            'unboundedValuePatternSpan' => normalize_extraction_field_unbounded_value_pattern_span($row),
         ]);
     }
 
@@ -3522,6 +3552,7 @@ function normalize_extraction_field_rule_sets(mixed $input, ?array $legacyField 
             'datePosition' => $datePosition,
             'amountPosition' => normalize_extraction_field_position($legacy['amountPosition'] ?? null),
             'scope' => null,
+            'unboundedValuePatternSpan' => false,
         ])];
     }
 
@@ -5472,9 +5503,11 @@ function archived_job_historical_auto_result(string $jobId, array $job, int $act
 function load_matching_settings_payload(): array
 {
     $defaultPositionAdjustment = default_matching_position_adjustment_settings();
+    $defaultBboxSpanBuilding = default_matching_bbox_span_building_settings();
     $defaultPayload = [
         'replacements' => [],
         'positionAdjustment' => $defaultPositionAdjustment,
+        'bboxSpanBuilding' => $defaultBboxSpanBuilding,
         'dataFieldAcceptanceThreshold' => 0.5,
     ];
 
@@ -5519,10 +5552,14 @@ function load_matching_settings_payload(): array
     $positionAdjustment = normalize_matching_position_adjustment_settings(
         is_array($decoded['positionAdjustment'] ?? null) ? $decoded['positionAdjustment'] : $decoded
     );
+    $bboxSpanBuilding = normalize_matching_bbox_span_building_settings(
+        is_array($decoded['bboxSpanBuilding'] ?? null) ? $decoded['bboxSpanBuilding'] : ($decoded['spanBuilding'] ?? null)
+    );
 
     return [
         'replacements' => $replacements,
         'positionAdjustment' => $positionAdjustment,
+        'bboxSpanBuilding' => $bboxSpanBuilding,
         'dataFieldAcceptanceThreshold' => is_numeric($decoded['dataFieldAcceptanceThreshold'] ?? null)
             ? clamp_confidence((float) $decoded['dataFieldAcceptanceThreshold'])
             : 0.5,
@@ -5545,6 +5582,14 @@ function default_matching_position_adjustment_settings(): array
         'rightYOffsetPenalty' => 0.25,
         'downXOffsetPenalty' => 0.25,
         'downYDistancePenaltyCurve' => default_matching_down_y_distance_penalty_curve(),
+    ];
+}
+
+function default_matching_bbox_span_building_settings(): array
+{
+    return [
+        'maxHorizontalGapMultiplier' => 2.5,
+        'maxVerticalOffsetMultiplier' => 0.4,
     ];
 }
 
@@ -5585,6 +5630,43 @@ function normalize_matching_decimal_setting(mixed $value, float $fallback, ?floa
     }
 
     return $resolved;
+}
+
+function normalize_matching_bbox_span_building_settings(mixed $input): array
+{
+    $source = is_array($input) ? $input : [];
+    $defaults = default_matching_bbox_span_building_settings();
+
+    return [
+        'maxHorizontalGapMultiplier' => normalize_matching_decimal_setting(
+            $source['maxHorizontalGapMultiplier'] ?? $source['max_horizontal_gap_multiplier'] ?? null,
+            $defaults['maxHorizontalGapMultiplier'],
+            null
+        ),
+        'maxVerticalOffsetMultiplier' => normalize_matching_decimal_setting(
+            $source['maxVerticalOffsetMultiplier'] ?? $source['max_vertical_offset_multiplier'] ?? null,
+            $defaults['maxVerticalOffsetMultiplier'],
+            null
+        ),
+    ];
+}
+
+function matching_position_settings_from_payload(array $matchingPayload): array
+{
+    $settings = normalize_matching_position_adjustment_settings(
+        is_array($matchingPayload['positionAdjustment'] ?? null) ? $matchingPayload['positionAdjustment'] : []
+    );
+    $settings['bboxSpanBuilding'] = normalize_matching_bbox_span_building_settings(
+        is_array($matchingPayload['bboxSpanBuilding'] ?? null) ? $matchingPayload['bboxSpanBuilding'] : null
+    );
+    return $settings;
+}
+
+function matching_bbox_span_building_from_position_settings(array $positionSettings): array
+{
+    return normalize_matching_bbox_span_building_settings(
+        is_array($positionSettings['bboxSpanBuilding'] ?? null) ? $positionSettings['bboxSpanBuilding'] : null
+    );
 }
 
 function normalize_matching_position_adjustment_settings(?array $input): array
@@ -12725,7 +12807,14 @@ function build_data_field_search_term_regex(string $searchTerm, array $replaceme
     return build_literal_space_flexible_regex($trimmed, $replacementMap, true);
 }
 
-function find_label_hits(array $lines, array $labels, array $replacementMap, bool $isRegex = false): array
+function find_label_hits(
+    array $lines,
+    array $labels,
+    array $replacementMap,
+    bool $isRegex = false,
+    array $lineGeometries = [],
+    array $spanSettings = []
+): array
 {
     $compiled = [];
     foreach ($labels as $label) {
@@ -12765,36 +12854,56 @@ function find_label_hits(array $lines, array $labels, array $replacementMap, boo
             continue;
         }
 
+        $lineGeometry = is_int($index) && is_array($lineGeometries[$index] ?? null) ? $lineGeometries[$index] : null;
+        $searchSpans = $lineGeometry !== null
+            ? extraction_field_layout_value_spans_for_line($line, $lineGeometry, 0, $spanSettings)
+            : [[
+                'text' => $line,
+                'start' => 0,
+                'end' => strlen($line),
+            ]];
+
         $lineHits = [];
         foreach ($compiled as $item) {
             $pattern = $item['pattern'];
-            $labelMatches = [];
-            if (@preg_match_all($pattern, $line, $labelMatches, PREG_OFFSET_CAPTURE) !== 1) {
-                continue;
-            }
-
-            $fullMatches = $labelMatches[0] ?? null;
-            if (!is_array($fullMatches)) {
-                continue;
-            }
-
-            foreach ($fullMatches as $matched) {
-                $matchedText = is_array($matched) && is_string($matched[0] ?? null) ? (string) $matched[0] : '';
-                $labelStart = is_array($matched) && is_int($matched[1] ?? null) ? (int) $matched[1] : 0;
-                if ($matchedText === '') {
+            foreach ($searchSpans as $searchSpan) {
+                if (!is_array($searchSpan)) {
+                    continue;
+                }
+                $spanText = is_string($searchSpan['text'] ?? null) ? (string) $searchSpan['text'] : '';
+                $spanStart = is_int($searchSpan['start'] ?? null) ? (int) $searchSpan['start'] : 0;
+                if ($spanText === '') {
                     continue;
                 }
 
-                $labelEnd = $labelStart + strlen($matchedText);
-                $lineHits[] = [
-                    'index' => is_int($index) ? (int) $index : 0,
-                    'line' => $line,
-                    'pattern' => $pattern,
-                    'label' => $item['label'],
-                    'labelStart' => $labelStart,
-                    'labelEnd' => $labelEnd,
-                    '_matchedLength' => strlen($matchedText),
-                ];
+                $labelMatches = [];
+                if (@preg_match_all($pattern, $spanText, $labelMatches, PREG_OFFSET_CAPTURE) !== 1) {
+                    continue;
+                }
+
+                $fullMatches = $labelMatches[0] ?? null;
+                if (!is_array($fullMatches)) {
+                    continue;
+                }
+
+                foreach ($fullMatches as $matched) {
+                    $matchedText = is_array($matched) && is_string($matched[0] ?? null) ? (string) $matched[0] : '';
+                    $labelStart = $spanStart + (is_array($matched) && is_int($matched[1] ?? null) ? (int) $matched[1] : 0);
+                    if ($matchedText === '') {
+                        continue;
+                    }
+
+                    $labelEnd = $labelStart + strlen($matchedText);
+                    $lineHits[] = [
+                        'index' => is_int($index) ? (int) $index : 0,
+                        'line' => $line,
+                        'pattern' => $pattern,
+                        'label' => $item['label'],
+                        'labelStart' => $labelStart,
+                        'labelEnd' => $labelEnd,
+                        '_matchedLength' => strlen($matchedText),
+                    ];
+                }
             }
         }
 
@@ -13140,11 +13249,18 @@ function detect_configured_zone_matches(array $lines, array $zones, array $repla
     return $matches;
 }
 
-function find_all_label_hits(array $lines, array $labels, array $replacementMap, bool $isRegex = false): array
+function find_all_label_hits(
+    array $lines,
+    array $labels,
+    array $replacementMap,
+    bool $isRegex = false,
+    array $lineGeometries = [],
+    array $spanSettings = []
+): array
 {
     $hitsByKey = [];
     foreach (array_merge(
-        find_label_hits($lines, $labels, $replacementMap, $isRegex),
+        find_label_hits($lines, $labels, $replacementMap, $isRegex, $lineGeometries, $spanSettings),
         find_document_label_hits($lines, $labels, $replacementMap, $isRegex)
     ) as $hit) {
         if (!is_array($hit)) {
@@ -13157,7 +13273,9 @@ function find_all_label_hits(array $lines, array $labels, array $replacementMap,
             (string) ((int) ($hit['labelEnd'] ?? -1)),
             is_string($hit['label'] ?? null) ? (string) $hit['label'] : '',
         ]);
-        $hitsByKey[$hitKey] = $hit;
+        if (!isset($hitsByKey[$hitKey])) {
+            $hitsByKey[$hitKey] = $hit;
+        }
     }
 
     return array_values($hitsByKey);
@@ -14413,7 +14531,7 @@ function select_best_labeled_candidate(
         'matchText' => null,
     ];
 
-    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex);
+    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex, $lineGeometries, $spanSettings);
     foreach ($hits as $hit) {
         $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
         $pattern = is_string($hit['pattern'] ?? null) ? (string) $hit['pattern'] : '';
@@ -15572,7 +15690,7 @@ function extract_primary_date_field_result(array $lines, array $lineGeometries =
 function amount_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
-    if (@preg_match_all('/\b((?:\d{1,3}(?:[ \x{00A0}.]\d{3})+|\d+),\d{2}|(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
+    if (@preg_match_all('/\b((?:\d{1,3}(?:[\s\x{00A0}.]+\d{3})+|\d+),\d{2}|(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}|\d{1,3}(?:[\s\x{00A0}.]+\d{3})+)\b/u', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
         return [];
     }
 
@@ -16000,6 +16118,171 @@ function extraction_field_document_span_bbox(array $lineEntries, array $lineGeom
     }
 
     return $bbox;
+}
+
+function line_geometry_segment_height(array $segment): float
+{
+    $bbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+    if ($bbox === null) {
+        return 0.0;
+    }
+    return max(0.0, (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0));
+}
+
+function line_geometry_segment_center_y(array $segment): ?float
+{
+    $bbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+    if ($bbox === null) {
+        return null;
+    }
+    return ((float) ($bbox['y0'] ?? 0.0) + (float) ($bbox['y1'] ?? 0.0)) / 2.0;
+}
+
+function line_geometry_segments_can_share_value_span(array $left, array $right, array $spanSettings): bool
+{
+    $leftBbox = normalize_debug_word_bbox($left['bbox'] ?? null);
+    $rightBbox = normalize_debug_word_bbox($right['bbox'] ?? null);
+    if ($leftBbox === null || $rightBbox === null) {
+        return false;
+    }
+
+    $leftHeight = line_geometry_segment_height($left);
+    $rightHeight = line_geometry_segment_height($right);
+    $averageHeight = max(1.0, (($leftHeight > 0.0 ? $leftHeight : 1.0) + ($rightHeight > 0.0 ? $rightHeight : 1.0)) / 2.0);
+    $horizontalGap = max(0.0, (float) ($rightBbox['x0'] ?? 0.0) - (float) ($leftBbox['x1'] ?? 0.0));
+    $leftCenterY = line_geometry_segment_center_y($left);
+    $rightCenterY = line_geometry_segment_center_y($right);
+    $verticalOffset = $leftCenterY !== null && $rightCenterY !== null ? abs($leftCenterY - $rightCenterY) : 0.0;
+
+    $maxHorizontalGap = $averageHeight * max(0.0, (float) ($spanSettings['maxHorizontalGapMultiplier'] ?? 2.5));
+    $maxVerticalOffset = $averageHeight * max(0.0, (float) ($spanSettings['maxVerticalOffsetMultiplier'] ?? 0.4));
+
+    return $horizontalGap <= $maxHorizontalGap && $verticalOffset <= $maxVerticalOffset;
+}
+
+function extraction_field_layout_value_spans_for_line(
+    string $line,
+    ?array $lineGeometry,
+    int $minStart = 0,
+    array $spanSettings = []
+): array {
+    $minStart = max(0, $minStart);
+    $settings = normalize_matching_bbox_span_building_settings($spanSettings);
+    $lineLength = strlen($line);
+    if ($lineLength <= $minStart) {
+        return [];
+    }
+
+    $segments = is_array($lineGeometry['segments'] ?? null) ? $lineGeometry['segments'] : [];
+    $eligible = [];
+    foreach ($segments as $segment) {
+        if (!is_array($segment)) {
+            continue;
+        }
+        $start = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+        $end = is_int($segment['end'] ?? null) ? (int) $segment['end'] : -1;
+        $text = is_string($segment['text'] ?? null) ? (string) $segment['text'] : '';
+        if ($start < 0 || $end <= $start || $end <= $minStart || trim($text) === '') {
+            continue;
+        }
+        if (normalize_debug_word_bbox($segment['bbox'] ?? null) === null) {
+            continue;
+        }
+        $eligible[] = [
+            ...$segment,
+            'start' => $start,
+            'end' => $end,
+        ];
+    }
+
+    usort($eligible, static fn(array $left, array $right): int => ((int) ($left['start'] ?? 0)) <=> ((int) ($right['start'] ?? 0)));
+
+    if ($eligible === []) {
+        $fallbackText = substr($line, $minStart);
+        return trim($fallbackText) === '' ? [] : [[
+            'text' => $fallbackText,
+            'start' => $minStart,
+            'end' => $lineLength,
+        ]];
+    }
+
+    $spans = [];
+    $groupStart = null;
+    $groupEnd = null;
+    $previous = null;
+    foreach ($eligible as $segment) {
+        if ($previous !== null && !line_geometry_segments_can_share_value_span($previous, $segment, $settings)) {
+            if ($groupStart !== null && $groupEnd !== null && $groupEnd > $groupStart) {
+                $text = substr($line, $groupStart, $groupEnd - $groupStart);
+                if (trim($text) !== '') {
+                    $spans[] = [
+                        'text' => $text,
+                        'start' => $groupStart,
+                        'end' => $groupEnd,
+                    ];
+                }
+            }
+            $groupStart = null;
+            $groupEnd = null;
+        }
+
+        $segmentStart = max($minStart, (int) ($segment['start'] ?? 0));
+        $segmentEnd = (int) ($segment['end'] ?? 0);
+        if ($groupStart === null) {
+            $groupStart = $segmentStart;
+        }
+        $groupEnd = max($groupEnd ?? $segmentEnd, $segmentEnd);
+        $previous = $segment;
+    }
+
+    if ($groupStart !== null && $groupEnd !== null && $groupEnd > $groupStart) {
+        $text = substr($line, $groupStart, $groupEnd - $groupStart);
+        if (trim($text) !== '') {
+            $spans[] = [
+                'text' => $text,
+                'start' => $groupStart,
+                'end' => $groupEnd,
+            ];
+        }
+    }
+
+    return array_values($spans);
+}
+
+function extraction_field_candidates_from_layout_spans(
+    string $line,
+    ?array $lineGeometry,
+    callable $candidateExtractor,
+    int $minStart = 0,
+    array $spanSettings = []
+): array {
+    $spans = extraction_field_layout_value_spans_for_line($line, $lineGeometry, $minStart, $spanSettings);
+    if ($spans === []) {
+        return [];
+    }
+
+    $candidates = [];
+    foreach ($spans as $span) {
+        if (!is_array($span)) {
+            continue;
+        }
+        $spanText = is_string($span['text'] ?? null) ? (string) $span['text'] : '';
+        $spanStart = is_int($span['start'] ?? null) ? (int) $span['start'] : -1;
+        if ($spanStart < 0 || trim($spanText) === '') {
+            continue;
+        }
+        $spanCandidates = $candidateExtractor($spanText, $spanStart);
+        if (!is_array($spanCandidates)) {
+            continue;
+        }
+        foreach ($spanCandidates as $candidate) {
+            if (is_array($candidate)) {
+                $candidates[] = $candidate;
+            }
+        }
+    }
+
+    return $candidates;
 }
 
 function extraction_field_document_pattern_candidates_from_lines(
@@ -16627,12 +16910,13 @@ function collect_labeled_candidate_matches(
     int $nearbyDistance = 1,
     array $positionSettings = [],
     array $lineGeometries = [],
-    bool $labelsAreRegex = false
+    bool $labelsAreRegex = false,
+    array $spanSettings = []
 ): array
 {
     $matchesByKey = [];
 
-    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex);
+    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex, $lineGeometries, $spanSettings);
     foreach ($hits as $hit) {
         $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
         $pattern = is_string($hit['pattern'] ?? null) ? (string) $hit['pattern'] : '';
@@ -16648,7 +16932,10 @@ function collect_labeled_candidate_matches(
         $tailText = is_string($tailInfo['text'] ?? null) ? (string) $tailInfo['text'] : '';
         $tailOffset = is_int($tailInfo['offset'] ?? null) ? (int) $tailInfo['offset'] : 0;
         if ($tailText !== '') {
-            $tailCandidates = $candidateExtractor($tailText, $tailOffset);
+            $lineGeometry = is_array($lineGeometries[$hitIndex] ?? null) ? $lineGeometries[$hitIndex] : null;
+            $tailCandidates = $lineGeometry !== null
+                ? extraction_field_candidates_from_layout_spans($line, $lineGeometry, $candidateExtractor, $labelEnd, $spanSettings)
+                : $candidateExtractor($tailText, $tailOffset);
             if (is_array($tailCandidates)) {
                 foreach ($tailCandidates as $candidate) {
                     if (!is_array($candidate)) {
@@ -16718,7 +17005,10 @@ function collect_labeled_candidate_matches(
             }
         }
 
-        $lineCandidates = $candidateExtractor($line, 0);
+        $lineGeometry = is_array($lineGeometries[$hitIndex] ?? null) ? $lineGeometries[$hitIndex] : null;
+        $lineCandidates = $lineGeometry !== null
+            ? extraction_field_candidates_from_layout_spans($line, $lineGeometry, $candidateExtractor, $labelEnd, $spanSettings)
+            : $candidateExtractor($line, 0);
         if (is_array($lineCandidates)) {
             foreach ($lineCandidates as $candidate) {
                 if (!is_array($candidate)) {
@@ -16794,7 +17084,10 @@ function collect_labeled_candidate_matches(
                 continue;
             }
 
-            $nearCandidates = $candidateExtractor($nearLine, 0);
+            $nearGeometry = is_array($lineGeometries[$nearIndex] ?? null) ? $lineGeometries[$nearIndex] : null;
+            $nearCandidates = $nearGeometry !== null
+                ? extraction_field_candidates_from_layout_spans($nearLine, $nearGeometry, $candidateExtractor, 0, $spanSettings)
+                : $candidateExtractor($nearLine, 0);
             if (!is_array($nearCandidates)) {
                 continue;
             }
@@ -17012,11 +17305,12 @@ function collect_anchored_candidate_matches(
     callable $candidateExtractor,
     array $positionSettings = [],
     array $lineGeometries = [],
-    bool $labelsAreRegex = false
+    bool $labelsAreRegex = false,
+    array $spanSettings = []
 ): array {
     $matchesByKey = [];
 
-    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex);
+    $hits = find_all_label_hits($lines, $labels, $replacementMap, $labelsAreRegex, $lineGeometries, $spanSettings);
     foreach ($hits as $hit) {
         $line = is_string($hit['line'] ?? null) ? (string) $hit['line'] : '';
         $label = is_string($hit['label'] ?? null) ? trim((string) $hit['label']) : '';
@@ -17040,7 +17334,11 @@ function collect_anchored_candidate_matches(
                 continue;
             }
 
-            $candidates = $candidateExtractor($resolvedCandidateLine, 0);
+            $lineGeometry = is_array($lineGeometries[$candidateLineIndex] ?? null) ? $lineGeometries[$candidateLineIndex] : null;
+            $minStart = $candidateLineIndex === $hitIndex ? $labelEnd : 0;
+            $candidates = $lineGeometry !== null
+                ? extraction_field_candidates_from_layout_spans($resolvedCandidateLine, $lineGeometry, $candidateExtractor, $minStart, $spanSettings)
+                : $candidateExtractor($resolvedCandidateLine, 0);
             if (!is_array($candidates)) {
                 continue;
             }
@@ -17084,7 +17382,9 @@ function collect_anchored_pattern_candidate_matches_from_segments(
     array $lineGeometries = [],
     bool $labelsAreRegex = false,
     bool $combineSplitAmountParts = false,
-    array $captureSelection = []
+    array $captureSelection = [],
+    array $spanSettings = [],
+    bool $unboundedValuePatternSpan = false
 ): array {
     $matchesByKey = [];
 
@@ -17116,16 +17416,39 @@ function collect_anchored_pattern_candidate_matches_from_segments(
                 continue;
             }
 
-            $candidates = extraction_field_pattern_candidates_from_text(
-                $resolvedCandidateLine,
-                $pattern,
-                true,
-                0,
-                $preferCaptureGroupValue,
-                $combineSplitAmountParts,
-                $captureSelection
-            );
-            if ($candidates === []) {
+            $lineGeometry = is_array($lineGeometries[$candidateLineIndex] ?? null) ? $lineGeometries[$candidateLineIndex] : null;
+            if (!$unboundedValuePatternSpan && $lineGeometry !== null) {
+                $patternExtractor = static function (string $text, int $offsetBase) use ($pattern, $preferCaptureGroupValue, $combineSplitAmountParts, $captureSelection): array {
+                    return extraction_field_pattern_candidates_from_text(
+                        $text,
+                        $pattern,
+                        true,
+                        $offsetBase,
+                        $preferCaptureGroupValue,
+                        $combineSplitAmountParts,
+                        $captureSelection
+                    );
+                };
+                $minStart = $candidateLineIndex === $hitIndex ? $labelEnd : 0;
+                $candidates = extraction_field_candidates_from_layout_spans(
+                    $resolvedCandidateLine,
+                    $lineGeometry,
+                    $patternExtractor,
+                    $minStart,
+                    $spanSettings
+                );
+            } else {
+                $candidates = extraction_field_pattern_candidates_from_text(
+                    $resolvedCandidateLine,
+                    $pattern,
+                    true,
+                    0,
+                    $preferCaptureGroupValue,
+                    $combineSplitAmountParts,
+                    $captureSelection
+                );
+            }
+            if ($candidates === [] && $unboundedValuePatternSpan) {
                 $lineGeometry = is_array($lineGeometries[$candidateLineIndex] ?? null) ? $lineGeometries[$candidateLineIndex] : null;
                 if ($lineGeometry !== null && is_array($lineGeometry['segments'] ?? null)) {
                     foreach ($lineGeometry['segments'] as $segment) {
@@ -17662,7 +17985,8 @@ function collect_document_candidate_matches(
     array $lines,
     callable $candidateExtractor,
     float $confidence = 0.55,
-    array $lineGeometries = []
+    array $lineGeometries = [],
+    array $spanSettings = []
 ): array {
     $matchesByKey = [];
     foreach ($lines as $lineIndex => $line) {
@@ -17671,7 +17995,10 @@ function collect_document_candidate_matches(
             continue;
         }
 
-        $candidates = $candidateExtractor($resolvedLine, 0);
+        $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+        $candidates = $lineGeometry !== null
+            ? extraction_field_candidates_from_layout_spans($resolvedLine, $lineGeometry, $candidateExtractor, 0, $spanSettings)
+            : $candidateExtractor($resolvedLine, 0);
         if (!is_array($candidates)) {
             continue;
         }
@@ -17702,23 +18029,17 @@ function collect_document_candidate_matches(
             }
 
             add_extraction_field_match(
-                $matchesByKey,
-                $lineIndex,
-                $start,
-                $value,
-                $raw,
-                is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
-                'pattern',
-                $confidence,
-                is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                $candidateBbox,
-                $candidateBbox,
-                $candidatePageNumber
+                matchesByKey: $matchesByKey,
+                lineIndex: $lineIndex,
+                start: $start,
+                value: $value,
+                raw: $raw,
+                matchText: is_string($candidate['matchText'] ?? null) ? (string) $candidate['matchText'] : $raw,
+                source: 'pattern',
+                confidence: $confidence,
+                matchType: is_string($candidate['matchType'] ?? null) ? (string) $candidate['matchType'] : null,
+                valueBbox: $candidateBbox,
+                pageNumber: $candidatePageNumber
             );
         }
     }
@@ -17934,18 +18255,60 @@ function extract_unlabeled_pattern_field_matches(
     bool $preferCaptureGroupValue = true,
     array $lineGeometries = [],
     bool $combineSplitAmountParts = false,
-    array $captureSelection = []
+    array $captureSelection = [],
+    array $spanSettings = [],
+    bool $unboundedValuePatternSpan = false
 ): array
 {
-    $candidates = extraction_field_document_pattern_candidates_from_lines(
-        $lines,
-        $pattern,
-        true,
-        $lineGeometries,
-        $preferCaptureGroupValue,
-        $combineSplitAmountParts,
-        $captureSelection
-    );
+    if ($unboundedValuePatternSpan) {
+        $candidates = extraction_field_document_pattern_candidates_from_lines(
+            $lines,
+            $pattern,
+            true,
+            $lineGeometries,
+            $preferCaptureGroupValue,
+            $combineSplitAmountParts,
+            $captureSelection
+        );
+    } else {
+        $patternExtractor = static function (string $text, int $offsetBase) use ($pattern, $preferCaptureGroupValue, $combineSplitAmountParts, $captureSelection): array {
+            return extraction_field_pattern_candidates_from_text(
+                $text,
+                $pattern,
+                true,
+                $offsetBase,
+                $preferCaptureGroupValue,
+                $combineSplitAmountParts,
+                $captureSelection
+            );
+        };
+        $candidates = [];
+        foreach ($lines as $lineIndex => $line) {
+            if (!is_int($lineIndex)) {
+                continue;
+            }
+            $resolvedLine = is_string($line) ? (string) $line : '';
+            if ($resolvedLine === '') {
+                continue;
+            }
+            $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+            $lineCandidates = $lineGeometry !== null
+                ? extraction_field_candidates_from_layout_spans($resolvedLine, $lineGeometry, $patternExtractor, 0, $spanSettings)
+                : $patternExtractor($resolvedLine, 0);
+            foreach ($lineCandidates as $lineCandidate) {
+                if (is_array($lineCandidate)) {
+                    $lineCandidate['lineIndex'] = $lineIndex;
+                    $lineCandidate['valueBbox'] = line_geometry_span_bbox(
+                        $lineGeometry,
+                        is_int($lineCandidate['start'] ?? null) ? (int) $lineCandidate['start'] : 0,
+                        (is_int($lineCandidate['start'] ?? null) ? (int) $lineCandidate['start'] : 0) + max(1, strlen(is_string($lineCandidate['spanText'] ?? null) ? (string) $lineCandidate['spanText'] : (is_string($lineCandidate['raw'] ?? null) ? (string) $lineCandidate['raw'] : '')))
+                    );
+                    $lineCandidate['pageNumber'] = matching_line_page_number($lineGeometries, $lineIndex);
+                    $candidates[] = $lineCandidate;
+                }
+            }
+        }
+    }
     if ($candidates === []) {
         return [];
     }
@@ -18119,6 +18482,8 @@ function extract_configured_rule_set_field_matches(
         && $valuePattern !== '';
     $combineSplitAmountParts = $valueType === 'amount' && extraction_field_value_pattern_uses_semantic_amount_parts($valuePattern);
     $captureSelection = extraction_field_rule_set_capture_selection($runtimeRuleSet, $valueType);
+    $spanSettings = matching_bbox_span_building_from_position_settings($positionSettings);
+    $unboundedValuePatternSpan = $usesValuePattern && normalize_extraction_field_unbounded_value_pattern_span($runtimeRuleSet);
 
     $preferCaptureGroupValue = true;
     $candidateExtractor = match ($valueType) {
@@ -18140,7 +18505,9 @@ function extract_configured_rule_set_field_matches(
             'generic_text_segment_candidates_from_text',
             1,
             $positionSettings,
-            $lineGeometries
+            $lineGeometries,
+            $labelsAreRegex,
+            $spanSettings
         ), $scopeDebug);
     }
 
@@ -18153,7 +18520,9 @@ function extract_configured_rule_set_field_matches(
                     $preferCaptureGroupValue,
                     $lineGeometries,
                     $combineSplitAmountParts,
-                    $captureSelection
+                    $captureSelection,
+                    $spanSettings,
+                    $unboundedValuePatternSpan
                 ),
                 $scopeDebug
             );
@@ -18162,7 +18531,7 @@ function extract_configured_rule_set_field_matches(
             return [];
         }
         return annotate_extraction_field_matches_with_scope(
-            collect_document_candidate_matches($lines, $candidateExtractor, 0.55, $lineGeometries),
+            collect_document_candidate_matches($lines, $candidateExtractor, 0.55, $lineGeometries, $spanSettings),
             $scopeDebug
         );
     }
@@ -18182,7 +18551,9 @@ function extract_configured_rule_set_field_matches(
             $lineGeometries,
             $labelsAreRegex,
             $combineSplitAmountParts,
-            $captureSelection
+            $captureSelection,
+            $spanSettings,
+            $unboundedValuePatternSpan
         ), $scopeDebug);
     }
 
@@ -18192,7 +18563,9 @@ function extract_configured_rule_set_field_matches(
         $replacementMap,
         $candidateExtractor,
         $positionSettings,
-        $lineGeometries
+        $lineGeometries,
+        $labelsAreRegex,
+        $spanSettings
     ), $scopeDebug);
 }
 
@@ -19319,9 +19692,7 @@ function calculate_auto_archiving_result_from_text(
     string $jobDir = ''
 ): array {
     $resolvedMatchingPayload = is_array($matchingPayload) ? $matchingPayload : load_matching_settings_payload();
-    $positionSettings = normalize_matching_position_adjustment_settings(
-        is_array($resolvedMatchingPayload['positionAdjustment'] ?? null) ? $resolvedMatchingPayload['positionAdjustment'] : []
-    );
+    $positionSettings = matching_position_settings_from_payload($resolvedMatchingPayload);
     $lineGeometries = build_matching_line_geometries_for_job($job, $ocrText);
     $valuePatterns = is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : [];
     $zoneMatches = detect_configured_zone_matches(

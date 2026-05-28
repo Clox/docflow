@@ -10,10 +10,18 @@ try {
         'positionAdjustment' => normalize_matching_position_adjustment_settings(
             is_array($payload['positionAdjustment'] ?? null) ? $payload['positionAdjustment'] : []
         ),
+        'bboxSpanBuilding' => normalize_matching_bbox_span_building_settings(
+            is_array($payload['bboxSpanBuilding'] ?? null) ? $payload['bboxSpanBuilding'] : []
+        ),
+        'dataFieldAcceptanceThreshold' => is_numeric($payload['dataFieldAcceptanceThreshold'] ?? null)
+            ? clamp_confidence((float) $payload['dataFieldAcceptanceThreshold'])
+            : 0.5,
     ]);
 } catch (Throwable $e) {
     json_response([
         'replacements' => [],
         'positionAdjustment' => default_matching_position_adjustment_settings(),
+        'bboxSpanBuilding' => default_matching_bbox_span_building_settings(),
+        'dataFieldAcceptanceThreshold' => 0.5,
     ], 500);
 }

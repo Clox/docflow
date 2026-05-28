@@ -42,9 +42,16 @@ if (array_key_exists('positionAdjustment', $payload) && !is_array($payload['posi
     json_response(['error' => 'Invalid position adjustment payload'], 400);
     exit;
 }
+if (array_key_exists('bboxSpanBuilding', $payload) && !is_array($payload['bboxSpanBuilding'])) {
+    json_response(['error' => 'Invalid bbox span payload'], 400);
+    exit;
+}
 
 $positionAdjustment = normalize_matching_position_adjustment_settings(
     is_array($payload['positionAdjustment'] ?? null) ? $payload['positionAdjustment'] : []
+);
+$bboxSpanBuilding = normalize_matching_bbox_span_building_settings(
+    is_array($payload['bboxSpanBuilding'] ?? null) ? $payload['bboxSpanBuilding'] : []
 );
 
 $dataFieldAcceptanceThreshold = is_numeric($payload['dataFieldAcceptanceThreshold'] ?? null)
@@ -58,6 +65,7 @@ try {
     write_json_file(DATA_DIR . '/matching.json', [
         'replacements' => $normalized,
         'positionAdjustment' => $positionAdjustment,
+        'bboxSpanBuilding' => $bboxSpanBuilding,
         'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
     ]);
 
@@ -71,6 +79,7 @@ try {
         !== json_encode([
             'replacements' => $normalized,
             'positionAdjustment' => $positionAdjustment,
+            'bboxSpanBuilding' => $bboxSpanBuilding,
             'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
     ) {
@@ -81,6 +90,7 @@ try {
         'ok' => true,
         'replacements' => $normalized,
         'positionAdjustment' => $positionAdjustment,
+        'bboxSpanBuilding' => $bboxSpanBuilding,
         'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
         'reprocessedJobs' => $reprocessedJobs,
     ]);

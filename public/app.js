@@ -233,6 +233,8 @@ let matchingDownXOffsetPenaltyEl = null;
 let matchingDownYDistanceCurveEl = null;
 let matchingDownYDistanceCurvePreviewEl = null;
 let matchingDownYDistanceCurveAddPointEl = null;
+let matchingMaxHorizontalGapMultiplierEl = null;
+let matchingMaxVerticalOffsetMultiplierEl = null;
 let matchingDataFieldAcceptanceThresholdEl = null;
 let ocrSkipExistingTextEl = null;
 let ocrOptimizeLevelEl = null;
@@ -523,6 +525,7 @@ let sendersDraft = [];
 let sendersUnlinkedIdentifiers = [];
 let matchingDraft = [];
 let matchingPositionAdjustmentDraft = defaultMatchingPositionAdjustmentSettings();
+let matchingBboxSpanBuildingDraft = defaultMatchingBboxSpanBuildingSettings();
 let matchingDataFieldAcceptanceThresholdDraft = 0.5;
 let ocrSkipExistingTextBaseline = true;
 let ocrOptimizeLevelBaseline = 1;
@@ -19308,6 +19311,8 @@ function bindSettingsPanelRefs(tabId) {
     matchingDownYDistanceCurveEl = document.getElementById('matching-down-y-distance-curve');
     matchingDownYDistanceCurvePreviewEl = document.getElementById('matching-down-y-distance-curve-preview');
     matchingDownYDistanceCurveAddPointEl = document.getElementById('matching-down-y-distance-curve-add-point');
+    matchingMaxHorizontalGapMultiplierEl = document.getElementById('matching-max-horizontal-gap-multiplier');
+    matchingMaxVerticalOffsetMultiplierEl = document.getElementById('matching-max-vertical-offset-multiplier');
     matchingDataFieldAcceptanceThresholdEl = document.getElementById('matching-data-field-acceptance-threshold');
     const bindMatchingPenaltyInput = (inputEl, key) => {
       if (!(inputEl instanceof HTMLInputElement)) {
@@ -19328,6 +19333,21 @@ function bindSettingsPanelRefs(tabId) {
     bindMatchingPenaltyInput(matchingOtherMatchKeyPenaltyEl, 'otherMatchKeyPenalty');
     bindMatchingPenaltyInput(matchingRightYOffsetPenaltyEl, 'rightYOffsetPenalty');
     bindMatchingPenaltyInput(matchingDownXOffsetPenaltyEl, 'downXOffsetPenalty');
+    const bindMatchingBboxSpanInput = (inputEl, key) => {
+      if (!(inputEl instanceof HTMLInputElement)) {
+        return;
+      }
+      inputEl.addEventListener('input', () => {
+        matchingBboxSpanBuildingDraft[key] = clampMatchingDecimal(
+          inputEl.value,
+          matchingBboxSpanBuildingDraft[key],
+          null
+        );
+        updateSettingsActionButtons();
+      });
+    };
+    bindMatchingBboxSpanInput(matchingMaxHorizontalGapMultiplierEl, 'maxHorizontalGapMultiplier');
+    bindMatchingBboxSpanInput(matchingMaxVerticalOffsetMultiplierEl, 'maxVerticalOffsetMultiplier');
     if (matchingDownYDistanceCurveAddPointEl instanceof HTMLButtonElement) {
       matchingDownYDistanceCurveAddPointEl.addEventListener('click', () => {
         const curve = sanitizeMatchingPenaltyCurve(matchingPositionAdjustmentDraft.downYDistancePenaltyCurve);
@@ -19366,6 +19386,7 @@ function bindSettingsPanelRefs(tabId) {
       const replacements = Array.isArray(parsed.replacements) ? parsed.replacements : [];
       matchingDraft = replacements.map(sanitizeReplacement);
       matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(parsed.positionAdjustment);
+      matchingBboxSpanBuildingDraft = sanitizeMatchingBboxSpanBuildingSettings(parsed.bboxSpanBuilding);
       matchingDataFieldAcceptanceThresholdDraft = parsed.dataFieldAcceptanceThreshold ?? 0.5;
       if (matchingDraft.length === 0) {
         matchingDraft = [defaultReplacement()];
@@ -20206,10 +20227,16 @@ function sanitizeOcrTextExtractionMethod(value, fallback = 'layout') {
   return fallback;
 }
 
-function normalizedMatchingJson(replacements, positionAdjustment = matchingPositionAdjustmentDraft, dataFieldAcceptanceThreshold = matchingDataFieldAcceptanceThresholdDraft) {
+function normalizedMatchingJson(
+  replacements,
+  positionAdjustment = matchingPositionAdjustmentDraft,
+  dataFieldAcceptanceThreshold = matchingDataFieldAcceptanceThresholdDraft,
+  bboxSpanBuilding = matchingBboxSpanBuildingDraft
+) {
   return JSON.stringify({
     replacements: replacements.map(sanitizeReplacement),
     positionAdjustment: sanitizeMatchingPositionAdjustmentSettings(positionAdjustment),
+    bboxSpanBuilding: sanitizeMatchingBboxSpanBuildingSettings(bboxSpanBuilding),
     dataFieldAcceptanceThreshold
   });
 }
@@ -20818,6 +20845,30 @@ function sanitizeMatchingPositionAdjustmentSettings(value) {
     ),
     downYDistancePenaltyCurve: sanitizeMatchingPenaltyCurve(input.downYDistancePenaltyCurve, defaults.downYDistancePenaltyCurve)
   };
+}
+
+function defaultMatchingBboxSpanBuildingSettings() {
+  return {
+    maxHorizontalGapMultiplier: 2.5,
+    maxVerticalOffsetMultiplier: 0.4,
+  };
+}
+
+function sanitizeMatchingBboxSpanBuildingSettings(value) {
+  const input = value && typeof value === 'object' ? value : {};
+  const defaults = defaultMatchingBboxSpanBuildingSettings();
+  return {
+    maxHorizontalGapMultiplier: clampMatchingDecimal(input.maxHorizontalGapMultiplier, defaults.maxHorizontalGapMultiplier, null),
+    maxVerticalOffsetMultiplier: clampMatchingDecimal(input.maxVerticalOffsetMultiplier, defaults.maxVerticalOffsetMultiplier, null),
+  };
+}
+
+function formatMatchingMultiplierInput(value) {
+  const resolved = clampMatchingDecimal(value, 0, null);
+  if (Number.isInteger(resolved)) {
+    return String(resolved);
+  }
+  return resolved.toFixed(2).replace(/0+$/u, '').replace(/\.$/u, '');
 }
 
 function defaultSenderDraft() {
@@ -23508,7 +23559,16 @@ function defaultExtractionFieldRuleSet() {
     amountWholeGroup: null,
     amountFractionGroup: null,
     scope: null,
+    unboundedValuePatternSpan: false,
   };
+}
+
+function sanitizeExtractionFieldUnboundedValuePatternSpan(input) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const nested = source.spanBuilding && typeof source.spanBuilding === 'object' && !Array.isArray(source.spanBuilding)
+    ? source.spanBuilding
+    : {};
+  return source.unboundedValuePatternSpan === true || nested.unboundedValuePatternSpan === true;
 }
 
 function sanitizeExtractionFieldAliasesInput(aliases, legacyFallback = '') {
@@ -23781,6 +23841,7 @@ function sanitizeExtractionFieldRuleSet(ruleSet, legacyField = null) {
     amountWholeGroup: sanitizeExtractionFieldCaptureGroup(hasExplicitRuleSet ? input.amountWholeGroup : legacy.amountWholeGroup),
     amountFractionGroup: sanitizeExtractionFieldCaptureGroup(hasExplicitRuleSet ? input.amountFractionGroup : legacy.amountFractionGroup),
     scope,
+    unboundedValuePatternSpan: sanitizeExtractionFieldUnboundedValuePatternSpan(hasExplicitRuleSet ? input : legacy),
   };
 }
 
@@ -25969,6 +26030,12 @@ function syncMatchingPositionAdjustmentInputs() {
   if (matchingDownXOffsetPenaltyEl) {
     matchingDownXOffsetPenaltyEl.value = formatMatchingPercentInput(matchingPositionAdjustmentDraft.downXOffsetPenalty, null);
   }
+  if (matchingMaxHorizontalGapMultiplierEl) {
+    matchingMaxHorizontalGapMultiplierEl.value = formatMatchingMultiplierInput(matchingBboxSpanBuildingDraft.maxHorizontalGapMultiplier);
+  }
+  if (matchingMaxVerticalOffsetMultiplierEl) {
+    matchingMaxVerticalOffsetMultiplierEl.value = formatMatchingMultiplierInput(matchingBboxSpanBuildingDraft.maxVerticalOffsetMultiplier);
+  }
   if (matchingDataFieldAcceptanceThresholdEl) {
     matchingDataFieldAcceptanceThresholdEl.value = formatMatchingPercentInput(matchingDataFieldAcceptanceThresholdDraft, null);
   }
@@ -27610,6 +27677,23 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       });
       valuePatternInput.addEventListener('scroll', syncValuePatternHighlightScroll);
 
+      const unboundedValuePatternLabel = document.createElement('label');
+      unboundedValuePatternLabel.className = 'extraction-field-rule-set-toggle extraction-field-span-unbounded-toggle';
+      const unboundedValuePatternCheckbox = document.createElement('input');
+      unboundedValuePatternCheckbox.type = 'checkbox';
+      unboundedValuePatternCheckbox.checked = sanitizeExtractionFieldUnboundedValuePatternSpan(ruleSet) === true;
+      const unboundedValuePatternText = document.createElement('span');
+      unboundedValuePatternText.textContent = 'Låt värdemönster söka utan layoutgräns';
+      unboundedValuePatternLabel.append(unboundedValuePatternCheckbox, unboundedValuePatternText);
+      const unboundedValuePatternField = document.createElement('div');
+      unboundedValuePatternField.className = 'floating-input-group extraction-field-span-unbounded-field';
+      unboundedValuePatternField.appendChild(unboundedValuePatternLabel);
+      const unboundedValuePatternHelp = document.createElement('div');
+      unboundedValuePatternHelp.className = 'extraction-field-span-help';
+      unboundedValuePatternHelp.textContent = 'Används för specialfall där värdemönstret behöver kunna matcha över ett långt område, till exempel maskinläsningsrader på bankgiroavier. När detta är avgränsat används layouten först för att bygga rimliga värdespann.';
+      unboundedValuePatternField.appendChild(unboundedValuePatternHelp);
+      valuePatternOptionBlock.appendChild(unboundedValuePatternField);
+
       const interpretationRow = document.createElement('div');
       interpretationRow.className = 'extraction-field-interpretation-row';
 
@@ -27807,6 +27891,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
             isRegex: scopeIsRegex === true,
           }
           : null;
+        collection[index].ruleSets[ruleSetIndex].unboundedValuePatternSpan = useValuePatternCheckbox.checked && unboundedValuePatternCheckbox.checked;
         collection[index].ruleSets[ruleSetIndex].datePosition = sanitizeExtractionFieldPosition(datePositionSelect.value);
         searchTermsField.hidden = !requiresSearchTermsCheckbox.checked;
         scopeField.hidden = !scopeCheckbox.checked;
@@ -27818,6 +27903,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         valuePatternInput.readOnly = collection[index].ruleSets[ruleSetIndex].patternSource === 'reference';
         valuePatternInput.setAttribute('aria-readonly', valuePatternInput.readOnly ? 'true' : 'false');
         valuePatternInputWrap.classList.toggle('is-readonly', valuePatternInput.readOnly);
+        unboundedValuePatternField.hidden = !useValuePatternCheckbox.checked;
+        unboundedValuePatternCheckbox.disabled = !useValuePatternCheckbox.checked;
         searchOptionBlock.classList.toggle('is-active', requiresSearchTermsCheckbox.checked);
         scopeOptionBlock.classList.toggle('is-active', scopeCheckbox.checked);
         valuePatternOptionBlock.classList.toggle('is-active', useValuePatternCheckbox.checked);
@@ -27883,6 +27970,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       normalizationCharsInput.addEventListener('input', syncRuleSetUi);
       datePositionSelect.addEventListener('change', syncRuleSetUi);
       amountPositionSelect.addEventListener('change', syncRuleSetUi);
+      unboundedValuePatternCheckbox.addEventListener('change', syncRuleSetUi);
       captureGroupSelect.addEventListener('change', () => {
         collection[index].ruleSets[ruleSetIndex].captureGroup = sanitizeExtractionFieldCaptureGroup(captureGroupSelect.value);
         syncRuleSetUi();
@@ -27940,6 +28028,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         captureGroup: null,
         amountWholeGroup: null,
         amountFractionGroup: null,
+        unboundedValuePatternSpan: baseRuleSet.unboundedValuePatternSpan === true,
       });
       collection[index].ruleSets = nextRuleSets;
       renderExtractionFieldsEditor();
@@ -31740,11 +31829,12 @@ async function loadMatchingSettings() {
 
   matchingDraft = payload.replacements.map(sanitizeReplacement);
   matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(payload.positionAdjustment);
+  matchingBboxSpanBuildingDraft = sanitizeMatchingBboxSpanBuildingSettings(payload.bboxSpanBuilding);
   matchingDataFieldAcceptanceThresholdDraft = payload.dataFieldAcceptanceThreshold ?? 0.5;
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -32035,6 +32125,7 @@ async function saveSendersSettings() {
 async function saveMatchingSettings() {
   const normalized = matchingDraft.map(sanitizeReplacement);
   const positionAdjustment = sanitizeMatchingPositionAdjustmentSettings(matchingPositionAdjustmentDraft);
+  const bboxSpanBuilding = sanitizeMatchingBboxSpanBuildingSettings(matchingBboxSpanBuildingDraft);
   const response = await fetch('/api/save-matching-settings.php', {
     method: 'POST',
     headers: {
@@ -32043,6 +32134,7 @@ async function saveMatchingSettings() {
     body: JSON.stringify({
       replacements: normalized,
       positionAdjustment,
+      bboxSpanBuilding,
       dataFieldAcceptanceThreshold: matchingDataFieldAcceptanceThresholdDraft
     })
   });
@@ -32057,11 +32149,12 @@ async function saveMatchingSettings() {
 
   matchingDraft = payload.replacements.map(sanitizeReplacement);
   matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(payload.positionAdjustment);
+  matchingBboxSpanBuildingDraft = sanitizeMatchingBboxSpanBuildingSettings(payload.bboxSpanBuilding);
   matchingDataFieldAcceptanceThresholdDraft = payload.dataFieldAcceptanceThreshold ?? 0.5;
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft);
   renderMatchingEditor();
   watchReprocessedJobIdsFromPayload(payload);
   await invalidateAnalysisViews();
@@ -33013,8 +33106,9 @@ settingsTabEls.forEach((tabButton) => {
         alert('Kunde inte ladda matchningsinställningar.');
         matchingDraft = [defaultReplacement()];
         matchingPositionAdjustmentDraft = defaultMatchingPositionAdjustmentSettings();
+        matchingBboxSpanBuildingDraft = defaultMatchingBboxSpanBuildingSettings();
         matchingDataFieldAcceptanceThresholdDraft = 0.5;
-        matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft);
+        matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft);
         renderMatchingEditor();
       } else if (tabId === 'ocr-processing') {
         alert('Kunde inte ladda OCR-inställningar.');

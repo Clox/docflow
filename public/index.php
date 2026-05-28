@@ -584,6 +584,22 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </div>
       <p>Kandidater som ligger till vänster eller ovanför förkastas. För kandidater till höger används bara y-avvikelse. För kandidater under används x-avvikelse och separat straff för vertikalt avstånd.</p>
     </div>
+    <div class="matching-bbox-span-section">
+      <h4>Bbox-sammanslagning</h4>
+      <p>Styr hur närliggande OCR-bboxar får byggas ihop till söktext och värden.</p>
+      <div class="matching-threshold-row">
+        <div class="matching-threshold-field">
+          <label class="settings-label" for="matching-max-horizontal-gap-multiplier">Max horisontellt avstånd</label>
+          <input id="matching-max-horizontal-gap-multiplier" type="number" min="0" step="0.1" inputmode="decimal">
+          <p class="settings-help-text">Hur långt det får vara mellan två bboxar för att de ska kunna räknas som samma textspann. Värdet multipliceras med textens ungefärliga höjd.</p>
+        </div>
+        <div class="matching-threshold-field">
+          <label class="settings-label" for="matching-max-vertical-offset-multiplier">Max vertikal avvikelse</label>
+          <input id="matching-max-vertical-offset-multiplier" type="number" min="0" step="0.1" inputmode="decimal">
+          <p class="settings-help-text">Hur mycket två bboxar får skilja i höjdled för att räknas som samma rad/textspann. Värdet multipliceras med textens ungefärliga höjd.</p>
+        </div>
+      </div>
+    </div>
     <div class="matching-acceptance-threshold-section">
       <h4>Accepterade datafältsvärden</h4>
       <p>Minsta säkerhet som krävs för att en datafältsmatchning ska accepteras som ett giltigt värde.</p>
