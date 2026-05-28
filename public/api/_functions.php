@@ -4468,7 +4468,7 @@ function normalize_value_pattern_definition(mixed $input, int $fallbackIndex = 0
         'name' => $name,
         'pattern' => $pattern,
         'isRegex' => ($input['isRegex'] ?? true) !== false,
-        'enabled' => ($input['enabled'] ?? true) !== false,
+        'enabled' => true,
         'description' => is_string($input['description'] ?? null) ? trim((string) $input['description']) : '',
     ];
 }

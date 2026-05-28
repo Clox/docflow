@@ -23379,7 +23379,7 @@ function sanitizeValuePattern(row, fallbackIndex = 0) {
     name,
     pattern: typeof input.pattern === 'string' ? input.pattern : '',
     isRegex: input.isRegex !== false,
-    enabled: input.enabled !== false,
+    enabled: true,
     description: typeof input.description === 'string' ? input.description : '',
   };
 }
@@ -28286,23 +28286,10 @@ function renderValuePatternsEditor() {
     const inspector = createMatchPatternInspector({ stateKey: `value-pattern:${current.id || index}` });
     registerMatchPatternInspectorInGroup('value-patterns', inspector);
 
-    const enabledLabel = document.createElement('label');
-    enabledLabel.className = 'extraction-field-rule-set-toggle extraction-zone-enabled';
-    const enabledCheckbox = document.createElement('input');
-    enabledCheckbox.type = 'checkbox';
-    enabledCheckbox.checked = current.enabled !== false;
-    const enabledText = document.createElement('span');
-    enabledText.textContent = 'Aktiv';
-    enabledLabel.append(enabledCheckbox, enabledText);
-
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.placeholder = 'Ex: Bankgiroavi';
     nameInput.value = current.name;
-    const idInput = document.createElement('input');
-    idInput.type = 'text';
-    idInput.placeholder = 'bankgiro_avi';
-    idInput.value = current.id;
     const descriptionInput = document.createElement('input');
     descriptionInput.type = 'text';
     descriptionInput.placeholder = 'Kort beskrivning';
@@ -28367,9 +28354,8 @@ function renderValuePatternsEditor() {
     const syncPattern = () => {
       valuePatternsDraft[index] = sanitizeValuePattern({
         ...valuePatternsDraft[index],
-        id: idInput.value,
         name: nameInput.value,
-        enabled: enabledCheckbox.checked,
+        enabled: true,
         description: descriptionInput.value,
         pattern: patternInput.value,
         isRegex: valuePatternsDraft[index]?.isRegex !== false,
@@ -28378,7 +28364,7 @@ function renderValuePatternsEditor() {
       syncHighlight();
       updateSettingsActionButtons();
     };
-    [enabledCheckbox, nameInput, idInput, descriptionInput, patternInput].forEach((input) => {
+    [nameInput, descriptionInput, patternInput].forEach((input) => {
       input.addEventListener('input', syncPattern);
       input.addEventListener('change', syncPattern);
     });
@@ -28386,9 +28372,7 @@ function renderValuePatternsEditor() {
     const fields = document.createElement('div');
     fields.className = 'extraction-field-header-fields value-pattern-header-fields';
     fields.append(
-      enabledLabel,
       createFloatingField('Namn', nameInput),
-      createFloatingField('Id', idInput),
       createFloatingField('Beskrivning', descriptionInput),
       patternField
     );
