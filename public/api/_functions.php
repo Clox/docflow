@@ -14389,6 +14389,229 @@ function sort_extraction_field_matches_by_confidence(array $matches): array
     return array_values($matches);
 }
 
+function extraction_field_match_dedupe_value(array $match): string
+{
+    $value = $match['value'] ?? null;
+    if (is_scalar($value)) {
+        return normalized_field_matching_text($value);
+    }
+
+    $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return is_string($encoded) ? normalized_field_matching_text($encoded) : '';
+}
+
+function extraction_field_bbox_overlap_ratio(?array $left, ?array $right): float
+{
+    if ($left === null || $right === null) {
+        return 0.0;
+    }
+
+    $intersection = bbox_intersection_area($left, $right);
+    if ($intersection <= 0.0) {
+        return 0.0;
+    }
+
+    $smallestArea = min(bbox_area($left), bbox_area($right));
+    if ($smallestArea <= 0.0) {
+        return 0.0;
+    }
+
+    return $intersection / $smallestArea;
+}
+
+function extraction_field_bboxes_clearly_overlap(?array $left, ?array $right, float $minRatio = 0.45): bool
+{
+    if ($left === null || $right === null) {
+        return false;
+    }
+
+    return extraction_field_bbox_overlap_ratio($left, $right) >= $minRatio
+        || bbox_iou($left, $right) >= 0.2;
+}
+
+function extraction_field_match_same_value_region(array $left, array $right): bool
+{
+    $leftValueBbox = is_array($left['valueBbox'] ?? null) ? $left['valueBbox'] : null;
+    $rightValueBbox = is_array($right['valueBbox'] ?? null) ? $right['valueBbox'] : null;
+    if (extraction_field_bboxes_clearly_overlap($leftValueBbox, $rightValueBbox, 0.55)) {
+        return true;
+    }
+
+    if ($leftValueBbox !== null || $rightValueBbox !== null) {
+        return false;
+    }
+
+    return (int) ($left['lineIndex'] ?? PHP_INT_MIN) === (int) ($right['lineIndex'] ?? PHP_INT_MAX)
+        && (int) ($left['start'] ?? PHP_INT_MIN) === (int) ($right['start'] ?? PHP_INT_MAX);
+}
+
+function extraction_field_match_same_key_region(array $left, array $right): bool
+{
+    $leftLabelBbox = is_array($left['labelBbox'] ?? null) ? $left['labelBbox'] : null;
+    $rightLabelBbox = is_array($right['labelBbox'] ?? null) ? $right['labelBbox'] : null;
+    if (extraction_field_bboxes_clearly_overlap($leftLabelBbox, $rightLabelBbox, 0.2)) {
+        return true;
+    }
+
+    if ($leftLabelBbox !== null && $rightLabelBbox !== null) {
+        $leftValueBbox = is_array($left['valueBbox'] ?? null) ? $left['valueBbox'] : null;
+        $rightValueBbox = is_array($right['valueBbox'] ?? null) ? $right['valueBbox'] : null;
+        $leftRegion = union_bboxes($leftLabelBbox, $leftValueBbox);
+        $rightRegion = union_bboxes($rightLabelBbox, $rightValueBbox);
+        if (extraction_field_bboxes_clearly_overlap($leftRegion, $rightRegion, 0.6)) {
+            return true;
+        }
+    }
+
+    if ($leftLabelBbox !== null || $rightLabelBbox !== null) {
+        return false;
+    }
+
+    $leftLabelLine = is_int($left['labelLineIndex'] ?? null) ? (int) $left['labelLineIndex'] : null;
+    $rightLabelLine = is_int($right['labelLineIndex'] ?? null) ? (int) $right['labelLineIndex'] : null;
+    return $leftLabelLine !== null
+        && $rightLabelLine !== null
+        && $leftLabelLine === $rightLabelLine;
+}
+
+function extraction_field_matches_are_alternative_interpretations(array $left, array $right): bool
+{
+    $leftValue = extraction_field_match_dedupe_value($left);
+    if ($leftValue === '' || $leftValue !== extraction_field_match_dedupe_value($right)) {
+        return false;
+    }
+
+    if (!extraction_field_match_same_value_region($left, $right)) {
+        return false;
+    }
+
+    return extraction_field_match_same_key_region($left, $right);
+}
+
+function extraction_field_match_specificity_length(array $match): int
+{
+    $candidates = [
+        is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : '',
+        is_string($match['labelText'] ?? null) ? trim((string) $match['labelText']) : '',
+        is_string($match['matchText'] ?? null) ? trim((string) $match['matchText']) : '',
+    ];
+
+    $length = 0;
+    foreach ($candidates as $candidate) {
+        if ($candidate !== '') {
+            $candidateLength = function_exists('mb_strlen') ? mb_strlen($candidate, 'UTF-8') : strlen($candidate);
+            $length = max($length, (int) $candidateLength);
+        }
+    }
+
+    return $length;
+}
+
+function extraction_field_match_key_span_score(array $match): int
+{
+    $text = is_string($match['labelText'] ?? null) && trim((string) $match['labelText']) !== ''
+        ? trim((string) $match['labelText'])
+        : (is_string($match['searchTerm'] ?? null) ? trim((string) $match['searchTerm']) : '');
+    if ($text === '') {
+        return 0;
+    }
+
+    preg_match_all('/\S+/u', $text, $words);
+    return is_array($words[0] ?? null) ? count($words[0]) : 0;
+}
+
+function preferred_extraction_field_match(array $left, array $right): array
+{
+    $leftConfidence = isset($left['finalConfidence']) && is_numeric($left['finalConfidence'])
+        ? (float) $left['finalConfidence']
+        : (float) ($left['confidence'] ?? ($left['baseConfidence'] ?? 0.0));
+    $rightConfidence = isset($right['finalConfidence']) && is_numeric($right['finalConfidence'])
+        ? (float) $right['finalConfidence']
+        : (float) ($right['confidence'] ?? ($right['baseConfidence'] ?? 0.0));
+    if ($leftConfidence !== $rightConfidence) {
+        return $leftConfidence > $rightConfidence ? $left : $right;
+    }
+
+    $leftKeyScore = extraction_field_match_key_span_score($left);
+    $rightKeyScore = extraction_field_match_key_span_score($right);
+    if ($leftKeyScore !== $rightKeyScore) {
+        return $leftKeyScore > $rightKeyScore ? $left : $right;
+    }
+
+    $leftSpecificity = extraction_field_match_specificity_length($left);
+    $rightSpecificity = extraction_field_match_specificity_length($right);
+    if ($leftSpecificity !== $rightSpecificity) {
+        return $leftSpecificity > $rightSpecificity ? $left : $right;
+    }
+
+    $leftNoise = is_numeric($left['noisePenalty'] ?? null) ? (float) $left['noisePenalty'] : 0.0;
+    $rightNoise = is_numeric($right['noisePenalty'] ?? null) ? (float) $right['noisePenalty'] : 0.0;
+    if ($leftNoise !== $rightNoise) {
+        return $leftNoise < $rightNoise ? $left : $right;
+    }
+
+    $leftPage = is_int($left['pageNumber'] ?? null) ? (int) $left['pageNumber'] : PHP_INT_MAX;
+    $rightPage = is_int($right['pageNumber'] ?? null) ? (int) $right['pageNumber'] : PHP_INT_MAX;
+    if ($leftPage !== $rightPage) {
+        return $leftPage < $rightPage ? $left : $right;
+    }
+
+    $leftLine = is_int($left['lineIndex'] ?? null) ? (int) $left['lineIndex'] : PHP_INT_MAX;
+    $rightLine = is_int($right['lineIndex'] ?? null) ? (int) $right['lineIndex'] : PHP_INT_MAX;
+    if ($leftLine !== $rightLine) {
+        return $leftLine < $rightLine ? $left : $right;
+    }
+
+    $leftStart = is_int($left['start'] ?? null) ? (int) $left['start'] : PHP_INT_MAX;
+    $rightStart = is_int($right['start'] ?? null) ? (int) $right['start'] : PHP_INT_MAX;
+    if ($leftStart !== $rightStart) {
+        return $leftStart < $rightStart ? $left : $right;
+    }
+
+    return $left;
+}
+
+function dedupe_extraction_field_matches(array $matches): array
+{
+    $deduped = [];
+    foreach ($matches as $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+
+        $matchedExisting = false;
+        foreach ($deduped as $index => $existing) {
+            if (!is_array($existing) || !extraction_field_matches_are_alternative_interpretations($existing, $match)) {
+                continue;
+            }
+
+            $deduped[$index] = preferred_extraction_field_match($existing, $match);
+            $matchedExisting = true;
+            break;
+        }
+
+        if (!$matchedExisting) {
+            $deduped[] = $match;
+        }
+    }
+
+    return sort_extraction_field_matches_by_confidence($deduped);
+}
+
+function dedupe_extraction_field_result_matches(array $results): array
+{
+    foreach ($results as &$result) {
+        if (!is_array($result) || !is_array($result['matches'] ?? null)) {
+            continue;
+        }
+
+        $result['matches'] = dedupe_extraction_field_matches($result['matches']);
+    }
+    unset($result);
+
+    return $results;
+}
+
 function candidate_confidence_score(
     array $components
 ): float
@@ -18749,7 +18972,7 @@ function extract_configured_text_field_results(
     }
 
     return apply_extraction_field_acceptance_threshold(
-        apply_cross_matching_key_penalties($results, $positionSettings),
+        dedupe_extraction_field_result_matches(apply_cross_matching_key_penalties($results, $positionSettings)),
         $acceptanceThreshold
     );
 }
