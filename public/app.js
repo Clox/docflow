@@ -385,6 +385,7 @@ let ocrDebugExportStatusTone = 'info';
 let ocrDebugExportCurrentFilter = 'ready';
 let ocrDebugExportHasOpened = false;
 let ocrDebugExportShowIdentical = false;
+let ocrDebugExportActiveCommentDraft = null;
 
 let state = {
   processingJobs: [],
@@ -7115,6 +7116,9 @@ async function saveOcrDebugExportComment(folderName, comment) {
     ocrDebugExportItems = ocrDebugExportItems.map((item) => (
       item && item.folderName === normalizedFolderName ? { ...item, comment: savedComment } : item
     ));
+    if (ocrDebugExportActiveCommentDraft && ocrDebugExportActiveCommentDraft.folderName === normalizedFolderName) {
+      ocrDebugExportActiveCommentDraft = null;
+    }
     setOcrDebugExportStatus('Kommentaren sparades.', 'success');
     return true;
   } catch (error) {
@@ -7123,13 +7127,41 @@ async function saveOcrDebugExportComment(folderName, comment) {
   }
 }
 
-function createOcrDebugExportCommentEditor(item) {
+function snapshotCommentDraftFromDom() {
+  if (!(ocrDebugExportListEl instanceof HTMLElement)) {
+    return null;
+  }
+  const active = document.activeElement;
+  if (!(active instanceof HTMLInputElement) || !active.classList.contains('snapshot-comment-input')) {
+    return null;
+  }
+  const row = active.closest('.settings-backup-row');
+  if (!(row instanceof HTMLElement)) {
+    return null;
+  }
+  const folderName = typeof row.dataset.snapshotFolderName === 'string' ? row.dataset.snapshotFolderName.trim() : '';
+  if (folderName === '') {
+    return null;
+  }
+  return {
+    folderName,
+    value: active.value,
+    selectionStart: typeof active.selectionStart === 'number' ? active.selectionStart : active.value.length,
+    selectionEnd: typeof active.selectionEnd === 'number' ? active.selectionEnd : active.value.length,
+  };
+}
+
+function createOcrDebugExportCommentEditor(item, restoreDraft = null) {
   const wrapper = document.createElement('div');
   wrapper.className = 'snapshot-comment';
-  const initialComment = typeof item.comment === 'string' ? item.comment : '';
+  const folderName = typeof item.folderName === 'string' ? item.folderName.trim() : '';
+  const initialComment = restoreDraft && restoreDraft.folderName === folderName
+    ? String(restoreDraft.value ?? '')
+    : (typeof item.comment === 'string' ? item.comment : '');
 
   const renderDisplay = (comment) => {
     wrapper.replaceChildren();
+    wrapper.classList.remove('is-editing');
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'snapshot-comment-button';
@@ -7140,7 +7172,7 @@ function createOcrDebugExportCommentEditor(item) {
     wrapper.appendChild(button);
   };
 
-  const renderEditor = (comment) => {
+  const renderEditor = (comment, options = {}) => {
     wrapper.replaceChildren();
     wrapper.classList.add('is-editing');
     const input = document.createElement('input');
@@ -7148,6 +7180,14 @@ function createOcrDebugExportCommentEditor(item) {
     input.className = 'snapshot-comment-input';
     input.value = comment;
     input.placeholder = 'Lägg till kommentar...';
+    input.addEventListener('input', () => {
+      ocrDebugExportActiveCommentDraft = {
+        folderName,
+        value: input.value,
+        selectionStart: typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length,
+        selectionEnd: typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length,
+      };
+    });
     const actions = document.createElement('div');
     actions.className = 'snapshot-comment-actions';
     const saveButton = document.createElement('button');
@@ -7162,6 +7202,9 @@ function createOcrDebugExportCommentEditor(item) {
     wrapper.append(input, actions);
 
     const finish = (nextComment) => {
+      if (ocrDebugExportActiveCommentDraft && ocrDebugExportActiveCommentDraft.folderName === folderName) {
+        ocrDebugExportActiveCommentDraft = null;
+      }
       wrapper.classList.remove('is-editing');
       renderDisplay(nextComment);
     };
@@ -7190,11 +7233,28 @@ function createOcrDebugExportCommentEditor(item) {
         finish(comment);
       }
     });
-    input.focus();
-    input.select();
+    const shouldFocus = options.focus !== false;
+    if (shouldFocus) {
+      input.focus();
+      if (
+        Number.isInteger(options.selectionStart)
+        && Number.isInteger(options.selectionEnd)
+      ) {
+        input.setSelectionRange(options.selectionStart, options.selectionEnd);
+      } else {
+        input.select();
+      }
+    }
   };
 
-  renderDisplay(initialComment);
+  if (restoreDraft && restoreDraft.folderName === folderName) {
+    renderEditor(initialComment, {
+      selectionStart: restoreDraft.selectionStart,
+      selectionEnd: restoreDraft.selectionEnd,
+    });
+  } else {
+    renderDisplay(initialComment);
+  }
   return wrapper;
 }
 
@@ -8140,6 +8200,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
     return;
   }
 
+  const activeCommentDraft = snapshotCommentDraftFromDom() || ocrDebugExportActiveCommentDraft;
   const normalizedItems = Array.isArray(items) ? items : [];
   ocrDebugExportItems = normalizedItems;
   const availableFolderNames = new Set(normalizedItems
@@ -8256,7 +8317,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
       ? 'Skapas temporärt vid jämförelse och sparas inte.'
       : (isProcessing ? 'Snapshotten blir valbar när omanalysen är klar.' : (isFailed ? 'Ingen färdig snapshot skapades.' : item.exportDirectory));
 
-    const comment = isLive ? null : createOcrDebugExportCommentEditor(item);
+    const comment = isLive ? null : createOcrDebugExportCommentEditor(item, activeCommentDraft);
 
     main.append(titleRow, meta);
     if (isProcessing) {
@@ -8428,6 +8489,38 @@ function ocrDebugRunIsProcessing(run) {
   return run && typeof run === 'object' && run.status === 'processing';
 }
 
+function updateOcrDebugSnapshotProgressRow(item) {
+  if (!(ocrDebugExportListEl instanceof HTMLElement) || !item || typeof item !== 'object') {
+    return false;
+  }
+  const folderName = typeof item.folderName === 'string' ? item.folderName.trim() : '';
+  if (folderName === '') {
+    return false;
+  }
+  const row = Array.from(ocrDebugExportListEl.querySelectorAll('.settings-backup-row'))
+    .find((candidate) => candidate instanceof HTMLElement && candidate.dataset.snapshotFolderName === folderName) || null;
+  if (!(row instanceof HTMLElement)) {
+    return false;
+  }
+
+  const totalJobs = Number.isFinite(Number(item.totalJobs ?? item.jobCount)) ? Number(item.totalJobs ?? item.jobCount) : 0;
+  const completedJobs = Number.isFinite(Number(item.completedJobs)) ? Number(item.completedJobs) : 0;
+  const failedJobs = Number.isFinite(Number(item.failedJobs)) ? Number(item.failedJobs) : 0;
+
+  const meta = row.querySelector('.settings-backup-row-meta');
+  if (meta instanceof HTMLElement) {
+    meta.textContent = `Bearbetar dokument ${completedJobs} / ${totalJobs}${failedJobs > 0 ? `, ${failedJobs} misslyckades` : ''}`;
+  }
+
+  const progressBar = row.querySelector('.snapshot-progress-bar');
+  if (progressBar instanceof HTMLElement) {
+    const ratio = totalJobs > 0 ? Math.max(0, Math.min(1, (completedJobs + failedJobs) / totalJobs)) : 0;
+    progressBar.style.width = `${Math.round(ratio * 100)}%`;
+  }
+
+  return true;
+}
+
 function updateOcrDebugSnapshotRunsFromServer(runs) {
   if (!Array.isArray(runs) || runs.length === 0) {
     return;
@@ -8440,6 +8533,7 @@ function updateOcrDebugSnapshotRunsFromServer(runs) {
   });
 
   let changed = false;
+  let needsFullRender = false;
   runs.forEach((run) => {
     if (!run || typeof run !== 'object' || typeof run.folderName !== 'string' || run.folderName.trim() === '') {
       return;
@@ -8447,17 +8541,27 @@ function updateOcrDebugSnapshotRunsFromServer(runs) {
     const folderName = run.folderName.trim();
     const existing = byFolderName.get(folderName) || null;
     if (existing) {
+      const existingWasProcessing = existing.item && existing.item.status === 'processing';
+      const nextIsProcessing = run.status === 'processing';
       ocrDebugExportItems[existing.index] = {
         ...existing.item,
         ...run,
       };
+      if (existingWasProcessing && nextIsProcessing) {
+        if (!updateOcrDebugSnapshotProgressRow(ocrDebugExportItems[existing.index])) {
+          needsFullRender = true;
+        }
+      } else {
+        needsFullRender = true;
+      }
     } else {
       ocrDebugExportItems.unshift(run);
+      needsFullRender = true;
     }
     changed = true;
   });
 
-  if (changed && ocrDebugExportListEl instanceof HTMLElement) {
+  if (changed && needsFullRender && ocrDebugExportListEl instanceof HTMLElement) {
     renderOcrDebugExportList(ocrDebugExportItems);
   }
 }
@@ -27236,8 +27340,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
       const patternSourceSelect = document.createElement('select');
       [
-        ['manual', 'Manuellt värdemönster'],
-        ['reference', 'Befintligt värdemönster'],
+        ['manual', 'Manuellt'],
+        ['reference', 'Befintligt'],
       ].forEach(([value, label]) => {
         const option = document.createElement('option');
         option.value = value;
@@ -27245,16 +27349,17 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         patternSourceSelect.appendChild(option);
       });
       patternSourceSelect.value = String(ruleSet.patternSource || '').trim().toLowerCase() === 'reference' ? 'reference' : 'manual';
-      const patternSourceField = createFloatingField('Typ', patternSourceSelect, 'extraction-field-pattern-source-field');
+      const patternSourceField = createFloatingField('Källa', patternSourceSelect, 'extraction-field-pattern-source-field');
 
       const valuePatternReferenceSelect = document.createElement('select');
       populateValuePatternSelect(valuePatternReferenceSelect, ruleSet.valuePatternId);
-      const valuePatternReferenceField = createFloatingField('Befintligt värdemönster', valuePatternReferenceSelect, 'extraction-field-pattern-reference-field');
 
       const editValuePatternButton = document.createElement('button');
       editValuePatternButton.type = 'button';
-      editValuePatternButton.className = 'extraction-field-value-pattern-edit-button';
-      editValuePatternButton.textContent = 'Öppna värdemönster';
+      editValuePatternButton.className = 'selected-job-sender-open extraction-field-value-pattern-open';
+      editValuePatternButton.textContent = '↗';
+      editValuePatternButton.title = 'Öppna värdemönster';
+      editValuePatternButton.setAttribute('aria-label', 'Öppna värdemönster');
       editValuePatternButton.addEventListener('click', async () => {
         setSettingsTab('value-patterns');
         await ensureSettingsPanelReady('value-patterns');
@@ -27267,9 +27372,10 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
           highlightSettingsElement(target);
         }
       });
-      valuePatternOptionBlock.appendChild(patternSourceField);
-      valuePatternOptionBlock.appendChild(valuePatternReferenceField);
-      valuePatternOptionBlock.appendChild(editValuePatternButton);
+      const valuePatternReferenceControl = document.createElement('div');
+      valuePatternReferenceControl.className = 'extraction-field-pattern-reference-control';
+      valuePatternReferenceControl.append(valuePatternReferenceSelect, editValuePatternButton);
+      const valuePatternReferenceField = createFloatingField('Befintligt värdemönster', valuePatternReferenceControl, 'extraction-field-pattern-reference-field');
 
       const valuePatternField = document.createElement('div');
       valuePatternField.className = 'floating-input-group extraction-field-value-pattern-field';
@@ -27291,6 +27397,10 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       valuePatternField.appendChild(valuePatternInputWrap);
       valuePatternField.appendChild(valuePatternHelpDisclosure.panel);
 
+      const valuePatternSourceRow = document.createElement('div');
+      valuePatternSourceRow.className = 'extraction-field-value-pattern-source-row';
+      valuePatternSourceRow.append(patternSourceField, valuePatternReferenceField, valuePatternField);
+
       const valuePatternCaptureField = document.createElement('div');
       valuePatternCaptureField.className = 'extraction-field-capture-selection';
       const captureGroupSelect = document.createElement('select');
@@ -27300,7 +27410,7 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
       const amountWholeGroupField = createFloatingField('Kronor', amountWholeGroupSelect, 'extraction-field-capture-select-field');
       const amountFractionGroupField = createFloatingField('Ören', amountFractionGroupSelect, 'extraction-field-capture-select-field');
       valuePatternCaptureField.append(captureGroupField, amountWholeGroupField, amountFractionGroupField);
-      valuePatternOptionBlock.appendChild(valuePatternField);
+      valuePatternOptionBlock.appendChild(valuePatternSourceRow);
       valuePatternOptionBlock.appendChild(valuePatternCaptureField);
       optionalControls.appendChild(valuePatternOptionBlock);
 
@@ -27627,6 +27737,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
           : '';
         if (collection[index].ruleSets[ruleSetIndex].patternSource !== 'reference') {
           collection[index].ruleSets[ruleSetIndex].valuePattern = valuePatternInput.value;
+        } else {
+          valuePatternInput.value = effectiveRuleSetValuePattern(collection[index].ruleSets[ruleSetIndex]);
         }
         collection[index].ruleSets[ruleSetIndex].normalizationType = normalizationType;
         collection[index].ruleSets[ruleSetIndex].normalizationChars = normalizationCharsInput.value;
@@ -27650,8 +27762,10 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
         patternSourceField.hidden = !useValuePatternCheckbox.checked;
         valuePatternReferenceField.hidden = !useValuePatternCheckbox.checked || collection[index].ruleSets[ruleSetIndex].patternSource !== 'reference';
         editValuePatternButton.hidden = valuePatternReferenceField.hidden;
+        editValuePatternButton.disabled = valuePatternReferenceField.hidden || valuePatternReferenceSelect.value === '';
         valuePatternInput.readOnly = collection[index].ruleSets[ruleSetIndex].patternSource === 'reference';
         valuePatternInput.setAttribute('aria-readonly', valuePatternInput.readOnly ? 'true' : 'false');
+        valuePatternInputWrap.classList.toggle('is-readonly', valuePatternInput.readOnly);
         searchOptionBlock.classList.toggle('is-active', requiresSearchTermsCheckbox.checked);
         scopeOptionBlock.classList.toggle('is-active', scopeCheckbox.checked);
         valuePatternOptionBlock.classList.toggle('is-active', useValuePatternCheckbox.checked);
@@ -28143,7 +28257,7 @@ function renderValuePatternsEditor() {
     const row = createTreeRow({ markerless: true });
     const body = document.createElement('div');
     body.className = 'tree-body category-body extraction-field-editor-body value-pattern-body';
-    appendTreeBodyIcon(body, 'tree-body-icon tree-body-icon-zone');
+    appendTreeBodyIcon(body, 'tree-body-icon tree-body-icon-value-pattern');
     const actions = document.createElement('div');
     actions.className = 'extraction-field-editor-actions';
     const copyButton = document.createElement('button');

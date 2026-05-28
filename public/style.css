@@ -6633,6 +6633,20 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   box-sizing: border-box;
 }
 
+.tree-body-icon-value-pattern {
+  width: auto;
+  height: auto;
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 18px;
+}
+
+.tree-body-icon-value-pattern::before {
+  content: '(.*)';
+}
+
 .tree-body-icon-rule {
   width: 18px;
   height: 18px;
@@ -7526,6 +7540,57 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .extraction-field-value-pattern-field > .extraction-field-alias-input-wrap {
   width: 100%;
   max-width: 100%;
+}
+
+.extraction-field-value-pattern-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+
+.extraction-field-value-pattern-source-row > .extraction-field-pattern-source-field {
+  flex: 0 0 auto;
+  width: max-content;
+}
+
+.extraction-field-value-pattern-source-row > .extraction-field-pattern-source-field select {
+  width: auto;
+  min-width: 0;
+}
+
+.extraction-field-value-pattern-source-row > .extraction-field-pattern-reference-field {
+  flex: 1 1 260px;
+}
+
+.extraction-field-value-pattern-source-row > .extraction-field-value-pattern-field {
+  flex: 2 1 360px;
+}
+
+.extraction-field-pattern-reference-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.extraction-field-pattern-reference-control .selected-job-sender-open {
+  margin-left: 0;
+}
+
+.extraction-field-value-pattern-open:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.extraction-field-value-pattern-field .inline-input-wrap.is-readonly {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+}
+
+.extraction-field-value-pattern-field .inline-input-wrap.is-readonly .inline-input-control {
+  color: #475569;
 }
 
 .extraction-field-alias-row input {
