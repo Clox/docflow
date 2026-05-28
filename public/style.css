@@ -3179,7 +3179,7 @@ body.is-resizing-sidebar {
 
 .ocr-word-tooltip {
   position: fixed;
-  z-index: 45;
+  z-index: 49;
   width: min(560px, calc(100vw - 24px));
   max-width: min(560px, calc(100vw - 24px));
   max-height: min(72vh, calc(100vh - 24px));

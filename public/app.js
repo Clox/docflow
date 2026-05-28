@@ -3517,8 +3517,12 @@ function updateHashState() {
 function setViewMode(mode, options = {}) {
   const syncHash = options.syncHash !== false;
   const nextMode = sanitizeViewMode(mode);
+  const viewChanged = currentViewMode !== nextMode;
   if (currentViewMode === 'ocr' && nextMode !== 'ocr') {
     saveCurrentOcrViewState();
+  }
+  if (viewChanged) {
+    hideOcrWordTooltip();
   }
   currentViewMode = nextMode;
   viewModeEl.value = nextMode;
@@ -16203,15 +16207,8 @@ function clampOcrWordTooltipPosition(left, top) {
     return { left, top };
   }
 
-  const viewportPadding = 8;
   const rect = ocrWordTooltipEl.getBoundingClientRect();
-  const maxLeft = Math.max(viewportPadding, window.innerWidth - rect.width - viewportPadding);
-  const maxTop = Math.max(viewportPadding, window.innerHeight - rect.height - viewportPadding);
-
-  return {
-    left: Math.min(Math.max(left, viewportPadding), maxLeft),
-    top: Math.min(Math.max(top, viewportPadding), maxTop),
-  };
+  return clampFloatingDialogPosition({ left, top }, rect.width, rect.height, { left, top });
 }
 
 function positionOcrWordTooltip(anchorEl) {
@@ -18898,19 +18895,38 @@ function clampFloatingDialogLayout(layout, options = {}) {
   ));
   const sourceLeft = Number(source.left);
   const sourceTop = Number(source.top);
-  const rawLeft = Number.isFinite(sourceLeft) ? sourceLeft : fallback.left;
-  const rawTop = Number.isFinite(sourceTop) ? sourceTop : fallback.top;
-  const minLeft = SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX - width;
-  const maxLeft = window.innerWidth - SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX;
-  const minTop = 0;
-  const maxTop = window.innerHeight - SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX;
-  const left = Math.round(Math.min(maxLeft, Math.max(minLeft, rawLeft)));
-  const top = Math.round(Math.min(maxTop, Math.max(minTop, rawTop)));
+  const position = clampFloatingDialogPosition(
+    {
+      left: Number.isFinite(sourceLeft) ? sourceLeft : fallback.left,
+      top: Number.isFinite(sourceTop) ? sourceTop : fallback.top,
+    },
+    width,
+    height,
+    fallback
+  );
   return {
     width,
     height,
-    left,
-    top,
+    left: position.left,
+    top: position.top,
+  };
+}
+
+function clampFloatingDialogPosition(position, width, height, fallback = {}) {
+  const source = position && typeof position === 'object' ? position : {};
+  const fallbackLeft = Number.isFinite(Number(fallback.left)) ? Number(fallback.left) : 0;
+  const fallbackTop = Number.isFinite(Number(fallback.top)) ? Number(fallback.top) : 0;
+  const resolvedWidth = Math.max(0, Number(width) || 0);
+  const rawLeft = Number.isFinite(Number(source.left)) ? Number(source.left) : fallbackLeft;
+  const rawTop = Number.isFinite(Number(source.top)) ? Number(source.top) : fallbackTop;
+  const minLeft = SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX - resolvedWidth;
+  const maxLeft = window.innerWidth - SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX;
+  const minTop = 0;
+  const maxTop = window.innerHeight - SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX;
+
+  return {
+    left: Math.round(Math.min(maxLeft, Math.max(minLeft, rawLeft))),
+    top: Math.round(Math.min(maxTop, Math.max(minTop, rawTop))),
   };
 }
 
