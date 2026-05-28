@@ -17409,8 +17409,19 @@ function apply_extraction_field_acceptance_threshold(array $results, float $acce
         ));
         $selectionRuleSet = configured_field_selection_rule_set($result);
         $selectionType = extraction_field_rule_set_type($selectionRuleSet, $result);
+        $matchedRuleSetIndex = is_int($result['matchedRuleSetIndex'] ?? null) ? (int) $result['matchedRuleSetIndex'] : null;
+        $selectionMatches = $matchedRuleSetIndex !== null
+            ? array_values(array_filter(
+                $acceptedMatches,
+                static fn (array $match): bool => is_int($match['ruleSetIndex'] ?? null)
+                    && (int) $match['ruleSetIndex'] === $matchedRuleSetIndex
+            ))
+            : [];
+        if ($selectionMatches === []) {
+            $selectionMatches = $acceptedMatches;
+        }
         if ($selectionType === 'date') {
-            $selectedMatch = is_array($acceptedMatches[0] ?? null) ? $acceptedMatches[0] : null;
+            $selectedMatch = is_array($selectionMatches[0] ?? null) ? $selectionMatches[0] : null;
             $result['candidateMatches'] = $acceptedMatches;
             $result['matches'] = is_array($selectedMatch) ? [$selectedMatch] : [];
             $result['values'] = is_array($selectedMatch) && array_key_exists('value', $selectedMatch)
@@ -17419,7 +17430,7 @@ function apply_extraction_field_acceptance_threshold(array $results, float $acce
             $primaryMatch = $selectedMatch;
         } elseif ($selectionType === 'amount') {
             $selectedMatch = selected_occurrence_match(
-                $acceptedMatches,
+                $selectionMatches,
                 extraction_field_rule_set_position($selectionRuleSet, $selectionType)
             );
             $result['candidateMatches'] = $acceptedMatches;
@@ -21385,6 +21396,7 @@ function process_claimed_job(
     $senders = load_senders();
     $activeRules = [
         'archiveFolders' => is_array($activeRulesSource['archiveFolders'] ?? null) ? $activeRulesSource['archiveFolders'] : [],
+        'valuePatterns' => is_array($activeRulesSource['valuePatterns'] ?? null) ? $activeRulesSource['valuePatterns'] : [],
         'labels' => is_array($activeRulesSource['labels'] ?? null) ? $activeRulesSource['labels'] : [],
         'systemLabels' => is_array($activeRulesSource['systemLabels'] ?? null) ? $activeRulesSource['systemLabels'] : [],
         'fields' => array_values(array_filter($allActiveFields, static function (array $field): bool {
@@ -21696,6 +21708,13 @@ function process_job_by_id(
         return;
     }
 
+    $reprocessMode = is_string($jobData['reprocessMode'] ?? null)
+        ? trim((string) $jobData['reprocessMode'])
+        : 'full';
+    if ($reprocessMode !== 'post-ocr') {
+        $reprocessMode = 'full';
+    }
+
     try {
         if ($reprocessMode !== 'post-ocr' && !is_file($sourcePdfPath)) {
             throw new RuntimeException('Missing source.pdf');
@@ -21711,12 +21730,6 @@ function process_job_by_id(
         $replacementMap = replacement_map(
             is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []
         );
-        $reprocessMode = is_string($jobData['reprocessMode'] ?? null)
-            ? trim((string) $jobData['reprocessMode'])
-            : 'full';
-        if ($reprocessMode !== 'post-ocr') {
-            $reprocessMode = 'full';
-        }
         $forceOcr = ($jobData['forceOcr'] ?? false) === true;
         $result = process_claimed_job(
             $jobDir,
