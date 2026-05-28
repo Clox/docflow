@@ -15137,6 +15137,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   const group = ocrDataFieldCurrentGroup();
   const confidenceValue = ocrDataFieldConfidenceValue(row);
   const matchIndex = Number.isInteger(row?.matchIndex) ? row.matchIndex + 1 : 1;
+  const isPrimaryDateMatch = typeof group?.fieldKey === 'string' && group.fieldKey === 'primary_date';
   const keyWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'key', pageMatches);
   const valueWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'value', pageMatches);
   const showKeySection = ocrDataFieldMatchHasKey(row, keyWordIndexes);
@@ -15156,11 +15157,15 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     : (typeof row?.raw === 'string' && row.raw.trim() !== ''
       ? row.raw.trim()
       : valueText);
-  const confidenceText = ocrDataFieldConfidenceTooltip(row, { includeHint: false });
+  const confidenceText = ocrDataFieldConfidenceTooltip(row, {
+    includeHint: false,
+    includeScoreDetails: isPrimaryDateMatch,
+  });
   const primaryDateSignals = normalizePrimaryDateSignals(row?.signals);
-  const hasPrimaryDateScoreDetails = primaryDateSignals.length > 0
+  const hasPrimaryDateScoreDetails = isPrimaryDateMatch
+    && (primaryDateSignals.length > 0
     || Number.isFinite(Number(row?.score))
-    || Number.isFinite(Number(row?.fullConfidenceScore));
+    || Number.isFinite(Number(row?.fullConfidenceScore)));
   const copyPayload = {
     fieldKey: typeof group?.fieldKey === 'string' ? group.fieldKey : '',
     fieldName: typeof group?.name === 'string' ? group.name : '',
@@ -17305,6 +17310,7 @@ function ocrDataFieldPositionPenaltyLabel(row) {
 function ocrDataFieldConfidenceTooltip(row, options = {}) {
   const lines = [];
   const includeHint = options.includeHint !== false;
+  const includeScoreDetails = options.includeScoreDetails === true;
   const confidenceValue = ocrDataFieldConfidenceValue(row);
   if (confidenceValue !== null) {
     lines.push(`Säkerhet: ${formatOcrPercent(confidenceValue)}`);
@@ -17323,33 +17329,35 @@ function ocrDataFieldConfidenceTooltip(row, options = {}) {
   appendPenalty('Vertikalt avstånd', row && typeof row.verticalDistancePenalty === 'number' ? row.verticalDistancePenalty : null);
   appendPenalty('Avslutstecken', row && typeof row.trailingDelimiterPenalty === 'number' ? row.trailingDelimiterPenalty : null);
   appendPenalty('Annan nyckel', row && typeof row.otherMatchKeyPenalty === 'number' ? row.otherMatchKeyPenalty : null);
-  const score = Number(row?.score);
-  const fullConfidenceScore = Number(row?.fullConfidenceScore);
-  if (Number.isFinite(score)) {
-    const scoreText = Number.isFinite(fullConfidenceScore)
-      ? `${formatPrimaryDateScoreNumber(score)} / ${formatPrimaryDateScoreNumber(fullConfidenceScore)}`
-      : formatPrimaryDateScoreNumber(score);
-    lines.push(`Poäng: ${scoreText}`);
-  }
-  const bonusText = formatPrimaryDateSignalsText(row?.signals, 'positive');
-  if (bonusText !== '') {
-    lines.push('Pluspoäng:');
-    normalizePrimaryDateSignals(row?.signals)
-      .filter((signal) => signal.score > 0)
-      .forEach((signal) => {
-        const detail = formatPrimaryDateSignalDetail(signal);
-        lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
-      });
-  }
-  const penaltyText = formatPrimaryDateSignalsText(row?.signals, 'negative');
-  if (penaltyText !== '') {
-    lines.push('Straff:');
-    normalizePrimaryDateSignals(row?.signals)
-      .filter((signal) => signal.score < 0)
-      .forEach((signal) => {
-        const detail = formatPrimaryDateSignalDetail(signal);
-        lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
-      });
+  if (includeScoreDetails) {
+    const score = Number(row?.score);
+    const fullConfidenceScore = Number(row?.fullConfidenceScore);
+    if (Number.isFinite(score)) {
+      const scoreText = Number.isFinite(fullConfidenceScore)
+        ? `${formatPrimaryDateScoreNumber(score)} / ${formatPrimaryDateScoreNumber(fullConfidenceScore)}`
+        : formatPrimaryDateScoreNumber(score);
+      lines.push(`Poäng: ${scoreText}`);
+    }
+    const bonusText = formatPrimaryDateSignalsText(row?.signals, 'positive');
+    if (bonusText !== '') {
+      lines.push('Pluspoäng:');
+      normalizePrimaryDateSignals(row?.signals)
+        .filter((signal) => signal.score > 0)
+        .forEach((signal) => {
+          const detail = formatPrimaryDateSignalDetail(signal);
+          lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
+        });
+    }
+    const penaltyText = formatPrimaryDateSignalsText(row?.signals, 'negative');
+    if (penaltyText !== '') {
+      lines.push('Straff:');
+      normalizePrimaryDateSignals(row?.signals)
+        .filter((signal) => signal.score < 0)
+        .forEach((signal) => {
+          const detail = formatPrimaryDateSignalDetail(signal);
+          lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
+        });
+    }
   }
 
   if (includeHint) {
@@ -17386,7 +17394,10 @@ function syncOcrDataFieldConfidenceUi(row = null) {
 
   const confidenceValue = ocrDataFieldConfidenceValue(activeRow);
   const confidenceText = confidenceValue !== null ? formatOcrPercent(confidenceValue) : '–';
-  const title = ocrDataFieldConfidenceTooltip(activeRow);
+  const currentGroup = ocrDataFieldCurrentGroup();
+  const title = ocrDataFieldConfidenceTooltip(activeRow, {
+    includeScoreDetails: typeof currentGroup?.fieldKey === 'string' && currentGroup.fieldKey === 'primary_date',
+  });
   ocrSearchConfidenceEl.replaceChildren();
   const confidenceValueEl = document.createElement('span');
   confidenceValueEl.className = 'ocr-search-confidence-value';
