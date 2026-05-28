@@ -7148,7 +7148,48 @@ function snapshotCommentDraftFromDom() {
     value: active.value,
     selectionStart: typeof active.selectionStart === 'number' ? active.selectionStart : active.value.length,
     selectionEnd: typeof active.selectionEnd === 'number' ? active.selectionEnd : active.value.length,
+    restoreFocus: true,
   };
+}
+
+function rememberActiveSnapshotCommentDraft() {
+  const draft = snapshotCommentDraftFromDom();
+  if (draft) {
+    ocrDebugExportActiveCommentDraft = draft;
+    return draft;
+  }
+  return ocrDebugExportActiveCommentDraft;
+}
+
+function restoreSnapshotCommentDraftFocus(draft) {
+  if (
+    !draft
+    || draft.restoreFocus !== true
+    || typeof draft.folderName !== 'string'
+    || draft.folderName.trim() === ''
+    || !(ocrDebugExportListEl instanceof HTMLElement)
+  ) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    if (!(ocrDebugExportListEl instanceof HTMLElement)) {
+      return;
+    }
+    const row = Array.from(ocrDebugExportListEl.querySelectorAll('.settings-backup-row'))
+      .find((candidate) => candidate instanceof HTMLElement && candidate.dataset.snapshotFolderName === draft.folderName) || null;
+    const input = row instanceof HTMLElement ? row.querySelector('.snapshot-comment-input') : null;
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    const selectionStart = Number.isInteger(draft.selectionStart) ? draft.selectionStart : input.value.length;
+    const selectionEnd = Number.isInteger(draft.selectionEnd) ? draft.selectionEnd : selectionStart;
+    input.focus();
+    input.setSelectionRange(
+      Math.max(0, Math.min(input.value.length, selectionStart)),
+      Math.max(0, Math.min(input.value.length, selectionEnd))
+    );
+  });
 }
 
 function createOcrDebugExportCommentEditor(item, restoreDraft = null) {
@@ -7180,14 +7221,20 @@ function createOcrDebugExportCommentEditor(item, restoreDraft = null) {
     input.className = 'snapshot-comment-input';
     input.value = comment;
     input.placeholder = 'Lägg till kommentar...';
-    input.addEventListener('input', () => {
+    const rememberDraft = () => {
       ocrDebugExportActiveCommentDraft = {
         folderName,
         value: input.value,
         selectionStart: typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length,
         selectionEnd: typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length,
+        restoreFocus: true,
       };
-    });
+    };
+    input.addEventListener('focus', rememberDraft);
+    input.addEventListener('input', rememberDraft);
+    input.addEventListener('select', rememberDraft);
+    input.addEventListener('keyup', rememberDraft);
+    input.addEventListener('mouseup', rememberDraft);
     const actions = document.createElement('div');
     actions.className = 'snapshot-comment-actions';
     const saveButton = document.createElement('button');
@@ -8200,8 +8247,12 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
     return;
   }
 
-  const activeCommentDraft = snapshotCommentDraftFromDom() || ocrDebugExportActiveCommentDraft;
+  const activeCommentDraft = rememberActiveSnapshotCommentDraft();
   const normalizedItems = Array.isArray(items) ? items : [];
+  const preserveCommentEditorDuringLoading = ocrDebugExportListLoading
+    && activeCommentDraft
+    && typeof activeCommentDraft.folderName === 'string'
+    && normalizedItems.length > 0;
   ocrDebugExportItems = normalizedItems;
   const availableFolderNames = new Set(normalizedItems
     .map((item) => item && typeof item.folderName === 'string' ? item.folderName : '')
@@ -8212,7 +8263,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
   renderOcrDebugExportStatus();
   renderOcrDebugExportCompareState();
 
-  if (ocrDebugExportListLoading) {
+  if (ocrDebugExportListLoading && !preserveCommentEditorDuringLoading) {
     const loading = document.createElement('div');
     loading.className = 'settings-backup-empty';
     loading.textContent = 'Läser snapshots...';
@@ -8405,6 +8456,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
   }
 
   normalizedItems.forEach(renderSnapshotRow);
+  restoreSnapshotCommentDraftFocus(activeCommentDraft);
 }
 
 function highlightOcrDebugExport(folderName) {
