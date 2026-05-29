@@ -56,8 +56,8 @@ try {
     $disabledReason = '';
     if (!$canCreate) {
         $disabledReason = $latestMatches
-            ? 'Ingen förändring sedan senaste säkerhetskopian'
-            : 'Konfigurationen finns redan som säkerhetskopia';
+            ? 'Ingen förändring sedan senaste inställningsbackupen'
+            : 'Konfigurationen finns redan som inställningsbackup';
     }
 
     json_response([

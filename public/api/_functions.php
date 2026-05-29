@@ -426,7 +426,7 @@ function ensure_configuration_backup_directory(): void
 
 function is_configuration_backup_filename(string $filename): bool
 {
-    return preg_match('/^(?:docflow-config|manual|imported|pre-restore|pre-import)-\d{8}_\d{6}\.json$/', $filename) === 1;
+    return preg_match('/^(?:docflow-config|manual|imported|pre-restore|pre-import|snapshot)-\d{8}_\d{6}\.json$/', $filename) === 1;
 }
 
 function normalize_configuration_backup_filename(string $filename): ?string
@@ -458,29 +458,37 @@ function configuration_backup_summary(array $payload): array
     ];
 }
 
+function configuration_backup_comment(array $payload): string
+{
+    return is_string($payload['comment'] ?? null) ? trim((string) $payload['comment']) : '';
+}
+
 function normalize_configuration_snapshot_type(mixed $type): string
 {
     $normalized = trim(strtolower(is_string($type) ? $type : ''));
-    if ($normalized === 'pre-import') {
-        return 'pre_restore';
+    $normalized = str_replace('-', '_', $normalized);
+    if (in_array($normalized, ['pre_import', 'pre_restore', 'before_restore'], true)) {
+        return 'before_restore';
     }
-    return in_array($normalized, ['manual', 'pre_restore', 'imported'], true) ? $normalized : '';
+    return in_array($normalized, ['manual', 'imported', 'snapshot'], true) ? $normalized : '';
 }
 
 function configuration_snapshot_type_label(string $snapshotType): string
 {
     return match (normalize_configuration_snapshot_type($snapshotType)) {
-        'pre_restore' => 'Före återställning',
+        'before_restore' => 'Före återställning',
         'imported' => 'Importerad',
-        default => 'Säkerhetskopia',
+        'snapshot' => 'Snapshot',
+        default => 'Manuell',
     };
 }
 
 function configuration_snapshot_type_prefix(string $snapshotType): string
 {
     return match (normalize_configuration_snapshot_type($snapshotType)) {
-        'pre_restore' => 'pre-restore',
+        'before_restore' => 'pre-restore',
         'imported' => 'imported',
+        'snapshot' => 'snapshot',
         default => 'manual',
     };
 }
@@ -515,7 +523,15 @@ function configuration_backup_entry_from_path(string $path): ?array
     $filename = basename($path);
     $snapshotType = normalize_configuration_snapshot_type($payload['snapshotType'] ?? null);
     if ($snapshotType === '') {
-        $snapshotType = str_starts_with($filename, 'pre-import-') ? 'pre_restore' : 'manual';
+        if (str_starts_with($filename, 'pre-import-') || str_starts_with($filename, 'pre-restore-')) {
+            $snapshotType = 'before_restore';
+        } elseif (str_starts_with($filename, 'snapshot-')) {
+            $snapshotType = 'snapshot';
+        } elseif (str_starts_with($filename, 'imported-')) {
+            $snapshotType = 'imported';
+        } else {
+            $snapshotType = 'manual';
+        }
     }
     $snapshotAt = is_string($payload['snapshotAt'] ?? null) ? trim((string) $payload['snapshotAt']) : '';
     $exportedAt = is_string($payload['exportedAt'] ?? null) ? trim((string) $payload['exportedAt']) : '';
@@ -534,6 +550,10 @@ function configuration_backup_entry_from_path(string $path): ?array
         'exportedAt' => $exportedAt !== '' ? $exportedAt : null,
         'version' => isset($payload['version']) && is_numeric($payload['version']) ? (int) $payload['version'] : 0,
         'summary' => configuration_backup_summary($payload),
+        'comment' => configuration_backup_comment($payload),
+        'snapshotId' => isset($payload['snapshotId']) && is_numeric($payload['snapshotId']) ? (int) $payload['snapshotId'] : null,
+        'snapshotFolderName' => is_string($payload['snapshotFolderName'] ?? null) ? trim((string) $payload['snapshotFolderName']) : '',
+        'snapshotCreatedAt' => is_string($payload['snapshotCreatedAt'] ?? null) ? trim((string) $payload['snapshotCreatedAt']) : null,
         'sizeBytes' => filesize($path) ?: 0,
         'modifiedAt' => $modifiedAtTimestamp !== false ? gmdate(DATE_ATOM, $modifiedAtTimestamp) : null,
         'sortTimestamp' => $sortTimestamp,
@@ -653,8 +673,9 @@ function write_configuration_backup_to_prefix(array $payload, string $prefix): s
 {
     $normalizedPrefix = trim(strtolower($prefix));
     $snapshotType = match ($normalizedPrefix) {
-        'pre-import', 'pre-restore' => 'pre_restore',
+        'pre-import', 'pre-restore', 'before-restore' => 'before_restore',
         'imported' => 'imported',
+        'snapshot' => 'snapshot',
         default => 'manual',
     };
     return write_configuration_snapshot_to_prefix($payload, $snapshotType);
@@ -685,15 +706,51 @@ function create_configuration_pre_import_backup(): string
 
 function create_configuration_pre_restore_backup(): string
 {
-    return write_configuration_snapshot_to_prefix(build_configuration_export_payload(), 'pre_restore');
+    return write_configuration_snapshot_to_prefix(build_configuration_export_payload(), 'before_restore');
 }
 
 function configuration_backup_payload_fingerprint(array $payload): string
 {
     $normalized = $payload;
-    unset($normalized['exportedAt'], $normalized['snapshotAt'], $normalized['snapshotType']);
+    unset(
+        $normalized['exportedAt'],
+        $normalized['snapshotAt'],
+        $normalized['snapshotType'],
+        $normalized['comment'],
+        $normalized['snapshotId'],
+        $normalized['snapshotFolderName'],
+        $normalized['snapshotCreatedAt']
+    );
     $encoded = json_encode($normalized, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     return is_string($encoded) ? sha1($encoded) : sha1('');
+}
+
+function update_configuration_backup_comment(string $filename, string $comment): array
+{
+    $path = configuration_backup_path($filename);
+    if ($path === null || !is_file($path)) {
+        throw new RuntimeException('Backup file not found');
+    }
+
+    $payload = load_json_file($path);
+    if (!is_array($payload) || ($payload['format'] ?? null) !== 'docflow_config') {
+        throw new RuntimeException('Backup file could not be read');
+    }
+
+    $resolvedComment = trim($comment);
+    if ($resolvedComment === '') {
+        unset($payload['comment']);
+    } else {
+        $payload['comment'] = $resolvedComment;
+    }
+    write_json_file($path, $payload);
+
+    $entry = configuration_backup_entry_from_path($path);
+    if (!is_array($entry)) {
+        throw new RuntimeException('Backup file could not be read after update');
+    }
+
+    return $entry;
 }
 
 function latest_configuration_backup_entry(): ?array
@@ -749,6 +806,32 @@ function store_imported_configuration_snapshot(array $payload): array
     $result = write_configuration_snapshot_if_changed($payload, 'imported');
     $result['snapshotType'] = 'imported';
     return $result;
+}
+
+function create_configuration_backup_for_ocr_debug_snapshot(array $snapshotRow): array
+{
+    $snapshotId = isset($snapshotRow['id']) && is_numeric($snapshotRow['id']) ? (int) $snapshotRow['id'] : 0;
+    $folderName = is_string($snapshotRow['folder_name'] ?? null) ? trim((string) $snapshotRow['folder_name']) : '';
+    if ($snapshotId < 1 || $folderName === '') {
+        throw new RuntimeException('Snapshot saknar identifierare för inställningsbackup.');
+    }
+
+    $createdAt = is_string($snapshotRow['created_at'] ?? null) ? trim((string) $snapshotRow['created_at']) : '';
+    $payload = build_configuration_export_payload();
+    $payload['snapshotId'] = $snapshotId;
+    $payload['snapshotFolderName'] = $folderName;
+    if ($createdAt !== '') {
+        $payload['snapshotCreatedAt'] = $createdAt;
+    }
+    $payload['comment'] = 'Inställningsbackup för snapshot: ' . $folderName;
+
+    $backupPath = write_configuration_snapshot_to_prefix($payload, 'snapshot');
+    $entry = configuration_backup_entry_from_path($backupPath);
+    if (!is_array($entry)) {
+        throw new RuntimeException('Inställningsbackupen kunde inte läsas efter skapande.');
+    }
+
+    return $entry;
 }
 
 function normalize_export_client_rows(array $rows): array
@@ -7116,6 +7199,7 @@ function ocr_debug_export_manifest_payload(
         'folderName' => $folderName,
         'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
         'comment' => '',
+        'settingsBackupFilename' => '',
     ];
 }
 
@@ -7132,6 +7216,9 @@ function ocr_debug_export_manifest_from_directory(string $exportDirectory): ?arr
             $manifest['sortTimestamp'] = filemtime($manifestPath) ?: (filemtime($exportDirectory) ?: 0);
             $manifest['legacy'] = false;
             $manifest['comment'] = is_string($manifest['comment'] ?? null) ? (string) $manifest['comment'] : '';
+            $manifest['settingsBackupFilename'] = is_string($manifest['settingsBackupFilename'] ?? null)
+                ? trim((string) $manifest['settingsBackupFilename'])
+                : '';
             $manifest['layers'] = is_array($manifest['layers'] ?? null) ? array_values($manifest['layers']) : ['text', 'merged_objects'];
             return $manifest;
         }
@@ -7188,6 +7275,7 @@ function ocr_debug_export_manifest_from_directory(string $exportDirectory): ?arr
         'folderName' => $folderName,
         'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
         'comment' => '',
+        'settingsBackupFilename' => '',
         'sortTimestamp' => $sortTimestamp,
         'legacy' => true,
     ];
@@ -7251,6 +7339,7 @@ function list_ocr_debug_exports(array $config): array
             'folderName' => $folderName,
             'exportDirectory' => normalized_realpath($exportDirectory) ?? $exportDirectory,
             'comment' => is_string($entry['comment'] ?? null) ? (string) $entry['comment'] : '',
+            'settingsBackupFilename' => is_string($entry['settingsBackupFilename'] ?? null) ? trim((string) $entry['settingsBackupFilename']) : '',
             'exportedAt' => is_string($entry['exportedAt'] ?? null) ? (string) $entry['exportedAt'] : null,
             'filter' => is_string($entry['filter'] ?? null) ? (string) $entry['filter'] : 'jobs',
             'filterLabel' => is_string($entry['filterLabel'] ?? null) ? (string) $entry['filterLabel'] : ocr_debug_export_scope_label((string) ($entry['filter'] ?? 'jobs')),
@@ -7283,6 +7372,18 @@ function ocr_debug_runs_pdo(): PDO
     return $pdo;
 }
 
+function sqlite_table_has_column(PDO $pdo, string $table, string $column): bool
+{
+    $statement = $pdo->query('PRAGMA table_info(' . preg_replace('/[^A-Za-z0-9_]/', '', $table) . ')');
+    $rows = $statement !== false ? $statement->fetchAll() : [];
+    foreach (is_array($rows) ? $rows : [] as $row) {
+        if (is_array($row) && is_string($row['name'] ?? null) && $row['name'] === $column) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function ocr_debug_runs_ensure_schema(PDO $pdo): void
 {
     static $ensured = false;
@@ -7309,6 +7410,9 @@ function ocr_debug_runs_ensure_schema(PDO $pdo): void
             error_message TEXT NULL
         )"
     );
+    if (!sqlite_table_has_column($pdo, 'analysis_snapshots', 'settings_backup_filename')) {
+        $pdo->exec('ALTER TABLE analysis_snapshots ADD COLUMN settings_backup_filename TEXT NULL');
+    }
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS analysis_snapshot_jobs (
             snapshot_id INTEGER NOT NULL,
@@ -7432,7 +7536,87 @@ function ocr_debug_snapshot_public_row(array $row): array
         'requiresReanalysis' => ((int) ($row['requires_reanalysis'] ?? 1)) === 1,
         'completedAt' => is_string($row['completed_at'] ?? null) ? (string) $row['completed_at'] : null,
         'errorMessage' => is_string($row['error_message'] ?? null) ? (string) $row['error_message'] : '',
+        'settingsBackupFilename' => is_string($row['settings_backup_filename'] ?? null) ? trim((string) $row['settings_backup_filename']) : '',
     ];
+}
+
+function ocr_debug_snapshot_row_by_id(int $snapshotId): ?array
+{
+    $pdo = ocr_debug_runs_pdo();
+    $statement = $pdo->prepare('SELECT * FROM analysis_snapshots WHERE id = :id LIMIT 1');
+    $statement->execute([':id' => $snapshotId]);
+    $row = $statement->fetch();
+    return is_array($row) ? $row : null;
+}
+
+function ocr_debug_snapshot_row_by_folder_name(string $folderName): ?array
+{
+    $normalizedFolderName = trim($folderName);
+    if ($normalizedFolderName === '') {
+        return null;
+    }
+    $pdo = ocr_debug_runs_pdo();
+    $statement = $pdo->prepare('SELECT * FROM analysis_snapshots WHERE folder_name = :folder_name LIMIT 1');
+    $statement->execute([':folder_name' => $normalizedFolderName]);
+    $row = $statement->fetch();
+    return is_array($row) ? $row : null;
+}
+
+function ocr_debug_update_manifest_settings_backup(string $exportDirectory, string $backupFilename): void
+{
+    $normalizedExportDirectory = rtrim($exportDirectory, DIRECTORY_SEPARATOR);
+    if ($normalizedExportDirectory === '' || !is_dir($normalizedExportDirectory)) {
+        return;
+    }
+
+    $manifestPath = ocr_debug_export_manifest_path($normalizedExportDirectory);
+    if (!is_file($manifestPath)) {
+        return;
+    }
+
+    $manifest = load_json_file($manifestPath);
+    if (!is_array($manifest)) {
+        return;
+    }
+    $manifest['settingsBackupFilename'] = trim($backupFilename);
+    write_json_file($manifestPath, $manifest);
+}
+
+function ocr_debug_link_settings_backup_to_snapshot(int $snapshotId): string
+{
+    $snapshotRow = ocr_debug_snapshot_row_by_id($snapshotId);
+    if (!is_array($snapshotRow)) {
+        throw new RuntimeException('Snapshot kunde inte hittas för inställningsbackup.');
+    }
+
+    $existingFilename = is_string($snapshotRow['settings_backup_filename'] ?? null)
+        ? trim((string) $snapshotRow['settings_backup_filename'])
+        : '';
+    if ($existingFilename !== '') {
+        $exportDirectory = is_string($snapshotRow['export_directory'] ?? null) ? (string) $snapshotRow['export_directory'] : '';
+        ocr_debug_update_manifest_settings_backup($exportDirectory, $existingFilename);
+        return $existingFilename;
+    }
+
+    $backup = create_configuration_backup_for_ocr_debug_snapshot($snapshotRow);
+    $backupFilename = is_string($backup['filename'] ?? null) ? trim((string) $backup['filename']) : '';
+    if ($backupFilename === '') {
+        throw new RuntimeException('Inställningsbackup saknar filnamn.');
+    }
+
+    $pdo = ocr_debug_runs_pdo();
+    $statement = $pdo->prepare(
+        'UPDATE analysis_snapshots SET settings_backup_filename = :settings_backup_filename WHERE id = :id'
+    );
+    $statement->execute([
+        ':id' => $snapshotId,
+        ':settings_backup_filename' => $backupFilename,
+    ]);
+
+    $exportDirectory = is_string($snapshotRow['export_directory'] ?? null) ? (string) $snapshotRow['export_directory'] : '';
+    ocr_debug_update_manifest_settings_backup($exportDirectory, $backupFilename);
+
+    return $backupFilename;
 }
 
 function list_processing_ocr_debug_snapshots(): array
@@ -7496,10 +7680,11 @@ function create_ocr_debug_snapshot_run(array $config, array $jobIds, string $sco
 {
     if (!$requiresReanalysis) {
         $result = export_ocr_debug_data($config, $jobIds, $scope);
-        ocr_debug_record_completed_snapshot_run($result, $scope, false);
+        $recordedSnapshot = ocr_debug_record_completed_snapshot_run($result, $scope, false);
+        $snapshot = is_array($recordedSnapshot) ? array_merge($result, $recordedSnapshot) : $result;
         return [
             'snapshot' => [
-                ...$result,
+                ...$snapshot,
                 'status' => 'completed',
                 'totalJobs' => (int) ($result['exportedCount'] ?? 0),
                 'completedJobs' => (int) ($result['exportedCount'] ?? 0),
@@ -7559,6 +7744,8 @@ function create_ocr_debug_snapshot_run(array $config, array $jobIds, string $sco
         throw $e;
     }
 
+    ocr_debug_link_settings_backup_to_snapshot($snapshotId);
+
     $queueFailures = ocr_debug_queue_reanalysis_for_run_jobs($config, $normalizedJobIds);
     foreach ($queueFailures as $jobId => $message) {
         ocr_debug_mark_snapshot_job_failed($config, $jobId, $message);
@@ -7579,12 +7766,12 @@ function create_ocr_debug_snapshot_run(array $config, array $jobIds, string $sco
     ];
 }
 
-function ocr_debug_record_completed_snapshot_run(array $result, string $scope, bool $requiresReanalysis): void
+function ocr_debug_record_completed_snapshot_run(array $result, string $scope, bool $requiresReanalysis): ?array
 {
     $folderName = is_string($result['folderName'] ?? null) ? (string) $result['folderName'] : '';
     $exportDirectory = is_string($result['exportDirectory'] ?? null) ? (string) $result['exportDirectory'] : '';
     if ($folderName === '' || $exportDirectory === '') {
-        return;
+        return null;
     }
     $jobIds = array_values(array_filter(
         is_array($result['exportedJobIds'] ?? null) ? $result['exportedJobIds'] : [],
@@ -7643,7 +7830,18 @@ function ocr_debug_record_completed_snapshot_run(array $result, string $scope, b
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
+        throw $e;
     }
+
+    $snapshotRow = $snapshotId > 0
+        ? ocr_debug_snapshot_row_by_id($snapshotId)
+        : ocr_debug_snapshot_row_by_folder_name($folderName);
+    if (is_array($snapshotRow) && isset($snapshotRow['id'])) {
+        ocr_debug_link_settings_backup_to_snapshot((int) $snapshotRow['id']);
+        return ocr_debug_snapshot_by_id((int) $snapshotRow['id']);
+    }
+
+    return null;
 }
 
 function ocr_debug_snapshot_by_id(int $snapshotId): ?array
@@ -7788,6 +7986,7 @@ function ocr_debug_finalize_snapshot_run(int $snapshotId): void
             is_string($snapshot['scope'] ?? null) ? (string) $snapshot['scope'] : 'jobs',
             is_string($snapshot['export_directory'] ?? null) ? (string) $snapshot['export_directory'] : null
         );
+        ocr_debug_link_settings_backup_to_snapshot($snapshotId);
     } catch (Throwable $e) {
         $statement = $pdo->prepare("UPDATE analysis_snapshots SET status = 'failed', error_message = :error_message WHERE id = :id");
         $statement->execute([
