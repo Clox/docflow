@@ -9465,22 +9465,64 @@ function launch_ocr_debug_export_meld(
     string $rightFolderName,
     ?string $relativePath = null
 ): array {
-    $leftDirectory = ocr_debug_export_directory_path_from_name($config, $leftFolderName);
-    $rightDirectory = ocr_debug_export_directory_path_from_name($config, $rightFolderName);
-    if ($leftDirectory === null || !is_dir($leftDirectory)) {
-        throw new RuntimeException('Export A hittades inte.');
-    }
-    if ($rightDirectory === null || !is_dir($rightDirectory)) {
-        throw new RuntimeException('Export B hittades inte.');
+    $leftIsLive = ocr_debug_export_is_live_reference($leftFolderName);
+    $rightIsLive = ocr_debug_export_is_live_reference($rightFolderName);
+    if ($leftIsLive && $rightIsLive) {
+        throw new RuntimeException('Välj en sparad snapshot och Aktuellt läge.');
     }
 
-    $leftPath = normalized_realpath($leftDirectory) ?? $leftDirectory;
-    $rightPath = normalized_realpath($rightDirectory) ?? $rightDirectory;
+    $safeRelativePath = null;
     if ($relativePath !== null && trim($relativePath) !== '') {
         $safeRelativePath = ocr_debug_export_safe_relative_file_path($relativePath);
         if ($safeRelativePath === null) {
             throw new RuntimeException('Ogiltig filsökväg för jämförelse.');
         }
+    }
+    if (($leftIsLive || $rightIsLive) && $safeRelativePath === null) {
+        throw new RuntimeException('Aktuellt läge kan bara jämföras per fil.');
+    }
+
+    $meldBinary = trim((string) shell_exec('command -v meld 2>/dev/null'));
+    if ($meldBinary === '') {
+        throw new RuntimeException('Meld kunde inte hittas på servern.');
+    }
+
+    $tempDirectories = [];
+    $liveJobId = null;
+    if ($leftIsLive || $rightIsLive) {
+        if (preg_match('/^(?:text|merged_objects|document_metadata)\/([A-Za-z0-9_-]+)\.(?:txt|json)$/', (string) $safeRelativePath, $matches) !== 1) {
+            throw new RuntimeException('Aktuellt läge kan bara jämföras för OCR-filer.');
+        }
+        $liveJobId = $matches[1];
+    }
+
+    if ($leftIsLive) {
+        $leftDirectory = create_ocr_debug_live_export_directory();
+        $tempDirectories[] = $leftDirectory;
+        export_ocr_debug_data($config, [$liveJobId], 'jobs', $leftDirectory);
+    } else {
+        $leftDirectory = ocr_debug_export_directory_path_from_name($config, $leftFolderName);
+        if ($leftDirectory === null || !is_dir($leftDirectory)) {
+            throw new RuntimeException('Export A hittades inte.');
+        }
+    }
+
+    if ($rightIsLive) {
+        $rightDirectory = create_ocr_debug_live_export_directory();
+        $tempDirectories[] = $rightDirectory;
+        export_ocr_debug_data($config, [$liveJobId], 'jobs', $rightDirectory);
+    } else {
+        $rightDirectory = ocr_debug_export_directory_path_from_name($config, $rightFolderName);
+        if ($rightDirectory === null || !is_dir($rightDirectory)) {
+            throw new RuntimeException('Export B hittades inte.');
+        }
+    }
+
+    $leftDirectory = normalized_realpath($leftDirectory) ?? $leftDirectory;
+    $rightDirectory = normalized_realpath($rightDirectory) ?? $rightDirectory;
+    $leftPath = $leftDirectory;
+    $rightPath = $rightDirectory;
+    if ($safeRelativePath !== null) {
         $leftPath = normalized_realpath($leftPath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $safeRelativePath)) ?? '';
         $rightPath = normalized_realpath($rightPath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $safeRelativePath)) ?? '';
         if (
@@ -9491,21 +9533,30 @@ function launch_ocr_debug_export_meld(
             || !path_is_within_directory($leftPath, $leftDirectory)
             || !path_is_within_directory($rightPath, $rightDirectory)
         ) {
-            throw new RuntimeException('Filen finns inte i båda snapshots.');
+            throw new RuntimeException(($leftIsLive || $rightIsLive) ? 'Filen finns inte i både snapshot och aktuellt läge.' : 'Filen finns inte i båda snapshots.');
         }
     }
 
-    $meldBinary = trim((string) shell_exec('command -v meld 2>/dev/null'));
-    if ($meldBinary === '') {
-        throw new RuntimeException('Meld kunde inte hittas på servern.');
+    $cleanupCommand = '';
+    foreach ($tempDirectories as $tempDirectory) {
+        if (is_string($tempDirectory) && $tempDirectory !== '') {
+            $cleanupCommand .= ' rm -rf -- ' . escapeshellarg($tempDirectory) . ';';
+        }
     }
-
-    $command = sprintf(
-        '%s %s %s > /dev/null 2>&1 & echo $!',
-        escapeshellarg($meldBinary),
-        escapeshellarg($leftPath),
-        escapeshellarg($rightPath)
-    );
+    $command = $cleanupCommand === ''
+        ? sprintf(
+            '%s %s %s > /dev/null 2>&1 & echo $!',
+            escapeshellarg($meldBinary),
+            escapeshellarg($leftPath),
+            escapeshellarg($rightPath)
+        )
+        : sprintf(
+            '( %s %s %s; %s ) > /dev/null 2>&1 & echo $!',
+            escapeshellarg($meldBinary),
+            escapeshellarg($leftPath),
+            escapeshellarg($rightPath),
+            $cleanupCommand
+        );
     exec($command, $output, $exitCode);
     if ($exitCode !== 0) {
         throw new RuntimeException('Meld kunde inte startas.');

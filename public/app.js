@@ -6959,8 +6959,11 @@ function renderOcrDebugExportCompareState() {
   if (ocrDebugExportCloseCompareButtonEl instanceof HTMLButtonElement) {
     const hasCompareResult = (ocrDebugExportCompareResult && typeof ocrDebugExportCompareResult === 'object')
       || (ocrDebugExportComparisonRun && typeof ocrDebugExportComparisonRun === 'object');
-    ocrDebugExportCloseCompareButtonEl.classList.toggle('hidden', !hasCompareResult);
-    ocrDebugExportCloseCompareButtonEl.disabled = ocrDebugExportCompareLoading;
+    ocrDebugExportCloseCompareButtonEl.textContent = hasCompareResult ? 'Stäng jämförelse' : 'Stäng';
+    ocrDebugExportCloseCompareButtonEl.title = hasCompareResult
+      ? 'Stäng jämförelsen.'
+      : 'Stäng snapshotfönstret.';
+    ocrDebugExportCloseCompareButtonEl.disabled = hasCompareResult && ocrDebugExportCompareLoading;
   }
 }
 
@@ -7426,6 +7429,7 @@ function positionOcrDebugSplitMenu(splitButton) {
 function createOcrDebugMeldSplitButton({ label, toggleLabel, command, relativePath = '' }) {
   const splitButton = document.createElement('div');
   splitButton.className = 'split-button ocr-debug-meld-split-button';
+  const commandText = typeof command === 'string' ? command.trim() : '';
 
   const mainButton = document.createElement('button');
   mainButton.type = 'button';
@@ -7456,15 +7460,19 @@ function createOcrDebugMeldSplitButton({ label, toggleLabel, command, relativePa
   splitButton._ocrDebugMenuEl = menu;
   splitButton._ocrDebugMenuToggle = toggleButton;
 
-  const copyButton = document.createElement('button');
-  copyButton.type = 'button';
-  copyButton.setAttribute('role', 'menuitem');
-  copyButton.textContent = 'Kopiera Meld-kommando';
-  copyButton.addEventListener('click', async () => {
-    closeOcrDebugSplitMenu(splitButton);
-    await copyOcrDebugExportCommand(command, copyButton);
-  });
-  menu.appendChild(copyButton);
+  if (commandText !== '') {
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.setAttribute('role', 'menuitem');
+    copyButton.textContent = 'Kopiera Meld-kommando';
+    copyButton.addEventListener('click', async () => {
+      closeOcrDebugSplitMenu(splitButton);
+      await copyOcrDebugExportCommand(commandText, copyButton);
+    });
+    menu.appendChild(copyButton);
+  } else {
+    toggleButton.disabled = true;
+  }
 
   toggleButton.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -8235,11 +8243,14 @@ function renderOcrDebugExportCompareResult() {
       main.append(status, path);
       row.appendChild(main);
 
-      if (file.status === 'changed' && typeof file.meldCommand === 'string' && file.meldCommand.trim() !== '') {
+      const fileMeldCommand = typeof file.meldCommand === 'string' ? file.meldCommand.trim() : '';
+      const canCompareFile = file.status === 'changed'
+        && (fileMeldCommand !== '' || /^(?:text|merged_objects|document_metadata)\/[A-Za-z0-9_-]+\.(?:txt|json)$/u.test(file.relativePath));
+      if (canCompareFile) {
         row.appendChild(createOcrDebugMeldSplitButton({
           label: 'Jämför',
           toggleLabel: 'Fler Meld-åtgärder för fil',
-          command: file.meldCommand,
+          command: fileMeldCommand,
           relativePath: file.relativePath,
         }));
       }
@@ -8300,7 +8311,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
     const failedJobs = Number.isFinite(Number(item.failedJobs)) ? Number(item.failedJobs) : 0;
 
     const row = document.createElement('div');
-    row.className = 'settings-backup-row';
+    row.className = 'settings-backup-row snapshot-row';
     row.classList.toggle('snapshot-current-row', isLive);
     row.classList.toggle('snapshot-processing-row', isProcessing);
     row.dataset.snapshotFolderName = item.folderName;
@@ -8310,6 +8321,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.checked = ocrDebugExportSelectedFolderNames.includes(item.folderName);
+    row.classList.toggle('is-selected', checkbox.checked);
     const liveHasJobs = !isLive || Number(item.jobCount) > 0;
     checkbox.disabled = ocrDebugExportBusy
       || ocrDebugExportCreateLoading
@@ -8350,6 +8362,17 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
       : (isProcessing ? 'Snapshot bearbetas' : (isFailed ? 'Snapshot misslyckades' : formatOcrDebugExportDateTime(item.exportedAt || '')));
     titleRow.appendChild(title);
 
+    const meta = document.createElement('div');
+    meta.className = 'settings-backup-row-meta snapshot-row-count';
+    meta.textContent = isLive
+      ? `${Number.isFinite(Number(item.jobCount)) ? Number(item.jobCount) : 0} dokument`
+      : (isProcessing
+        ? `Bearbetar dokument ${completedJobs} / ${totalJobs}${failedJobs > 0 ? `, ${failedJobs} misslyckades` : ''}`
+        : (isFailed
+          ? (typeof item.errorMessage === 'string' && item.errorMessage.trim() !== '' ? item.errorMessage.trim() : 'Snapshotten kunde inte färdigställas.')
+          : `${Number.isFinite(Number(item.jobCount)) ? Number(item.jobCount) : 0} dokument${isCompletedWithErrors ? `, ${failedJobs} misslyckades` : ''}`));
+    titleRow.appendChild(meta);
+
     const kind = document.createElement('span');
     kind.className = 'settings-backup-row-kind';
     kind.textContent = isLive
@@ -8358,16 +8381,6 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
         ? item.filterLabel
         : jobListModeLabel(item.filter));
     titleRow.appendChild(kind);
-
-    const meta = document.createElement('div');
-    meta.className = 'settings-backup-row-meta';
-    meta.textContent = isLive
-      ? `Nuvarande filer och analysresultat · ${Number.isFinite(Number(item.jobCount)) ? Number(item.jobCount) : 0} dokument (${typeof item.filterLabel === 'string' ? item.filterLabel : jobListModeLabel(item.filter)})`
-      : (isProcessing
-        ? `Bearbetar dokument ${completedJobs} / ${totalJobs}${failedJobs > 0 ? `, ${failedJobs} misslyckades` : ''}`
-        : (isFailed
-          ? (typeof item.errorMessage === 'string' && item.errorMessage.trim() !== '' ? item.errorMessage.trim() : 'Snapshotten kunde inte färdigställas.')
-          : `${Number.isFinite(Number(item.jobCount)) ? Number(item.jobCount) : 0} dokument${isCompletedWithErrors ? `, ${failedJobs} misslyckades` : ''}`));
 
     const filename = document.createElement('div');
     filename.id = `snapshot-path-${item.folderName}`;
@@ -8378,7 +8391,7 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
 
     const comment = isLive ? null : createOcrDebugExportCommentEditor(item, activeCommentDraft);
 
-    main.append(titleRow, meta);
+    main.appendChild(titleRow);
     if (isProcessing) {
       const progress = document.createElement('div');
       progress.className = 'snapshot-progress';
@@ -8403,10 +8416,6 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
       });
       main.appendChild(backupLink);
     }
-    if (comment instanceof HTMLElement) {
-      main.appendChild(comment);
-    }
-
     const actions = document.createElement('div');
     actions.className = 'settings-backup-row-actions';
 
@@ -8463,6 +8472,9 @@ function renderOcrDebugExportList(items = ocrDebugExportItems) {
 
     row.classList.toggle('settings-highlight-target', ocrDebugExportHighlightedFolderName === item.folderName);
     row.append(selection, main, actions);
+    if (comment instanceof HTMLElement) {
+      row.appendChild(comment);
+    }
     ocrDebugExportListEl.appendChild(row);
   };
 
@@ -9003,14 +9015,10 @@ function openOcrDebugExportDialog() {
 
   const actions = document.createElement('div');
   actions.className = 'panel-actions snapshot-dialog-footer';
-  const closeCompareButton = document.createElement('button');
-  closeCompareButton.type = 'button';
-  closeCompareButton.className = 'settings-backup-row-button hidden';
-  closeCompareButton.textContent = 'Stäng jämförelse';
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
   closeButton.textContent = 'Stäng';
-  actions.append(closeCompareButton, closeButton);
+  actions.append(compareActions, closeButton);
 
   const resizeHandle = document.createElement('button');
   resizeHandle.type = 'button';
@@ -9018,7 +9026,7 @@ function openOcrDebugExportDialog() {
   resizeHandle.setAttribute('aria-label', 'Ändra storlek på snapshotfönstret');
   resizeHandle.setAttribute('title', 'Ändra storlek');
 
-  body.append(description, controls, compareActions, compareResult, history);
+  body.append(description, controls, compareResult, history);
   dialog.append(titlebar, title, body, actions, resizeHandle);
   overlay.appendChild(dialog);
 
@@ -9173,8 +9181,15 @@ function openOcrDebugExportDialog() {
     event.preventDefault();
   });
   titlebarCloseButton.addEventListener('click', finish);
-  closeCompareButton.addEventListener('click', closeOcrDebugExportCompareResult);
-  closeButton.addEventListener('click', finish);
+  closeButton.addEventListener('click', () => {
+    const hasCompareResult = (ocrDebugExportCompareResult && typeof ocrDebugExportCompareResult === 'object')
+      || (ocrDebugExportComparisonRun && typeof ocrDebugExportComparisonRun === 'object');
+    if (hasCompareResult) {
+      closeOcrDebugExportCompareResult();
+      return;
+    }
+    finish();
+  });
   filterSelect.addEventListener('change', () => {
     ocrDebugExportCurrentFilter = VALID_JOB_LIST_MODES.has(filterSelect.value) ? filterSelect.value : 'ready';
     ocrDebugExportCompareResult = null;
@@ -9217,7 +9232,7 @@ function openOcrDebugExportDialog() {
   ocrDebugExportStatusEl = null;
   ocrDebugExportListEl = list;
   ocrDebugExportCompareButtonEl = compareButton;
-  ocrDebugExportCloseCompareButtonEl = closeCompareButton;
+  ocrDebugExportCloseCompareButtonEl = closeButton;
   ocrDebugExportCompareResultEl = compareResult;
   ocrDebugExportShowIdenticalEl = null;
 
