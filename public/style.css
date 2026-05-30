@@ -6049,6 +6049,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .matching-curve-editor {
+  position: relative;
   margin: 10px 0;
   padding: 10px;
   border: 1px solid #e5e7eb;
@@ -6116,7 +6117,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   margin-bottom: 8px;
 }
 
-.matching-curve-header button,
+.matching-curve-popover-header button,
 .matching-curve-point-remove {
   border: 1px solid #d1d5db;
   border-radius: 4px;
@@ -6127,20 +6128,96 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   cursor: pointer;
 }
 
-.matching-curve-header button:hover,
+.matching-curve-popover-header button:hover,
 .matching-curve-point-remove:hover {
   background: #f3f4f6;
+}
+
+.matching-curve-preview-button {
+  display: block;
+  width: min(100%, 324px);
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #334155;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.matching-curve-preview-button:hover .matching-curve-preview,
+.matching-curve-preview-button[aria-expanded="true"] .matching-curve-preview {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.25);
+}
+
+.matching-curve-preview-button:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 3px;
 }
 
 .matching-curve-preview {
   display: block;
   width: 100%;
-  max-width: 360px;
-  height: 92px;
-  margin: 0 0 10px;
+  height: 83px;
+  margin: 0;
   border: 1px solid #dbeafe;
   border-radius: 5px;
   background: #fff;
+}
+
+.matching-curve-preview-action {
+  display: inline-block;
+  margin-top: 6px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.matching-curve-popover {
+  position: absolute;
+  left: 10px;
+  top: 38px;
+  z-index: 48;
+  width: min(560px, calc(100vw - 64px));
+  max-height: min(64vh, 520px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d7dee8;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  overflow: auto;
+}
+
+.matching-curve-popover.hidden {
+  display: none;
+}
+
+.matching-curve-popover-preview {
+  display: block;
+  width: 100%;
+  height: 150px;
+  flex: 0 0 auto;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.matching-curve-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.matching-curve-popover-title {
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .matching-curve-points {

@@ -232,6 +232,9 @@ let matchingRightYOffsetPenaltyEl = null;
 let matchingDownXOffsetPenaltyEl = null;
 let matchingDownYDistanceCurveEl = null;
 let matchingDownYDistanceCurvePreviewEl = null;
+let matchingDownYDistanceCurvePopoverPreviewEl = null;
+let matchingDownYDistanceCurveToggleEl = null;
+let matchingDownYDistanceCurvePopoverEl = null;
 let matchingDownYDistanceCurveAddPointEl = null;
 let matchingMaxHorizontalGapMultiplierEl = null;
 let matchingMaxVerticalOffsetMultiplierEl = null;
@@ -19599,6 +19602,9 @@ function bindSettingsPanelRefs(tabId) {
     matchingDownXOffsetPenaltyEl = document.getElementById('matching-down-x-offset-penalty');
     matchingDownYDistanceCurveEl = document.getElementById('matching-down-y-distance-curve');
     matchingDownYDistanceCurvePreviewEl = document.getElementById('matching-down-y-distance-curve-preview');
+    matchingDownYDistanceCurvePopoverPreviewEl = document.getElementById('matching-down-y-distance-curve-popover-preview');
+    matchingDownYDistanceCurveToggleEl = document.getElementById('matching-down-y-distance-curve-toggle');
+    matchingDownYDistanceCurvePopoverEl = document.getElementById('matching-down-y-distance-curve-popover');
     matchingDownYDistanceCurveAddPointEl = document.getElementById('matching-down-y-distance-curve-add-point');
     matchingMaxHorizontalGapMultiplierEl = document.getElementById('matching-max-horizontal-gap-multiplier');
     matchingMaxVerticalOffsetMultiplierEl = document.getElementById('matching-max-vertical-offset-multiplier');
@@ -19637,6 +19643,35 @@ function bindSettingsPanelRefs(tabId) {
     };
     bindMatchingBboxSpanInput(matchingMaxHorizontalGapMultiplierEl, 'maxHorizontalGapMultiplier');
     bindMatchingBboxSpanInput(matchingMaxVerticalOffsetMultiplierEl, 'maxVerticalOffsetMultiplier');
+    if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement) {
+      matchingDownYDistanceCurveToggleEl.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleMatchingDownYDistanceCurvePopover();
+      });
+    }
+    if (matchingDownYDistanceCurvePopoverEl instanceof HTMLElement) {
+      matchingDownYDistanceCurvePopoverEl.addEventListener('click', (event) => {
+        event.stopPropagation();
+      });
+    }
+    document.addEventListener('click', (event) => {
+      if (!(matchingDownYDistanceCurvePopoverEl instanceof HTMLElement) || matchingDownYDistanceCurvePopoverEl.classList.contains('hidden')) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        closeMatchingDownYDistanceCurvePopover();
+        return;
+      }
+      if (matchingDownYDistanceCurvePopoverEl.contains(target)) {
+        return;
+      }
+      if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement && matchingDownYDistanceCurveToggleEl.contains(target)) {
+        return;
+      }
+      closeMatchingDownYDistanceCurvePopover();
+    }, true);
     if (matchingDownYDistanceCurveAddPointEl instanceof HTMLButtonElement) {
       matchingDownYDistanceCurveAddPointEl.addEventListener('click', () => {
         const curve = sanitizeMatchingPenaltyCurve(matchingPositionAdjustmentDraft.downYDistancePenaltyCurve);
@@ -19680,6 +19715,7 @@ function bindSettingsPanelRefs(tabId) {
       if (matchingDraft.length === 0) {
         matchingDraft = [defaultReplacement()];
       }
+      closeMatchingDownYDistanceCurvePopover();
       renderMatchingEditor();
       updateSettingsActionButtons();
     });
@@ -26240,6 +26276,39 @@ function renderMatchingDownYDistanceCurveEditor() {
   renderMatchingDownYDistanceCurvePreview(curve);
 }
 
+function closeMatchingDownYDistanceCurvePopover() {
+  if (!(matchingDownYDistanceCurvePopoverEl instanceof HTMLElement)) {
+    return;
+  }
+  matchingDownYDistanceCurvePopoverEl.classList.add('hidden');
+  if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement) {
+    matchingDownYDistanceCurveToggleEl.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function toggleMatchingDownYDistanceCurvePopover(forceOpen = null) {
+  if (!(matchingDownYDistanceCurvePopoverEl instanceof HTMLElement)) {
+    return;
+  }
+  const nextOpen = forceOpen === null
+    ? matchingDownYDistanceCurvePopoverEl.classList.contains('hidden')
+    : forceOpen === true;
+  matchingDownYDistanceCurvePopoverEl.classList.toggle('hidden', !nextOpen);
+  if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement) {
+    matchingDownYDistanceCurveToggleEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+  }
+  if (!nextOpen) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    const firstInput = matchingDownYDistanceCurvePopoverEl.querySelector('input');
+    if (firstInput instanceof HTMLInputElement) {
+      firstInput.focus();
+      firstInput.select();
+    }
+  });
+}
+
 function formatMatchingCurveNumber(value) {
   const resolved = clampMatchingDecimal(value, 0, null);
   if (Number.isInteger(resolved)) {
@@ -26259,32 +26328,97 @@ function wrapPercentInput(input) {
 }
 
 function renderMatchingDownYDistanceCurvePreview(curve) {
-  if (!(matchingDownYDistanceCurvePreviewEl instanceof SVGElement)) {
+  renderMatchingPenaltyCurveSvg(matchingDownYDistanceCurvePreviewEl, curve, { compact: true });
+  renderMatchingPenaltyCurveSvg(matchingDownYDistanceCurvePopoverPreviewEl, curve, { compact: false });
+}
+
+function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
+  if (!(svgEl instanceof SVGElement)) {
     return;
   }
-
+  const isCompact = options.compact === true;
   const points = sanitizeMatchingPenaltyCurve(curve);
   const maxX = Math.max(1, ...points.map((point) => point.x));
   const width = 240;
   const height = 90;
-  const padding = 12;
-  const plotWidth = width - (padding * 2);
-  const plotHeight = height - (padding * 2);
+  const padding = {
+    top: isCompact ? 8 : 12,
+    right: isCompact ? 10 : 14,
+    bottom: isCompact ? 23 : 27,
+    left: isCompact ? 44 : 38
+  };
+  const xTickLabelOffset = isCompact ? 15 : 12;
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const plotLeft = padding.left;
+  const plotRight = width - padding.right;
+  const plotTop = padding.top;
+  const plotBottom = height - padding.bottom;
   const toSvgPoint = (point) => {
-    const x = padding + ((point.x / maxX) * plotWidth);
-    const y = padding + ((1 - point.y) * plotHeight);
+    const x = plotLeft + ((point.x / maxX) * plotWidth);
+    const y = plotTop + ((1 - point.y) * plotHeight);
     return { x, y };
   };
   const svgPoints = points.map(toSvgPoint);
   const path = svgPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
 
-  matchingDownYDistanceCurvePreviewEl.replaceChildren();
+  svgEl.replaceChildren();
 
-  const grid = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  grid.setAttribute('d', `M ${padding} ${padding} V ${height - padding} H ${width - padding}`);
-  grid.setAttribute('fill', 'none');
-  grid.setAttribute('stroke', '#dbeafe');
-  grid.setAttribute('stroke-width', '1');
+  const formatTickNumber = (value) => {
+    const rounded = Math.round(value * 10) / 10;
+    if (Number.isInteger(rounded)) {
+      return String(rounded);
+    }
+    return rounded.toFixed(1).replace(/0+$/u, '').replace(/\.$/u, '');
+  };
+
+  const addLine = (x1, y1, x2, y2, color = '#dbeafe', widthValue = '1') => {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x1.toFixed(2));
+    line.setAttribute('y1', y1.toFixed(2));
+    line.setAttribute('x2', x2.toFixed(2));
+    line.setAttribute('y2', y2.toFixed(2));
+    line.setAttribute('stroke', color);
+    line.setAttribute('stroke-width', widthValue);
+    svgEl.appendChild(line);
+  };
+
+  const addText = (textValue, x, y, anchor = 'middle', extraAttrs = {}) => {
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.textContent = textValue;
+    text.setAttribute('x', x.toFixed(2));
+    text.setAttribute('y', y.toFixed(2));
+    text.setAttribute('text-anchor', anchor);
+    text.setAttribute('fill', '#64748b');
+    text.setAttribute('font-size', isCompact ? '12' : '6.5');
+    text.setAttribute('font-family', 'Arial, sans-serif');
+    Object.entries(extraAttrs).forEach(([name, value]) => {
+      text.setAttribute(name, value);
+    });
+    svgEl.appendChild(text);
+  };
+
+  const tickRatios = isCompact ? [0, 1] : [0, 0.5, 1];
+
+  tickRatios.forEach((ratio) => {
+    const y = plotTop + ((1 - ratio) * plotHeight);
+    addLine(plotLeft, y, plotRight, y);
+    addText(`${Math.round(ratio * 100)}%`, plotLeft - 5, y + 2.2, 'end');
+  });
+
+  tickRatios.forEach((ratio) => {
+    const x = plotLeft + (ratio * plotWidth);
+    addLine(x, plotTop, x, plotBottom);
+    addText(formatTickNumber(maxX * ratio), x, plotBottom + xTickLabelOffset);
+  });
+
+  addText('Avstånd (radhöjder)', plotLeft + (plotWidth / 2), height - 4);
+  addText('Straff', 8, plotTop + (plotHeight / 2), 'middle', {
+    transform: `rotate(-90 8 ${(plotTop + (plotHeight / 2)).toFixed(2)})`
+  });
+
+  addLine(plotLeft, plotTop, plotLeft, plotBottom, '#94a3b8', '1.2');
+  addLine(plotLeft, plotBottom, plotRight, plotBottom, '#94a3b8', '1.2');
 
   const curvePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   curvePath.setAttribute('d', path);
@@ -26294,8 +26428,7 @@ function renderMatchingDownYDistanceCurvePreview(curve) {
   curvePath.setAttribute('stroke-linecap', 'round');
   curvePath.setAttribute('stroke-linejoin', 'round');
 
-  matchingDownYDistanceCurvePreviewEl.appendChild(grid);
-  matchingDownYDistanceCurvePreviewEl.appendChild(curvePath);
+  svgEl.appendChild(curvePath);
 
   svgPoints.forEach((point) => {
     const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -26303,7 +26436,7 @@ function renderMatchingDownYDistanceCurvePreview(curve) {
     dot.setAttribute('cy', point.y.toFixed(2));
     dot.setAttribute('r', '3');
     dot.setAttribute('fill', '#1d4ed8');
-    matchingDownYDistanceCurvePreviewEl.appendChild(dot);
+    svgEl.appendChild(dot);
   });
 }
 
@@ -33883,6 +34016,14 @@ document.addEventListener('keydown', (event) => {
 
   if (event.key === 'Escape' && valuePatternsAddMenuEl instanceof HTMLElement && !valuePatternsAddMenuEl.classList.contains('hidden')) {
     closeValuePatternsAddMenu();
+    return;
+  }
+
+  if (event.key === 'Escape' && matchingDownYDistanceCurvePopoverEl instanceof HTMLElement && !matchingDownYDistanceCurvePopoverEl.classList.contains('hidden')) {
+    closeMatchingDownYDistanceCurvePopover();
+    if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement) {
+      matchingDownYDistanceCurveToggleEl.focus();
+    }
     return;
   }
 

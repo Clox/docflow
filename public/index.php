@@ -577,10 +577,19 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       <div class="matching-curve-editor">
         <div class="matching-curve-header">
           <label class="settings-label">Straffkurva för vertikalt avstånd</label>
-          <button id="matching-down-y-distance-curve-add-point" type="button">Lägg till punkt</button>
         </div>
-        <svg id="matching-down-y-distance-curve-preview" class="matching-curve-preview" viewBox="0 0 240 90" role="img" aria-label="Förhandsvisning av straffkurva"></svg>
-        <div id="matching-down-y-distance-curve" class="matching-curve-points"></div>
+        <button id="matching-down-y-distance-curve-toggle" class="matching-curve-preview-button" type="button" aria-expanded="false" aria-controls="matching-down-y-distance-curve-popover">
+          <svg id="matching-down-y-distance-curve-preview" class="matching-curve-preview" viewBox="0 0 240 90" role="img" aria-label="Förhandsvisning av straffkurva"></svg>
+          <span class="matching-curve-preview-action">Redigera kurva</span>
+        </button>
+        <div id="matching-down-y-distance-curve-popover" class="matching-curve-popover hidden">
+          <svg id="matching-down-y-distance-curve-popover-preview" class="matching-curve-popover-preview" viewBox="0 0 240 90" role="img" aria-label="Stor förhandsvisning av straffkurva"></svg>
+          <div class="matching-curve-popover-header">
+            <div class="matching-curve-popover-title">Punkter</div>
+            <button id="matching-down-y-distance-curve-add-point" type="button">Lägg till punkt</button>
+          </div>
+          <div id="matching-down-y-distance-curve" class="matching-curve-points"></div>
+        </div>
       </div>
       <p>Kandidater som ligger till vänster eller ovanför förkastas. För kandidater till höger används bara y-avvikelse. För kandidater under används x-avvikelse och separat straff för vertikalt avstånd.</p>
     </div>
