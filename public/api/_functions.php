@@ -2815,7 +2815,7 @@ function normalize_primary_date_heuristics(mixed $input): array
 
     foreach ($defaults['bonuses'] as $key => $default) {
         $raw = is_array($source['bonuses'][$key] ?? null) ? $source['bonuses'][$key] : [];
-        $result['bonuses'][$key]['enabled'] = normalize_primary_date_bool($raw['enabled'] ?? null, (bool) $default['enabled']);
+        $result['bonuses'][$key]['enabled'] = true;
         foreach (['points', 'max_points'] as $field) {
             if (array_key_exists($field, $default)) {
                 $result['bonuses'][$key][$field] = normalize_primary_date_number($raw[$field] ?? null, (float) $default[$field]);
@@ -2834,7 +2834,7 @@ function normalize_primary_date_heuristics(mixed $input): array
 
     foreach ($defaults['penalties'] as $key => $default) {
         $raw = is_array($source['penalties'][$key] ?? null) ? $source['penalties'][$key] : [];
-        $result['penalties'][$key]['enabled'] = normalize_primary_date_bool($raw['enabled'] ?? null, (bool) $default['enabled']);
+        $result['penalties'][$key]['enabled'] = true;
         foreach (['points', 'max_points', 'direct_before_points', 'same_line_points', 'line_above_points', 'points_per_page'] as $field) {
             if (array_key_exists($field, $default)) {
                 $result['penalties'][$key][$field] = normalize_primary_date_number($raw[$field] ?? null, (float) $default[$field]);

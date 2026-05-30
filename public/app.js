@@ -24279,7 +24279,7 @@ function sanitizePrimaryDateHeuristics(input) {
     const raw = source.bonuses && source.bonuses[key] && typeof source.bonuses[key] === 'object'
       ? source.bonuses[key]
       : {};
-    result.bonuses[key].enabled = typeof raw.enabled === 'boolean' ? raw.enabled : defaultsForRule.enabled;
+    result.bonuses[key].enabled = true;
     ['points', 'max_points'].forEach((prop) => {
       if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
         result.bonuses[key][prop] = sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop]);
@@ -24299,7 +24299,7 @@ function sanitizePrimaryDateHeuristics(input) {
     const raw = source.penalties && source.penalties[key] && typeof source.penalties[key] === 'object'
       ? source.penalties[key]
       : {};
-    result.penalties[key].enabled = typeof raw.enabled === 'boolean' ? raw.enabled : defaultsForRule.enabled;
+    result.penalties[key].enabled = true;
     ['points', 'max_points', 'direct_before_points', 'same_line_points', 'line_above_points', 'points_per_page'].forEach((prop) => {
       if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
         result.penalties[key][prop] = sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop]);
@@ -28477,24 +28477,15 @@ function createPrimaryDateHeuristicRuleEditor({
   const row = document.createElement('div');
   row.className = 'primary-date-heuristic-rule';
 
-  const header = document.createElement('label');
+  const header = document.createElement('div');
   header.className = 'primary-date-heuristic-rule-header';
-  const checkbox = document.createElement('input');
-  checkbox.type = 'checkbox';
-  checkbox.checked = rule.enabled !== false;
-  checkbox.addEventListener('change', () => {
-    const next = sanitizePrimaryDateHeuristics(collection[index].primaryDateHeuristics);
-    next[section][ruleKey].enabled = checkbox.checked;
-    collection[index].primaryDateHeuristics = sanitizePrimaryDateHeuristics(next);
-    updateSettingsActionButtons();
-  });
   const title = document.createElement('span');
   title.textContent = primaryDateHeuristicLabels[ruleKey] || ruleKey;
   const maxHint = document.createElement('span');
   maxHint.className = 'primary-date-heuristic-max';
   const maxValue = Number.isFinite(Number(rule.max_points)) ? Number(rule.max_points) : Number(rule.points || 0);
   maxHint.textContent = `${maxValue > 0 ? '+' : ''}${maxValue}`;
-  header.append(checkbox, title, maxHint);
+  header.append(title, maxHint);
 
   const help = document.createElement('p');
   help.className = 'primary-date-heuristic-help';
