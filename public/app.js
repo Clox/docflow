@@ -261,14 +261,14 @@ let pythonLocalInstallButtonEl = null;
 
 const MATCHING_PENALTY_CURVE_CHART_DEFAULTS = Object.freeze({
   xAxisTitle: 'X',
-  yAxisTitle: 'Straff',
+  yAxisTitle: 'Straff (%)',
   xPointLabel: '',
   yPointLabel: ''
 });
 
 const MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART = Object.freeze({
   xAxisTitle: 'Avstånd (radhöjder)',
-  yAxisTitle: 'Straff'
+  yAxisTitle: 'Straff (%)'
 });
 let rapidocrStatusBadgeWrapEl = null;
 let rapidocrStatusBadgeEl = null;
@@ -26475,7 +26475,7 @@ function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
   tickRatios.forEach((ratio) => {
     const y = plotTop + ((1 - ratio) * plotHeight);
     addLine(plotLeft, y, plotRight, y);
-    addText(`${Math.round(ratio * 100)}%`, plotLeft - 5, y + 2.2, 'end');
+    addText(String(Math.round(ratio * 100)), plotLeft - 5, y + 2.2, 'end');
   });
 
   tickRatios.forEach((ratio) => {
