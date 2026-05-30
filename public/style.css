@@ -6050,6 +6050,8 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 
 .matching-curve-editor {
   position: relative;
+  display: flex;
+  flex-direction: column;
   margin: 10px 0;
   padding: 10px;
   border: 1px solid #e5e7eb;
@@ -6136,6 +6138,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .matching-curve-preview-button {
   display: block;
   width: min(100%, 324px);
+  margin-top: auto;
   padding: 0;
   border: 0;
   border-radius: 6px;
