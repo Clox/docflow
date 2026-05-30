@@ -236,6 +236,7 @@ let matchingDownYDistanceCurvePopoverPreviewEl = null;
 let matchingDownYDistanceCurveToggleEl = null;
 let matchingDownYDistanceCurvePopoverEl = null;
 let matchingDownYDistanceCurveAddPointEl = null;
+let matchingPenaltyCurveEditors = new Map();
 let matchingMaxHorizontalGapMultiplierEl = null;
 let matchingMaxVerticalOffsetMultiplierEl = null;
 let matchingDataFieldAcceptanceThresholdEl = null;
@@ -263,13 +264,55 @@ const MATCHING_PENALTY_CURVE_CHART_DEFAULTS = Object.freeze({
   xAxisTitle: 'X',
   yAxisTitle: 'Straff (%)',
   xPointLabel: '',
-  yPointLabel: ''
+  yPointLabel: '',
+  yMin: 0,
+  yMax: 1,
+  yAsPercent: true,
+  xStep: 0.1,
+  yStep: 0.1,
 });
 
 const MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART = Object.freeze({
   xAxisTitle: 'Avstånd (radhöjder)',
   yAxisTitle: 'Straff (%)'
 });
+const MATCHING_PENALTY_CURVE_CONFIGS = Object.freeze([
+  {
+    settingKey: 'noisePenaltyPerCharacterCurve',
+    legacyKey: 'noisePenaltyPerCharacter',
+    domId: 'noise-penalty',
+    chart: {
+      xAxisTitle: 'Brustecken',
+      yAxisTitle: 'Straff (%)',
+      xPointLabel: 'Brustecken'
+    }
+  },
+  {
+    settingKey: 'rightYOffsetPenaltyCurve',
+    legacyKey: 'rightYOffsetPenalty',
+    domId: 'right-y-offset-penalty',
+    chart: {
+      xAxisTitle: 'Y-avvikelse (radhöjder)',
+      yAxisTitle: 'Straff (%)',
+      xPointLabel: 'Y-avvikelse'
+    }
+  },
+  {
+    settingKey: 'downXOffsetPenaltyCurve',
+    legacyKey: 'downXOffsetPenalty',
+    domId: 'down-x-offset-penalty',
+    chart: {
+      xAxisTitle: 'X-avvikelse (radhöjder)',
+      yAxisTitle: 'Straff (%)',
+      xPointLabel: 'X-avvikelse'
+    }
+  },
+  {
+    settingKey: 'downYDistancePenaltyCurve',
+    domId: 'down-y-distance',
+    chart: MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART
+  }
+]);
 let rapidocrStatusBadgeWrapEl = null;
 let rapidocrStatusBadgeEl = null;
 let rapidocrInstallCommandEl = null;
@@ -7688,17 +7731,10 @@ function formatSnapshotCompareCandidateBboxIndexes(indexes) {
 
 function formatPrimaryDateSignalLabel(code) {
   const labels = {
-    place_before_date: 'Ort före datum',
-    place_above_date: 'Ort ovanför datum',
-    top_of_first_page: 'Högt i dokument',
-    context_above_date: 'Kontext ovanför datum',
-    letterhead_context: 'Brevhuvud/header',
-    single_date_line: 'Ensam datumrad',
-    near_title: 'Nära dokumenttitel',
+    place_near_date: 'Ort vid datum',
+    document_position: 'Position i dokument',
     date_word_nearby: 'Ordet datum i närheten',
-    identifier_row: 'Identifierarrad',
-    late_in_document: 'Sent i dokument',
-    page_after_first: 'Sida efter första',
+    page_in_document: 'Sida i dokument',
     running_text: 'Löpande text',
   };
   return labels[code] || code;
@@ -7784,7 +7820,9 @@ function appendPrimaryDateSignalTextLines(lines, title, signals, type = null) {
     return;
   }
   lines.push('');
-  lines.push(`${title}:`);
+  if (title) {
+    lines.push(`${title}:`);
+  }
   rows.forEach((signal) => {
     const detail = formatPrimaryDateSignalDetail(signal);
     lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
@@ -7807,6 +7845,28 @@ function formatPrimaryDateSignalDetail(signal) {
   if (wordsMatch) {
     return `${Number(wordsMatch[1]).toLocaleString('sv-SE')} ord`;
   }
+  const contextLabels = {
+    same_line_before: 'till vänster',
+    line_above: 'ovanför',
+    no_bbox: 'saknar bbox',
+  };
+  const colonIndex = detail.indexOf(':');
+  if (colonIndex > 0) {
+    const prefix = detail.slice(0, colonIndex);
+    const rest = detail.slice(colonIndex + 1);
+    if (contextLabels[prefix]) {
+      const [valuePart] = rest.split(',distance:');
+      const distancePart = rest.match(/\bdistance:([0-9.]+)/u);
+      const distanceText = distancePart
+        ? `, ${formatPrimaryDateScoreNumber(Number(distancePart[1]))} radhöjder`
+        : '';
+      return `${contextLabels[prefix]}${valuePart ? `: ${valuePart}` : ''}${distanceText}`;
+    }
+  }
+  const distanceMatch = detail.match(/\bdistance:([0-9.]+)/u);
+  if (distanceMatch) {
+    return `${formatPrimaryDateScoreNumber(Number(distanceMatch[1]))} radhöjder`;
+  }
   const lineMatch = detail.match(/\bline:(\d+)/u);
   if (lineMatch) {
     return `rad ${Number(lineMatch[1]).toLocaleString('sv-SE')}`;
@@ -7819,12 +7879,6 @@ function formatPrimaryDateSignalDetail(signal) {
   if (identifierMatch) {
     return `${Number(identifierMatch[1]).toLocaleString('sv-SE')} långa nummer`;
   }
-  const contextLabels = {
-    direct_before: 'direkt före datumet',
-    same_line: 'samma rad',
-    line_above: 'raden ovanför',
-    no_bbox: 'saknar bbox',
-  };
   return contextLabels[detail] || detail;
 }
 
@@ -7869,8 +7923,7 @@ function snapshotCompareCandidateDetailsText(candidate) {
   add('Poäng', Number.isFinite(Number(candidate.score)) && Number.isFinite(Number(candidate.fullConfidenceScore))
     ? `${formatPrimaryDateScoreNumber(candidate.score)} / ${formatPrimaryDateScoreNumber(candidate.fullConfidenceScore)}`
     : formatPrimaryDateScoreNumber(candidate.score));
-  appendPrimaryDateSignalTextLines(lines, 'Pluspoäng', candidate.signals, 'positive');
-  appendPrimaryDateSignalTextLines(lines, 'Straff', candidate.signals, 'negative');
+  appendPrimaryDateSignalTextLines(lines, 'Poängsignaler', candidate.signals);
   add('Position på sidan', Number.isFinite(Number(candidate.yRatio)) ? `${formatPrimaryDateScoreNumber(Number(candidate.yRatio) * 100)} % ner på sidan` : '');
   add('Ogiltighetsorsak', candidate.invalidReason);
   add('Källa', candidate.source);
@@ -15567,11 +15620,9 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     detail: formatPrimaryDateSignalDetail(signal),
     type: signal.score >= 0 ? 'positive' : 'negative',
   });
-  const plusRows = primaryDateSignals.filter((signal) => signal.score > 0).map(toScoreRow);
-  const penaltyRows = primaryDateSignals.filter((signal) => signal.score < 0).map(toScoreRow);
+  const scoreRows = primaryDateSignals.map(toScoreRow);
   const scoreGroups = [
-    ...(plusRows.length > 0 ? [{ title: 'Pluspoäng', rows: plusRows }] : []),
-    ...(penaltyRows.length > 0 ? [{ title: 'Straff', rows: penaltyRows }] : []),
+    ...(scoreRows.length > 0 ? [{ title: 'Poängsignaler', rows: scoreRows }] : []),
   ];
 
   const securityRowIndex = metaRows.findIndex((row) => row && row.raw !== true && typeof row.label === 'string' && row.label.trim() === 'Säkerhet');
@@ -17618,21 +17669,10 @@ function ocrDataFieldConfidenceTooltip(row, options = {}) {
         : formatPrimaryDateScoreNumber(score);
       lines.push(`Poäng: ${scoreText}`);
     }
-    const bonusText = formatPrimaryDateSignalsText(row?.signals, 'positive');
-    if (bonusText !== '') {
-      lines.push('Pluspoäng:');
+    const signalText = formatPrimaryDateSignalsText(row?.signals);
+    if (signalText !== '') {
+      lines.push('Poängsignaler:');
       normalizePrimaryDateSignals(row?.signals)
-        .filter((signal) => signal.score > 0)
-        .forEach((signal) => {
-          const detail = formatPrimaryDateSignalDetail(signal);
-          lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
-        });
-    }
-    const penaltyText = formatPrimaryDateSignalsText(row?.signals, 'negative');
-    if (penaltyText !== '') {
-      lines.push('Straff:');
-      normalizePrimaryDateSignals(row?.signals)
-        .filter((signal) => signal.score < 0)
         .forEach((signal) => {
           const detail = formatPrimaryDateSignalDetail(signal);
           lines.push(`${formatPrimaryDateSignalScore(signal.score)} ${formatPrimaryDateSignalLabel(signal.code)}${detail ? ` (${detail})` : ''}`);
@@ -19624,6 +19664,7 @@ function bindSettingsPanelRefs(tabId) {
     matchingDownYDistanceCurveToggleEl = document.getElementById('matching-down-y-distance-curve-toggle');
     matchingDownYDistanceCurvePopoverEl = document.getElementById('matching-down-y-distance-curve-popover');
     matchingDownYDistanceCurveAddPointEl = document.getElementById('matching-down-y-distance-curve-add-point');
+    matchingPenaltyCurveEditors = setupMatchingPenaltyCurveEditors();
     matchingMaxHorizontalGapMultiplierEl = document.getElementById('matching-max-horizontal-gap-multiplier');
     matchingMaxVerticalOffsetMultiplierEl = document.getElementById('matching-max-vertical-offset-multiplier');
     matchingDataFieldAcceptanceThresholdEl = document.getElementById('matching-data-field-acceptance-threshold');
@@ -19661,48 +19702,7 @@ function bindSettingsPanelRefs(tabId) {
     };
     bindMatchingBboxSpanInput(matchingMaxHorizontalGapMultiplierEl, 'maxHorizontalGapMultiplier');
     bindMatchingBboxSpanInput(matchingMaxVerticalOffsetMultiplierEl, 'maxVerticalOffsetMultiplier');
-    if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement) {
-      matchingDownYDistanceCurveToggleEl.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleMatchingDownYDistanceCurvePopover();
-      });
-    }
-    if (matchingDownYDistanceCurvePopoverEl instanceof HTMLElement) {
-      matchingDownYDistanceCurvePopoverEl.addEventListener('click', (event) => {
-        event.stopPropagation();
-      });
-    }
-    document.addEventListener('click', (event) => {
-      if (!(matchingDownYDistanceCurvePopoverEl instanceof HTMLElement) || matchingDownYDistanceCurvePopoverEl.classList.contains('hidden')) {
-        return;
-      }
-      const target = event.target;
-      if (!(target instanceof Node)) {
-        closeMatchingDownYDistanceCurvePopover();
-        return;
-      }
-      if (matchingDownYDistanceCurvePopoverEl.contains(target)) {
-        return;
-      }
-      if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement && matchingDownYDistanceCurveToggleEl.contains(target)) {
-        return;
-      }
-      closeMatchingDownYDistanceCurvePopover();
-    }, true);
-    if (matchingDownYDistanceCurveAddPointEl instanceof HTMLButtonElement) {
-      matchingDownYDistanceCurveAddPointEl.addEventListener('click', () => {
-        const curve = sanitizeMatchingPenaltyCurve(matchingPositionAdjustmentDraft.downYDistancePenaltyCurve);
-        const lastPoint = curve[curve.length - 1] || { x: 0, y: 0 };
-        curve.push({
-          x: Math.max(0, lastPoint.x + 1),
-          y: Math.min(1, lastPoint.y + 0.1)
-        });
-        matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = sanitizeMatchingPenaltyCurve(curve);
-        renderMatchingDownYDistanceCurveEditor();
-        updateSettingsActionButtons();
-      });
-    }
+    bindMatchingPenaltyCurveEditorEvents(matchingPenaltyCurveEditors);
     if (matchingDataFieldAcceptanceThresholdEl instanceof HTMLInputElement) {
       matchingDataFieldAcceptanceThresholdEl.addEventListener('input', () => {
         matchingDataFieldAcceptanceThresholdDraft = sanitizeMatchingPercentInput(
@@ -19733,7 +19733,7 @@ function bindSettingsPanelRefs(tabId) {
       if (matchingDraft.length === 0) {
         matchingDraft = [defaultReplacement()];
       }
-      closeMatchingDownYDistanceCurvePopover();
+      closeAllMatchingPenaltyCurvePopovers();
       renderMatchingEditor();
       updateSettingsActionButtons();
     });
@@ -21088,8 +21088,32 @@ function defaultMatchingPositionAdjustmentSettings() {
     otherMatchKeyPenalty: 0.5,
     rightYOffsetPenalty: 0.25,
     downXOffsetPenalty: 0.25,
+    noisePenaltyPerCharacterCurve: defaultMatchingNoisePenaltyCurve(),
+    rightYOffsetPenaltyCurve: defaultMatchingOffsetPenaltyCurve(0.25),
+    downXOffsetPenaltyCurve: defaultMatchingOffsetPenaltyCurve(0.25),
     downYDistancePenaltyCurve: defaultMatchingDownYDistancePenaltyCurve()
   };
+}
+
+function defaultMatchingNoisePenaltyCurve() {
+  return [
+    { x: 0, y: 0 },
+    { x: 100, y: 1 }
+  ];
+}
+
+function defaultMatchingOffsetPenaltyCurve(penaltyPerLineHeight) {
+  const weight = clampMatchingDecimal(penaltyPerLineHeight, 0, null);
+  if (weight <= 0) {
+    return [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 }
+    ];
+  }
+  return [
+    { x: 0, y: 0 },
+    { x: 1 / weight, y: 1 }
+  ];
 }
 
 function defaultMatchingDownYDistancePenaltyCurve() {
@@ -21122,6 +21146,23 @@ function sanitizeMatchingPercentInput(value, fallbackDecimal, maxDecimal = 1) {
     return fallbackDecimal;
   }
   return clampMatchingDecimal(parsed / 100, fallbackDecimal, maxDecimal);
+}
+
+function legacyMatchingPenaltyCurveFromScalar(value, fallbackValue, type) {
+  const scalar = clampMatchingDecimal(value, fallbackValue, type === 'noise' ? 1 : null);
+  if (type === 'noise') {
+    if (scalar <= 0) {
+      return [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 }
+      ];
+    }
+    return [
+      { x: 0, y: 0 },
+      { x: 1 / scalar, y: 1 }
+    ];
+  }
+  return defaultMatchingOffsetPenaltyCurve(scalar);
 }
 
 function formatMatchingPercentInput(value, maxDecimal = 1) {
@@ -21172,19 +21213,36 @@ function sanitizeMatchingPenaltyCurve(points, fallback = defaultMatchingDownYDis
 function sanitizeMatchingPositionAdjustmentSettings(value) {
   const input = value && typeof value === 'object' ? value : {};
   const defaults = defaultMatchingPositionAdjustmentSettings();
+  const noisePenaltyPerCharacter = clampMatchingDecimal(input.noisePenaltyPerCharacter, defaults.noisePenaltyPerCharacter, 1);
+  const trailingDelimiterPenalty = clampMatchingDecimal(input.trailingDelimiterPenalty, defaults.trailingDelimiterPenalty, null);
+  const otherMatchKeyPenalty = clampMatchingDecimal(input.otherMatchKeyPenalty, defaults.otherMatchKeyPenalty, null);
+  const rightYOffsetPenalty = clampMatchingDecimal(
+    input.rightYOffsetPenalty ?? input.downRightPenalty,
+    defaults.rightYOffsetPenalty,
+    null
+  );
+  const downXOffsetPenalty = clampMatchingDecimal(
+    input.downXOffsetPenalty ?? input.downRightPenalty,
+    defaults.downXOffsetPenalty,
+    null
+  );
   return {
-    noisePenaltyPerCharacter: clampMatchingDecimal(input.noisePenaltyPerCharacter, defaults.noisePenaltyPerCharacter, 1),
-    trailingDelimiterPenalty: clampMatchingDecimal(input.trailingDelimiterPenalty, defaults.trailingDelimiterPenalty, null),
-    otherMatchKeyPenalty: clampMatchingDecimal(input.otherMatchKeyPenalty, defaults.otherMatchKeyPenalty, null),
-    rightYOffsetPenalty: clampMatchingDecimal(
-      input.rightYOffsetPenalty ?? input.downRightPenalty,
-      defaults.rightYOffsetPenalty,
-      null
+    noisePenaltyPerCharacter,
+    trailingDelimiterPenalty,
+    otherMatchKeyPenalty,
+    rightYOffsetPenalty,
+    downXOffsetPenalty,
+    noisePenaltyPerCharacterCurve: sanitizeMatchingPenaltyCurve(
+      input.noisePenaltyPerCharacterCurve,
+      legacyMatchingPenaltyCurveFromScalar(noisePenaltyPerCharacter, defaults.noisePenaltyPerCharacter, 'noise')
     ),
-    downXOffsetPenalty: clampMatchingDecimal(
-      input.downXOffsetPenalty ?? input.downRightPenalty,
-      defaults.downXOffsetPenalty,
-      null
+    rightYOffsetPenaltyCurve: sanitizeMatchingPenaltyCurve(
+      input.rightYOffsetPenaltyCurve,
+      legacyMatchingPenaltyCurveFromScalar(rightYOffsetPenalty, defaults.rightYOffsetPenalty, 'offset')
+    ),
+    downXOffsetPenaltyCurve: sanitizeMatchingPenaltyCurve(
+      input.downXOffsetPenaltyCurve,
+      legacyMatchingPenaltyCurveFromScalar(downXOffsetPenalty, defaults.downXOffsetPenalty, 'offset')
     ),
     downYDistancePenaltyCurve: sanitizeMatchingPenaltyCurve(input.downYDistancePenaltyCurve, defaults.downYDistancePenaltyCurve)
   };
@@ -24214,82 +24272,57 @@ function defaultPrimaryDateHeuristics() {
   return {
     full_confidence_score: 130,
     bonuses: {
-      place_before_date: {
+      place_near_date: {
         enabled: true,
-        points: 100,
-        description: 'Bonus när en svensk ort/tätort står före datumet på samma rad.',
+        curve: [
+          { x: 0, y: 100 },
+          { x: 1, y: 90 },
+          { x: 3, y: 45 },
+          { x: 6, y: 0 },
+        ],
+        description: 'Poängkurva när en svensk ort/tätort finns ungefär till vänster om eller ovanför kandidatdatumet.',
       },
-      place_above_date: {
+      document_position: {
         enabled: true,
-        points: 90,
-        description: 'Bonus när en svensk ort/tätort står på raden ovanför datumet.',
-      },
-      top_of_first_page: {
-        enabled: true,
-        max_points: 50,
-        full_until_y_ratio: 0.08,
-        zero_after_y_ratio: 0.35,
-        description: 'Maxbonus för datum högt upp på första sidan. Bonusen minskar gradvis längre ner.',
-      },
-      context_above_date: {
-        enabled: true,
-        points: 10,
-        max_y_ratio: 0.35,
-        description: 'Liten bonus när det finns meningsfull kontext ovanför datumet i övre delen av dokumentet.',
-      },
-      letterhead_context: {
-        enabled: true,
-        max_points: 40,
-        zero_after_y_ratio: 0.40,
-        keywords: ['till', 'från', 'fran', 'handläggare', 'handlaggare', 'diarienummer', 'avdelning'],
-        description: 'Bonus när närliggande brevhuvud/header innehåller typiska brevhuvudord.',
-      },
-      single_date_line: {
-        enabled: true,
-        points: 30,
-        description: 'Bonus när raden bara består av datumet, eller av "den" följt av datumet.',
-      },
-      near_title: {
-        enabled: true,
-        points: 30,
-        description: 'Bonus när föregående rad ser ut som en dokumenttitel.',
+        curve: [
+          { x: 0, y: 50 },
+          { x: 0.08, y: 50 },
+          { x: 0.35, y: 0 },
+          { x: 0.90, y: -30 },
+        ],
+        description: 'Poängkurva baserad på datumets vertikala position på sidan.',
       },
     },
     penalties: {
       date_word_nearby: {
         enabled: true,
-        max_points: -40,
-        direct_before_points: -40,
-        same_line_points: -30,
-        line_above_points: -20,
-        description: 'Straff när ordet "datum" finns nära kandidatdatumet.',
+        curve: [
+          { x: 0, y: -40 },
+          { x: 1, y: -35 },
+          { x: 3, y: -18 },
+          { x: 6, y: 0 },
+        ],
+        description: 'Poängkurva när ordet "datum" finns ungefär till vänster om eller ovanför kandidatdatumet.',
       },
-      identifier_row: {
+      page_in_document: {
         enabled: true,
-        points: -60,
-        description: 'Straff när raden ser ut som en identifierarrad med flera långa nummer och saknar stöd från ort eller header.',
-      },
-      late_in_document: {
-        enabled: true,
-        max_points: -30,
-        starts_at_y_ratio: 0.65,
-        full_after_y_ratio: 0.90,
-        description: 'Glidande straff för datum långt ner på sidan.',
-      },
-      page_after_first: {
-        enabled: true,
-        points_per_page: -60,
-        max_points: -120,
-        description: 'Straff för datum som inte ligger på första sidan.',
+        curve: [
+          { x: 1, y: 0 },
+          { x: 2, y: -60 },
+          { x: 3, y: -120 },
+        ],
+        description: 'Poängkurva baserad på sidnumret där datumet hittas.',
       },
       running_text: {
         enabled: true,
-        max_points: -60,
-        no_penalty_until_words: 4,
-        full_penalty_from_words: 12,
+        curve: [
+          { x: 0, y: 0 },
+          { x: 0.35, y: 0 },
+          { x: 1, y: -60 },
+        ],
         middle_of_sentence_extra_ratio: 0.25,
         sentence_punctuation_extra_ratio: 0.15,
-        description: 'Glidande straff när datumet verkar ligga i löpande text.',
+        description: 'Poängkurva baserad på hur mycket raden liknar löpande text.',
       },
     },
   };
@@ -24320,6 +24353,29 @@ function sanitizePrimaryDateKeywords(value, fallback) {
   return normalized.length > 0 ? normalized : [...fallback];
 }
 
+function sanitizePrimaryDateScoreCurve(value, fallback) {
+  const source = Array.isArray(value) ? value : fallback;
+  const pointsByX = new Map();
+  source.forEach((point) => {
+    if (!point || typeof point !== 'object') {
+      return;
+    }
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0) {
+      return;
+    }
+    pointsByX.set(x.toFixed(6), { x, y });
+  });
+  const points = Array.from(pointsByX.values()).sort((left, right) => left.x - right.x || left.y - right.y);
+  if (points.length >= 2) {
+    return points;
+  }
+  return Array.isArray(fallback) && fallback.length >= 2
+    ? fallback.map((point) => ({ x: Number(point.x) || 0, y: Number(point.y) || 0 }))
+    : [{ x: 0, y: 0 }, { x: 1, y: 0 }];
+}
+
 function sanitizePrimaryDateHeuristics(input) {
   const defaults = defaultPrimaryDateHeuristics();
   const source = input && typeof input === 'object' ? input : {};
@@ -24347,6 +24403,9 @@ function sanitizePrimaryDateHeuristics(input) {
     if (Object.prototype.hasOwnProperty.call(defaultsForRule, 'keywords')) {
       result.bonuses[key].keywords = sanitizePrimaryDateKeywords(raw.keywords, defaultsForRule.keywords);
     }
+    if (Object.prototype.hasOwnProperty.call(defaultsForRule, 'curve')) {
+      result.bonuses[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForRule.curve);
+    }
   });
 
   Object.entries(defaults.penalties).forEach(([key, defaultsForRule]) => {
@@ -24369,17 +24428,10 @@ function sanitizePrimaryDateHeuristics(input) {
         result.penalties[key][prop] = Math.max(0, Math.round(sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop])));
       }
     });
+    if (Object.prototype.hasOwnProperty.call(defaultsForRule, 'curve')) {
+      result.penalties[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForRule.curve);
+    }
   });
-
-  if (result.bonuses.top_of_first_page.zero_after_y_ratio <= result.bonuses.top_of_first_page.full_until_y_ratio) {
-    result.bonuses.top_of_first_page.zero_after_y_ratio = Math.min(1, result.bonuses.top_of_first_page.full_until_y_ratio + 0.01);
-  }
-  if (result.penalties.late_in_document.full_after_y_ratio <= result.penalties.late_in_document.starts_at_y_ratio) {
-    result.penalties.late_in_document.full_after_y_ratio = Math.min(1, result.penalties.late_in_document.starts_at_y_ratio + 0.01);
-  }
-  if (result.penalties.running_text.full_penalty_from_words <= result.penalties.running_text.no_penalty_until_words) {
-    result.penalties.running_text.full_penalty_from_words = result.penalties.running_text.no_penalty_until_words + 1;
-  }
 
   return result;
 }
@@ -25987,9 +26039,17 @@ function appendTreeBodyLock(bodyEl, title = 'Låst etikett') {
   lock.className = 'tree-body-icon-lock';
   lock.setAttribute('aria-hidden', 'true');
   lock.title = title;
-  bodyEl.classList.add('has-top-lock');
   bodyEl.appendChild(lock);
   return lock;
+}
+
+function systemExtractionFieldHelpText(field) {
+  const key = typeof field?.systemFieldKey === 'string' ? field.systemFieldKey : '';
+  const extractor = typeof field?.extractor === 'string' ? field.extractor : '';
+  if (key === 'primary_date' || extractor === 'primary_date') {
+    return 'Huvuddatum är dokumentets primära, visuellt representativa datum. Det ska normalt vara naket, fristående och högt upp i dokumentet, inte ett datum i löpande text eller ett tydligt etiketterat datumfält.';
+  }
+  return '';
 }
 
 function renderClientsEditor() {
@@ -26169,7 +26229,7 @@ function renderMatchingEditor() {
   preserveSettingsPanelScroll(() => {
     matchingListEl.innerHTML = '';
     syncMatchingPositionAdjustmentInputs();
-    renderMatchingDownYDistanceCurveEditor();
+    renderMatchingPenaltyCurveEditors();
 
     if (matchingDraft.length === 0) {
       const empty = document.createElement('div');
@@ -26231,31 +26291,224 @@ function renderMatchingEditor() {
   });
 }
 
-function renderMatchingDownYDistanceCurveEditor() {
-  if (!(matchingDownYDistanceCurveEl instanceof HTMLElement)) {
+function setupMatchingPenaltyCurveEditors() {
+  const editors = new Map();
+  MATCHING_PENALTY_CURVE_CONFIGS.forEach((config) => {
+    const pointsEl = document.getElementById(`matching-${config.domId}-curve`);
+    const previewEl = document.getElementById(`matching-${config.domId}-curve-preview`);
+    const popoverPreviewEl = document.getElementById(`matching-${config.domId}-curve-popover-preview`);
+    const toggleEl = document.getElementById(`matching-${config.domId}-curve-toggle`);
+    const popoverEl = document.getElementById(`matching-${config.domId}-curve-popover`);
+    const addPointEl = document.getElementById(`matching-${config.domId}-curve-add-point`);
+    if (!(pointsEl instanceof HTMLElement)) {
+      return;
+    }
+    editors.set(config.settingKey, {
+      config,
+      pointsEl,
+      previewEl,
+      popoverPreviewEl,
+      toggleEl,
+      popoverEl,
+      addPointEl
+    });
+  });
+  return editors;
+}
+
+function closeMatchingPenaltyCurvePopover(editor) {
+  if (!editor || !(editor.popoverEl instanceof HTMLElement)) {
     return;
   }
+  editor.popoverEl.classList.add('hidden');
+  editor.popoverEl.style.removeProperty('left');
+  editor.popoverEl.style.removeProperty('top');
+  editor.popoverEl.style.removeProperty('width');
+  editor.popoverEl.style.removeProperty('max-height');
+  if (editor.toggleEl instanceof HTMLButtonElement) {
+    editor.toggleEl.setAttribute('aria-expanded', 'false');
+  }
+}
 
+function closeAllMatchingPenaltyCurvePopovers(exceptEditor = null) {
+  matchingPenaltyCurveEditors.forEach((editor) => {
+    if (editor !== exceptEditor) {
+      closeMatchingPenaltyCurvePopover(editor);
+    }
+  });
+}
+
+function findOpenMatchingPenaltyCurveEditor() {
+  return Array.from(matchingPenaltyCurveEditors.values())
+    .find((editor) => editor.popoverEl instanceof HTMLElement && !editor.popoverEl.classList.contains('hidden')) || null;
+}
+
+function positionMatchingPenaltyCurvePopover(editor) {
+  if (!editor || !(editor.popoverEl instanceof HTMLElement)) {
+    return;
+  }
+  const anchorEl = editor.popoverEl.parentElement;
+  if (!(anchorEl instanceof HTMLElement)) {
+    return;
+  }
+  const boundsEl = editor.popoverEl.closest('.settings-dialog')
+    || document.documentElement;
+  const boundsRect = boundsEl.getBoundingClientRect();
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const gutter = 12;
+  const viewportWidth = document.documentElement.clientWidth || window.innerWidth || boundsRect.width;
+  const viewportHeight = document.documentElement.clientHeight || window.innerHeight || boundsRect.height;
+  const availableWidth = Math.max(260, Math.min(boundsRect.width, viewportWidth) - (gutter * 2));
+  const popoverWidth = Math.min(560, availableWidth);
+  const defaultLeft = anchorRect.left + 10;
+  const minLeft = Math.max(gutter, boundsRect.left + gutter);
+  const maxLeft = Math.min(viewportWidth - gutter, boundsRect.right - gutter) - popoverWidth;
+  const clampedLeft = Math.min(Math.max(defaultLeft, minLeft), Math.max(minLeft, maxLeft));
+  const preferredTop = anchorRect.top + 38;
+  const minTop = Math.max(gutter, boundsRect.top + gutter);
+  const maxBottom = Math.min(viewportHeight - gutter, boundsRect.bottom - gutter);
+  const maxHeightBelow = maxBottom - preferredTop;
+  const maxHeightAbove = anchorRect.top - minTop - gutter;
+  const openAbove = maxHeightBelow < 220 && maxHeightAbove > maxHeightBelow;
+  const popoverMaxHeight = Math.max(180, Math.min(520, Math.max(openAbove ? maxHeightAbove : maxHeightBelow, 180)));
+  const top = openAbove
+    ? Math.max(minTop, anchorRect.top - popoverMaxHeight - gutter)
+    : Math.max(minTop, preferredTop);
+
+  editor.popoverEl.style.width = `${Math.round(popoverWidth)}px`;
+  editor.popoverEl.style.left = `${Math.round(clampedLeft)}px`;
+  editor.popoverEl.style.top = `${Math.round(top)}px`;
+  editor.popoverEl.style.maxHeight = `${Math.round(popoverMaxHeight)}px`;
+}
+
+function toggleMatchingPenaltyCurvePopover(editor, forceOpen = null) {
+  if (!editor || !(editor.popoverEl instanceof HTMLElement)) {
+    return;
+  }
+  const nextOpen = forceOpen === null
+    ? editor.popoverEl.classList.contains('hidden')
+    : forceOpen === true;
+  if (nextOpen) {
+    closeAllMatchingPenaltyCurvePopovers(editor);
+  }
+  editor.popoverEl.classList.toggle('hidden', !nextOpen);
+  if (editor.toggleEl instanceof HTMLButtonElement) {
+    editor.toggleEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+  }
+  if (!nextOpen) {
+    return;
+  }
+  positionMatchingPenaltyCurvePopover(editor);
+  requestAnimationFrame(() => {
+    positionMatchingPenaltyCurvePopover(editor);
+    const firstInput = editor.popoverEl.querySelector('input');
+    if (firstInput instanceof HTMLInputElement) {
+      firstInput.focus();
+      firstInput.select();
+    }
+  });
+}
+
+function bindMatchingPenaltyCurveEditorEvents(editors) {
+  editors.forEach((editor) => {
+    if (editor.toggleEl instanceof HTMLButtonElement) {
+      editor.toggleEl.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const openEditor = findOpenMatchingPenaltyCurveEditor();
+        if (openEditor && openEditor !== editor) {
+          closeMatchingPenaltyCurvePopover(openEditor);
+          return;
+        }
+        toggleMatchingPenaltyCurvePopover(editor);
+      });
+    }
+    if (editor.popoverEl instanceof HTMLElement) {
+      editor.popoverEl.addEventListener('click', (event) => {
+        event.stopPropagation();
+      });
+    }
+    if (editor.addPointEl instanceof HTMLButtonElement) {
+      editor.addPointEl.addEventListener('click', () => {
+        const key = editor.config.settingKey;
+        const curve = sanitizeMatchingPenaltyCurve(matchingPositionAdjustmentDraft[key]);
+        const lastPoint = curve[curve.length - 1] || { x: 0, y: 0 };
+        curve.push({
+          x: Math.max(0, lastPoint.x + 1),
+          y: Math.min(1, lastPoint.y + 0.1)
+        });
+        matchingPositionAdjustmentDraft[key] = sanitizeMatchingPenaltyCurve(curve);
+        renderMatchingPenaltyCurveEditor(editor);
+        updateSettingsActionButtons();
+      });
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Node)) {
+      closeAllMatchingPenaltyCurvePopovers();
+      return;
+    }
+    matchingPenaltyCurveEditors.forEach((editor) => {
+      if (!(editor.popoverEl instanceof HTMLElement) || editor.popoverEl.classList.contains('hidden')) {
+        return;
+      }
+      if (editor.popoverEl.contains(target)) {
+        return;
+      }
+      if (editor.toggleEl instanceof HTMLButtonElement && editor.toggleEl.contains(target)) {
+        return;
+      }
+      closeMatchingPenaltyCurvePopover(editor);
+    });
+  }, true);
+
+  const repositionOpenMatchingPenaltyCurvePopover = () => {
+    matchingPenaltyCurveEditors.forEach((editor) => {
+      if (editor.popoverEl instanceof HTMLElement && !editor.popoverEl.classList.contains('hidden')) {
+        positionMatchingPenaltyCurvePopover(editor);
+      }
+    });
+  };
+
+  window.addEventListener('resize', repositionOpenMatchingPenaltyCurvePopover);
+  const settingsPanel = document.getElementById('settings-panel-matching');
+  if (settingsPanel instanceof HTMLElement) {
+    settingsPanel.addEventListener('scroll', repositionOpenMatchingPenaltyCurvePopover, { passive: true });
+  }
+}
+
+function renderMatchingPenaltyCurveEditor(editor) {
+  if (!editor || !(editor.pointsEl instanceof HTMLElement)) {
+    return;
+  }
+  const key = editor.config.settingKey;
   const curve = renderMatchingPenaltyCurvePointEditor(
-    matchingDownYDistanceCurveEl,
-    matchingPositionAdjustmentDraft.downYDistancePenaltyCurve,
+    editor.pointsEl,
+    matchingPositionAdjustmentDraft[key],
     {
-      chart: MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART,
-      getCurve: () => matchingPositionAdjustmentDraft.downYDistancePenaltyCurve,
+      chart: editor.config.chart,
+      getCurve: () => matchingPositionAdjustmentDraft[key],
       onChange: (nextCurve, context = {}) => {
-        matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = nextCurve;
+        matchingPositionAdjustmentDraft[key] = nextCurve;
         if (context.preserveFocus !== true) {
-          renderMatchingDownYDistanceCurveEditor();
+          renderMatchingPenaltyCurveEditor(editor);
         } else {
-          renderMatchingDownYDistanceCurvePreview(nextCurve);
+          renderMatchingPenaltyCurvePreview(editor, nextCurve);
         }
         updateSettingsActionButtons();
       }
     }
   );
-  matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = curve;
+  matchingPositionAdjustmentDraft[key] = curve;
+  renderMatchingPenaltyCurvePreview(editor, curve);
+}
 
-  renderMatchingDownYDistanceCurvePreview(curve);
+function renderMatchingPenaltyCurveEditors() {
+  matchingPenaltyCurveEditors.forEach((editor) => {
+    renderMatchingPenaltyCurveEditor(editor);
+  });
 }
 
 function resolveMatchingPenaltyCurveChartConfig(chart = {}) {
@@ -26276,13 +26529,16 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
   }
 
   const chart = resolveMatchingPenaltyCurveChartConfig(options.chart);
-  const points = sanitizeMatchingPenaltyCurve(curve);
+  const sanitizeCurve = typeof options.sanitizeCurve === 'function'
+    ? options.sanitizeCurve
+    : (value) => sanitizeMatchingPenaltyCurve(value);
+  const points = sanitizeCurve(curve);
   const workingPoints = points.map((point) => ({ ...point }));
   const getCurve = typeof options.getCurve === 'function'
     ? options.getCurve
     : () => points;
   const commitCurve = (nextCurve, context = {}) => {
-    const sanitizedCurve = sanitizeMatchingPenaltyCurve(nextCurve);
+    const sanitizedCurve = sanitizeCurve(nextCurve);
     if (typeof options.onChange === 'function') {
       options.onChange(sanitizedCurve, context);
     }
@@ -26297,17 +26553,19 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
     const xInput = document.createElement('input');
     xInput.type = 'number';
     xInput.min = '0';
-    xInput.step = '0.1';
+    xInput.step = String(chart.xStep || 0.1);
     xInput.inputMode = 'decimal';
     xInput.value = formatMatchingCurveNumber(point.x);
 
     const yInput = document.createElement('input');
     yInput.type = 'number';
-    yInput.min = '0';
-    yInput.max = '100';
-    yInput.step = '0.1';
+    yInput.min = chart.yAsPercent === false ? String(chart.yMin) : '0';
+    yInput.max = chart.yAsPercent === false ? String(chart.yMax) : '100';
+    yInput.step = String(chart.yAsPercent === false ? (chart.yStep || 1) : 0.1);
     yInput.inputMode = 'decimal';
-    yInput.value = formatMatchingPercentInput(point.y, 1);
+    yInput.value = chart.yAsPercent === false
+      ? formatMatchingCurveNumber(point.y)
+      : formatMatchingPercentInput(point.y, 1);
 
     const updatePoint = (event) => {
       if (!workingPoints[pointIndex]) {
@@ -26315,7 +26573,11 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
       }
       workingPoints[pointIndex] = {
         x: clampMatchingDecimal(xInput.value, point.x, null),
-        y: sanitizeMatchingPercentInput(yInput.value, point.y, 1)
+        y: chart.yAsPercent === false
+          ? (Number.isFinite(Number.parseFloat(String(yInput.value).replace(',', '.')))
+            ? Number.parseFloat(String(yInput.value).replace(',', '.'))
+            : point.y)
+          : sanitizeMatchingPercentInput(yInput.value, point.y, 1)
       };
       const activeElement = document.activeElement;
       commitCurve(workingPoints, {
@@ -26339,7 +26601,7 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
     });
 
     row.appendChild(createFloatingField(chart.xPointLabel, xInput));
-    row.appendChild(createFloatingField(chart.yPointLabel, wrapPercentInput(yInput)));
+    row.appendChild(createFloatingField(chart.yPointLabel, chart.yAsPercent === false ? yInput : wrapPercentInput(yInput)));
     row.appendChild(removeButton);
     containerEl.appendChild(row);
   });
@@ -26347,41 +26609,11 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
   return points;
 }
 
-function closeMatchingDownYDistanceCurvePopover() {
-  if (!(matchingDownYDistanceCurvePopoverEl instanceof HTMLElement)) {
-    return;
-  }
-  matchingDownYDistanceCurvePopoverEl.classList.add('hidden');
-  if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement) {
-    matchingDownYDistanceCurveToggleEl.setAttribute('aria-expanded', 'false');
-  }
-}
-
-function toggleMatchingDownYDistanceCurvePopover(forceOpen = null) {
-  if (!(matchingDownYDistanceCurvePopoverEl instanceof HTMLElement)) {
-    return;
-  }
-  const nextOpen = forceOpen === null
-    ? matchingDownYDistanceCurvePopoverEl.classList.contains('hidden')
-    : forceOpen === true;
-  matchingDownYDistanceCurvePopoverEl.classList.toggle('hidden', !nextOpen);
-  if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement) {
-    matchingDownYDistanceCurveToggleEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
-  }
-  if (!nextOpen) {
-    return;
-  }
-  requestAnimationFrame(() => {
-    const firstInput = matchingDownYDistanceCurvePopoverEl.querySelector('input');
-    if (firstInput instanceof HTMLInputElement) {
-      firstInput.focus();
-      firstInput.select();
-    }
-  });
-}
-
 function formatMatchingCurveNumber(value) {
-  const resolved = clampMatchingDecimal(value, 0, null);
+  const resolved = Number.parseFloat(String(value).replace(',', '.'));
+  if (!Number.isFinite(resolved)) {
+    return '0';
+  }
   if (Number.isInteger(resolved)) {
     return String(resolved);
   }
@@ -26398,14 +26630,17 @@ function wrapPercentInput(input) {
   return wrapper;
 }
 
-function renderMatchingDownYDistanceCurvePreview(curve) {
-  renderMatchingPenaltyCurveSvg(matchingDownYDistanceCurvePreviewEl, curve, {
+function renderMatchingPenaltyCurvePreview(editor, curve) {
+  if (!editor) {
+    return;
+  }
+  renderMatchingPenaltyCurveSvg(editor.previewEl, curve, {
     compact: true,
-    chart: MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART
+    chart: editor.config.chart
   });
-  renderMatchingPenaltyCurveSvg(matchingDownYDistanceCurvePopoverPreviewEl, curve, {
+  renderMatchingPenaltyCurveSvg(editor.popoverPreviewEl, curve, {
     compact: false,
-    chart: MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART
+    chart: editor.config.chart
   });
 }
 
@@ -26415,8 +26650,12 @@ function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
   }
   const isCompact = options.compact === true;
   const chart = resolveMatchingPenaltyCurveChartConfig(options.chart);
-  const points = sanitizeMatchingPenaltyCurve(curve);
+  const points = typeof options.sanitizeCurve === 'function'
+    ? options.sanitizeCurve(curve)
+    : (chart.yAsPercent === false ? sanitizePrimaryDateScoreCurve(curve, [{ x: 0, y: 0 }, { x: 1, y: 0 }]) : sanitizeMatchingPenaltyCurve(curve));
   const maxX = Math.max(1, ...points.map((point) => point.x));
+  const yMin = Number.isFinite(Number(chart.yMin)) ? Number(chart.yMin) : 0;
+  const yMax = Number.isFinite(Number(chart.yMax)) && Number(chart.yMax) > yMin ? Number(chart.yMax) : 1;
   const width = 240;
   const height = 90;
   const padding = {
@@ -26434,7 +26673,8 @@ function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
   const plotBottom = height - padding.bottom;
   const toSvgPoint = (point) => {
     const x = plotLeft + ((point.x / maxX) * plotWidth);
-    const y = plotTop + ((1 - point.y) * plotHeight);
+    const yRatio = Math.max(0, Math.min(1, (point.y - yMin) / (yMax - yMin)));
+    const y = plotTop + ((1 - yRatio) * plotHeight);
     return { x, y };
   };
   const svgPoints = points.map(toSvgPoint);
@@ -26478,11 +26718,26 @@ function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
 
   const tickRatios = isCompact ? [0, 1] : [0, 0.5, 1];
 
+  const formatYTick = (ratio) => {
+    const value = yMin + ((yMax - yMin) * ratio);
+    return chart.yAsPercent === false ? formatMatchingCurveNumber(value) : String(Math.round(ratio * 100));
+  };
+
   tickRatios.forEach((ratio) => {
     const y = plotTop + ((1 - ratio) * plotHeight);
     addLine(plotLeft, y, plotRight, y);
-    addText(String(Math.round(ratio * 100)), plotLeft - 5, y + 2.2, 'end');
+    addText(formatYTick(ratio), plotLeft - 5, y + 2.2, 'end');
   });
+
+  if (yMin <= 0 && yMax >= 0) {
+    const zeroRatio = (0 - yMin) / (yMax - yMin);
+    const zeroY = plotTop + ((1 - zeroRatio) * plotHeight);
+    addLine(plotLeft, zeroY, plotRight, zeroY, '#64748b', isCompact ? '1.2' : '1.5');
+    addText('0', plotLeft - 5, zeroY + 2.2, 'end', {
+      fill: '#334155',
+      'font-weight': '700'
+    });
+  }
 
   tickRatios.forEach((ratio) => {
     const x = plotLeft + (ratio * plotWidth);
@@ -26491,8 +26746,9 @@ function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
   });
 
   addText(chart.xAxisTitle, plotLeft + (plotWidth / 2), height - 4);
-  addText(chart.yAxisTitle, 8, plotTop + (plotHeight / 2), 'middle', {
-    transform: `rotate(-90 8 ${(plotTop + (plotHeight / 2)).toFixed(2)})`
+  const yAxisTitleX = 15;
+  addText(chart.yAxisTitle, yAxisTitleX, plotTop + (plotHeight / 2), 'middle', {
+    transform: `rotate(-90 ${yAxisTitleX} ${(plotTop + (plotHeight / 2)).toFixed(2)})`
   });
 
   addLine(plotLeft, plotTop, plotLeft, plotBottom, '#94a3b8', '1.2');
@@ -27555,6 +27811,13 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   const fieldValueTypeField = createFloatingField('Värdetyp', fieldValueTypeSelect);
   fieldValueTypeField.classList.add('extraction-field-header-value-type-field');
   fields.appendChild(fieldValueTypeField);
+  const systemHelpText = showLock ? systemExtractionFieldHelpText(field) : '';
+  if (systemHelpText !== '') {
+    const systemHelp = document.createElement('p');
+    systemHelp.className = 'system-extraction-field-help';
+    systemHelp.textContent = systemHelpText;
+    fields.appendChild(systemHelp);
+  }
 
   if (allowRemove) {
     const removeButton = createTrashButton({
@@ -28550,14 +28813,14 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
     ruleSetList.appendChild(ruleActions);
     fieldBody.appendChild(ruleSetList);
   } else {
-    const queryInput = document.createElement('input');
-    queryInput.type = 'text';
-    queryInput.placeholder = isPrimaryDateField ? 'Särskild intern heuristik' : 'Ex: "\\d{6}[- ]?\\d{4}"';
-    queryInput.value = isPrimaryDateField
-      ? 'Ort + datum / brevhuvud / fristående datum'
-      : field.searchString;
-    queryInput.disabled = true;
-    fields.appendChild(createFloatingField(isPrimaryDateField ? 'Extraktion' : 'Söksträng', queryInput));
+    if (!isPrimaryDateField) {
+      const queryInput = document.createElement('input');
+      queryInput.type = 'text';
+      queryInput.placeholder = 'Ex: "\\d{6}[- ]?\\d{4}"';
+      queryInput.value = field.searchString;
+      queryInput.disabled = true;
+      fields.appendChild(createFloatingField('Söksträng', queryInput));
+    }
   }
 
   fieldRow.appendChild(fieldBody);
@@ -28617,17 +28880,10 @@ function renderExtractionFieldsEditor() {
 }
 
 const primaryDateHeuristicLabels = {
-  place_before_date: 'Ort före datum',
-  place_above_date: 'Ort ovanför datum',
-  top_of_first_page: 'Högt i dokument',
-  context_above_date: 'Kontext ovanför datum',
-  letterhead_context: 'Brevhuvud/header',
-  single_date_line: 'Ensam datumrad',
-  near_title: 'Nära dokumenttitel',
+  place_near_date: 'Ort vid datum',
+  document_position: 'Position i dokument',
   date_word_nearby: 'Ordet datum i närheten',
-  identifier_row: 'Identifierarrad',
-  late_in_document: 'Sent i dokument',
-  page_after_first: 'Sida efter första',
+  page_in_document: 'Sida i dokument',
   running_text: 'Löpande text',
 };
 
@@ -28651,6 +28907,64 @@ function primaryDateHeuristicPropertyLabel(prop) {
   };
   return labels[prop] || prop;
 }
+
+const primaryDateHeuristicCurveCharts = {
+  place_near_date: {
+    xAxisTitle: 'Avstånd i radhöjder',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Avstånd i radhöjder',
+    yPointLabel: 'Poäng',
+    yMin: -40,
+    yMax: 120,
+    yAsPercent: false,
+    xStep: 0.1,
+    yStep: 1,
+  },
+  document_position: {
+    xAxisTitle: 'Andel ned på sidan',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Andel ned på sidan',
+    yPointLabel: 'Poäng',
+    yMin: -120,
+    yMax: 120,
+    yAsPercent: false,
+    xStep: 0.01,
+    yStep: 1,
+  },
+  date_word_nearby: {
+    xAxisTitle: 'Avstånd i radhöjder',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Avstånd i radhöjder',
+    yPointLabel: 'Poäng',
+    yMin: -120,
+    yMax: 120,
+    yAsPercent: false,
+    xStep: 0.1,
+    yStep: 1,
+  },
+  page_in_document: {
+    xAxisTitle: 'Sidnummer',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Sidnummer',
+    yPointLabel: 'Poäng',
+    yMin: -160,
+    yMax: 80,
+    yAsPercent: false,
+    xStep: 1,
+    yStep: 1,
+  },
+  running_text: {
+    xAxisTitle: 'Textgrad 0-1',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Textgrad 0-1',
+    yPointLabel: 'Poäng',
+    yMin: -120,
+    yMax: 80,
+    yAsPercent: false,
+    xStep: 0.05,
+    yStep: 1,
+  },
+};
 
 function createPrimaryDateHeuristicNumberInput({
   heuristics,
@@ -28677,6 +28991,122 @@ function createPrimaryDateHeuristicNumberInput({
   return createFloatingField(primaryDateHeuristicPropertyLabel(prop), input, 'primary-date-heuristic-number-field');
 }
 
+function createPrimaryDateHeuristicCurveEditor({
+  heuristics,
+  section,
+  ruleKey,
+  collection,
+  index,
+}) {
+  const chart = primaryDateHeuristicCurveCharts[ruleKey] || {
+    xAxisTitle: 'X',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'X',
+    yPointLabel: 'Poäng',
+    yAsPercent: false,
+  };
+  const rule = heuristics[section][ruleKey];
+  const editor = {
+    config: { chart },
+    previewEl: document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+    popoverPreviewEl: document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+    pointsEl: document.createElement('div'),
+    toggleEl: document.createElement('button'),
+    popoverEl: document.createElement('div'),
+    addPointEl: document.createElement('button'),
+  };
+  const wrapper = document.createElement('div');
+  wrapper.className = 'matching-curve-editor primary-date-curve-editor';
+  editor.toggleEl.type = 'button';
+  editor.toggleEl.className = 'matching-curve-preview-button';
+  editor.toggleEl.setAttribute('aria-expanded', 'false');
+  editor.previewEl.classList.add('matching-curve-preview');
+  editor.previewEl.setAttribute('viewBox', '0 0 240 90');
+  editor.previewEl.setAttribute('role', 'img');
+  editor.previewEl.setAttribute('aria-label', 'Förhandsvisning av poängkurva');
+  editor.toggleEl.appendChild(editor.previewEl);
+  editor.popoverEl.className = 'matching-curve-popover hidden';
+  editor.popoverPreviewEl.classList.add('matching-curve-popover-preview');
+  editor.popoverPreviewEl.setAttribute('viewBox', '0 0 240 90');
+  editor.popoverPreviewEl.setAttribute('role', 'img');
+  editor.popoverPreviewEl.setAttribute('aria-label', 'Stor förhandsvisning av poängkurva');
+  const header = document.createElement('div');
+  header.className = 'matching-curve-popover-header';
+  const title = document.createElement('div');
+  title.className = 'matching-curve-popover-title';
+  title.textContent = 'Punkter';
+  editor.addPointEl.type = 'button';
+  editor.addPointEl.textContent = 'Lägg till punkt';
+  header.append(title, editor.addPointEl);
+  editor.pointsEl.className = 'matching-curve-points';
+  editor.popoverEl.append(editor.popoverPreviewEl, header, editor.pointsEl);
+  wrapper.append(editor.toggleEl, editor.popoverEl);
+
+  const render = () => {
+    const current = sanitizePrimaryDateScoreCurve(
+      collection[index].primaryDateHeuristics?.[section]?.[ruleKey]?.curve,
+      rule.curve
+    );
+    const curve = renderMatchingPenaltyCurvePointEditor(editor.pointsEl, current, {
+      chart,
+      sanitizeCurve: (value) => sanitizePrimaryDateScoreCurve(value, rule.curve),
+      getCurve: () => collection[index].primaryDateHeuristics[section][ruleKey].curve,
+      onChange: (nextCurve, context = {}) => {
+        const next = sanitizePrimaryDateHeuristics(collection[index].primaryDateHeuristics);
+        next[section][ruleKey].curve = sanitizePrimaryDateScoreCurve(nextCurve, rule.curve);
+        collection[index].primaryDateHeuristics = sanitizePrimaryDateHeuristics(next);
+        if (context.preserveFocus !== true) {
+          render();
+        } else {
+          renderMatchingPenaltyCurvePreview(editor, next[section][ruleKey].curve);
+        }
+        updateSettingsActionButtons();
+      },
+    });
+    collection[index].primaryDateHeuristics[section][ruleKey].curve = curve;
+    renderMatchingPenaltyCurvePreview(editor, curve);
+  };
+
+  editor.toggleEl.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.primaryDateCurveClosedOther === true) {
+      return;
+    }
+    const nextOpen = editor.popoverEl.classList.contains('hidden');
+    editor.popoverEl.classList.toggle('hidden', !nextOpen);
+    editor.toggleEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+    if (nextOpen) {
+      positionMatchingPenaltyCurvePopover(editor);
+    }
+  });
+  editor.popoverEl.addEventListener('click', (event) => event.stopPropagation());
+  editor.addPointEl.addEventListener('click', () => {
+    const current = sanitizePrimaryDateScoreCurve(collection[index].primaryDateHeuristics[section][ruleKey].curve, rule.curve);
+    const lastPoint = current[current.length - 1] || { x: 0, y: 0 };
+    current.push({ x: Math.max(0, lastPoint.x + 1), y: lastPoint.y });
+    collection[index].primaryDateHeuristics[section][ruleKey].curve = sanitizePrimaryDateScoreCurve(current, rule.curve);
+    render();
+    updateSettingsActionButtons();
+  });
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target instanceof Node && (editor.popoverEl.contains(target) || editor.toggleEl.contains(target))) {
+      return;
+    }
+    const clickedOtherCurveToggle = target instanceof Element
+      ? target.closest('.primary-date-curve-editor .matching-curve-preview-button')
+      : null;
+    if (clickedOtherCurveToggle instanceof HTMLButtonElement && !editor.popoverEl.classList.contains('hidden')) {
+      event.primaryDateCurveClosedOther = true;
+    }
+    editor.popoverEl.classList.add('hidden');
+    editor.toggleEl.setAttribute('aria-expanded', 'false');
+  }, true);
+  render();
+  return wrapper;
+}
+
 function createPrimaryDateHeuristicRuleEditor({
   heuristics,
   section,
@@ -28692,11 +29122,7 @@ function createPrimaryDateHeuristicRuleEditor({
   header.className = 'primary-date-heuristic-rule-header';
   const title = document.createElement('span');
   title.textContent = primaryDateHeuristicLabels[ruleKey] || ruleKey;
-  const maxHint = document.createElement('span');
-  maxHint.className = 'primary-date-heuristic-max';
-  const maxValue = Number.isFinite(Number(rule.max_points)) ? Number(rule.max_points) : Number(rule.points || 0);
-  maxHint.textContent = `${maxValue > 0 ? '+' : ''}${maxValue}`;
-  header.append(title, maxHint);
+  header.append(title);
 
   const help = document.createElement('p');
   help.className = 'primary-date-heuristic-help';
@@ -28706,6 +29132,16 @@ function createPrimaryDateHeuristicRuleEditor({
   fields.className = 'primary-date-heuristic-fields';
   Object.keys(rule).forEach((prop) => {
     if (prop === 'enabled' || prop === 'description') {
+      return;
+    }
+    if (prop === 'curve') {
+      fields.appendChild(createPrimaryDateHeuristicCurveEditor({
+        heuristics,
+        section,
+        ruleKey,
+        collection,
+        index,
+      }));
       return;
     }
     if (prop === 'keywords') {
@@ -28746,11 +29182,6 @@ function createPrimaryDateHeuristicsEditor(collection, index) {
   const wrapper = document.createElement('div');
   wrapper.className = 'primary-date-heuristics-editor';
 
-  const intro = document.createElement('p');
-  intro.className = 'primary-date-heuristics-intro';
-  intro.textContent = 'Huvuddatum är dokumentets primära, visuellt representativa datum. Det ska normalt vara naket, fristående och högt upp i dokumentet, inte ett datum i löpande text eller ett tydligt etiketterat datumfält.';
-  wrapper.appendChild(intro);
-
   const confidenceCard = document.createElement('section');
   confidenceCard.className = 'primary-date-confidence-card';
   const confidenceTitle = document.createElement('div');
@@ -28758,7 +29189,7 @@ function createPrimaryDateHeuristicsEditor(collection, index) {
   confidenceTitle.textContent = 'Säkerhetsnivå';
   const confidenceHelp = document.createElement('p');
   confidenceHelp.className = 'primary-date-heuristic-help';
-  confidenceHelp.textContent = 'Hur många poäng en kandidat behöver för att räknas som 100 % säker. Detta är inte summan av alla möjliga pluspoäng, utan en praktisk nivå för en mycket stark träff.';
+  confidenceHelp.textContent = 'Hur många poäng en kandidat behöver för att räknas som 100 % säker. Detta är inte summan av alla möjliga signaler, utan en praktisk nivå för en mycket stark träff.';
   const confidenceInput = document.createElement('input');
   confidenceInput.type = 'number';
   confidenceInput.step = '1';
@@ -28781,15 +29212,11 @@ function createPrimaryDateHeuristicsEditor(collection, index) {
   wrapper.appendChild(confidenceCard);
 
   [
-    ['bonuses', 'Pluspoäng'],
-    ['penalties', 'Straff'],
-  ].forEach(([section, title]) => {
+    ['bonuses'],
+    ['penalties'],
+  ].forEach(([section]) => {
     const sectionEl = document.createElement('section');
     sectionEl.className = 'primary-date-heuristic-section';
-    const heading = document.createElement('div');
-    heading.className = 'archive-level-label';
-    heading.textContent = title;
-    sectionEl.appendChild(heading);
     Object.keys(heuristics[section]).forEach((ruleKey) => {
       sectionEl.appendChild(createPrimaryDateHeuristicRuleEditor({
         heuristics,
@@ -34097,10 +34524,11 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (event.key === 'Escape' && matchingDownYDistanceCurvePopoverEl instanceof HTMLElement && !matchingDownYDistanceCurvePopoverEl.classList.contains('hidden')) {
-    closeMatchingDownYDistanceCurvePopover();
-    if (matchingDownYDistanceCurveToggleEl instanceof HTMLButtonElement) {
-      matchingDownYDistanceCurveToggleEl.focus();
+  const openMatchingPenaltyCurveEditor = findOpenMatchingPenaltyCurveEditor();
+  if (event.key === 'Escape' && openMatchingPenaltyCurveEditor) {
+    closeMatchingPenaltyCurvePopover(openMatchingPenaltyCurveEditor);
+    if (openMatchingPenaltyCurveEditor.toggleEl instanceof HTMLButtonElement) {
+      openMatchingPenaltyCurveEditor.toggleEl.focus();
     }
     return;
   }

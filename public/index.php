@@ -535,16 +535,9 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
   <template id="settings-template-matching">
     <h3>Textmatchning</h3>
     <div class="matching-threshold-section">
-      <h4>Positionsbaserad säkerhetsjustering</h4>
-      <p>Hur säkerheten justeras utifrån brus, avslutstecken, nyckelkrockar mellan matchningar och axelbaserad positionsavvikelse i dokumentet.</p>
+      <h4>Straff</h4>
+      <p>Straffen gäller matchning av datafältsvärden och sänker säkerheten när OCR-texten innehåller brus, avslutstecken, nyckelkrockar eller positionsavvikelser. Kandidater till vänster eller ovanför fältets nyckel förkastas; kandidater till höger bedöms på y-avvikelse och kandidater under på x-avvikelse samt vertikalt avstånd.</p>
       <div class="matching-threshold-row">
-        <div class="matching-threshold-field">
-          <label class="settings-label" for="matching-noise-penalty">Straff per brus-tecken</label>
-          <div class="matching-percent-field">
-            <input id="matching-noise-penalty" type="number" min="0" max="100" step="0.1" inputmode="decimal">
-            <span>%</span>
-          </div>
-        </div>
         <div class="matching-threshold-field">
           <label class="settings-label" for="matching-trailing-delimiter-penalty">Straff när värdet slutar på kolon eller semikolon</label>
           <div class="matching-percent-field">
@@ -559,39 +552,83 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
             <span>%</span>
           </div>
         </div>
-        <div class="matching-threshold-field">
-          <label class="settings-label" for="matching-right-y-offset-penalty">Straff per y-avvikelse när värdet ligger till höger</label>
-          <div class="matching-percent-field">
-            <input id="matching-right-y-offset-penalty" type="number" min="0" step="0.1" inputmode="decimal">
-            <span>%</span>
+        <div class="matching-curve-editor">
+          <div class="matching-curve-header">
+            <label class="settings-label">Straff per brus-tecken</label>
+          </div>
+          <button id="matching-noise-penalty-curve-toggle" class="matching-curve-preview-button" type="button" aria-expanded="false" aria-controls="matching-noise-penalty-curve-popover">
+            <svg id="matching-noise-penalty-curve-preview" class="matching-curve-preview" viewBox="0 0 240 90" role="img" aria-label="Förhandsvisning av straffkurva"></svg>
+          </button>
+          <div id="matching-noise-penalty-curve-popover" class="matching-curve-popover hidden">
+            <svg id="matching-noise-penalty-curve-popover-preview" class="matching-curve-popover-preview" viewBox="0 0 240 90" role="img" aria-label="Stor förhandsvisning av straffkurva"></svg>
+            <div class="matching-curve-popover-header">
+              <div class="matching-curve-popover-title">Punkter</div>
+              <button id="matching-noise-penalty-curve-add-point" type="button">Lägg till punkt</button>
+            </div>
+            <div id="matching-noise-penalty-curve" class="matching-curve-points"></div>
           </div>
         </div>
-        <div class="matching-threshold-field">
-          <label class="settings-label" for="matching-down-x-offset-penalty">Straff per x-avvikelse när värdet ligger under</label>
-          <div class="matching-percent-field">
-            <input id="matching-down-x-offset-penalty" type="number" min="0" step="0.1" inputmode="decimal">
-            <span>%</span>
+        <div class="matching-curve-editor">
+          <div class="matching-curve-header">
+            <label class="settings-label">Straff per y-avvikelse när värdet ligger till höger</label>
+          </div>
+          <button id="matching-right-y-offset-penalty-curve-toggle" class="matching-curve-preview-button" type="button" aria-expanded="false" aria-controls="matching-right-y-offset-penalty-curve-popover">
+            <svg id="matching-right-y-offset-penalty-curve-preview" class="matching-curve-preview" viewBox="0 0 240 90" role="img" aria-label="Förhandsvisning av straffkurva"></svg>
+          </button>
+          <div id="matching-right-y-offset-penalty-curve-popover" class="matching-curve-popover hidden">
+            <svg id="matching-right-y-offset-penalty-curve-popover-preview" class="matching-curve-popover-preview" viewBox="0 0 240 90" role="img" aria-label="Stor förhandsvisning av straffkurva"></svg>
+            <div class="matching-curve-popover-header">
+              <div class="matching-curve-popover-title">Punkter</div>
+              <button id="matching-right-y-offset-penalty-curve-add-point" type="button">Lägg till punkt</button>
+            </div>
+            <div id="matching-right-y-offset-penalty-curve" class="matching-curve-points"></div>
+          </div>
+        </div>
+        <div class="matching-curve-editor">
+          <div class="matching-curve-header">
+            <label class="settings-label">Straff per x-avvikelse när värdet ligger under</label>
+          </div>
+          <button id="matching-down-x-offset-penalty-curve-toggle" class="matching-curve-preview-button" type="button" aria-expanded="false" aria-controls="matching-down-x-offset-penalty-curve-popover">
+            <svg id="matching-down-x-offset-penalty-curve-preview" class="matching-curve-preview" viewBox="0 0 240 90" role="img" aria-label="Förhandsvisning av straffkurva"></svg>
+          </button>
+          <div id="matching-down-x-offset-penalty-curve-popover" class="matching-curve-popover hidden">
+            <svg id="matching-down-x-offset-penalty-curve-popover-preview" class="matching-curve-popover-preview" viewBox="0 0 240 90" role="img" aria-label="Stor förhandsvisning av straffkurva"></svg>
+            <div class="matching-curve-popover-header">
+              <div class="matching-curve-popover-title">Punkter</div>
+              <button id="matching-down-x-offset-penalty-curve-add-point" type="button">Lägg till punkt</button>
+            </div>
+            <div id="matching-down-x-offset-penalty-curve" class="matching-curve-points"></div>
+          </div>
+        </div>
+        <div class="matching-curve-editor">
+          <div class="matching-curve-header">
+            <label class="settings-label">Straffkurva för vertikalt avstånd</label>
+          </div>
+          <button id="matching-down-y-distance-curve-toggle" class="matching-curve-preview-button" type="button" aria-expanded="false" aria-controls="matching-down-y-distance-curve-popover">
+            <svg id="matching-down-y-distance-curve-preview" class="matching-curve-preview" viewBox="0 0 240 90" role="img" aria-label="Förhandsvisning av straffkurva"></svg>
+          </button>
+          <div id="matching-down-y-distance-curve-popover" class="matching-curve-popover hidden">
+            <svg id="matching-down-y-distance-curve-popover-preview" class="matching-curve-popover-preview" viewBox="0 0 240 90" role="img" aria-label="Stor förhandsvisning av straffkurva"></svg>
+            <div class="matching-curve-popover-header">
+              <div class="matching-curve-popover-title">Punkter</div>
+              <button id="matching-down-y-distance-curve-add-point" type="button">Lägg till punkt</button>
+            </div>
+            <div id="matching-down-y-distance-curve" class="matching-curve-points"></div>
           </div>
         </div>
       </div>
-      <div class="matching-curve-editor">
-        <div class="matching-curve-header">
-          <label class="settings-label">Straffkurva för vertikalt avstånd</label>
-        </div>
-        <button id="matching-down-y-distance-curve-toggle" class="matching-curve-preview-button" type="button" aria-expanded="false" aria-controls="matching-down-y-distance-curve-popover">
-          <svg id="matching-down-y-distance-curve-preview" class="matching-curve-preview" viewBox="0 0 240 90" role="img" aria-label="Förhandsvisning av straffkurva"></svg>
-          <span class="matching-curve-preview-action">Redigera kurva</span>
-        </button>
-        <div id="matching-down-y-distance-curve-popover" class="matching-curve-popover hidden">
-          <svg id="matching-down-y-distance-curve-popover-preview" class="matching-curve-popover-preview" viewBox="0 0 240 90" role="img" aria-label="Stor förhandsvisning av straffkurva"></svg>
-          <div class="matching-curve-popover-header">
-            <div class="matching-curve-popover-title">Punkter</div>
-            <button id="matching-down-y-distance-curve-add-point" type="button">Lägg till punkt</button>
-          </div>
-          <div id="matching-down-y-distance-curve" class="matching-curve-points"></div>
+    </div>
+    <div class="matching-acceptance-threshold-section">
+      <h4>Accepterade datafältsvärden</h4>
+      <p>Minsta säkerhet som krävs för att en datafältsmatchning ska accepteras som ett giltigt värde.</p>
+      <div class="matching-threshold-field">
+        <label class="settings-label" for="matching-data-field-acceptance-threshold">Minsta säkerhet för accepterat datafältsvärde</label>
+        <div class="matching-percent-field">
+          <input id="matching-data-field-acceptance-threshold" type="number" min="0" max="100" step="0.1" inputmode="decimal">
+          <span>%</span>
         </div>
       </div>
-      <p>Kandidater som ligger till vänster eller ovanför förkastas. För kandidater till höger används bara y-avvikelse. För kandidater under används x-avvikelse och separat straff för vertikalt avstånd.</p>
+      <p>Matchningar under denna tröskel visas fortfarande i matchningsvyer men används inte som accepterade värden i fakturadetaljer, filnamnsmallar eller arkiveringslogik.</p>
     </div>
     <div class="matching-bbox-span-section">
       <h4>Bbox-sammanslagning</h4>
@@ -608,18 +645,6 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <p class="settings-help-text">Hur mycket två bboxar får skilja i höjdled för att räknas som samma rad/textspann. Värdet multipliceras med textens ungefärliga höjd.</p>
         </div>
       </div>
-    </div>
-    <div class="matching-acceptance-threshold-section">
-      <h4>Accepterade datafältsvärden</h4>
-      <p>Minsta säkerhet som krävs för att en datafältsmatchning ska accepteras som ett giltigt värde.</p>
-      <div class="matching-threshold-field">
-        <label class="settings-label" for="matching-data-field-acceptance-threshold">Minsta säkerhet för accepterat datafältsvärde</label>
-        <div class="matching-percent-field">
-          <input id="matching-data-field-acceptance-threshold" type="number" min="0" max="100" step="0.1" inputmode="decimal">
-          <span>%</span>
-        </div>
-      </div>
-      <p>Matchningar under denna tröskel visas fortfarande i matchningsvyer men används inte som accepterade värden i fakturadetaljer, filnamnsmallar eller arkiveringslogik.</p>
     </div>
     <div class="matching-replacements-section">
       <h4>Teckenersättningar före matchning</h4>

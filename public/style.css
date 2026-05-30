@@ -6170,19 +6170,11 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   background: #fff;
 }
 
-.matching-curve-preview-action {
-  display: inline-block;
-  margin-top: 6px;
-  color: #2563eb;
-  font-size: 12px;
-  font-weight: 650;
-}
-
 .matching-curve-popover {
-  position: absolute;
-  left: 10px;
-  top: 38px;
-  z-index: 48;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1201;
   width: min(560px, calc(100vw - 64px));
   max-height: min(64vh, 520px);
   display: flex;
@@ -6786,17 +6778,14 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .tree-body-icon-lock {
-  position: static;
+  position: absolute;
+  top: 10px;
+  left: 34px;
   width: 20px;
   height: 20px;
   display: block;
   background: url('/assets/icons/lock.svg') center/contain no-repeat;
   pointer-events: none;
-  margin: 0 0 6px -5px;
-}
-
-.tree-body.has-top-lock > .tree-body-icon {
-  top: 36px;
 }
 
 .sender-card-icon {
@@ -6890,6 +6879,14 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   color: #374151;
 }
 
+.system-extraction-field-help {
+  grid-column: 1 / -1;
+  margin: -2px 0 2px;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .primary-date-heuristic-section + .primary-date-heuristic-section {
   margin-top: 14px;
 }
@@ -6931,13 +6928,6 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   font-weight: 700;
 }
 
-.primary-date-heuristic-max {
-  margin-left: auto;
-  color: #4b5563;
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .primary-date-heuristic-help {
   margin: 4px 0 8px;
   color: #4b5563;
@@ -6948,6 +6938,10 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
+}
+
+.primary-date-curve-editor {
+  grid-column: 1 / -1;
 }
 
 .primary-date-heuristic-number-field input,

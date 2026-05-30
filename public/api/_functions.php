@@ -2682,82 +2682,57 @@ function default_primary_date_heuristics(): array
     return [
         'full_confidence_score' => 130.0,
         'bonuses' => [
-            'place_before_date' => [
+            'place_near_date' => [
                 'enabled' => true,
-                'points' => 100.0,
-                'description' => 'Bonus när en svensk ort/tätort står före datumet på samma rad.',
+                'curve' => [
+                    ['x' => 0.0, 'y' => 100.0],
+                    ['x' => 1.0, 'y' => 90.0],
+                    ['x' => 3.0, 'y' => 45.0],
+                    ['x' => 6.0, 'y' => 0.0],
+                ],
+                'description' => 'Poängkurva när en svensk ort/tätort finns ungefär till vänster om eller ovanför kandidatdatumet.',
             ],
-            'place_above_date' => [
+            'document_position' => [
                 'enabled' => true,
-                'points' => 90.0,
-                'description' => 'Bonus när en svensk ort/tätort står på raden ovanför datumet.',
-            ],
-            'top_of_first_page' => [
-                'enabled' => true,
-                'max_points' => 50.0,
-                'full_until_y_ratio' => 0.08,
-                'zero_after_y_ratio' => 0.35,
-                'description' => 'Maxbonus för datum högt upp på första sidan. Bonusen minskar gradvis längre ner.',
-            ],
-            'context_above_date' => [
-                'enabled' => true,
-                'points' => 10.0,
-                'max_y_ratio' => 0.35,
-                'description' => 'Liten bonus när det finns meningsfull kontext ovanför datumet i övre delen av dokumentet.',
-            ],
-            'letterhead_context' => [
-                'enabled' => true,
-                'max_points' => 40.0,
-                'zero_after_y_ratio' => 0.40,
-                'keywords' => ['till', 'från', 'fran', 'handläggare', 'handlaggare', 'diarienummer', 'avdelning'],
-                'description' => 'Bonus när närliggande brevhuvud/header innehåller typiska brevhuvudord.',
-            ],
-            'single_date_line' => [
-                'enabled' => true,
-                'points' => 30.0,
-                'description' => 'Bonus när raden bara består av datumet, eller av "den" följt av datumet.',
-            ],
-            'near_title' => [
-                'enabled' => true,
-                'points' => 30.0,
-                'description' => 'Bonus när föregående rad ser ut som en dokumenttitel.',
+                'curve' => [
+                    ['x' => 0.0, 'y' => 50.0],
+                    ['x' => 0.08, 'y' => 50.0],
+                    ['x' => 0.35, 'y' => 0.0],
+                    ['x' => 0.90, 'y' => -30.0],
+                ],
+                'description' => 'Poängkurva baserad på datumets vertikala position på sidan.',
             ],
         ],
         'penalties' => [
             'date_word_nearby' => [
                 'enabled' => true,
-                'max_points' => -40.0,
-                'direct_before_points' => -40.0,
-                'same_line_points' => -30.0,
-                'line_above_points' => -20.0,
-                'description' => 'Straff när ordet "datum" finns nära kandidatdatumet.',
+                'curve' => [
+                    ['x' => 0.0, 'y' => -40.0],
+                    ['x' => 1.0, 'y' => -35.0],
+                    ['x' => 3.0, 'y' => -18.0],
+                    ['x' => 6.0, 'y' => 0.0],
+                ],
+                'description' => 'Poängkurva när ordet "datum" finns ungefär till vänster om eller ovanför kandidatdatumet.',
             ],
-            'identifier_row' => [
+            'page_in_document' => [
                 'enabled' => true,
-                'points' => -60.0,
-                'description' => 'Straff när raden ser ut som en identifierarrad med flera långa nummer och saknar stöd från ort eller header.',
-            ],
-            'late_in_document' => [
-                'enabled' => true,
-                'max_points' => -30.0,
-                'starts_at_y_ratio' => 0.65,
-                'full_after_y_ratio' => 0.90,
-                'description' => 'Glidande straff för datum långt ner på sidan.',
-            ],
-            'page_after_first' => [
-                'enabled' => true,
-                'points_per_page' => -60.0,
-                'max_points' => -120.0,
-                'description' => 'Straff för datum som inte ligger på första sidan.',
+                'curve' => [
+                    ['x' => 1.0, 'y' => 0.0],
+                    ['x' => 2.0, 'y' => -60.0],
+                    ['x' => 3.0, 'y' => -120.0],
+                ],
+                'description' => 'Poängkurva baserad på sidnumret där datumet hittas.',
             ],
             'running_text' => [
                 'enabled' => true,
-                'max_points' => -60.0,
-                'no_penalty_until_words' => 4,
-                'full_penalty_from_words' => 12,
+                'curve' => [
+                    ['x' => 0.0, 'y' => 0.0],
+                    ['x' => 0.35, 'y' => 0.0],
+                    ['x' => 1.0, 'y' => -60.0],
+                ],
                 'middle_of_sentence_extra_ratio' => 0.25,
                 'sentence_punctuation_extra_ratio' => 0.15,
-                'description' => 'Glidande straff när datumet verkar ligga i löpande text.',
+                'description' => 'Poängkurva baserad på hur mycket raden liknar löpande text.',
             ],
         ],
     ];
@@ -2803,6 +2778,57 @@ function normalize_primary_date_keywords(mixed $value, array $fallback): array
     return $normalized !== [] ? $normalized : $fallback;
 }
 
+function normalize_primary_date_score_curve(mixed $value, array $fallback): array
+{
+    $source = is_array($value) ? $value : $fallback;
+    $points = [];
+    foreach ($source as $point) {
+        if (!is_array($point) || !is_numeric($point['x'] ?? null) || !is_numeric($point['y'] ?? null)) {
+            continue;
+        }
+        $x = max(0.0, (float) $point['x']);
+        $points[sprintf('%.6F', $x)] = [
+            'x' => $x,
+            'y' => (float) $point['y'],
+        ];
+    }
+    $points = array_values($points);
+    usort($points, static fn (array $left, array $right): int => $left['x'] <=> $right['x'] ?: $left['y'] <=> $right['y']);
+    if (count($points) >= 2) {
+        return $points;
+    }
+    if ($fallback === []) {
+        return [];
+    }
+    return normalize_primary_date_score_curve($fallback, []);
+}
+
+function interpolate_primary_date_score_curve(array $points, float $x): float
+{
+    $curve = normalize_primary_date_score_curve($points, []);
+    if (count($curve) === 0) {
+        return 0.0;
+    }
+    if ($x <= (float) $curve[0]['x']) {
+        return (float) $curve[0]['y'];
+    }
+    $last = $curve[count($curve) - 1];
+    if ($x >= (float) $last['x']) {
+        return (float) $last['y'];
+    }
+    for ($index = 1; $index < count($curve); $index++) {
+        $left = $curve[$index - 1];
+        $right = $curve[$index];
+        if ($x > (float) $right['x']) {
+            continue;
+        }
+        $span = max(0.000001, (float) $right['x'] - (float) $left['x']);
+        $ratio = ($x - (float) $left['x']) / $span;
+        return (float) $left['y'] + (((float) $right['y'] - (float) $left['y']) * $ratio);
+    }
+    return 0.0;
+}
+
 function normalize_primary_date_heuristics(mixed $input): array
 {
     $defaults = default_primary_date_heuristics();
@@ -2829,6 +2855,9 @@ function normalize_primary_date_heuristics(mixed $input): array
         if (array_key_exists('keywords', $default)) {
             $result['bonuses'][$key]['keywords'] = normalize_primary_date_keywords($raw['keywords'] ?? null, $default['keywords']);
         }
+        if (array_key_exists('curve', $default)) {
+            $result['bonuses'][$key]['curve'] = normalize_primary_date_score_curve($raw['curve'] ?? null, $default['curve']);
+        }
         $result['bonuses'][$key]['description'] = (string) $default['description'];
     }
 
@@ -2850,17 +2879,10 @@ function normalize_primary_date_heuristics(mixed $input): array
                 $result['penalties'][$key][$field] = max(0, normalize_primary_date_int($raw[$field] ?? null, (int) $default[$field]));
             }
         }
+        if (array_key_exists('curve', $default)) {
+            $result['penalties'][$key]['curve'] = normalize_primary_date_score_curve($raw['curve'] ?? null, $default['curve']);
+        }
         $result['penalties'][$key]['description'] = (string) $default['description'];
-    }
-
-    if (($result['bonuses']['top_of_first_page']['zero_after_y_ratio'] ?? 0.0) <= ($result['bonuses']['top_of_first_page']['full_until_y_ratio'] ?? 0.0)) {
-        $result['bonuses']['top_of_first_page']['zero_after_y_ratio'] = min(1.0, ((float) $result['bonuses']['top_of_first_page']['full_until_y_ratio']) + 0.01);
-    }
-    if (($result['penalties']['late_in_document']['full_after_y_ratio'] ?? 0.0) <= ($result['penalties']['late_in_document']['starts_at_y_ratio'] ?? 0.0)) {
-        $result['penalties']['late_in_document']['full_after_y_ratio'] = min(1.0, ((float) $result['penalties']['late_in_document']['starts_at_y_ratio']) + 0.01);
-    }
-    if (($result['penalties']['running_text']['full_penalty_from_words'] ?? 0) <= ($result['penalties']['running_text']['no_penalty_until_words'] ?? 0)) {
-        $result['penalties']['running_text']['full_penalty_from_words'] = ((int) $result['penalties']['running_text']['no_penalty_until_words']) + 1;
     }
 
     return $result;
@@ -5664,6 +5686,9 @@ function default_matching_position_adjustment_settings(): array
         'otherMatchKeyPenalty' => 0.5,
         'rightYOffsetPenalty' => 0.25,
         'downXOffsetPenalty' => 0.25,
+        'noisePenaltyPerCharacterCurve' => default_matching_noise_penalty_curve(),
+        'rightYOffsetPenaltyCurve' => default_matching_offset_penalty_curve(0.25),
+        'downXOffsetPenaltyCurve' => default_matching_offset_penalty_curve(0.25),
         'downYDistancePenaltyCurve' => default_matching_down_y_distance_penalty_curve(),
     ];
 }
@@ -5684,6 +5709,29 @@ function default_matching_down_y_distance_penalty_curve(): array
         ['x' => 4.0, 'y' => 0.25],
         ['x' => 8.0, 'y' => 0.8],
         ['x' => 10.0, 'y' => 1.0],
+    ];
+}
+
+function default_matching_noise_penalty_curve(): array
+{
+    return [
+        ['x' => 0.0, 'y' => 0.0],
+        ['x' => 100.0, 'y' => 1.0],
+    ];
+}
+
+function default_matching_offset_penalty_curve(float $penaltyPerLineHeight): array
+{
+    $weight = normalize_matching_decimal_setting($penaltyPerLineHeight, 0.0, null);
+    if ($weight <= 0.0) {
+        return [
+            ['x' => 0.0, 'y' => 0.0],
+            ['x' => 1.0, 'y' => 0.0],
+        ];
+    }
+    return [
+        ['x' => 0.0, 'y' => 0.0],
+        ['x' => 1.0 / $weight, 'y' => 1.0],
     ];
 }
 
@@ -5756,31 +5804,54 @@ function normalize_matching_position_adjustment_settings(?array $input): array
 {
     $defaults = default_matching_position_adjustment_settings();
     $source = is_array($input) ? $input : [];
+    $noisePenaltyPerCharacter = normalize_matching_decimal_setting(
+        $source['noisePenaltyPerCharacter'] ?? $source['noise_penalty_per_character'] ?? null,
+        $defaults['noisePenaltyPerCharacter']
+    );
+    $trailingDelimiterPenalty = normalize_matching_decimal_setting(
+        $source['trailingDelimiterPenalty'] ?? $source['trailing_delimiter_penalty'] ?? null,
+        $defaults['trailingDelimiterPenalty'],
+        null
+    );
+    $otherMatchKeyPenalty = normalize_matching_decimal_setting(
+        $source['otherMatchKeyPenalty'] ?? $source['other_match_key_penalty'] ?? null,
+        $defaults['otherMatchKeyPenalty'],
+        null
+    );
+    $rightYOffsetPenalty = normalize_matching_decimal_setting(
+        $source['rightYOffsetPenalty'] ?? $source['right_y_offset_penalty'] ?? $source['downRightPenalty'] ?? $source['down_right_penalty'] ?? null,
+        $defaults['rightYOffsetPenalty'],
+        null
+    );
+    $downXOffsetPenalty = normalize_matching_decimal_setting(
+        $source['downXOffsetPenalty'] ?? $source['down_x_offset_penalty'] ?? $source['downRightPenalty'] ?? $source['down_right_penalty'] ?? null,
+        $defaults['downXOffsetPenalty'],
+        null
+    );
 
     return [
-        'noisePenaltyPerCharacter' => normalize_matching_decimal_setting(
-            $source['noisePenaltyPerCharacter'] ?? $source['noise_penalty_per_character'] ?? null,
-            $defaults['noisePenaltyPerCharacter']
+        'noisePenaltyPerCharacter' => $noisePenaltyPerCharacter,
+        'trailingDelimiterPenalty' => $trailingDelimiterPenalty,
+        'otherMatchKeyPenalty' => $otherMatchKeyPenalty,
+        'rightYOffsetPenalty' => $rightYOffsetPenalty,
+        'downXOffsetPenalty' => $downXOffsetPenalty,
+        'noisePenaltyPerCharacterCurve' => normalize_matching_penalty_curve(
+            is_array($source['noisePenaltyPerCharacterCurve'] ?? null)
+                ? $source['noisePenaltyPerCharacterCurve']
+                : (is_array($source['noise_penalty_per_character_curve'] ?? null) ? $source['noise_penalty_per_character_curve'] : null),
+            default_matching_legacy_penalty_curve($noisePenaltyPerCharacter, 'noise')
         ),
-        'trailingDelimiterPenalty' => normalize_matching_decimal_setting(
-            $source['trailingDelimiterPenalty'] ?? $source['trailing_delimiter_penalty'] ?? null,
-            $defaults['trailingDelimiterPenalty'],
-            null
+        'rightYOffsetPenaltyCurve' => normalize_matching_penalty_curve(
+            is_array($source['rightYOffsetPenaltyCurve'] ?? null)
+                ? $source['rightYOffsetPenaltyCurve']
+                : (is_array($source['right_y_offset_penalty_curve'] ?? null) ? $source['right_y_offset_penalty_curve'] : null),
+            default_matching_legacy_penalty_curve($rightYOffsetPenalty, 'offset')
         ),
-        'otherMatchKeyPenalty' => normalize_matching_decimal_setting(
-            $source['otherMatchKeyPenalty'] ?? $source['other_match_key_penalty'] ?? null,
-            $defaults['otherMatchKeyPenalty'],
-            null
-        ),
-        'rightYOffsetPenalty' => normalize_matching_decimal_setting(
-            $source['rightYOffsetPenalty'] ?? $source['right_y_offset_penalty'] ?? $source['downRightPenalty'] ?? $source['down_right_penalty'] ?? null,
-            $defaults['rightYOffsetPenalty'],
-            null
-        ),
-        'downXOffsetPenalty' => normalize_matching_decimal_setting(
-            $source['downXOffsetPenalty'] ?? $source['down_x_offset_penalty'] ?? $source['downRightPenalty'] ?? $source['down_right_penalty'] ?? null,
-            $defaults['downXOffsetPenalty'],
-            null
+        'downXOffsetPenaltyCurve' => normalize_matching_penalty_curve(
+            is_array($source['downXOffsetPenaltyCurve'] ?? null)
+                ? $source['downXOffsetPenaltyCurve']
+                : (is_array($source['down_x_offset_penalty_curve'] ?? null) ? $source['down_x_offset_penalty_curve'] : null),
+            default_matching_legacy_penalty_curve($downXOffsetPenalty, 'offset')
         ),
         'downYDistancePenaltyCurve' => normalize_matching_penalty_curve(
             is_array($source['downYDistancePenaltyCurve'] ?? null)
@@ -5836,6 +5907,24 @@ function normalize_matching_penalty_curve(?array $points, array $fallback): arra
     }
 
     return array_values($deduped);
+}
+
+function default_matching_legacy_penalty_curve(float $value, string $type): array
+{
+    $scalar = normalize_matching_decimal_setting($value, 0.0, $type === 'noise' ? 1.0 : null);
+    if ($type === 'noise') {
+        if ($scalar <= 0.0) {
+            return [
+                ['x' => 0.0, 'y' => 0.0],
+                ['x' => 1.0, 'y' => 0.0],
+            ];
+        }
+        return [
+            ['x' => 0.0, 'y' => 0.0],
+            ['x' => 1.0 / $scalar, 'y' => 1.0],
+        ];
+    }
+    return default_matching_offset_penalty_curve($scalar);
 }
 
 function interpolate_matching_penalty_curve(array $points, float $x): float
@@ -14518,9 +14607,13 @@ function candidate_position_penalty_details(
     if ($mainDirection === 'right') {
         $diff = abs((float) ($candidateBbox['y1'] ?? 0.0) - (float) ($labelBbox['y1'] ?? 0.0));
         $normalizedDiff = $lineHeight > 0.0 ? ($diff / $lineHeight) : 0.0;
+        $penalty = interpolate_matching_penalty_curve(
+            is_array($settings['rightYOffsetPenaltyCurve'] ?? null) ? $settings['rightYOffsetPenaltyCurve'] : [],
+            $normalizedDiff
+        );
         return [
             ...$geometryContext,
-            'penalty' => max(0.0, $normalizedDiff * (float) ($settings['rightYOffsetPenalty'] ?? 0.0)),
+            'penalty' => max(0.0, $penalty),
             'verticalDistancePenalty' => 0.0,
             'verticalDistance' => 0.0,
             'verticalNormalizedDistance' => 0.0,
@@ -14539,10 +14632,14 @@ function candidate_position_penalty_details(
         is_array($settings['downYDistancePenaltyCurve'] ?? null) ? $settings['downYDistancePenaltyCurve'] : [],
         $verticalNormalizedDistance
     );
+    $xOffsetPenalty = interpolate_matching_penalty_curve(
+        is_array($settings['downXOffsetPenaltyCurve'] ?? null) ? $settings['downXOffsetPenaltyCurve'] : [],
+        $normalizedDiff
+    );
 
     return [
         ...$geometryContext,
-        'penalty' => max(0.0, $normalizedDiff * (float) ($settings['downXOffsetPenalty'] ?? 0.0)),
+        'penalty' => max(0.0, $xOffsetPenalty),
         'verticalDistancePenalty' => clamp_confidence($verticalDistancePenalty),
         'verticalDistance' => $verticalDistance,
         'verticalNormalizedDistance' => $verticalNormalizedDistance,
@@ -14927,7 +15024,10 @@ function candidate_confidence_components(
         }
     ));
     $noiseCharacters = is_int($noiseDetails['characterCount'] ?? null) ? (int) $noiseDetails['characterCount'] : 0;
-    $noisePenalty = min(1.0, $noiseCharacters * (float) $settings['noisePenaltyPerCharacter']);
+    $noisePenalty = interpolate_matching_penalty_curve(
+        is_array($settings['noisePenaltyPerCharacterCurve'] ?? null) ? $settings['noisePenaltyPerCharacterCurve'] : [],
+        (float) $noiseCharacters
+    );
     $trailingDelimiterPenalty = candidate_trailing_delimiter_penalty($candidateSpanText, $settings);
 
     $positionPenaltyDetails = candidate_position_penalty_details(
@@ -15818,12 +15918,139 @@ function primary_date_running_text_penalty(string $line, string $prefix, string 
         $ratio += (float) ($settings['sentence_punctuation_extra_ratio'] ?? 0.15);
     }
     $ratio = max(0.0, min(1.0, $ratio));
-    $maxPoints = is_numeric($settings['max_points'] ?? null) ? (float) $settings['max_points'] : -60.0;
     return [
-        'score' => $maxPoints < 0.0 ? $maxPoints * $ratio : 0.0,
         'ratio' => $ratio,
         'wordCount' => $wordCount,
     ];
+}
+
+function primary_date_date_word_distance_ratio(array $candidate, array $lines, array $lineGeometries): ?float
+{
+    $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
+    $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+    $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : '';
+    if ($lineIndex < 0 || $start < 0 || $raw === '') {
+        return null;
+    }
+
+    $candidateLineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+    $candidateBbox = line_geometry_span_bbox($candidateLineGeometry, $start, $start + strlen($raw));
+    $candidateHeight = $candidateBbox !== null
+        ? max(1.0, (float) $candidateBbox['y1'] - (float) $candidateBbox['y0'])
+        : 1.0;
+    $candidateCenter = $candidateBbox !== null ? bbox_center_point($candidateBbox) : null;
+    $best = null;
+
+    $lineIndexes = array_values(array_unique([$lineIndex, $lineIndex - 1, $lineIndex - 2]));
+    foreach ($lineIndexes as $contextLineIndex) {
+        if ($contextLineIndex < 0 || !is_string($lines[$contextLineIndex] ?? null)) {
+            continue;
+        }
+        $contextLine = (string) $lines[$contextLineIndex];
+        if (@preg_match_all('/\b[a-z0-9]*datum[a-z0-9]*\b/iu', $contextLine, $matches, PREG_OFFSET_CAPTURE) !== 1) {
+            continue;
+        }
+        foreach ($matches[0] as $match) {
+            $wordStart = is_int($match[1] ?? null) ? (int) $match[1] : -1;
+            $wordText = is_string($match[0] ?? null) ? (string) $match[0] : '';
+            if ($wordStart < 0 || $wordText === '') {
+                continue;
+            }
+            $wordEnd = $wordStart + strlen($wordText);
+            $isLeft = $contextLineIndex === $lineIndex && $wordEnd <= $start;
+            $isAbove = $contextLineIndex < $lineIndex;
+            if (!$isLeft && !$isAbove) {
+                continue;
+            }
+
+            $wordLineGeometry = is_array($lineGeometries[$contextLineIndex] ?? null) ? $lineGeometries[$contextLineIndex] : null;
+            $wordBbox = line_geometry_span_bbox($wordLineGeometry, $wordStart, $wordEnd);
+            if ($candidateCenter !== null && $wordBbox !== null) {
+                $wordCenter = bbox_center_point($wordBbox);
+                $dx = max(0.0, (float) $candidateCenter['x'] - (float) $wordCenter['x']);
+                $dy = max(0.0, (float) $candidateCenter['y'] - (float) $wordCenter['y']);
+                $distance = sqrt(($dx * $dx) + ($dy * $dy)) / $candidateHeight;
+            } elseif ($contextLineIndex === $lineIndex) {
+                $distance = max(0.0, ($start - $wordEnd) / 12.0);
+            } else {
+                $distance = (float) ($lineIndex - $contextLineIndex);
+            }
+            $best = $best === null ? $distance : min($best, $distance);
+        }
+    }
+
+    return $best;
+}
+
+function primary_date_place_distance_match(array $candidate, array $lines, array $lineGeometries): ?array
+{
+    $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
+    $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+    $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : '';
+    if ($lineIndex < 0 || $start < 0 || $raw === '') {
+        return null;
+    }
+
+    $candidateLineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+    $candidateBbox = line_geometry_span_bbox($candidateLineGeometry, $start, $start + strlen($raw));
+    $candidateHeight = $candidateBbox !== null
+        ? max(1.0, (float) $candidateBbox['y1'] - (float) $candidateBbox['y0'])
+        : 1.0;
+    $candidateCenter = $candidateBbox !== null ? bbox_center_point($candidateBbox) : null;
+    $best = null;
+
+    $lineIndexes = array_values(array_unique([$lineIndex, $lineIndex - 1, $lineIndex - 2]));
+    foreach ($lineIndexes as $contextLineIndex) {
+        if ($contextLineIndex < 0 || !is_string($lines[$contextLineIndex] ?? null)) {
+            continue;
+        }
+        $contextLine = (string) $lines[$contextLineIndex];
+        foreach (primary_date_reference_localities() as $normalizedPlace => $rawPlace) {
+            $quotedRaw = preg_quote($rawPlace, '/');
+            if (@preg_match_all('/\b' . $quotedRaw . '\b/iu', $contextLine, $matches, PREG_OFFSET_CAPTURE) !== 1) {
+                continue;
+            }
+            foreach ($matches[0] as $match) {
+                $placeStart = is_int($match[1] ?? null) ? (int) $match[1] : -1;
+                $placeText = is_string($match[0] ?? null) ? (string) $match[0] : '';
+                if ($placeStart < 0 || $placeText === '') {
+                    continue;
+                }
+                $placeEnd = $placeStart + strlen($placeText);
+                $isLeft = $contextLineIndex === $lineIndex && $placeEnd <= $start;
+                $isAbove = $contextLineIndex < $lineIndex;
+                if (!$isLeft && !$isAbove) {
+                    continue;
+                }
+
+                $placeLineGeometry = is_array($lineGeometries[$contextLineIndex] ?? null) ? $lineGeometries[$contextLineIndex] : null;
+                $placeBbox = line_geometry_span_bbox($placeLineGeometry, $placeStart, $placeEnd);
+                if ($candidateCenter !== null && $placeBbox !== null) {
+                    $placeCenter = bbox_center_point($placeBbox);
+                    $dx = max(0.0, (float) $candidateCenter['x'] - (float) $placeCenter['x']);
+                    $dy = max(0.0, (float) $candidateCenter['y'] - (float) $placeCenter['y']);
+                    $distance = sqrt(($dx * $dx) + ($dy * $dy)) / $candidateHeight;
+                } elseif ($contextLineIndex === $lineIndex) {
+                    $between = substr($contextLine, $placeEnd, max(0, $start - $placeEnd));
+                    $distance = count(preg_split('/\s+/u', trim(is_string($between) ? $between : ''), -1, PREG_SPLIT_NO_EMPTY) ?: []);
+                } else {
+                    $distance = (float) ($lineIndex - $contextLineIndex);
+                }
+
+                $candidateMatch = [
+                    'name' => $rawPlace,
+                    'normalized' => $normalizedPlace,
+                    'distance' => $distance,
+                    'context' => $contextLineIndex === $lineIndex ? 'same_line_before' : 'line_above',
+                ];
+                if ($best === null || $distance < (float) ($best['distance'] ?? INF)) {
+                    $best = $candidateMatch;
+                }
+            }
+        }
+    }
+
+    return $best;
 }
 
 function score_primary_date_candidate(array $candidate, array $lines, array $lineGeometries = [], array $heuristics = []): array
@@ -15864,211 +16091,94 @@ function score_primary_date_candidate(array $candidate, array $lines, array $lin
     $result['bbox'] = $position['bbox'];
     $result['pageNumber'] = $candidatePageNumber;
     $result['yRatio'] = $candidateYRatio;
-    $lineWordCount = count(preg_split('/\s+/u', trim($line), -1, PREG_SPLIT_NO_EMPTY) ?: []);
-
     $score = 0.0;
     $signals = [];
     $bonuses = is_array($heuristics['bonuses'] ?? null) ? $heuristics['bonuses'] : [];
     $penalties = is_array($heuristics['penalties'] ?? null) ? $heuristics['penalties'] : [];
 
-    $placeMatch = primary_date_place_match($prefix);
-    if (is_array($placeMatch) && $lineWordCount <= 8 && ($bonuses['place_before_date']['enabled'] ?? true) === true) {
-        $points = (float) ($bonuses['place_before_date']['points'] ?? 100.0);
-        $score += $points;
-        $signals[] = [
-            'type' => 'positive',
-            'code' => 'place_before_date',
-            'score' => $points,
-            'detail' => $placeMatch['name'],
-        ];
-        $result['matchedPlace'] = $placeMatch['name'];
-        $result['matchedPlaceGapWords'] = (int) ($placeMatch['gapWords'] ?? 0);
-    }
-
-    $placeAboveMatch = $previousLine !== '' ? primary_date_place_match($previousLine) : null;
-    if (is_array($placeAboveMatch) && ($bonuses['place_above_date']['enabled'] ?? true) === true) {
-        $points = (float) ($bonuses['place_above_date']['points'] ?? 90.0);
-        $score += $points;
-        $signals[] = [
-            'type' => 'positive',
-            'code' => 'place_above_date',
-            'score' => $points,
-            'detail' => $placeAboveMatch['name'],
-        ];
-        $result['matchedPlaceAbove'] = $placeAboveMatch['name'];
-        $result['matchedPlaceAboveGapWords'] = (int) ($placeAboveMatch['gapWords'] ?? 0);
-    }
-
-    if (($bonuses['top_of_first_page']['enabled'] ?? true) === true && ($candidatePageNumber === null || $candidatePageNumber <= 1)) {
-        $points = primary_date_linear_bonus(
-            $candidateYRatio,
-            (float) ($bonuses['top_of_first_page']['max_points'] ?? 50.0),
-            (float) ($bonuses['top_of_first_page']['full_until_y_ratio'] ?? 0.08),
-            (float) ($bonuses['top_of_first_page']['zero_after_y_ratio'] ?? 0.35)
+    $placeMatch = primary_date_place_distance_match($candidate, $lines, $lineGeometries);
+    if (is_array($placeMatch) && ($bonuses['place_near_date']['enabled'] ?? true) === true) {
+        $placeDistance = (float) ($placeMatch['distance'] ?? 0.0);
+        $points = interpolate_primary_date_score_curve(
+            is_array($bonuses['place_near_date']['curve'] ?? null) ? $bonuses['place_near_date']['curve'] : [],
+            $placeDistance
         );
         if (abs($points) >= 0.0001) {
             $score += $points;
             $signals[] = [
-                'type' => 'positive',
-                'code' => 'top_of_first_page',
+                'type' => $points >= 0.0 ? 'positive' : 'negative',
+                'code' => 'place_near_date',
                 'score' => $points,
-                'detail' => $candidateYRatio !== null ? 'y_ratio:' . round($candidateYRatio, 3) : 'no_bbox',
+                'detail' => (string) ($placeMatch['context'] ?? 'near') . ':' . (string) ($placeMatch['name'] ?? '') . ',distance:' . round($placeDistance, 3),
             ];
         }
+        $result['matchedPlace'] = (string) ($placeMatch['name'] ?? '');
+        $result['matchedPlaceDistance'] = $placeDistance;
     }
 
-    if (($bonuses['context_above_date']['enabled'] ?? true) === true && $previousLine !== '' && ($candidateYRatio === null || $candidateYRatio <= (float) ($bonuses['context_above_date']['max_y_ratio'] ?? 0.35))) {
-        $points = (float) ($bonuses['context_above_date']['points'] ?? 10.0);
-        $score += $points;
-        $signals[] = [
-            'type' => 'positive',
-            'code' => 'context_above_date',
-            'score' => $points,
-            'detail' => 'line:' . ($previousLineIndex !== null ? ($previousLineIndex + 1) : $lineIndex),
-        ];
-    }
-
-    $headerWindowStart = max(0, $lineIndex - 3);
-    $headerWindowEnd = min(count($lines) - 1, $lineIndex + 1);
-    $headerPatterns = normalize_primary_date_keywords(
-        $bonuses['letterhead_context']['keywords'] ?? null,
-        default_primary_date_heuristics()['bonuses']['letterhead_context']['keywords']
-    );
-    $headerMatched = null;
-    for ($i = $headerWindowStart; $i <= $headerWindowEnd; $i++) {
-        $windowLine = is_string($lines[$i] ?? null) ? (string) $lines[$i] : '';
-        $normalizedWindowLine = normalize_primary_date_lookup_text($windowLine);
-        foreach ($headerPatterns as $pattern) {
-            $normalizedPattern = normalize_primary_date_lookup_text($pattern);
-            if ($normalizedPattern !== '' && @preg_match('/\b' . preg_quote($normalizedPattern, '/') . '\b/u', $normalizedWindowLine) === 1) {
-                $headerMatched = $pattern;
-                break 2;
-            }
-        }
-    }
-    if (($bonuses['letterhead_context']['enabled'] ?? true) === true && $headerMatched !== null) {
-        $points = primary_date_linear_bonus(
-            $candidateYRatio,
-            (float) ($bonuses['letterhead_context']['max_points'] ?? 40.0),
-            0.0,
-            (float) ($bonuses['letterhead_context']['zero_after_y_ratio'] ?? 0.40)
+    if (($bonuses['document_position']['enabled'] ?? true) === true && $candidateYRatio !== null) {
+        $points = interpolate_primary_date_score_curve(
+            is_array($bonuses['document_position']['curve'] ?? null) ? $bonuses['document_position']['curve'] : [],
+            $candidateYRatio
         );
         if (abs($points) >= 0.0001) {
             $score += $points;
             $signals[] = [
-                'type' => 'positive',
-                'code' => 'letterhead_context',
+                'type' => $points >= 0.0 ? 'positive' : 'negative',
+                'code' => 'document_position',
                 'score' => $points,
-                'detail' => $headerMatched,
+                'detail' => 'y_ratio:' . round($candidateYRatio, 3),
             ];
         }
-    }
-
-    $trimmedLine = normalize_inline_whitespace($line);
-    if (
-        ($bonuses['single_date_line']['enabled'] ?? true) === true
-        && ($trimmedLine === $raw || $trimmedLine === ('den ' . $raw))
-    ) {
-        $points = (float) ($bonuses['single_date_line']['points'] ?? 30.0);
-        $score += $points;
-        $signals[] = [
-            'type' => 'positive',
-            'code' => 'single_date_line',
-            'score' => $points,
-            'detail' => $trimmedLine,
-        ];
-    }
-
-    if (($bonuses['near_title']['enabled'] ?? true) === true && $previousLine !== '' && is_document_title_line($previousLine)) {
-        $points = (float) ($bonuses['near_title']['points'] ?? 30.0);
-        $score += $points;
-        $signals[] = [
-            'type' => 'positive',
-            'code' => 'near_title',
-            'score' => $points,
-            'detail' => normalize_inline_whitespace($previousLine),
-        ];
     }
 
     if (($penalties['date_word_nearby']['enabled'] ?? true) === true) {
-        $dateWordScore = 0.0;
-        $dateWordContext = '';
-        if (primary_date_has_date_word(normalize_primary_date_lookup_text($prefix))) {
-            $dateWordScore = (float) ($penalties['date_word_nearby']['direct_before_points'] ?? -40.0);
-            $dateWordContext = 'direct_before';
-        } elseif (primary_date_has_date_word(normalize_primary_date_lookup_text($line))) {
-            $dateWordScore = (float) ($penalties['date_word_nearby']['same_line_points'] ?? -30.0);
-            $dateWordContext = 'same_line';
-        } elseif (primary_date_has_date_word(normalize_primary_date_lookup_text($previousLine))) {
-            $dateWordScore = (float) ($penalties['date_word_nearby']['line_above_points'] ?? -20.0);
-            $dateWordContext = 'line_above';
-        }
-        if ($dateWordScore < 0.0) {
+        $dateWordDistance = primary_date_date_word_distance_ratio($candidate, $lines, $lineGeometries);
+        $dateWordScore = $dateWordDistance !== null
+            ? interpolate_primary_date_score_curve(
+                is_array($penalties['date_word_nearby']['curve'] ?? null) ? $penalties['date_word_nearby']['curve'] : [],
+                $dateWordDistance
+            )
+            : 0.0;
+        if (abs($dateWordScore) >= 0.0001) {
             $score += $dateWordScore;
             $signals[] = [
-                'type' => 'negative',
+                'type' => $dateWordScore >= 0.0 ? 'positive' : 'negative',
                 'code' => 'date_word_nearby',
                 'score' => $dateWordScore,
-                'detail' => $dateWordContext,
+                'detail' => 'distance:' . round($dateWordDistance ?? 0.0, 3),
             ];
         }
     }
 
     if (($penalties['running_text']['enabled'] ?? true) === true) {
         $running = primary_date_running_text_penalty($line, $prefix, $suffix, $penalties['running_text']);
-        $runningScore = (float) ($running['score'] ?? 0.0);
-        if ($runningScore < -0.0001) {
+        $runningRatio = (float) ($running['ratio'] ?? 0.0);
+        $runningScore = interpolate_primary_date_score_curve(
+            is_array($penalties['running_text']['curve'] ?? null) ? $penalties['running_text']['curve'] : [],
+            $runningRatio
+        );
+        if (abs($runningScore) >= 0.0001) {
             $score += $runningScore;
             $signals[] = [
-                'type' => 'negative',
+                'type' => $runningScore >= 0.0 ? 'positive' : 'negative',
                 'code' => 'running_text',
                 'score' => $runningScore,
-                'detail' => 'words:' . (int) ($running['wordCount'] ?? 0) . ',ratio:' . round((float) ($running['ratio'] ?? 0.0), 3),
+                'detail' => 'words:' . (int) ($running['wordCount'] ?? 0) . ',ratio:' . round($runningRatio, 3),
             ];
         }
     }
 
-    $longIdentifierCount = count_pattern_matches('/\b\d{6,}\b/u', $line)
-        + count_pattern_matches('/\b\d{2,6}-\d{4,}\b/u', $line);
-    if (($penalties['identifier_row']['enabled'] ?? true) === true && !is_array($placeMatch) && $headerMatched === null && $longIdentifierCount >= 2) {
-        $points = (float) ($penalties['identifier_row']['points'] ?? -60.0);
-        $score += $points;
-        $signals[] = [
-            'type' => 'negative',
-            'code' => 'identifier_row',
-            'score' => $points,
-            'detail' => 'long_identifiers:' . $longIdentifierCount,
-        ];
-    }
-
-    if (($penalties['late_in_document']['enabled'] ?? true) === true) {
-        $points = primary_date_linear_penalty(
-            $candidateYRatio,
-            (float) ($penalties['late_in_document']['max_points'] ?? -30.0),
-            (float) ($penalties['late_in_document']['starts_at_y_ratio'] ?? 0.65),
-            (float) ($penalties['late_in_document']['full_after_y_ratio'] ?? 0.90)
+    if (($penalties['page_in_document']['enabled'] ?? true) === true && $candidatePageNumber !== null) {
+        $points = interpolate_primary_date_score_curve(
+            is_array($penalties['page_in_document']['curve'] ?? null) ? $penalties['page_in_document']['curve'] : [],
+            (float) $candidatePageNumber
         );
-        if ($points < -0.0001) {
+        if (abs($points) >= 0.0001) {
             $score += $points;
             $signals[] = [
-                'type' => 'negative',
-                'code' => 'late_in_document',
-                'score' => $points,
-                'detail' => $candidateYRatio !== null ? 'y_ratio:' . round($candidateYRatio, 3) : 'no_bbox',
-            ];
-        }
-    }
-
-    if (($penalties['page_after_first']['enabled'] ?? true) === true && $candidatePageNumber !== null && $candidatePageNumber > 1) {
-        $pointsPerPage = (float) ($penalties['page_after_first']['points_per_page'] ?? -60.0);
-        $maxPoints = (float) ($penalties['page_after_first']['max_points'] ?? -120.0);
-        $points = $pointsPerPage * max(1, $candidatePageNumber - 1);
-        $points = max($maxPoints, min(0.0, $points));
-        if ($points < -0.0001) {
-            $score += $points;
-            $signals[] = [
-                'type' => 'negative',
-                'code' => 'page_after_first',
+                'type' => $points >= 0.0 ? 'positive' : 'negative',
+                'code' => 'page_in_document',
                 'score' => $points,
                 'detail' => 'page:' . $candidatePageNumber,
             ];
@@ -18043,7 +18153,7 @@ function collect_anchored_pattern_candidate_matches_from_segments(
 function apply_cross_matching_key_penalties(array $results, array $positionSettings = []): array
 {
     $settings = normalize_matching_position_adjustment_settings($positionSettings);
-    $weight = max(0.0, (float) ($settings['otherMatchKeyPenalty'] ?? 0.0));
+    $penaltyWeight = normalize_matching_decimal_setting($settings['otherMatchKeyPenalty'] ?? null, 0.5, null);
 
     $labelsByText = [];
     foreach ($results as $fieldKey => $result) {
@@ -18089,7 +18199,7 @@ function apply_cross_matching_key_penalties(array $results, array $positionSetti
             $match['finalConfidence'] = $baseConfidence;
             $match['confidence'] = $baseConfidence;
 
-            if ($weight <= 0.0 || $labelsByText === []) {
+            if ($penaltyWeight <= 0.0 || $labelsByText === []) {
                 $result['matches'][$matchIndex] = $match;
                 continue;
             }
@@ -18114,7 +18224,7 @@ function apply_cross_matching_key_penalties(array $results, array $positionSetti
                 continue;
             }
 
-            $penalty = max(0.0, $otherConfidence * $weight);
+            $penalty = max(0.0, $penaltyWeight * $otherConfidence);
             $match['otherMatchKeyPenalty'] = $penalty;
             $match['finalConfidence'] = clamp_confidence(
                 $baseConfidence
