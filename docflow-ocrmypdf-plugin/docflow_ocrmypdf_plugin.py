@@ -597,7 +597,7 @@ def _transfer_swedish_diacritics_token(source_text: str, truth_text: str) -> str
                     text = (truth_char if diacritic_match else source_char) + tail[1]
                     best = (score, text)
 
-        if matched_any_source and truth_index < len(truth_chars) and _is_swedish_diacritic_char(truth_chars[truth_index]):
+        if truth_index < len(truth_chars) and _is_swedish_diacritic_char(truth_chars[truth_index]):
             tail = solve(source_index, truth_index + 1, matched_any_source)
             if tail is not None:
                 score = tail[0] + 0.10

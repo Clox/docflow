@@ -10631,7 +10631,7 @@ function transfer_swedish_diacritics_token(string $sourceText, string $truthText
             }
         }
 
-        if ($matchedAnySource && $truthIndex < $truthCount && is_swedish_diacritic_char($truthChars[$truthIndex])) {
+        if ($truthIndex < $truthCount && is_swedish_diacritic_char($truthChars[$truthIndex])) {
             $tail = $solve($sourceIndex, $truthIndex + 1, $matchedAnySource);
             if ($tail !== null) {
                 $candidate = [
