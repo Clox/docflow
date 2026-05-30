@@ -26236,9 +26236,13 @@ function renderMatchingDownYDistanceCurveEditor() {
     {
       chart: MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART,
       getCurve: () => matchingPositionAdjustmentDraft.downYDistancePenaltyCurve,
-      onChange: (nextCurve) => {
+      onChange: (nextCurve, context = {}) => {
         matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = nextCurve;
-        renderMatchingDownYDistanceCurveEditor();
+        if (context.preserveFocus !== true) {
+          renderMatchingDownYDistanceCurveEditor();
+        } else {
+          renderMatchingDownYDistanceCurvePreview(nextCurve);
+        }
         updateSettingsActionButtons();
       }
     }
@@ -26267,13 +26271,14 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
 
   const chart = resolveMatchingPenaltyCurveChartConfig(options.chart);
   const points = sanitizeMatchingPenaltyCurve(curve);
+  const workingPoints = points.map((point) => ({ ...point }));
   const getCurve = typeof options.getCurve === 'function'
     ? options.getCurve
     : () => points;
-  const commitCurve = (nextCurve) => {
+  const commitCurve = (nextCurve, context = {}) => {
     const sanitizedCurve = sanitizeMatchingPenaltyCurve(nextCurve);
     if (typeof options.onChange === 'function') {
-      options.onChange(sanitizedCurve);
+      options.onChange(sanitizedCurve, context);
     }
   };
 
@@ -26298,16 +26303,23 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
     yInput.inputMode = 'decimal';
     yInput.value = formatMatchingPercentInput(point.y, 1);
 
-    const updatePoint = () => {
-      const nextCurve = sanitizeMatchingPenaltyCurve(getCurve());
-      nextCurve[pointIndex] = {
+    const updatePoint = (event) => {
+      if (!workingPoints[pointIndex]) {
+        workingPoints[pointIndex] = sanitizeMatchingPenaltyCurve(getCurve())[pointIndex] || { ...point };
+      }
+      workingPoints[pointIndex] = {
         x: clampMatchingDecimal(xInput.value, point.x, null),
         y: sanitizeMatchingPercentInput(yInput.value, point.y, 1)
       };
-      commitCurve(nextCurve);
+      const activeElement = document.activeElement;
+      commitCurve(workingPoints, {
+        preserveFocus: event?.type === 'input' || activeElement === xInput || activeElement === yInput
+      });
     };
 
+    xInput.addEventListener('input', updatePoint);
     xInput.addEventListener('change', updatePoint);
+    yInput.addEventListener('input', updatePoint);
     yInput.addEventListener('change', updatePoint);
 
     const removeButton = document.createElement('button');
