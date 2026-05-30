@@ -258,6 +258,18 @@ let pythonInstallCommandEl = null;
 let pythonRefreshButtonEl = null;
 let archivingReviewActionsEl = null;
 let pythonLocalInstallButtonEl = null;
+
+const MATCHING_PENALTY_CURVE_CHART_DEFAULTS = Object.freeze({
+  xAxisTitle: 'X',
+  yAxisTitle: 'Straff',
+  xPointLabel: '',
+  yPointLabel: ''
+});
+
+const MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART = Object.freeze({
+  xAxisTitle: 'Avstånd (radhöjder)',
+  yAxisTitle: 'Straff'
+});
 let rapidocrStatusBadgeWrapEl = null;
 let rapidocrStatusBadgeEl = null;
 let rapidocrInstallCommandEl = null;
@@ -26218,11 +26230,56 @@ function renderMatchingDownYDistanceCurveEditor() {
     return;
   }
 
-  const curve = sanitizeMatchingPenaltyCurve(matchingPositionAdjustmentDraft.downYDistancePenaltyCurve);
+  const curve = renderMatchingPenaltyCurvePointEditor(
+    matchingDownYDistanceCurveEl,
+    matchingPositionAdjustmentDraft.downYDistancePenaltyCurve,
+    {
+      chart: MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART,
+      getCurve: () => matchingPositionAdjustmentDraft.downYDistancePenaltyCurve,
+      onChange: (nextCurve) => {
+        matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = nextCurve;
+        renderMatchingDownYDistanceCurveEditor();
+        updateSettingsActionButtons();
+      }
+    }
+  );
   matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = curve;
-  matchingDownYDistanceCurveEl.replaceChildren();
 
-  curve.forEach((point, pointIndex) => {
+  renderMatchingDownYDistanceCurvePreview(curve);
+}
+
+function resolveMatchingPenaltyCurveChartConfig(chart = {}) {
+  const resolved = {
+    ...MATCHING_PENALTY_CURVE_CHART_DEFAULTS,
+    ...(chart && typeof chart === 'object' ? chart : {})
+  };
+  return {
+    ...resolved,
+    xPointLabel: resolved.xPointLabel || resolved.xAxisTitle,
+    yPointLabel: resolved.yPointLabel || resolved.yAxisTitle
+  };
+}
+
+function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {}) {
+  if (!(containerEl instanceof HTMLElement)) {
+    return sanitizeMatchingPenaltyCurve(curve);
+  }
+
+  const chart = resolveMatchingPenaltyCurveChartConfig(options.chart);
+  const points = sanitizeMatchingPenaltyCurve(curve);
+  const getCurve = typeof options.getCurve === 'function'
+    ? options.getCurve
+    : () => points;
+  const commitCurve = (nextCurve) => {
+    const sanitizedCurve = sanitizeMatchingPenaltyCurve(nextCurve);
+    if (typeof options.onChange === 'function') {
+      options.onChange(sanitizedCurve);
+    }
+  };
+
+  containerEl.replaceChildren();
+
+  points.forEach((point, pointIndex) => {
     const row = document.createElement('div');
     row.className = 'matching-curve-point-row';
 
@@ -26242,14 +26299,12 @@ function renderMatchingDownYDistanceCurveEditor() {
     yInput.value = formatMatchingPercentInput(point.y, 1);
 
     const updatePoint = () => {
-      const nextCurve = sanitizeMatchingPenaltyCurve(matchingPositionAdjustmentDraft.downYDistancePenaltyCurve);
+      const nextCurve = sanitizeMatchingPenaltyCurve(getCurve());
       nextCurve[pointIndex] = {
         x: clampMatchingDecimal(xInput.value, point.x, null),
         y: sanitizeMatchingPercentInput(yInput.value, point.y, 1)
       };
-      matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = sanitizeMatchingPenaltyCurve(nextCurve);
-      renderMatchingDownYDistanceCurveEditor();
-      updateSettingsActionButtons();
+      commitCurve(nextCurve);
     };
 
     xInput.addEventListener('change', updatePoint);
@@ -26259,21 +26314,19 @@ function renderMatchingDownYDistanceCurveEditor() {
     removeButton.type = 'button';
     removeButton.className = 'matching-curve-point-remove';
     removeButton.textContent = 'Ta bort';
-    removeButton.disabled = curve.length <= 2;
+    removeButton.disabled = points.length <= 2;
     removeButton.addEventListener('click', () => {
-      const nextCurve = curve.filter((_, index) => index !== pointIndex);
-      matchingPositionAdjustmentDraft.downYDistancePenaltyCurve = sanitizeMatchingPenaltyCurve(nextCurve);
-      renderMatchingDownYDistanceCurveEditor();
-      updateSettingsActionButtons();
+      const nextCurve = points.filter((_, index) => index !== pointIndex);
+      commitCurve(nextCurve);
     });
 
-    row.appendChild(createFloatingField('Avstånd (radhöjder)', xInput));
-    row.appendChild(createFloatingField('Straff', wrapPercentInput(yInput)));
+    row.appendChild(createFloatingField(chart.xPointLabel, xInput));
+    row.appendChild(createFloatingField(chart.yPointLabel, wrapPercentInput(yInput)));
     row.appendChild(removeButton);
-    matchingDownYDistanceCurveEl.appendChild(row);
+    containerEl.appendChild(row);
   });
 
-  renderMatchingDownYDistanceCurvePreview(curve);
+  return points;
 }
 
 function closeMatchingDownYDistanceCurvePopover() {
@@ -26328,8 +26381,14 @@ function wrapPercentInput(input) {
 }
 
 function renderMatchingDownYDistanceCurvePreview(curve) {
-  renderMatchingPenaltyCurveSvg(matchingDownYDistanceCurvePreviewEl, curve, { compact: true });
-  renderMatchingPenaltyCurveSvg(matchingDownYDistanceCurvePopoverPreviewEl, curve, { compact: false });
+  renderMatchingPenaltyCurveSvg(matchingDownYDistanceCurvePreviewEl, curve, {
+    compact: true,
+    chart: MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART
+  });
+  renderMatchingPenaltyCurveSvg(matchingDownYDistanceCurvePopoverPreviewEl, curve, {
+    compact: false,
+    chart: MATCHING_DOWN_Y_DISTANCE_PENALTY_CURVE_CHART
+  });
 }
 
 function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
@@ -26337,6 +26396,7 @@ function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
     return;
   }
   const isCompact = options.compact === true;
+  const chart = resolveMatchingPenaltyCurveChartConfig(options.chart);
   const points = sanitizeMatchingPenaltyCurve(curve);
   const maxX = Math.max(1, ...points.map((point) => point.x));
   const width = 240;
@@ -26412,8 +26472,8 @@ function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
     addText(formatTickNumber(maxX * ratio), x, plotBottom + xTickLabelOffset);
   });
 
-  addText('Avstånd (radhöjder)', plotLeft + (plotWidth / 2), height - 4);
-  addText('Straff', 8, plotTop + (plotHeight / 2), 'middle', {
+  addText(chart.xAxisTitle, plotLeft + (plotWidth / 2), height - 4);
+  addText(chart.yAxisTitle, 8, plotTop + (plotHeight / 2), 'middle', {
     transform: `rotate(-90 8 ${(plotTop + (plotHeight / 2)).toFixed(2)})`
   });
 
