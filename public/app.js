@@ -6960,8 +6960,16 @@ function ocrDebugExportLiveItem() {
 }
 
 function renderOcrDebugExportCompareState() {
+  const hasCompareResult = (ocrDebugExportCompareResult && typeof ocrDebugExportCompareResult === 'object')
+    || (ocrDebugExportComparisonRun && typeof ocrDebugExportComparisonRun === 'object');
+
   if (ocrDebugExportCompareButtonEl instanceof HTMLButtonElement) {
     const selectedCount = ocrDebugExportSelectedCount();
+    const compareActionsEl = ocrDebugExportCompareButtonEl.closest('.snapshot-compare-actions');
+    if (compareActionsEl instanceof HTMLElement) {
+      compareActionsEl.hidden = hasCompareResult;
+      compareActionsEl.classList.toggle('hidden', hasCompareResult);
+    }
     ocrDebugExportCompareButtonEl.disabled = ocrDebugExportBusy
       || ocrDebugExportCreateLoading
       || ocrDebugExportCompareLoading
@@ -6972,8 +6980,6 @@ function renderOcrDebugExportCompareState() {
       : 'Markera exakt två lägen att jämföra.';
   }
   if (ocrDebugExportCloseCompareButtonEl instanceof HTMLButtonElement) {
-    const hasCompareResult = (ocrDebugExportCompareResult && typeof ocrDebugExportCompareResult === 'object')
-      || (ocrDebugExportComparisonRun && typeof ocrDebugExportComparisonRun === 'object');
     ocrDebugExportCloseCompareButtonEl.textContent = hasCompareResult ? 'Stäng jämförelse' : 'Stäng';
     ocrDebugExportCloseCompareButtonEl.title = hasCompareResult
       ? 'Stäng jämförelsen.'
