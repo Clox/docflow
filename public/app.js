@@ -7735,7 +7735,8 @@ function formatPrimaryDateSignalLabel(code) {
     document_position: 'Position i dokument',
     date_word_nearby: 'Ordet datum i närheten',
     page_in_document: 'Sida i dokument',
-    running_text: 'Löpande text',
+    text_density: 'Texttäthet',
+    running_text: 'Texttäthet',
   };
   return labels[code] || code;
 }
@@ -7841,9 +7842,24 @@ function formatPrimaryDateSignalDetail(signal) {
       return `${formatPrimaryDateScoreNumber(ratio * 100)} % ner på sidan`;
     }
   }
-  const wordsMatch = detail.match(/\bwords:(\d+)/u);
-  if (wordsMatch) {
-    return `${Number(wordsMatch[1]).toLocaleString('sv-SE')} ord`;
+  const textDensityMatch = detail.match(/\bratio:([0-9.]+)/u);
+  if (signal?.code === 'text_density' || signal?.code === 'running_text') {
+    const ratio = textDensityMatch ? Number(textDensityMatch[1]) : null;
+    if (Number.isFinite(ratio)) {
+      if (ratio <= 0.2) {
+        return 'mycket låg';
+      }
+      if (ratio <= 0.4) {
+        return 'låg';
+      }
+      if (ratio <= 0.65) {
+        return 'medel';
+      }
+      if (ratio <= 0.85) {
+        return 'hög';
+      }
+      return 'mycket hög';
+    }
   }
   const confidenceMatch = detail.match(/\bconfidence:([0-9.]+)/u);
   if (confidenceMatch) {
@@ -24321,16 +24337,14 @@ function defaultPrimaryDateHeuristics() {
         ],
         description: 'Poängkurva baserad på sidnumret där datumet hittas.',
       },
-      running_text: {
+      text_density: {
         enabled: true,
         curve: [
           { x: 0, y: 0 },
           { x: 0.35, y: 0 },
           { x: 1, y: -60 },
         ],
-        middle_of_sentence_extra_ratio: 0.25,
-        sentence_punctuation_extra_ratio: 0.15,
-        description: 'Poängkurva baserad på hur mycket raden liknar löpande text.',
+        description: 'Poängkurva baserad på hur mycket omgivande text som finns runt kandidatdatumet.',
       },
     },
   };
@@ -24417,16 +24431,19 @@ function sanitizePrimaryDateHeuristics(input) {
   });
 
   Object.entries(defaults.penalties).forEach(([key, defaultsForRule]) => {
-    const raw = source.penalties && source.penalties[key] && typeof source.penalties[key] === 'object'
+    let raw = source.penalties && source.penalties[key] && typeof source.penalties[key] === 'object'
       ? source.penalties[key]
       : {};
+    if (key === 'text_density' && Object.keys(raw).length === 0 && source.penalties && source.penalties.running_text && typeof source.penalties.running_text === 'object') {
+      raw = source.penalties.running_text;
+    }
     result.penalties[key].enabled = true;
     ['points', 'max_points', 'direct_before_points', 'same_line_points', 'line_above_points', 'points_per_page'].forEach((prop) => {
       if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
         result.penalties[key][prop] = sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop]);
       }
     });
-    ['starts_at_y_ratio', 'full_after_y_ratio', 'middle_of_sentence_extra_ratio', 'sentence_punctuation_extra_ratio'].forEach((prop) => {
+    ['starts_at_y_ratio', 'full_after_y_ratio'].forEach((prop) => {
       if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
         result.penalties[key][prop] = sanitizePrimaryDateRatio(raw[prop], defaultsForRule[prop]);
       }
@@ -26060,7 +26077,7 @@ function systemExtractionFieldHelpText(field) {
   const key = typeof field?.systemFieldKey === 'string' ? field.systemFieldKey : '';
   const extractor = typeof field?.extractor === 'string' ? field.extractor : '';
   if (key === 'primary_date' || extractor === 'primary_date') {
-    return 'Huvuddatum är dokumentets primära, visuellt representativa datum. Det ska normalt vara naket, fristående och högt upp i dokumentet, inte ett datum i löpande text eller ett tydligt etiketterat datumfält.';
+    return 'Huvuddatum är dokumentets primära, visuellt representativa datum. Det ska normalt vara naket, fristående och högt upp i dokumentet, inte ett datum omgivet av hög texttäthet eller ett tydligt etiketterat datumfält.';
   }
   return '';
 }
@@ -28906,7 +28923,8 @@ const primaryDateHeuristicLabels = {
   document_position: 'Position i dokument',
   date_word_nearby: 'Ordet datum i närheten',
   page_in_document: 'Sida i dokument',
-  running_text: 'Löpande text',
+  text_density: 'Texttäthet',
+  running_text: 'Texttäthet',
 };
 
 function primaryDateHeuristicPropertyLabel(prop) {
@@ -28924,8 +28942,6 @@ function primaryDateHeuristicPropertyLabel(prop) {
     full_after_y_ratio: 'Full efter y-ratio',
     no_penalty_until_words: 'Utan straff t.o.m. ord',
     full_penalty_from_words: 'Fullt straff från ord',
-    middle_of_sentence_extra_ratio: 'Mitt i mening extra',
-    sentence_punctuation_extra_ratio: 'Meningspunktion extra',
   };
   return labels[prop] || prop;
 }
@@ -28976,10 +28992,21 @@ const primaryDateHeuristicCurveCharts = {
     xStep: 1,
     yStep: 1,
   },
-  running_text: {
-    xAxisTitle: 'Textgrad 0-1',
+  text_density: {
+    xAxisTitle: 'Texttäthet 0-1',
     yAxisTitle: 'Poäng',
-    xPointLabel: 'Textgrad 0-1',
+    xPointLabel: 'Texttäthet 0-1',
+    yPointLabel: 'Poäng',
+    yMin: -120,
+    yMax: 80,
+    yAsPercent: false,
+    xStep: 0.05,
+    yStep: 1,
+  },
+  running_text: {
+    xAxisTitle: 'Texttäthet 0-1',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Texttäthet 0-1',
     yPointLabel: 'Poäng',
     yMin: -120,
     yMax: 80,

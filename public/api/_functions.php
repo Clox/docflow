@@ -2722,16 +2722,14 @@ function default_primary_date_heuristics(): array
                 ],
                 'description' => 'Poängkurva baserad på sidnumret där datumet hittas.',
             ],
-            'running_text' => [
+            'text_density' => [
                 'enabled' => true,
                 'curve' => [
                     ['x' => 0.0, 'y' => 0.0],
                     ['x' => 0.35, 'y' => 0.0],
                     ['x' => 1.0, 'y' => -60.0],
                 ],
-                'middle_of_sentence_extra_ratio' => 0.25,
-                'sentence_punctuation_extra_ratio' => 0.15,
-                'description' => 'Poängkurva baserad på hur mycket raden liknar löpande text.',
+                'description' => 'Poängkurva baserad på hur mycket omgivande text som finns runt kandidatdatumet.',
             ],
         ],
     ];
@@ -2862,13 +2860,16 @@ function normalize_primary_date_heuristics(mixed $input): array
 
     foreach ($defaults['penalties'] as $key => $default) {
         $raw = is_array($source['penalties'][$key] ?? null) ? $source['penalties'][$key] : [];
+        if ($key === 'text_density' && $raw === [] && is_array($source['penalties']['running_text'] ?? null)) {
+            $raw = $source['penalties']['running_text'];
+        }
         $result['penalties'][$key]['enabled'] = true;
         foreach (['points', 'max_points', 'direct_before_points', 'same_line_points', 'line_above_points', 'points_per_page'] as $field) {
             if (array_key_exists($field, $default)) {
                 $result['penalties'][$key][$field] = normalize_primary_date_number($raw[$field] ?? null, (float) $default[$field]);
             }
         }
-        foreach (['starts_at_y_ratio', 'full_after_y_ratio', 'middle_of_sentence_extra_ratio', 'sentence_punctuation_extra_ratio'] as $field) {
+        foreach (['starts_at_y_ratio', 'full_after_y_ratio'] as $field) {
             if (array_key_exists($field, $default)) {
                 $result['penalties'][$key][$field] = normalize_primary_date_ratio($raw[$field] ?? null, (float) $default[$field]);
             }
@@ -15911,20 +15912,12 @@ function primary_date_has_date_word(string $normalizedText): bool
     return $normalizedText !== '' && @preg_match('/\b[a-z0-9]*datum[a-z0-9]*\b/u', $normalizedText) === 1;
 }
 
-function primary_date_running_text_penalty(string $line, string $prefix, string $suffix, array $settings): array
+function primary_date_text_density_signal(string $line, string $prefix, string $suffix, array $settings): array
 {
     $wordCount = count(preg_split('/\s+/u', trim($line), -1, PREG_SPLIT_NO_EMPTY) ?: []);
     $freeWords = max(0, (int) ($settings['no_penalty_until_words'] ?? 4));
     $fullWords = max($freeWords + 1, (int) ($settings['full_penalty_from_words'] ?? 12));
     $ratio = max(0.0, min(1.0, ($wordCount - $freeWords) / max(1, $fullWords - $freeWords)));
-    $prefixLength = function_exists('mb_strlen') ? mb_strlen(trim($prefix)) : strlen(trim($prefix));
-    $suffixLength = function_exists('mb_strlen') ? mb_strlen(trim($suffix)) : strlen(trim($suffix));
-    if ($prefixLength > 10 && $suffixLength > 10) {
-        $ratio += (float) ($settings['middle_of_sentence_extra_ratio'] ?? 0.25);
-    }
-    if (@preg_match('/[.,;()]/u', $line) === 1) {
-        $ratio += (float) ($settings['sentence_punctuation_extra_ratio'] ?? 0.15);
-    }
     $ratio = max(0.0, min(1.0, $ratio));
     return [
         'ratio' => $ratio,
@@ -16184,20 +16177,20 @@ function score_primary_date_candidate(
         }
     }
 
-    if (($penalties['running_text']['enabled'] ?? true) === true) {
-        $running = primary_date_running_text_penalty($line, $prefix, $suffix, $penalties['running_text']);
-        $runningRatio = (float) ($running['ratio'] ?? 0.0);
-        $runningScore = interpolate_primary_date_score_curve(
-            is_array($penalties['running_text']['curve'] ?? null) ? $penalties['running_text']['curve'] : [],
-            $runningRatio
+    if (($penalties['text_density']['enabled'] ?? true) === true) {
+        $textDensity = primary_date_text_density_signal($line, $prefix, $suffix, $penalties['text_density']);
+        $textDensityRatio = (float) ($textDensity['ratio'] ?? 0.0);
+        $textDensityScore = interpolate_primary_date_score_curve(
+            is_array($penalties['text_density']['curve'] ?? null) ? $penalties['text_density']['curve'] : [],
+            $textDensityRatio
         );
-        if (abs($runningScore) >= 0.0001) {
-            $score += $runningScore;
+        if (abs($textDensityScore) >= 0.0001) {
+            $score += $textDensityScore;
             $signals[] = [
-                'type' => $runningScore >= 0.0 ? 'positive' : 'negative',
-                'code' => 'running_text',
-                'score' => $runningScore,
-                'detail' => 'words:' . (int) ($running['wordCount'] ?? 0) . ',ratio:' . round($runningRatio, 3),
+                'type' => $textDensityScore >= 0.0 ? 'positive' : 'negative',
+                'code' => 'text_density',
+                'score' => $textDensityScore,
+                'detail' => 'words:' . (int) ($textDensity['wordCount'] ?? 0) . ',ratio:' . round($textDensityRatio, 3),
             ];
         }
     }
