@@ -64,6 +64,7 @@ try {
             $replacementMap = replacement_map(
                 is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []
             );
+            $positionSettings = matching_position_settings_from_payload($matchingPayload);
             $liveZoneMatches = detect_configured_zone_matches(
                 split_lines_for_matching($ocrText),
                 is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
@@ -87,7 +88,9 @@ try {
                 $primaryDateResult = extract_primary_date_field_result(
                     split_lines_for_matching($ocrText),
                     $lineGeometries,
-                    is_array($systemField['primaryDateHeuristics'] ?? null) ? $systemField['primaryDateHeuristics'] : []
+                    is_array($systemField['primaryDateHeuristics'] ?? null) ? $systemField['primaryDateHeuristics'] : [],
+                    $replacementMap,
+                    $positionSettings
                 );
                 $primaryDateMatches = primary_date_result_matches($primaryDateResult, $lineGeometries);
                 if (is_string($primaryDateResult['value'] ?? null) && (string) $primaryDateResult['value'] !== '') {

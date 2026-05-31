@@ -2707,12 +2707,11 @@ function default_primary_date_heuristics(): array
             'date_word_nearby' => [
                 'enabled' => true,
                 'curve' => [
-                    ['x' => 0.0, 'y' => -40.0],
-                    ['x' => 1.0, 'y' => -35.0],
-                    ['x' => 3.0, 'y' => -18.0],
-                    ['x' => 6.0, 'y' => 0.0],
+                    ['x' => 0.0, 'y' => 0.0],
+                    ['x' => 0.5, 'y' => -18.0],
+                    ['x' => 1.0, 'y' => -40.0],
                 ],
-                'description' => 'Poängkurva när ordet "datum" finns ungefär till vänster om eller ovanför kandidatdatumet.',
+                'description' => 'Poängkurva baserad på hur säkert kandidatdatumet matchar text som innehåller "datum" i närheten.',
             ],
             'page_in_document' => [
                 'enabled' => true,
@@ -2880,7 +2879,16 @@ function normalize_primary_date_heuristics(mixed $input): array
             }
         }
         if (array_key_exists('curve', $default)) {
-            $result['penalties'][$key]['curve'] = normalize_primary_date_score_curve($raw['curve'] ?? null, $default['curve']);
+            $rawCurve = $raw['curve'] ?? null;
+            if ($key === 'date_word_nearby' && is_array($rawCurve)) {
+                foreach ($rawCurve as $point) {
+                    if (is_array($point) && is_numeric($point['x'] ?? null) && (float) $point['x'] > 1.0) {
+                        $rawCurve = null;
+                        break;
+                    }
+                }
+            }
+            $result['penalties'][$key]['curve'] = normalize_primary_date_score_curve($rawCurve, $default['curve']);
         }
         $result['penalties'][$key]['description'] = (string) $default['description'];
     }
@@ -15924,7 +15932,7 @@ function primary_date_running_text_penalty(string $line, string $prefix, string 
     ];
 }
 
-function primary_date_date_word_distance_ratio(array $candidate, array $lines, array $lineGeometries): ?float
+function primary_date_date_word_match(array $candidate, array $lines, array $replacementMap, array $positionSettings, array $lineGeometries): ?array
 {
     $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
     $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
@@ -15933,49 +15941,60 @@ function primary_date_date_word_distance_ratio(array $candidate, array $lines, a
         return null;
     }
 
-    $candidateLineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
-    $candidateBbox = line_geometry_span_bbox($candidateLineGeometry, $start, $start + strlen($raw));
-    $candidateHeight = $candidateBbox !== null
-        ? max(1.0, (float) $candidateBbox['y1'] - (float) $candidateBbox['y0'])
-        : 1.0;
-    $candidateCenter = $candidateBbox !== null ? bbox_center_point($candidateBbox) : null;
+    $candidateLine = is_string($lines[$lineIndex] ?? null) ? (string) $lines[$lineIndex] : '';
+    if ($candidateLine === '') {
+        return null;
+    }
+
+    $spanSettings = matching_bbox_span_building_from_position_settings($positionSettings);
+    $hits = find_all_label_hits(
+        $lines,
+        [['text' => 'datum', 'isRegex' => true]],
+        $replacementMap,
+        false,
+        $lineGeometries,
+        $spanSettings
+    );
+    if ($hits === []) {
+        return null;
+    }
+
+    $spanText = is_string($candidate['spanText'] ?? null)
+        ? (string) $candidate['spanText']
+        : $raw;
     $best = null;
 
-    $lineIndexes = array_values(array_unique([$lineIndex, $lineIndex - 1, $lineIndex - 2]));
-    foreach ($lineIndexes as $contextLineIndex) {
-        if ($contextLineIndex < 0 || !is_string($lines[$contextLineIndex] ?? null)) {
+    foreach ($hits as $hit) {
+        if (!is_array($hit)) {
             continue;
         }
-        $contextLine = (string) $lines[$contextLineIndex];
-        if (@preg_match_all('/\b[a-z0-9]*datum[a-z0-9]*\b/iu', $contextLine, $matches, PREG_OFFSET_CAPTURE) !== 1) {
-            continue;
-        }
-        foreach ($matches[0] as $match) {
-            $wordStart = is_int($match[1] ?? null) ? (int) $match[1] : -1;
-            $wordText = is_string($match[0] ?? null) ? (string) $match[0] : '';
-            if ($wordStart < 0 || $wordText === '') {
-                continue;
-            }
-            $wordEnd = $wordStart + strlen($wordText);
-            $isLeft = $contextLineIndex === $lineIndex && $wordEnd <= $start;
-            $isAbove = $contextLineIndex < $lineIndex;
-            if (!$isLeft && !$isAbove) {
-                continue;
-            }
 
-            $wordLineGeometry = is_array($lineGeometries[$contextLineIndex] ?? null) ? $lineGeometries[$contextLineIndex] : null;
-            $wordBbox = line_geometry_span_bbox($wordLineGeometry, $wordStart, $wordEnd);
-            if ($candidateCenter !== null && $wordBbox !== null) {
-                $wordCenter = bbox_center_point($wordBbox);
-                $dx = max(0.0, (float) $candidateCenter['x'] - (float) $wordCenter['x']);
-                $dy = max(0.0, (float) $candidateCenter['y'] - (float) $wordCenter['y']);
-                $distance = sqrt(($dx * $dx) + ($dy * $dy)) / $candidateHeight;
-            } elseif ($contextLineIndex === $lineIndex) {
-                $distance = max(0.0, ($start - $wordEnd) / 12.0);
-            } else {
-                $distance = (float) ($lineIndex - $contextLineIndex);
-            }
-            $best = $best === null ? $distance : min($best, $distance);
+        $components = candidate_confidence_components(
+            $hit,
+            $candidateLine,
+            $start,
+            $lineIndex,
+            'primary_date',
+            $positionSettings,
+            $lineGeometries,
+            $spanText,
+            $start,
+            $spanText
+        );
+        $components['trailingDelimiterPenalty'] = 0.0;
+        $components['contentPenalty'] = 0.0;
+        $confidence = candidate_confidence_score($components);
+        if ($confidence <= 0.0) {
+            continue;
+        }
+
+        $candidateMatch = [
+            'confidence' => $confidence,
+            'matchedText' => matched_label_text_from_hit($hit) ?? 'datum',
+            'components' => $components,
+        ];
+        if ($best === null || $confidence > (float) ($best['confidence'] ?? 0.0)) {
+            $best = $candidateMatch;
         }
     }
 
@@ -15993,10 +16012,6 @@ function primary_date_place_distance_match(array $candidate, array $lines, array
 
     $candidateLineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
     $candidateBbox = line_geometry_span_bbox($candidateLineGeometry, $start, $start + strlen($raw));
-    $candidateHeight = $candidateBbox !== null
-        ? max(1.0, (float) $candidateBbox['y1'] - (float) $candidateBbox['y0'])
-        : 1.0;
-    $candidateCenter = $candidateBbox !== null ? bbox_center_point($candidateBbox) : null;
     $best = null;
 
     $lineIndexes = array_values(array_unique([$lineIndex, $lineIndex - 1, $lineIndex - 2]));
@@ -16025,11 +16040,19 @@ function primary_date_place_distance_match(array $candidate, array $lines, array
 
                 $placeLineGeometry = is_array($lineGeometries[$contextLineIndex] ?? null) ? $lineGeometries[$contextLineIndex] : null;
                 $placeBbox = line_geometry_span_bbox($placeLineGeometry, $placeStart, $placeEnd);
-                if ($candidateCenter !== null && $placeBbox !== null) {
-                    $placeCenter = bbox_center_point($placeBbox);
-                    $dx = max(0.0, (float) $candidateCenter['x'] - (float) $placeCenter['x']);
-                    $dy = max(0.0, (float) $candidateCenter['y'] - (float) $placeCenter['y']);
-                    $distance = sqrt(($dx * $dx) + ($dy * $dy)) / $candidateHeight;
+                if ($candidateBbox !== null && $placeBbox !== null) {
+                    $horizontalGap = max(
+                        0.0,
+                        (float) ($candidateBbox['x0'] ?? 0.0) - (float) ($placeBbox['x1'] ?? 0.0),
+                        (float) ($placeBbox['x0'] ?? 0.0) - (float) ($candidateBbox['x1'] ?? 0.0)
+                    );
+                    $verticalGap = max(
+                        0.0,
+                        (float) ($candidateBbox['y0'] ?? 0.0) - (float) ($placeBbox['y1'] ?? 0.0),
+                        (float) ($placeBbox['y0'] ?? 0.0) - (float) ($candidateBbox['y1'] ?? 0.0)
+                    );
+                    $lineHeight = position_penalty_min_line_height($placeBbox, $candidateBbox);
+                    $distance = sqrt(($horizontalGap * $horizontalGap) + ($verticalGap * $verticalGap)) / max(1.0, $lineHeight);
                 } elseif ($contextLineIndex === $lineIndex) {
                     $between = substr($contextLine, $placeEnd, max(0, $start - $placeEnd));
                     $distance = count(preg_split('/\s+/u', trim(is_string($between) ? $between : ''), -1, PREG_SPLIT_NO_EMPTY) ?: []);
@@ -16053,7 +16076,14 @@ function primary_date_place_distance_match(array $candidate, array $lines, array
     return $best;
 }
 
-function score_primary_date_candidate(array $candidate, array $lines, array $lineGeometries = [], array $heuristics = []): array
+function score_primary_date_candidate(
+    array $candidate,
+    array $lines,
+    array $lineGeometries = [],
+    array $heuristics = [],
+    array $replacementMap = [],
+    array $positionSettings = []
+): array
 {
     $heuristics = normalize_primary_date_heuristics($heuristics);
     $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
@@ -16133,11 +16163,14 @@ function score_primary_date_candidate(array $candidate, array $lines, array $lin
     }
 
     if (($penalties['date_word_nearby']['enabled'] ?? true) === true) {
-        $dateWordDistance = primary_date_date_word_distance_ratio($candidate, $lines, $lineGeometries);
-        $dateWordScore = $dateWordDistance !== null
+        $dateWordMatch = primary_date_date_word_match($candidate, $lines, $replacementMap, $positionSettings, $lineGeometries);
+        $dateWordConfidence = is_array($dateWordMatch) && is_numeric($dateWordMatch['confidence'] ?? null)
+            ? clamp_confidence((float) $dateWordMatch['confidence'])
+            : null;
+        $dateWordScore = $dateWordConfidence !== null
             ? interpolate_primary_date_score_curve(
                 is_array($penalties['date_word_nearby']['curve'] ?? null) ? $penalties['date_word_nearby']['curve'] : [],
-                $dateWordDistance
+                $dateWordConfidence
             )
             : 0.0;
         if (abs($dateWordScore) >= 0.0001) {
@@ -16146,7 +16179,7 @@ function score_primary_date_candidate(array $candidate, array $lines, array $lin
                 'type' => $dateWordScore >= 0.0 ? 'positive' : 'negative',
                 'code' => 'date_word_nearby',
                 'score' => $dateWordScore,
-                'detail' => 'distance:' . round($dateWordDistance ?? 0.0, 3),
+                'detail' => 'confidence:' . round($dateWordConfidence ?? 0.0, 3) . ',label:' . (string) ($dateWordMatch['matchedText'] ?? 'datum'),
             ];
         }
     }
@@ -16194,7 +16227,13 @@ function score_primary_date_candidate(array $candidate, array $lines, array $lin
     return $result;
 }
 
-function extract_primary_date_field_result(array $lines, array $lineGeometries = [], array $heuristics = []): array
+function extract_primary_date_field_result(
+    array $lines,
+    array $lineGeometries = [],
+    array $heuristics = [],
+    array $replacementMap = [],
+    array $positionSettings = []
+): array
 {
     $heuristics = normalize_primary_date_heuristics($heuristics);
     $candidates = [];
@@ -16210,7 +16249,14 @@ function extract_primary_date_field_result(array $lines, array $lineGeometries =
         foreach ($lineCandidates as $candidate) {
             $candidate['lineIndex'] = is_int($lineIndex) ? $lineIndex : 0;
             $candidate['line'] = $line;
-            $candidates[] = score_primary_date_candidate($candidate, $lines, $lineGeometries, $heuristics);
+            $candidates[] = score_primary_date_candidate(
+                $candidate,
+                $lines,
+                $lineGeometries,
+                $heuristics,
+                $replacementMap,
+                $positionSettings
+            );
         }
     }
 
@@ -19203,7 +19249,9 @@ function extract_configured_text_field_results(
             $result = extract_primary_date_field_result(
                 $lines,
                 $lineGeometries,
-                is_array($field['primaryDateHeuristics'] ?? null) ? $field['primaryDateHeuristics'] : []
+                is_array($field['primaryDateHeuristics'] ?? null) ? $field['primaryDateHeuristics'] : [],
+                $replacementMap,
+                $positionSettings
             );
             $ruleSets = [];
             $matches = primary_date_result_matches($result, $lineGeometries);

@@ -7845,6 +7845,15 @@ function formatPrimaryDateSignalDetail(signal) {
   if (wordsMatch) {
     return `${Number(wordsMatch[1]).toLocaleString('sv-SE')} ord`;
   }
+  const confidenceMatch = detail.match(/\bconfidence:([0-9.]+)/u);
+  if (confidenceMatch) {
+    const confidence = Number(confidenceMatch[1]);
+    const labelMatch = detail.match(/\blabel:([^,]+)/u);
+    const labelText = labelMatch && labelMatch[1] ? ` mot "${labelMatch[1].trim()}"` : '';
+    return Number.isFinite(confidence)
+      ? `${formatPrimaryDateScoreNumber(confidence * 100)} % matchsäkerhet${labelText}`
+      : '';
+  }
   const contextLabels = {
     same_line_before: 'till vänster',
     line_above: 'ovanför',
@@ -24297,12 +24306,11 @@ function defaultPrimaryDateHeuristics() {
       date_word_nearby: {
         enabled: true,
         curve: [
-          { x: 0, y: -40 },
-          { x: 1, y: -35 },
-          { x: 3, y: -18 },
-          { x: 6, y: 0 },
+          { x: 0, y: 0 },
+          { x: 0.5, y: -18 },
+          { x: 1, y: -40 },
         ],
-        description: 'Poängkurva när ordet "datum" finns ungefär till vänster om eller ovanför kandidatdatumet.',
+        description: 'Poängkurva baserad på hur säkert kandidatdatumet matchar text som innehåller "datum" i närheten.',
       },
       page_in_document: {
         enabled: true,
@@ -24429,7 +24437,12 @@ function sanitizePrimaryDateHeuristics(input) {
       }
     });
     if (Object.prototype.hasOwnProperty.call(defaultsForRule, 'curve')) {
-      result.penalties[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForRule.curve);
+      const rawCurve = key === 'date_word_nearby'
+        && Array.isArray(raw.curve)
+        && raw.curve.some((point) => point && Number.isFinite(Number(point.x)) && Number(point.x) > 1)
+        ? null
+        : raw.curve;
+      result.penalties[key].curve = sanitizePrimaryDateScoreCurve(rawCurve, defaultsForRule.curve);
     }
   });
 
@@ -26553,9 +26566,14 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
     const xInput = document.createElement('input');
     xInput.type = 'number';
     xInput.min = '0';
-    xInput.step = String(chart.xStep || 0.1);
+    if (chart.xAsPercent === true) {
+      xInput.max = '100';
+    }
+    xInput.step = String(chart.xAsPercent === true ? ((chart.xStep || 0.1) * 100) : (chart.xStep || 0.1));
     xInput.inputMode = 'decimal';
-    xInput.value = formatMatchingCurveNumber(point.x);
+    xInput.value = chart.xAsPercent === true
+      ? formatMatchingCurveNumber(point.x * 100)
+      : formatMatchingCurveNumber(point.x);
 
     const yInput = document.createElement('input');
     yInput.type = 'number';
@@ -26571,8 +26589,11 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
       if (!workingPoints[pointIndex]) {
         workingPoints[pointIndex] = sanitizeMatchingPenaltyCurve(getCurve())[pointIndex] || { ...point };
       }
+      const parsedX = Number.parseFloat(String(xInput.value).replace(',', '.'));
       workingPoints[pointIndex] = {
-        x: clampMatchingDecimal(xInput.value, point.x, null),
+        x: chart.xAsPercent === true
+          ? (Number.isFinite(parsedX) ? Math.max(0, Math.min(100, parsedX)) / 100 : point.x)
+          : clampMatchingDecimal(xInput.value, point.x, null),
         y: chart.yAsPercent === false
           ? (Number.isFinite(Number.parseFloat(String(yInput.value).replace(',', '.')))
             ? Number.parseFloat(String(yInput.value).replace(',', '.'))
@@ -26600,7 +26621,7 @@ function renderMatchingPenaltyCurvePointEditor(containerEl, curve, options = {})
       commitCurve(nextCurve);
     });
 
-    row.appendChild(createFloatingField(chart.xPointLabel, xInput));
+    row.appendChild(createFloatingField(chart.xPointLabel, chart.xAsPercent === true ? wrapPercentInput(xInput) : xInput));
     row.appendChild(createFloatingField(chart.yPointLabel, chart.yAsPercent === false ? yInput : wrapPercentInput(yInput)));
     row.appendChild(removeButton);
     containerEl.appendChild(row);
@@ -26742,7 +26763,8 @@ function renderMatchingPenaltyCurveSvg(svgEl, curve, options = {}) {
   tickRatios.forEach((ratio) => {
     const x = plotLeft + (ratio * plotWidth);
     addLine(x, plotTop, x, plotBottom);
-    addText(formatTickNumber(maxX * ratio), x, plotBottom + xTickLabelOffset);
+    const tickValue = maxX * ratio;
+    addText(chart.xAsPercent === true ? String(Math.round(tickValue * 100)) : formatTickNumber(tickValue), x, plotBottom + xTickLabelOffset);
   });
 
   addText(chart.xAxisTitle, plotLeft + (plotWidth / 2), height - 4);
@@ -28932,12 +28954,13 @@ const primaryDateHeuristicCurveCharts = {
     yStep: 1,
   },
   date_word_nearby: {
-    xAxisTitle: 'Avstånd i radhöjder',
+    xAxisTitle: 'Matchsäkerhet (%)',
     yAxisTitle: 'Poäng',
-    xPointLabel: 'Avstånd i radhöjder',
+    xPointLabel: 'Matchsäkerhet',
     yPointLabel: 'Poäng',
     yMin: -120,
     yMax: 120,
+    xAsPercent: true,
     yAsPercent: false,
     xStep: 0.1,
     yStep: 1,
@@ -29084,7 +29107,10 @@ function createPrimaryDateHeuristicCurveEditor({
   editor.addPointEl.addEventListener('click', () => {
     const current = sanitizePrimaryDateScoreCurve(collection[index].primaryDateHeuristics[section][ruleKey].curve, rule.curve);
     const lastPoint = current[current.length - 1] || { x: 0, y: 0 };
-    current.push({ x: Math.max(0, lastPoint.x + 1), y: lastPoint.y });
+    const nextX = chart.xAsPercent === true
+      ? Math.min(1, Math.max(0, lastPoint.x + (chart.xStep || 0.1)))
+      : Math.max(0, lastPoint.x + 1);
+    current.push({ x: nextX, y: lastPoint.y });
     collection[index].primaryDateHeuristics[section][ruleKey].curve = sanitizePrimaryDateScoreCurve(current, rule.curve);
     render();
     updateSettingsActionButtons();
