@@ -26521,31 +26521,66 @@ function positionMatchingPenaltyCurvePopover(editor) {
   const boundsEl = editor.popoverEl.closest('.settings-dialog')
     || document.documentElement;
   const boundsRect = boundsEl.getBoundingClientRect();
+  const horizontalBoundsEl = boundsEl instanceof HTMLElement
+    ? (boundsEl.querySelector('.settings-content') || boundsEl)
+    : boundsEl;
+  const horizontalBoundsRect = horizontalBoundsEl.getBoundingClientRect();
   const anchorRect = anchorEl.getBoundingClientRect();
   const gutter = 12;
   const viewportWidth = document.documentElement.clientWidth || window.innerWidth || boundsRect.width;
   const viewportHeight = document.documentElement.clientHeight || window.innerHeight || boundsRect.height;
-  const availableWidth = Math.max(260, Math.min(boundsRect.width, viewportWidth) - (gutter * 2));
+  const availableWidth = Math.max(260, Math.min(horizontalBoundsRect.width, viewportWidth) - (gutter * 2));
+  const availableHeight = Math.max(220, Math.min(boundsRect.height, viewportHeight) - (gutter * 2));
   const popoverWidth = Math.min(560, availableWidth);
-  const defaultLeft = anchorRect.left + 10;
-  const minLeft = Math.max(gutter, boundsRect.left + gutter);
-  const maxLeft = Math.min(viewportWidth - gutter, boundsRect.right - gutter) - popoverWidth;
-  const clampedLeft = Math.min(Math.max(defaultLeft, minLeft), Math.max(minLeft, maxLeft));
-  const preferredTop = anchorRect.top + 38;
+  const minLeft = Math.max(gutter, horizontalBoundsRect.left + gutter);
+  const maxLeft = Math.min(viewportWidth - gutter, horizontalBoundsRect.right - gutter) - popoverWidth;
+  const centeredLeft = horizontalBoundsRect.left + ((horizontalBoundsRect.width - popoverWidth) / 2);
+  const clampedLeft = Math.min(Math.max(centeredLeft, minLeft), Math.max(minLeft, maxLeft));
   const minTop = Math.max(gutter, boundsRect.top + gutter);
   const maxBottom = Math.min(viewportHeight - gutter, boundsRect.bottom - gutter);
-  const maxHeightBelow = maxBottom - preferredTop;
-  const maxHeightAbove = anchorRect.top - minTop - gutter;
-  const openAbove = maxHeightBelow < 220 && maxHeightAbove > maxHeightBelow;
-  const popoverMaxHeight = Math.max(180, Math.min(520, Math.max(openAbove ? maxHeightAbove : maxHeightBelow, 180)));
-  const top = openAbove
-    ? Math.max(minTop, anchorRect.top - popoverMaxHeight - gutter)
-    : Math.max(minTop, preferredTop);
 
   editor.popoverEl.style.width = `${Math.round(popoverWidth)}px`;
+  editor.popoverEl.style.maxHeight = `${Math.round(availableHeight)}px`;
+
+  const popoverRect = editor.popoverEl.getBoundingClientRect();
+  const popoverHeight = Math.max(180, Math.min(availableHeight, popoverRect.height || availableHeight));
+  const maxTop = maxBottom - popoverHeight;
+  const centeredTop = boundsRect.top + ((boundsRect.height - popoverHeight) / 2);
+  const top = Math.min(Math.max(centeredTop, minTop), Math.max(minTop, maxTop));
+
   editor.popoverEl.style.left = `${Math.round(clampedLeft)}px`;
   editor.popoverEl.style.top = `${Math.round(top)}px`;
-  editor.popoverEl.style.maxHeight = `${Math.round(popoverMaxHeight)}px`;
+}
+
+function animateMatchingPenaltyCurvePopoverOpen(editor) {
+  if (
+    !editor
+    || !(editor.popoverEl instanceof HTMLElement)
+    || !(editor.toggleEl instanceof HTMLElement)
+    || typeof editor.popoverEl.animate !== 'function'
+  ) {
+    return;
+  }
+  const popoverRect = editor.popoverEl.getBoundingClientRect();
+  const anchorRect = editor.toggleEl.getBoundingClientRect();
+  const popoverCenterX = popoverRect.left + (popoverRect.width / 2);
+  const popoverCenterY = popoverRect.top + (popoverRect.height / 2);
+  const anchorCenterX = anchorRect.left + (anchorRect.width / 2);
+  const anchorCenterY = anchorRect.top + (anchorRect.height / 2);
+  editor.popoverEl.getAnimations().forEach((animation) => animation.cancel());
+  editor.popoverEl.animate([
+    {
+      opacity: 0,
+      transform: `translate(${Math.round(anchorCenterX - popoverCenterX)}px, ${Math.round(anchorCenterY - popoverCenterY)}px) scale(0.18)`,
+    },
+    {
+      opacity: 1,
+      transform: 'translate(0, 0) scale(1)',
+    },
+  ], {
+    duration: 160,
+    easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+  });
 }
 
 function toggleMatchingPenaltyCurvePopover(editor, forceOpen = null) {
@@ -26566,6 +26601,7 @@ function toggleMatchingPenaltyCurvePopover(editor, forceOpen = null) {
     return;
   }
   positionMatchingPenaltyCurvePopover(editor);
+  animateMatchingPenaltyCurvePopoverOpen(editor);
   requestAnimationFrame(() => {
     positionMatchingPenaltyCurvePopover(editor);
     const firstInput = editor.popoverEl.querySelector('input');
@@ -29357,6 +29393,10 @@ function createPrimaryDateHeuristicCurveEditor({
     editor.toggleEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
     if (nextOpen) {
       positionMatchingPenaltyCurvePopover(editor);
+      animateMatchingPenaltyCurvePopoverOpen(editor);
+      requestAnimationFrame(() => {
+        positionMatchingPenaltyCurvePopover(editor);
+      });
     }
   });
   editor.popoverEl.addEventListener('click', (event) => event.stopPropagation());
