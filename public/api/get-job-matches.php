@@ -73,6 +73,7 @@ try {
                 is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : []
             );
             $zoneMatches = $liveZoneMatches;
+            $matchingLines = split_lines_for_matching($ocrText);
 
             foreach (is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [] as $systemField) {
                 if (!is_array($systemField)) {
@@ -81,37 +82,64 @@ try {
                 $extractor = is_string($systemField['extractor'] ?? null) ? trim((string) $systemField['extractor']) : '';
                 $systemFieldKey = is_string($systemField['systemFieldKey'] ?? null) ? trim((string) $systemField['systemFieldKey']) : '';
                 $key = is_string($systemField['key'] ?? null) ? trim((string) $systemField['key']) : '';
-                if ($extractor !== 'primary_date' && $systemFieldKey !== 'primary_date' && $key !== 'primary_date') {
+                if ($extractor === 'primary_date' || $systemFieldKey === 'primary_date' || $key === 'primary_date') {
+                    $primaryDateResult = extract_primary_date_field_result(
+                        $matchingLines,
+                        $lineGeometries,
+                        is_array($systemField['primaryDateHeuristics'] ?? null) ? $systemField['primaryDateHeuristics'] : [],
+                        $replacementMap,
+                        $positionSettings
+                    );
+                    $primaryDateMatches = primary_date_result_matches($primaryDateResult, $lineGeometries);
+                    if (is_string($primaryDateResult['value'] ?? null) && (string) $primaryDateResult['value'] !== '') {
+                        $fieldValues['primary_date'] = [(string) $primaryDateResult['value']];
+                    }
+                    $fieldMeta['primary_date'] = [
+                        'key' => 'primary_date',
+                        'name' => is_string($systemField['name'] ?? null) && trim((string) $systemField['name']) !== ''
+                            ? trim((string) $systemField['name'])
+                            : 'Huvuddatum',
+                        'extractor' => 'primary_date',
+                        'value' => is_string($primaryDateResult['value'] ?? null) ? (string) $primaryDateResult['value'] : null,
+                        'raw' => is_string($primaryDateResult['raw'] ?? null) ? (string) $primaryDateResult['raw'] : null,
+                        'confidence' => isset($primaryDateResult['confidence']) && is_numeric($primaryDateResult['confidence']) ? (float) $primaryDateResult['confidence'] : 0.0,
+                        'baseConfidence' => isset($primaryDateResult['confidence']) && is_numeric($primaryDateResult['confidence']) ? (float) $primaryDateResult['confidence'] : 0.0,
+                        'finalConfidence' => isset($primaryDateResult['confidence']) && is_numeric($primaryDateResult['confidence']) ? (float) $primaryDateResult['confidence'] : 0.0,
+                        'score' => is_numeric($primaryDateResult['selectedCandidate']['score'] ?? null) ? (float) $primaryDateResult['selectedCandidate']['score'] : null,
+                        'fullConfidenceScore' => is_numeric($primaryDateResult['fullConfidenceScore'] ?? null) ? (float) $primaryDateResult['fullConfidenceScore'] : null,
+                        'matches' => $primaryDateMatches,
+                    ];
                     continue;
                 }
 
-                $primaryDateResult = extract_primary_date_field_result(
-                    split_lines_for_matching($ocrText),
-                    $lineGeometries,
-                    is_array($systemField['primaryDateHeuristics'] ?? null) ? $systemField['primaryDateHeuristics'] : [],
-                    $replacementMap,
-                    $positionSettings
-                );
-                $primaryDateMatches = primary_date_result_matches($primaryDateResult, $lineGeometries);
-                if (is_string($primaryDateResult['value'] ?? null) && (string) $primaryDateResult['value'] !== '') {
-                    $fieldValues['primary_date'] = [(string) $primaryDateResult['value']];
+                if ($extractor !== 'title' && $systemFieldKey !== 'title' && $key !== 'title') {
+                    continue;
                 }
-                $fieldMeta['primary_date'] = [
-                    'key' => 'primary_date',
+
+                $titleResult = extract_title_field_result(
+                    $matchingLines,
+                    $lineGeometries,
+                    is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : []
+                );
+                $titleMatches = title_result_matches($titleResult, $lineGeometries);
+                if (is_string($titleResult['value'] ?? null) && (string) $titleResult['value'] !== '') {
+                    $fieldValues['title'] = [(string) $titleResult['value']];
+                }
+                $fieldMeta['title'] = [
+                    'key' => 'title',
                     'name' => is_string($systemField['name'] ?? null) && trim((string) $systemField['name']) !== ''
                         ? trim((string) $systemField['name'])
-                        : 'Huvuddatum',
-                    'extractor' => 'primary_date',
-                    'value' => is_string($primaryDateResult['value'] ?? null) ? (string) $primaryDateResult['value'] : null,
-                    'raw' => is_string($primaryDateResult['raw'] ?? null) ? (string) $primaryDateResult['raw'] : null,
-                    'confidence' => isset($primaryDateResult['confidence']) && is_numeric($primaryDateResult['confidence']) ? (float) $primaryDateResult['confidence'] : 0.0,
-                    'baseConfidence' => isset($primaryDateResult['confidence']) && is_numeric($primaryDateResult['confidence']) ? (float) $primaryDateResult['confidence'] : 0.0,
-                    'finalConfidence' => isset($primaryDateResult['confidence']) && is_numeric($primaryDateResult['confidence']) ? (float) $primaryDateResult['confidence'] : 0.0,
-                    'score' => is_numeric($primaryDateResult['selectedCandidate']['score'] ?? null) ? (float) $primaryDateResult['selectedCandidate']['score'] : null,
-                    'fullConfidenceScore' => is_numeric($primaryDateResult['fullConfidenceScore'] ?? null) ? (float) $primaryDateResult['fullConfidenceScore'] : null,
-                    'matches' => $primaryDateMatches,
+                        : 'Rubrik',
+                    'extractor' => 'title',
+                    'value' => is_string($titleResult['value'] ?? null) ? (string) $titleResult['value'] : null,
+                    'raw' => is_string($titleResult['raw'] ?? null) ? (string) $titleResult['raw'] : null,
+                    'confidence' => isset($titleResult['confidence']) && is_numeric($titleResult['confidence']) ? (float) $titleResult['confidence'] : 0.0,
+                    'baseConfidence' => isset($titleResult['confidence']) && is_numeric($titleResult['confidence']) ? (float) $titleResult['confidence'] : 0.0,
+                    'finalConfidence' => isset($titleResult['confidence']) && is_numeric($titleResult['confidence']) ? (float) $titleResult['confidence'] : 0.0,
+                    'score' => is_numeric($titleResult['selectedCandidate']['score'] ?? null) ? (float) $titleResult['selectedCandidate']['score'] : null,
+                    'fullConfidenceScore' => is_numeric($titleResult['fullConfidenceScore'] ?? null) ? (float) $titleResult['fullConfidenceScore'] : null,
+                    'matches' => $titleMatches,
                 ];
-                break;
             }
         }
     } catch (Throwable $e) {

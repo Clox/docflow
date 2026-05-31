@@ -4306,7 +4306,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
     container.appendChild(span);
   };
   const matchHasPrimaryDateScoreDetails = (row, fieldKey = '') => (
-    fieldKey === 'primary_date'
+    (fieldKey === 'primary_date' || fieldKey === 'title')
     && (primaryDateSignalRows(row?.signals).length > 0
     || Number.isFinite(Number(row?.score))
     || Number.isFinite(Number(row?.fullConfidenceScore)))
@@ -7732,11 +7732,16 @@ function formatSnapshotCompareCandidateBboxIndexes(indexes) {
 function formatPrimaryDateSignalLabel(code) {
   const labels = {
     place_near_date: 'Ort vid datum',
-    document_position: 'Position i dokument',
+    document_position: 'Högt på sidan',
     date_word_nearby: 'Ordet datum i närheten',
     page_in_document: 'Sida i dokument',
     text_density: 'Texttäthet',
     running_text: 'Texttäthet',
+    vertical_position: 'Högt på sidan',
+    horizontal_position: 'Centrerad',
+    text_size: 'Textstorlek',
+    uppercase_ratio: 'Versalgrad',
+    brevity: 'Korthet',
   };
   return labels[code] || code;
 }
@@ -7842,6 +7847,27 @@ function formatPrimaryDateSignalDetail(signal) {
       return `${formatPrimaryDateScoreNumber(ratio * 100)} % ner på sidan`;
     }
   }
+  const centerDistanceMatch = detail.match(/\bcenter_distance:([0-9.]+)/u);
+  if (centerDistanceMatch) {
+    const ratio = Number(centerDistanceMatch[1]);
+    if (Number.isFinite(ratio)) {
+      return `${formatPrimaryDateScoreNumber(ratio * 100)} % från mitten`;
+    }
+  }
+  const relativeSizeMatch = detail.match(/\brelative_size:([0-9.]+)/u);
+  if (relativeSizeMatch) {
+    const ratio = Number(relativeSizeMatch[1]);
+    if (Number.isFinite(ratio)) {
+      return `${formatPrimaryDateScoreNumber(ratio)} x normal textstorlek`;
+    }
+  }
+  const uppercaseRatioMatch = detail.match(/\buppercase_ratio:([0-9.]+)/u);
+  if (uppercaseRatioMatch) {
+    const ratio = Number(uppercaseRatioMatch[1]);
+    if (Number.isFinite(ratio)) {
+      return `${formatPrimaryDateScoreNumber(ratio * 100)} % versaler`;
+    }
+  }
   const textDensityMatch = detail.match(/\bratio:([0-9.]+)/u);
   if (signal?.code === 'text_density' || signal?.code === 'running_text') {
     const ratio = textDensityMatch ? Number(textDensityMatch[1]) : null;
@@ -7895,6 +7921,13 @@ function formatPrimaryDateSignalDetail(signal) {
   const lineMatch = detail.match(/\bline:(\d+)/u);
   if (lineMatch) {
     return `rad ${Number(lineMatch[1]).toLocaleString('sv-SE')}`;
+  }
+  const wordsMatch = detail.match(/\bwords:(\d+)/u);
+  if (wordsMatch) {
+    const words = Number(wordsMatch[1]);
+    if (Number.isFinite(words)) {
+      return `${words.toLocaleString('sv-SE')} ord`;
+    }
   }
   const pageMatch = detail.match(/\bpage:(\d+)/u);
   if (pageMatch) {
@@ -15502,7 +15535,8 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   const group = ocrDataFieldCurrentGroup();
   const confidenceValue = ocrDataFieldConfidenceValue(row);
   const matchIndex = Number.isInteger(row?.matchIndex) ? row.matchIndex + 1 : 1;
-  const isPrimaryDateMatch = typeof group?.fieldKey === 'string' && group.fieldKey === 'primary_date';
+  const hasSystemScoreDetails = typeof group?.fieldKey === 'string'
+    && (group.fieldKey === 'primary_date' || group.fieldKey === 'title');
   const keyWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'key', pageMatches);
   const valueWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'value', pageMatches);
   const showKeySection = ocrDataFieldMatchHasKey(row, keyWordIndexes);
@@ -15524,10 +15558,10 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
       : valueText);
   const confidenceText = ocrDataFieldConfidenceTooltip(row, {
     includeHint: false,
-    includeScoreDetails: isPrimaryDateMatch,
+    includeScoreDetails: hasSystemScoreDetails,
   });
   const primaryDateSignals = normalizePrimaryDateSignals(row?.signals);
-  const hasPrimaryDateScoreDetails = isPrimaryDateMatch
+  const hasPrimaryDateScoreDetails = hasSystemScoreDetails
     && (primaryDateSignals.length > 0
     || Number.isFinite(Number(row?.score))
     || Number.isFinite(Number(row?.fullConfidenceScore)));
@@ -15564,6 +15598,11 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     'score',
     'fullConfidenceScore',
     'yRatio',
+    'centerDistance',
+    'relativeTextSize',
+    'uppercaseRatio',
+    'textDensityRatio',
+    'wordCount',
   ].forEach((key) => {
     const numericValue = Number(row?.[key]);
     if (Number.isFinite(numericValue)) {
@@ -17741,7 +17780,8 @@ function syncOcrDataFieldConfidenceUi(row = null) {
   const confidenceText = confidenceValue !== null ? formatOcrPercent(confidenceValue) : '–';
   const currentGroup = ocrDataFieldCurrentGroup();
   const title = ocrDataFieldConfidenceTooltip(activeRow, {
-    includeScoreDetails: typeof currentGroup?.fieldKey === 'string' && currentGroup.fieldKey === 'primary_date',
+    includeScoreDetails: typeof currentGroup?.fieldKey === 'string'
+      && (currentGroup.fieldKey === 'primary_date' || currentGroup.fieldKey === 'title'),
   });
   ocrSearchConfidenceEl.replaceChildren();
   const confidenceValueEl = document.createElement('span');
@@ -24466,6 +24506,94 @@ function sanitizePrimaryDateHeuristics(input) {
   return result;
 }
 
+function defaultTitleHeuristics() {
+  return {
+    full_confidence_score: 120,
+    signals: {
+      vertical_position: {
+        enabled: true,
+        curve: [
+          { x: 0, y: 35 },
+          { x: 0.20, y: 25 },
+          { x: 0.60, y: 0 },
+          { x: 0.95, y: -25 },
+        ],
+        description: 'Poängkurva baserad på rubrikkandidatens vertikala position på sidan.',
+      },
+      horizontal_position: {
+        enabled: true,
+        curve: [
+          { x: 0, y: 30 },
+          { x: 0.25, y: 20 },
+          { x: 0.55, y: 0 },
+          { x: 1, y: -20 },
+        ],
+        description: 'Poängkurva baserad på hur nära rubrikkandidaten ligger sidans mitt.',
+      },
+      text_size: {
+        enabled: true,
+        curve: [
+          { x: 0.75, y: -20 },
+          { x: 1, y: 0 },
+          { x: 1.50, y: 25 },
+          { x: 2.20, y: 45 },
+        ],
+        description: 'Poängkurva baserad på textstorlek relativt normal radhöjd på sidan.',
+      },
+      uppercase_ratio: {
+        enabled: true,
+        curve: [
+          { x: 0, y: 0 },
+          { x: 0.45, y: 10 },
+          { x: 0.80, y: 25 },
+          { x: 1, y: 30 },
+        ],
+        description: 'Poängkurva baserad på andelen versaler i rubrikkandidaten.',
+      },
+      brevity: {
+        enabled: true,
+        curve: [
+          { x: 1, y: 25 },
+          { x: 3, y: 20 },
+          { x: 6, y: 0 },
+          { x: 10, y: -25 },
+        ],
+        description: 'Poängkurva baserad på hur många ord rubrikkandidaten innehåller.',
+      },
+      text_density: {
+        enabled: true,
+        curve: [
+          { x: 0, y: 25 },
+          { x: 0.35, y: 15 },
+          { x: 0.70, y: 0 },
+          { x: 1, y: -35 },
+        ],
+        description: 'Poängkurva baserad på hur mycket omgivande text som finns runt rubrikkandidaten.',
+      },
+    },
+  };
+}
+
+function sanitizeTitleHeuristics(input) {
+  const defaults = defaultTitleHeuristics();
+  const source = input && typeof input === 'object' ? input : {};
+  const result = defaultTitleHeuristics();
+  result.full_confidence_score = Math.max(1, sanitizePrimaryDateNumber(
+    source.full_confidence_score,
+    defaults.full_confidence_score
+  ));
+
+  Object.entries(defaults.signals).forEach(([key, defaultsForSignal]) => {
+    const raw = source.signals && source.signals[key] && typeof source.signals[key] === 'object'
+      ? source.signals[key]
+      : {};
+    result.signals[key].enabled = true;
+    result.signals[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForSignal.curve);
+  });
+
+  return result;
+}
+
 function sanitizeExtractionField(field, fallbackIndex = 0) {
   const input = field && typeof field === 'object' ? field : {};
   const name = typeof input.name === 'string' ? input.name : '';
@@ -24518,6 +24646,9 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
       isSystemField,
       ...(normalizedKey === 'primary_date' || input.systemFieldKey === 'primary_date' || extractor === 'primary_date'
         ? { primaryDateHeuristics: sanitizePrimaryDateHeuristics(input.primaryDateHeuristics) }
+        : {}),
+      ...(normalizedKey === 'title' || input.systemFieldKey === 'title' || extractor === 'title'
+        ? { titleHeuristics: sanitizeTitleHeuristics(input.titleHeuristics) }
         : {}),
     };
   }
@@ -24783,6 +24914,9 @@ function filenameTemplateSystemFieldTitle(fieldKey, fieldName) {
   const name = typeof fieldName === 'string' ? fieldName.trim() : '';
   if (key === 'primary_date') {
     return 'Huvuddatum är systemets bästa gissning på dokumentets huvuddatum när inget tydligt datumfält finns.';
+  }
+  if (key === 'title') {
+    return 'Rubrik är systemets bästa gissning på dokumentets huvudsakliga rubrik eller titel.';
   }
   if (key === 'sender') {
     return 'Lägger till avsändarens namn i filnamnet.';
@@ -26078,6 +26212,9 @@ function systemExtractionFieldHelpText(field) {
   const extractor = typeof field?.extractor === 'string' ? field.extractor : '';
   if (key === 'primary_date' || extractor === 'primary_date') {
     return 'Huvuddatum är dokumentets primära, visuellt representativa datum. Det ska normalt vara naket, fristående och högt upp i dokumentet, inte ett datum omgivet av hög texttäthet eller ett tydligt etiketterat datumfält.';
+  }
+  if (key === 'title' || extractor === 'title') {
+    return 'Rubrik är dokumentets huvudsakliga rubrik eller titel. Den väljs genom poängsatta kandidater från OCR-rader med signaler för position, centrering, textstorlek, versalgrad, korthet och texttäthet.';
   }
   return '';
 }
@@ -27738,6 +27875,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   const readOnly = options.readOnly === true;
   const isPrimaryDateField = field.extractor === 'primary_date'
     || field.systemFieldKey === 'primary_date';
+  const isTitleField = field.extractor === 'title'
+    || field.systemFieldKey === 'title';
   const lockedFieldNormalization = bankgiroFieldNormalizationOverride(field);
   if (lockedFieldNormalization) {
     collection[index] = {
@@ -27920,6 +28059,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
   if (isPrimaryDateField) {
     fieldBody.appendChild(createPrimaryDateHeuristicsEditor(collection, index));
+  }
+  if (isTitleField) {
+    fieldBody.appendChild(createTitleHeuristicsEditor(collection, index));
   }
 
   if (!readOnly) {
@@ -28920,7 +29062,7 @@ function renderExtractionFieldsEditor() {
 
 const primaryDateHeuristicLabels = {
   place_near_date: 'Ort vid datum',
-  document_position: 'Position i dokument',
+  document_position: 'Högt på sidan',
   date_word_nearby: 'Ordet datum i närheten',
   page_in_document: 'Sida i dokument',
   text_density: 'Texttäthet',
@@ -28959,12 +29101,13 @@ const primaryDateHeuristicCurveCharts = {
     yStep: 1,
   },
   document_position: {
-    xAxisTitle: 'Andel ned på sidan',
+    xAxisTitle: 'Andel ned på sidan (%)',
     yAxisTitle: 'Poäng',
     xPointLabel: 'Andel ned på sidan',
     yPointLabel: 'Poäng',
     yMin: -120,
     yMax: 120,
+    xAsPercent: true,
     yAsPercent: false,
     xStep: 0.01,
     yStep: 1,
@@ -29016,6 +29159,87 @@ const primaryDateHeuristicCurveCharts = {
   },
 };
 
+const titleHeuristicLabels = {
+  vertical_position: 'Högt på sidan',
+  horizontal_position: 'Centrerad',
+  text_size: 'Textstorlek',
+  uppercase_ratio: 'Versalgrad',
+  brevity: 'Korthet',
+  text_density: 'Texttäthet',
+};
+
+const titleHeuristicCurveCharts = {
+  vertical_position: {
+    xAxisTitle: 'Andel ned på sidan (%)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Andel ned på sidan',
+    yPointLabel: 'Poäng',
+    yMin: -80,
+    yMax: 80,
+    xAsPercent: true,
+    yAsPercent: false,
+    xStep: 0.01,
+    yStep: 1,
+  },
+  horizontal_position: {
+    xAxisTitle: 'Avstånd från mitten (%)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Avstånd från mitten',
+    yPointLabel: 'Poäng',
+    yMin: -80,
+    yMax: 80,
+    xAsPercent: true,
+    yAsPercent: false,
+    xStep: 0.01,
+    yStep: 1,
+  },
+  text_size: {
+    xAxisTitle: 'Relativ textstorlek',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Relativ textstorlek',
+    yPointLabel: 'Poäng',
+    yMin: -80,
+    yMax: 100,
+    yAsPercent: false,
+    xStep: 0.1,
+    yStep: 1,
+  },
+  uppercase_ratio: {
+    xAxisTitle: 'Versalgrad (%)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Versalgrad',
+    yPointLabel: 'Poäng',
+    yMin: -40,
+    yMax: 80,
+    xAsPercent: true,
+    yAsPercent: false,
+    xStep: 0.05,
+    yStep: 1,
+  },
+  brevity: {
+    xAxisTitle: 'Antal ord',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Antal ord',
+    yPointLabel: 'Poäng',
+    yMin: -80,
+    yMax: 80,
+    yAsPercent: false,
+    xStep: 1,
+    yStep: 1,
+  },
+  text_density: {
+    xAxisTitle: 'Texttäthet 0-1',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Texttäthet 0-1',
+    yPointLabel: 'Poäng',
+    yMin: -80,
+    yMax: 80,
+    yAsPercent: false,
+    xStep: 0.05,
+    yStep: 1,
+  },
+};
+
 function createPrimaryDateHeuristicNumberInput({
   heuristics,
   section,
@@ -29047,8 +29271,13 @@ function createPrimaryDateHeuristicCurveEditor({
   ruleKey,
   collection,
   index,
+  heuristicsName = 'primaryDateHeuristics',
+  sanitizeHeuristics = sanitizePrimaryDateHeuristics,
+  curveCharts = primaryDateHeuristicCurveCharts,
+  editorClass = 'primary-date-curve-editor',
+  closeEventFlag = 'primaryDateCurveClosedOther',
 }) {
-  const chart = primaryDateHeuristicCurveCharts[ruleKey] || {
+  const chart = curveCharts[ruleKey] || {
     xAxisTitle: 'X',
     yAxisTitle: 'Poäng',
     xPointLabel: 'X',
@@ -29066,7 +29295,7 @@ function createPrimaryDateHeuristicCurveEditor({
     addPointEl: document.createElement('button'),
   };
   const wrapper = document.createElement('div');
-  wrapper.className = 'matching-curve-editor primary-date-curve-editor';
+  wrapper.className = `matching-curve-editor ${editorClass}`;
   editor.toggleEl.type = 'button';
   editor.toggleEl.className = 'matching-curve-preview-button';
   editor.toggleEl.setAttribute('aria-expanded', 'false');
@@ -29094,17 +29323,17 @@ function createPrimaryDateHeuristicCurveEditor({
 
   const render = () => {
     const current = sanitizePrimaryDateScoreCurve(
-      collection[index].primaryDateHeuristics?.[section]?.[ruleKey]?.curve,
+      collection[index][heuristicsName]?.[section]?.[ruleKey]?.curve,
       rule.curve
     );
     const curve = renderMatchingPenaltyCurvePointEditor(editor.pointsEl, current, {
       chart,
       sanitizeCurve: (value) => sanitizePrimaryDateScoreCurve(value, rule.curve),
-      getCurve: () => collection[index].primaryDateHeuristics[section][ruleKey].curve,
+      getCurve: () => collection[index][heuristicsName][section][ruleKey].curve,
       onChange: (nextCurve, context = {}) => {
-        const next = sanitizePrimaryDateHeuristics(collection[index].primaryDateHeuristics);
+        const next = sanitizeHeuristics(collection[index][heuristicsName]);
         next[section][ruleKey].curve = sanitizePrimaryDateScoreCurve(nextCurve, rule.curve);
-        collection[index].primaryDateHeuristics = sanitizePrimaryDateHeuristics(next);
+        collection[index][heuristicsName] = sanitizeHeuristics(next);
         if (context.preserveFocus !== true) {
           render();
         } else {
@@ -29113,14 +29342,14 @@ function createPrimaryDateHeuristicCurveEditor({
         updateSettingsActionButtons();
       },
     });
-    collection[index].primaryDateHeuristics[section][ruleKey].curve = curve;
+    collection[index][heuristicsName][section][ruleKey].curve = curve;
     renderMatchingPenaltyCurvePreview(editor, curve);
   };
 
   editor.toggleEl.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (event.primaryDateCurveClosedOther === true) {
+    if (event[closeEventFlag] === true || event.matchingCurveClosedOther === true) {
       return;
     }
     const nextOpen = editor.popoverEl.classList.contains('hidden');
@@ -29132,13 +29361,13 @@ function createPrimaryDateHeuristicCurveEditor({
   });
   editor.popoverEl.addEventListener('click', (event) => event.stopPropagation());
   editor.addPointEl.addEventListener('click', () => {
-    const current = sanitizePrimaryDateScoreCurve(collection[index].primaryDateHeuristics[section][ruleKey].curve, rule.curve);
+    const current = sanitizePrimaryDateScoreCurve(collection[index][heuristicsName][section][ruleKey].curve, rule.curve);
     const lastPoint = current[current.length - 1] || { x: 0, y: 0 };
     const nextX = chart.xAsPercent === true
       ? Math.min(1, Math.max(0, lastPoint.x + (chart.xStep || 0.1)))
       : Math.max(0, lastPoint.x + 1);
     current.push({ x: nextX, y: lastPoint.y });
-    collection[index].primaryDateHeuristics[section][ruleKey].curve = sanitizePrimaryDateScoreCurve(current, rule.curve);
+    collection[index][heuristicsName][section][ruleKey].curve = sanitizePrimaryDateScoreCurve(current, rule.curve);
     render();
     updateSettingsActionButtons();
   });
@@ -29148,10 +29377,11 @@ function createPrimaryDateHeuristicCurveEditor({
       return;
     }
     const clickedOtherCurveToggle = target instanceof Element
-      ? target.closest('.primary-date-curve-editor .matching-curve-preview-button')
+      ? target.closest('.matching-curve-editor .matching-curve-preview-button')
       : null;
     if (clickedOtherCurveToggle instanceof HTMLButtonElement && !editor.popoverEl.classList.contains('hidden')) {
-      event.primaryDateCurveClosedOther = true;
+      event[closeEventFlag] = true;
+      event.matchingCurveClosedOther = true;
     }
     editor.popoverEl.classList.add('hidden');
     editor.toggleEl.setAttribute('aria-expanded', 'false');
@@ -29281,6 +29511,111 @@ function createPrimaryDateHeuristicsEditor(collection, index) {
     });
     wrapper.appendChild(sectionEl);
   });
+
+  return wrapper;
+}
+
+function createTitleHeuristicCurveEditor({
+  heuristics,
+  ruleKey,
+  collection,
+  index,
+}) {
+  return createPrimaryDateHeuristicCurveEditor({
+    heuristics,
+    section: 'signals',
+    ruleKey,
+    collection,
+    index,
+    heuristicsName: 'titleHeuristics',
+    sanitizeHeuristics: sanitizeTitleHeuristics,
+    curveCharts: titleHeuristicCurveCharts,
+    editorClass: 'title-curve-editor',
+    closeEventFlag: 'titleCurveClosedOther',
+  });
+}
+
+function createTitleHeuristicRuleEditor({
+  heuristics,
+  ruleKey,
+  collection,
+  index,
+}) {
+  const rule = heuristics.signals[ruleKey];
+  const row = document.createElement('div');
+  row.className = 'primary-date-heuristic-rule';
+
+  const header = document.createElement('div');
+  header.className = 'primary-date-heuristic-rule-header';
+  const title = document.createElement('span');
+  title.textContent = titleHeuristicLabels[ruleKey] || ruleKey;
+  header.append(title);
+
+  const help = document.createElement('p');
+  help.className = 'primary-date-heuristic-help';
+  help.textContent = rule.description || '';
+
+  const fields = document.createElement('div');
+  fields.className = 'primary-date-heuristic-fields';
+  fields.appendChild(createTitleHeuristicCurveEditor({
+    heuristics,
+    ruleKey,
+    collection,
+    index,
+  }));
+
+  row.append(header, help, fields);
+  return row;
+}
+
+function createTitleHeuristicsEditor(collection, index) {
+  const field = sanitizeExtractionField(collection[index], index);
+  const heuristics = sanitizeTitleHeuristics(field.titleHeuristics);
+  collection[index].titleHeuristics = heuristics;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'primary-date-heuristics-editor title-heuristics-editor';
+
+  const confidenceCard = document.createElement('section');
+  confidenceCard.className = 'primary-date-confidence-card';
+  const confidenceTitle = document.createElement('div');
+  confidenceTitle.className = 'primary-date-confidence-card-title';
+  confidenceTitle.textContent = 'Säkerhetsnivå';
+  const confidenceHelp = document.createElement('p');
+  confidenceHelp.className = 'primary-date-heuristic-help';
+  confidenceHelp.textContent = 'Hur många poäng en rubrikkandidat behöver för att räknas som 100 % säker. Detta är en praktisk nivå för en mycket stark träff.';
+  const confidenceInput = document.createElement('input');
+  confidenceInput.type = 'number';
+  confidenceInput.step = '1';
+  confidenceInput.min = '1';
+  confidenceInput.value = String(heuristics.full_confidence_score);
+  confidenceInput.addEventListener('input', () => {
+    const next = sanitizeTitleHeuristics(collection[index].titleHeuristics);
+    const value = Number(confidenceInput.value);
+    if (Number.isFinite(value)) {
+      next.full_confidence_score = Math.max(1, value);
+      collection[index].titleHeuristics = sanitizeTitleHeuristics(next);
+      updateSettingsActionButtons();
+    }
+  });
+  confidenceCard.append(
+    confidenceTitle,
+    confidenceHelp,
+    createFloatingField('Poäng för full säkerhet', confidenceInput, 'primary-date-full-confidence-field')
+  );
+  wrapper.appendChild(confidenceCard);
+
+  const sectionEl = document.createElement('section');
+  sectionEl.className = 'primary-date-heuristic-section';
+  Object.keys(heuristics.signals).forEach((ruleKey) => {
+    sectionEl.appendChild(createTitleHeuristicRuleEditor({
+      heuristics,
+      ruleKey,
+      collection,
+      index,
+    }));
+  });
+  wrapper.appendChild(sectionEl);
 
   return wrapper;
 }

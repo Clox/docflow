@@ -2519,6 +2519,7 @@ function valid_extraction_field_extractor(string $extractor, string $fallback = 
         'amount',
         'due_date',
         'primary_date',
+        'title',
         'bankgiro',
         'plusgiro',
         'supplier',
@@ -2673,6 +2674,86 @@ function system_extraction_field_definitions(): array
             'normalizationChars' => '',
             'extractor' => 'primary_date',
             'primaryDateHeuristics' => default_primary_date_heuristics(),
+        ],
+        'title' => [
+            'name' => 'Rubrik',
+            'aliases' => [],
+            'searchString' => '',
+            'isRegex' => false,
+            'normalizationType' => 'none',
+            'normalizationChars' => '',
+            'valueType' => 'text',
+            'extractor' => 'title',
+            'titleHeuristics' => default_title_heuristics(),
+        ],
+    ];
+}
+
+function default_title_heuristics(): array
+{
+    return [
+        'full_confidence_score' => 120.0,
+        'signals' => [
+            'vertical_position' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.0, 'y' => 35.0],
+                    ['x' => 0.20, 'y' => 25.0],
+                    ['x' => 0.60, 'y' => 0.0],
+                    ['x' => 0.95, 'y' => -25.0],
+                ],
+                'description' => 'Poängkurva baserad på rubrikkandidatens vertikala position på sidan.',
+            ],
+            'horizontal_position' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.0, 'y' => 30.0],
+                    ['x' => 0.25, 'y' => 20.0],
+                    ['x' => 0.55, 'y' => 0.0],
+                    ['x' => 1.0, 'y' => -20.0],
+                ],
+                'description' => 'Poängkurva baserad på hur nära rubrikkandidaten ligger sidans mitt.',
+            ],
+            'text_size' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.75, 'y' => -20.0],
+                    ['x' => 1.0, 'y' => 0.0],
+                    ['x' => 1.50, 'y' => 25.0],
+                    ['x' => 2.20, 'y' => 45.0],
+                ],
+                'description' => 'Poängkurva baserad på textstorlek relativt normal radhöjd på sidan.',
+            ],
+            'uppercase_ratio' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.0, 'y' => 0.0],
+                    ['x' => 0.45, 'y' => 10.0],
+                    ['x' => 0.80, 'y' => 25.0],
+                    ['x' => 1.0, 'y' => 30.0],
+                ],
+                'description' => 'Poängkurva baserad på andelen versaler i rubrikkandidaten.',
+            ],
+            'brevity' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 1.0, 'y' => 25.0],
+                    ['x' => 3.0, 'y' => 20.0],
+                    ['x' => 6.0, 'y' => 0.0],
+                    ['x' => 10.0, 'y' => -25.0],
+                ],
+                'description' => 'Poängkurva baserad på hur många ord rubrikkandidaten innehåller.',
+            ],
+            'text_density' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.0, 'y' => 25.0],
+                    ['x' => 0.35, 'y' => 15.0],
+                    ['x' => 0.70, 'y' => 0.0],
+                    ['x' => 1.0, 'y' => -35.0],
+                ],
+                'description' => 'Poängkurva baserad på hur mycket omgivande text som finns runt rubrikkandidaten.',
+            ],
         ],
     ];
 }
@@ -2892,6 +2973,35 @@ function normalize_primary_date_heuristics(mixed $input): array
             $result['penalties'][$key]['curve'] = normalize_primary_date_score_curve($rawCurve, $default['curve']);
         }
         $result['penalties'][$key]['description'] = (string) $default['description'];
+    }
+
+    return $result;
+}
+
+function title_full_confidence_score(array $heuristics): float
+{
+    $normalized = normalize_title_heuristics($heuristics);
+    return max(1.0, (float) ($normalized['full_confidence_score'] ?? 120.0));
+}
+
+function normalize_title_heuristics(mixed $input): array
+{
+    $defaults = default_title_heuristics();
+    $source = is_array($input) ? $input : [];
+    $result = $defaults;
+    $result['full_confidence_score'] = max(1.0, normalize_primary_date_number(
+        $source['full_confidence_score'] ?? null,
+        (float) $defaults['full_confidence_score']
+    ));
+
+    foreach ($defaults['signals'] as $key => $default) {
+        $raw = is_array($source['signals'][$key] ?? null) ? $source['signals'][$key] : [];
+        $result['signals'][$key]['enabled'] = true;
+        $result['signals'][$key]['curve'] = normalize_primary_date_score_curve(
+            $raw['curve'] ?? null,
+            $default['curve']
+        );
+        $result['signals'][$key]['description'] = (string) $default['description'];
     }
 
     return $result;
@@ -3948,6 +4058,13 @@ function normalize_system_extraction_field_with_defaults(string $key, mixed $inp
             array_key_exists('primaryDateHeuristics', $field)
                 ? $field['primaryDateHeuristics']
                 : ($defaults['primaryDateHeuristics'] ?? null)
+        );
+    }
+    if ($key === 'title') {
+        $normalized['titleHeuristics'] = normalize_title_heuristics(
+            array_key_exists('titleHeuristics', $field)
+                ? $field['titleHeuristics']
+                : ($defaults['titleHeuristics'] ?? null)
         );
     }
     return $normalized;
@@ -8575,6 +8692,12 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
         'baseConfidence',
         'finalConfidence',
         'score',
+        'fullConfidenceScore',
+        'yRatio',
+        'centerDistance',
+        'relativeTextSize',
+        'uppercaseRatio',
+        'textDensityRatio',
         'noisePenalty',
         'trailingDelimiterPenalty',
         'positionPenalty',
@@ -8587,12 +8710,12 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     ] as $key) {
         $number = debug_export_float_or_null($match[$key] ?? null);
         if ($number !== null) {
-            $candidate[$key] = in_array($key, ['score', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                 ? $number
                 : clamp_confidence($number);
         }
     }
-    foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex'] as $key) {
+    foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount'] as $key) {
         $number = debug_export_int_or_null($match[$key] ?? null);
         if ($number !== null) {
             $candidate[$key] = $number;
@@ -8999,6 +9122,12 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'baseConfidence',
             'finalConfidence',
             'score',
+            'fullConfidenceScore',
+            'yRatio',
+            'centerDistance',
+            'relativeTextSize',
+            'uppercaseRatio',
+            'textDensityRatio',
             'noisePenalty',
             'trailingDelimiterPenalty',
             'positionPenalty',
@@ -9011,12 +9140,12 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         ] as $key) {
             $number = debug_export_float_or_null($candidate[$key] ?? null);
             if ($number !== null) {
-                $normalized[$key] = in_array($key, ['score', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                     ? $number
                     : clamp_confidence($number);
             }
         }
-        foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex'] as $key) {
+        foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount'] as $key) {
             $number = debug_export_int_or_null($candidate[$key] ?? null);
             if ($number !== null) {
                 $normalized[$key] = $number;
@@ -16309,6 +16438,298 @@ function extract_primary_date_field_result(
     ];
 }
 
+function title_line_page_dimensions(array $lineGeometries, int $lineIndex): array
+{
+    $entry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+    $pageWidth = is_array($entry) && is_numeric($entry['pageWidth'] ?? null) ? (float) $entry['pageWidth'] : null;
+    $pageHeight = is_array($entry) && is_numeric($entry['pageHeight'] ?? null) ? (float) $entry['pageHeight'] : null;
+    $pageNumber = matching_line_page_number($lineGeometries, $lineIndex);
+    $maxX = null;
+    $maxY = null;
+
+    foreach ($lineGeometries as $geometry) {
+        if (!is_array($geometry)) {
+            continue;
+        }
+        $geometryPage = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
+        if ($pageNumber !== null && $geometryPage !== $pageNumber) {
+            continue;
+        }
+        foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+            if (!is_array($segment)) {
+                continue;
+            }
+            $bbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+            if ($bbox === null) {
+                continue;
+            }
+            $maxX = $maxX === null ? (float) $bbox['x1'] : max($maxX, (float) $bbox['x1']);
+            $maxY = $maxY === null ? (float) $bbox['y1'] : max($maxY, (float) $bbox['y1']);
+        }
+    }
+
+    return [
+        'width' => $pageWidth !== null && $pageWidth > 0.0 ? $pageWidth : ($maxX !== null && $maxX > 0.0 ? $maxX : null),
+        'height' => $pageHeight !== null && $pageHeight > 0.0 ? $pageHeight : ($maxY !== null && $maxY > 0.0 ? $maxY : null),
+    ];
+}
+
+function title_page_median_line_height(array $lineGeometries, ?int $pageNumber): ?float
+{
+    $heights = [];
+    foreach ($lineGeometries as $geometry) {
+        if (!is_array($geometry)) {
+            continue;
+        }
+        $geometryPage = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
+        if ($pageNumber !== null && $geometryPage !== $pageNumber) {
+            continue;
+        }
+        $bbox = line_geometry_span_bbox($geometry, 0, strlen(is_string($geometry['text'] ?? null) ? (string) $geometry['text'] : ''));
+        if ($bbox === null) {
+            continue;
+        }
+        $height = (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0);
+        if ($height > 0.0) {
+            $heights[] = $height;
+        }
+    }
+    if ($heights === []) {
+        return null;
+    }
+    sort($heights, SORT_NUMERIC);
+    $middle = intdiv(count($heights), 2);
+    if (count($heights) % 2 === 1) {
+        return (float) $heights[$middle];
+    }
+    return ((float) $heights[$middle - 1] + (float) $heights[$middle]) / 2.0;
+}
+
+function title_candidate_word_count(string $text): int
+{
+    return count(preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY) ?: []);
+}
+
+function title_candidate_uppercase_ratio(string $text): float
+{
+    $letterCount = count_pattern_matches('/\p{L}/u', $text);
+    if ($letterCount <= 0) {
+        return 0.0;
+    }
+    return max(0.0, min(1.0, count_pattern_matches('/\p{Lu}/u', $text) / $letterCount));
+}
+
+function title_candidate_text_density(array $lines, int $lineIndex, int $wordCount): array
+{
+    $surroundingWords = 0;
+    $lineCount = 0;
+    foreach ([$lineIndex - 1, $lineIndex, $lineIndex + 1] as $index) {
+        if (!is_string($lines[$index] ?? null)) {
+            continue;
+        }
+        $line = normalize_inline_whitespace((string) $lines[$index]);
+        if ($line === '' || preg_match('/^===\s*PAGE\s+\d+\s*===$/iu', $line) === 1) {
+            continue;
+        }
+        $surroundingWords += title_candidate_word_count($line);
+        $lineCount++;
+    }
+    $contextWords = max(0, $surroundingWords - $wordCount);
+    $ratio = ($contextWords / 12.0) + (max(0, $wordCount - 4) / 8.0);
+    return [
+        'ratio' => max(0.0, min(1.0, $ratio)),
+        'wordCount' => $wordCount,
+        'surroundingWords' => $surroundingWords,
+        'lineCount' => $lineCount,
+    ];
+}
+
+function title_candidates_from_lines(array $lines, array $lineGeometries = []): array
+{
+    $candidates = [];
+    foreach ($lines as $lineIndex => $line) {
+        if (!is_string($line)) {
+            continue;
+        }
+        $text = normalize_inline_whitespace($line);
+        if ($text === '' || preg_match('/^===\s*PAGE\s+\d+\s*===$/iu', $text) === 1) {
+            continue;
+        }
+        if (count_pattern_matches('/\p{L}/u', $text) < 2 || title_candidate_word_count($text) > 16) {
+            continue;
+        }
+        if (preg_match('/^\W*[\d\s:.,;\/-]+\W*$/u', $text) === 1) {
+            continue;
+        }
+        $start = strpos($line, trim($line));
+        $start = is_int($start) ? $start : 0;
+        $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+        $bbox = $lineGeometry !== null
+            ? line_geometry_span_bbox($lineGeometry, 0, strlen($line))
+            : null;
+        $candidates[] = [
+            'value' => $text,
+            'raw' => $text,
+            'line' => $line,
+            'lineIndex' => is_int($lineIndex) ? $lineIndex : 0,
+            'start' => $start,
+            'bbox' => $bbox,
+            'pageNumber' => is_int($lineIndex) ? matching_line_page_number($lineGeometries, $lineIndex) : null,
+        ];
+    }
+    return $candidates;
+}
+
+function score_title_candidate(array $candidate, array $lines, array $lineGeometries = [], array $heuristics = []): array
+{
+    $heuristics = normalize_title_heuristics($heuristics);
+    $signals = is_array($heuristics['signals'] ?? null) ? $heuristics['signals'] : [];
+    $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
+    $text = is_string($candidate['value'] ?? null) ? (string) $candidate['value'] : '';
+    $bbox = is_array($candidate['bbox'] ?? null) ? normalize_debug_word_bbox($candidate['bbox']) : null;
+    $pageNumber = $lineIndex >= 0 ? matching_line_page_number($lineGeometries, $lineIndex) : null;
+    $dimensions = $lineIndex >= 0 ? title_line_page_dimensions($lineGeometries, $lineIndex) : ['width' => null, 'height' => null];
+    $fullConfidenceScore = title_full_confidence_score($heuristics);
+    $result = $candidate;
+    $result['signals'] = [];
+    $result['excluded'] = false;
+    $result['excludedReason'] = null;
+    $result['score'] = 0.0;
+    $result['rawScore'] = 0.0;
+    $result['confidence'] = 0.0;
+    $result['fullConfidenceScore'] = $fullConfidenceScore;
+    $result['pageNumber'] = $pageNumber;
+    $result['bbox'] = $bbox;
+
+    if ($lineIndex < 0 || $text === '') {
+        return $result;
+    }
+
+    $score = 0.0;
+    $addSignal = static function (string $code, float $x, string $detail) use (&$score, &$result, $signals): void {
+        if (($signals[$code]['enabled'] ?? true) !== true) {
+            return;
+        }
+        $points = interpolate_primary_date_score_curve(
+            is_array($signals[$code]['curve'] ?? null) ? $signals[$code]['curve'] : [],
+            $x
+        );
+        if (abs($points) < 0.0001) {
+            return;
+        }
+        $score += $points;
+        $result['signals'][] = [
+            'type' => $points >= 0.0 ? 'positive' : 'negative',
+            'code' => $code,
+            'score' => $points,
+            'detail' => $detail,
+        ];
+    };
+
+    if ($bbox !== null) {
+        $center = bbox_center_point($bbox);
+        $pageHeight = is_numeric($dimensions['height'] ?? null) ? (float) $dimensions['height'] : null;
+        if ($pageHeight !== null && $pageHeight > 0.0) {
+            $yRatio = max(0.0, min(1.0, ((float) $center['y']) / $pageHeight));
+            $result['yRatio'] = $yRatio;
+            $addSignal('vertical_position', $yRatio, 'y_ratio:' . round($yRatio, 3));
+        }
+
+        $pageWidth = is_numeric($dimensions['width'] ?? null) ? (float) $dimensions['width'] : null;
+        if ($pageWidth !== null && $pageWidth > 0.0) {
+            $centerDistance = max(0.0, min(1.0, abs(((float) $center['x']) - ($pageWidth / 2.0)) / max(1.0, $pageWidth / 2.0)));
+            $result['centerDistance'] = $centerDistance;
+            $addSignal('horizontal_position', $centerDistance, 'center_distance:' . round($centerDistance, 3));
+        }
+
+        $height = (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0);
+        $medianHeight = title_page_median_line_height($lineGeometries, $pageNumber);
+        if ($height > 0.0 && $medianHeight !== null && $medianHeight > 0.0) {
+            $relativeSize = $height / $medianHeight;
+            $result['relativeTextSize'] = $relativeSize;
+            $addSignal('text_size', $relativeSize, 'relative_size:' . round($relativeSize, 3));
+        }
+    }
+
+    $uppercaseRatio = title_candidate_uppercase_ratio($text);
+    $result['uppercaseRatio'] = $uppercaseRatio;
+    $addSignal('uppercase_ratio', $uppercaseRatio, 'uppercase_ratio:' . round($uppercaseRatio, 3));
+
+    $wordCount = title_candidate_word_count($text);
+    $result['wordCount'] = $wordCount;
+    $addSignal('brevity', (float) $wordCount, 'words:' . $wordCount);
+
+    $density = title_candidate_text_density($lines, $lineIndex, $wordCount);
+    $densityRatio = (float) ($density['ratio'] ?? 0.0);
+    $result['textDensityRatio'] = $densityRatio;
+    $addSignal(
+        'text_density',
+        $densityRatio,
+        'words:' . (int) ($density['surroundingWords'] ?? $wordCount) . ',ratio:' . round($densityRatio, 3)
+    );
+
+    $result['score'] = $score;
+    $result['rawScore'] = $score;
+    $result['confidence'] = clamp_confidence($score / $fullConfidenceScore);
+    return $result;
+}
+
+function extract_title_field_result(array $lines, array $lineGeometries = [], array $heuristics = []): array
+{
+    $heuristics = normalize_title_heuristics($heuristics);
+    $candidates = array_map(
+        static fn(array $candidate): array => score_title_candidate($candidate, $lines, $lineGeometries, $heuristics),
+        title_candidates_from_lines($lines, $lineGeometries)
+    );
+
+    usort($candidates, static function (array $a, array $b): int {
+        $excludedCompare = ((bool) ($a['excluded'] ?? false)) <=> ((bool) ($b['excluded'] ?? false));
+        if ($excludedCompare !== 0) {
+            return $excludedCompare;
+        }
+        $scoreCompare = ((float) ($b['score'] ?? 0.0)) <=> ((float) ($a['score'] ?? 0.0));
+        if ($scoreCompare !== 0) {
+            return $scoreCompare;
+        }
+        return ((int) ($a['lineIndex'] ?? 0)) <=> ((int) ($b['lineIndex'] ?? 0));
+    });
+
+    $selected = null;
+    foreach ($candidates as $candidate) {
+        if (($candidate['excluded'] ?? false) === true) {
+            continue;
+        }
+        $selected = $candidate;
+        break;
+    }
+
+    if (!is_array($selected)) {
+        return [
+            'value' => null,
+            'confidence' => 0.0,
+            'lineIndex' => null,
+            'source' => 'title_heuristic',
+            'raw' => null,
+            'selectedValue' => null,
+            'selectedCandidate' => null,
+            'fullConfidenceScore' => title_full_confidence_score($heuristics),
+            'candidates' => $candidates,
+        ];
+    }
+
+    return [
+        'value' => is_string($selected['value'] ?? null) ? (string) $selected['value'] : null,
+        'confidence' => isset($selected['confidence']) ? clamp_confidence((float) $selected['confidence']) : 0.0,
+        'lineIndex' => is_int($selected['lineIndex'] ?? null) ? (int) $selected['lineIndex'] : null,
+        'source' => 'title_heuristic',
+        'raw' => is_string($selected['raw'] ?? null) ? (string) $selected['raw'] : null,
+        'selectedValue' => is_string($selected['value'] ?? null) ? (string) $selected['value'] : null,
+        'selectedCandidate' => $selected,
+        'fullConfidenceScore' => title_full_confidence_score($heuristics),
+        'candidates' => $candidates,
+    ];
+}
+
 function amount_candidates_from_text(string $text, int $offsetBase = 0): array
 {
     $matches = [];
@@ -18365,7 +18786,13 @@ function apply_extraction_field_acceptance_threshold(array $results, float $acce
         if ($selectionMatches === []) {
             $selectionMatches = $acceptedMatches;
         }
-        if ($selectionType === 'date') {
+        if (($result['extractor'] ?? null) === 'title') {
+            $primaryMatch = is_array($selectionMatches[0] ?? null) ? $selectionMatches[0] : null;
+            $result['candidateMatches'] = $acceptedMatches;
+            $result['values'] = is_array($primaryMatch) && array_key_exists('value', $primaryMatch)
+                ? [$primaryMatch['value']]
+                : [];
+        } elseif ($selectionType === 'date') {
             $selectedMatch = is_array($selectionMatches[0] ?? null) ? $selectionMatches[0] : null;
             $result['candidateMatches'] = $acceptedMatches;
             $result['matches'] = is_array($selectedMatch) ? [$selectedMatch] : [];
@@ -18512,6 +18939,72 @@ function primary_date_result_matches(array $result, array $lineGeometries = []):
             if (isset($matchesByKey[$matchKey]) && is_numeric($result['fullConfidenceScore'] ?? null)) {
                 $matchesByKey[$matchKey]['fullConfidenceScore'] = (float) $result['fullConfidenceScore'];
             }
+        }
+    }
+
+    return sort_extraction_field_matches(array_values($matchesByKey));
+}
+
+function title_result_matches(array $result, array $lineGeometries = []): array
+{
+    $matchesByKey = [];
+    $candidates = is_array($result['candidates'] ?? null) ? $result['candidates'] : [];
+    foreach ($candidates as $candidate) {
+        if (!is_array($candidate) || ($candidate['excluded'] ?? false) === true) {
+            continue;
+        }
+
+        $value = is_string($candidate['value'] ?? null) ? (string) $candidate['value'] : null;
+        $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
+        $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : 0;
+        $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : $value;
+        if ($lineIndex < 0 || $value === null || $value === '') {
+            continue;
+        }
+
+        $confidence = isset($candidate['confidence'])
+            ? clamp_confidence((float) $candidate['confidence'])
+            : (
+                is_numeric($candidate['fullConfidenceScore'] ?? null) && (float) $candidate['fullConfidenceScore'] > 0.0
+                    ? clamp_confidence(((float) ($candidate['score'] ?? 0.0)) / (float) $candidate['fullConfidenceScore'])
+                    : 0.0
+            );
+        $candidateBbox = is_array($candidate['bbox'] ?? null) ? normalize_debug_word_bbox($candidate['bbox']) : null;
+        if ($candidateBbox === null && is_array($lineGeometries[$lineIndex] ?? null)) {
+            $candidateBbox = line_geometry_span_bbox($lineGeometries[$lineIndex], 0, strlen(is_string($candidate['line'] ?? null) ? (string) $candidate['line'] : $value));
+        }
+        $candidatePageNumber = matching_line_page_number($lineGeometries, $lineIndex);
+
+        add_extraction_field_match(
+            matchesByKey: $matchesByKey,
+            lineIndex: $lineIndex,
+            start: $start,
+            value: $value,
+            raw: $raw,
+            matchText: $raw,
+            source: 'title_heuristic',
+            confidence: $confidence,
+            matchType: 'title_heuristic',
+            score: is_numeric($candidate['rawScore'] ?? null)
+                ? (float) $candidate['rawScore']
+                : (float) ((int) ($candidate['score'] ?? 0)),
+            baseConfidence: $confidence,
+            finalConfidence: $confidence,
+            labelBbox: $candidateBbox,
+            valueBbox: $candidateBbox,
+            pageNumber: $candidatePageNumber
+        );
+        $matchKey = extraction_field_match_storage_key($lineIndex, $start, $value, $raw);
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['signals'] ?? null)) {
+            $matchesByKey[$matchKey]['signals'] = $candidate['signals'];
+        }
+        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio'] as $numericKey) {
+            if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$numericKey] ?? null)) {
+                $matchesByKey[$matchKey][$numericKey] = (float) $candidate[$numericKey];
+            }
+        }
+        if (isset($matchesByKey[$matchKey]) && is_numeric($candidate['wordCount'] ?? null)) {
+            $matchesByKey[$matchKey]['wordCount'] = (int) $candidate['wordCount'];
         }
     }
 
@@ -19248,6 +19741,14 @@ function extract_configured_text_field_results(
             );
             $ruleSets = [];
             $matches = primary_date_result_matches($result, $lineGeometries);
+        } elseif ($extractor === 'title') {
+            $result = extract_title_field_result(
+                $lines,
+                $lineGeometries,
+                is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : []
+            );
+            $ruleSets = [];
+            $matches = title_result_matches($result, $lineGeometries);
         } else {
             $result = empty_extraction_field_result();
             foreach ($ruleSets as $ruleSetIndex => $ruleSet) {
@@ -19334,6 +19835,9 @@ function extract_configured_text_field_results(
             $acceptedMatches
         ));
         $primaryMatch = is_array($acceptedMatches[0] ?? null) ? $acceptedMatches[0] : null;
+        if ($extractor === 'title' && is_array($primaryMatch)) {
+            $resolvedValues = [$primaryMatch['value'] ?? null];
+        }
         $resolvedMatchedRuleSetIndex = $matchedRuleSetIndex;
         if (is_array($primaryMatch) && is_int($primaryMatch['ruleSetIndex'] ?? null)) {
             $resolvedMatchedRuleSetIndex = (int) $primaryMatch['ruleSetIndex'];
@@ -19471,6 +19975,11 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'score' => is_numeric($match['score'] ?? null) ? (float) $match['score'] : null,
                         'fullConfidenceScore' => is_numeric($match['fullConfidenceScore'] ?? null) ? (float) $match['fullConfidenceScore'] : null,
                         'yRatio' => is_numeric($match['yRatio'] ?? null) ? (float) $match['yRatio'] : null,
+                        'centerDistance' => is_numeric($match['centerDistance'] ?? null) ? (float) $match['centerDistance'] : null,
+                        'relativeTextSize' => is_numeric($match['relativeTextSize'] ?? null) ? (float) $match['relativeTextSize'] : null,
+                        'uppercaseRatio' => is_numeric($match['uppercaseRatio'] ?? null) ? (float) $match['uppercaseRatio'] : null,
+                        'textDensityRatio' => is_numeric($match['textDensityRatio'] ?? null) ? (float) $match['textDensityRatio'] : null,
+                        'wordCount' => is_int($match['wordCount'] ?? null) ? (int) $match['wordCount'] : null,
                         'signals' => is_array($match['signals'] ?? null) ? array_values(array_filter(
                             $match['signals'],
                             static fn($signal): bool => is_array($signal)
