@@ -310,10 +310,10 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                 <button type="button" class="segmented-control-button" data-ocr-search-mode="datafield" aria-pressed="false">Datafält</button>
               </div>
               <div class="ocr-search-filter">
-                <select id="ocr-search-field-hit-filter" class="matches-filter-select">
-                  <option value="results">Endast resultat</option>
-                  <option value="candidates">Resultat + kandidater</option>
-                  <option value="all">Alla träffar</option>
+                <select id="ocr-search-field-hit-filter" class="matches-filter-select" title="Kandidater som når upp till tröskelvärdet för säkerhet.">
+                  <option value="results" title="Kandidater som når upp till tröskelvärdet för säkerhet.">Resultat</option>
+                  <option value="candidates" title="Kandidater med positiv säkerhet/poäng, även om de inte når tröskelvärdet.">Kandidater</option>
+                  <option value="all" title="Alla sparade kandidater som finns tillgängliga för visning.">Alla kandidater</option>
                 </select>
               </div>
               <span id="ocr-search-status" class="ocr-search-status"></span>

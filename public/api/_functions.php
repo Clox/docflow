@@ -16743,6 +16743,10 @@ function extract_title_field_result(array $lines, array $lineGeometries = [], ar
         static fn(array $candidate): array => score_title_candidate($candidate, $lines, $lineGeometries, $heuristics),
         title_candidates_from_lines($lines, $lineGeometries, $spanSettings)
     );
+    $candidates = array_values(array_filter(
+        $candidates,
+        static fn(array $candidate): bool => (float) ($candidate['score'] ?? 0.0) > 0.0
+    ));
 
     usort($candidates, static function (array $a, array $b): int {
         $excludedCompare = ((bool) ($a['excluded'] ?? false)) <=> ((bool) ($b['excluded'] ?? false));

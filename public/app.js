@@ -564,6 +564,16 @@ let matchesRequestSeq = 0;
 let pendingMatchesFocus = null;
 const MATCHES_FIELD_HIT_FILTER_STORAGE_KEY = 'docflowMatchesFieldHitFilterMode';
 const MATCHES_FIELD_HIT_FILTER_MODES = new Set(['results', 'candidates', 'all']);
+const MATCHES_FIELD_HIT_FILTER_LABELS = {
+  results: 'Resultat',
+  candidates: 'Kandidater',
+  all: 'Alla kandidater',
+};
+const MATCHES_FIELD_HIT_FILTER_HELP = {
+  results: 'Kandidater som når upp till tröskelvärdet för säkerhet.',
+  candidates: 'Kandidater med positiv säkerhet/poäng, även om de inte når tröskelvärdet.',
+  all: 'Alla sparade kandidater som finns tillgängliga för visning.',
+};
 function normalizeMatchesFieldHitFilterMode(value) {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return MATCHES_FIELD_HIT_FILTER_MODES.has(normalized) ? normalized : 'results';
@@ -4217,18 +4227,21 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
     filterSelect.id = 'matches-field-hit-filter';
     filterSelect.className = 'matches-filter-select';
     [
-      ['results', `Endast resultat (${hitFilterCounts.results})`],
-      ['candidates', `Resultat + kandidater (${hitFilterCounts.candidates})`],
-      ['all', `Alla träffar (${hitFilterCounts.all})`],
-    ].forEach(([value, label]) => {
+      ['results', hitFilterCounts.results],
+      ['candidates', hitFilterCounts.candidates],
+      ['all', hitFilterCounts.all],
+    ].forEach(([value, count]) => {
       const optionEl = document.createElement('option');
       optionEl.value = value;
-      optionEl.textContent = label;
+      optionEl.textContent = `${MATCHES_FIELD_HIT_FILTER_LABELS[value] || value} (${count})`;
+      optionEl.title = MATCHES_FIELD_HIT_FILTER_HELP[value] || '';
       filterSelect.appendChild(optionEl);
     });
     filterSelect.value = matchesFieldHitFilterMode;
+    filterSelect.title = MATCHES_FIELD_HIT_FILTER_HELP[matchesFieldHitFilterMode] || '';
     filterSelect.addEventListener('change', () => {
       matchesFieldHitFilterMode = normalizeMatchesFieldHitFilterMode(filterSelect.value);
+      filterSelect.title = MATCHES_FIELD_HIT_FILTER_HELP[matchesFieldHitFilterMode] || '';
       window.localStorage.setItem(MATCHES_FIELD_HIT_FILTER_STORAGE_KEY, matchesFieldHitFilterMode);
       refreshLoadedMatchesView();
     });
@@ -4247,7 +4260,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       openMatchingThresholdSettings();
     });
     helpText.appendChild(thresholdLink);
-    helpText.appendChild(document.createTextNode(' för säkerhet.'));
+    helpText.appendChild(document.createTextNode(' för säkerhet. Kandidater visar positiv säkerhet/poäng. Alla kandidater visar allt sparat som finns tillgängligt.'));
     container.appendChild(helpText);
   }
 
@@ -17611,19 +17624,15 @@ function syncOcrDataFieldHitFilterUi() {
 
   const group = ocrDataFieldCurrentGroup();
   const counts = ocrDataFieldFilterCounts(group ? group.rows : []);
-  const optionMap = {
-    results: 'Endast resultat',
-    candidates: 'Resultat + kandidater',
-    all: 'Alla träffar',
-  };
-
   Array.from(ocrSearchFieldHitFilterEl.options).forEach((optionEl) => {
-    if (optionEl instanceof HTMLOptionElement && Object.prototype.hasOwnProperty.call(optionMap, optionEl.value)) {
-      optionEl.textContent = optionMap[optionEl.value];
+    if (optionEl instanceof HTMLOptionElement && Object.prototype.hasOwnProperty.call(MATCHES_FIELD_HIT_FILTER_LABELS, optionEl.value)) {
+      optionEl.textContent = MATCHES_FIELD_HIT_FILTER_LABELS[optionEl.value];
+      optionEl.title = MATCHES_FIELD_HIT_FILTER_HELP[optionEl.value] || '';
     }
   });
 
   ocrSearchFieldHitFilterEl.value = matchesFieldHitFilterMode;
+  ocrSearchFieldHitFilterEl.title = MATCHES_FIELD_HIT_FILTER_HELP[matchesFieldHitFilterMode] || '';
 }
 
 function ocrDataFieldSelectionStatusText(matchIndex, rowCount) {
