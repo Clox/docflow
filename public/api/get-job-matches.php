@@ -119,7 +119,8 @@ try {
                 $titleResult = extract_title_field_result(
                     $matchingLines,
                     $lineGeometries,
-                    is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : []
+                    is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : [],
+                    $positionSettings
                 );
                 $titleMatches = title_result_matches($titleResult, $lineGeometries);
                 if (is_string($titleResult['value'] ?? null) && (string) $titleResult['value'] !== '') {

@@ -16544,38 +16544,60 @@ function title_candidate_text_density(array $lines, int $lineIndex, int $wordCou
     ];
 }
 
-function title_candidates_from_lines(array $lines, array $lineGeometries = []): array
+function title_candidates_from_lines(array $lines, array $lineGeometries = [], array $spanSettings = []): array
 {
+    $settings = normalize_matching_bbox_span_building_settings($spanSettings);
     $candidates = [];
     foreach ($lines as $lineIndex => $line) {
         if (!is_string($line)) {
             continue;
         }
-        $text = normalize_inline_whitespace($line);
-        if ($text === '' || preg_match('/^===\s*PAGE\s+\d+\s*===$/iu', $text) === 1) {
+        $lineText = normalize_inline_whitespace($line);
+        if ($lineText === '' || preg_match('/^===\s*PAGE\s+\d+\s*===$/iu', $lineText) === 1) {
             continue;
         }
-        if (count_pattern_matches('/\p{L}/u', $text) < 2 || title_candidate_word_count($text) > 16) {
-            continue;
-        }
-        if (preg_match('/^\W*[\d\s:.,;\/-]+\W*$/u', $text) === 1) {
-            continue;
-        }
-        $start = strpos($line, trim($line));
-        $start = is_int($start) ? $start : 0;
         $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
-        $bbox = $lineGeometry !== null
-            ? line_geometry_span_bbox($lineGeometry, 0, strlen($line))
-            : null;
-        $candidates[] = [
-            'value' => $text,
-            'raw' => $text,
-            'line' => $line,
-            'lineIndex' => is_int($lineIndex) ? $lineIndex : 0,
-            'start' => $start,
-            'bbox' => $bbox,
-            'pageNumber' => is_int($lineIndex) ? matching_line_page_number($lineGeometries, $lineIndex) : null,
-        ];
+        $spans = extraction_field_layout_value_spans_for_line($line, $lineGeometry, 0, $settings);
+        foreach ($spans as $span) {
+            if (!is_array($span)) {
+                continue;
+            }
+            $spanText = is_string($span['text'] ?? null) ? (string) $span['text'] : '';
+            $spanStart = is_int($span['start'] ?? null) ? (int) $span['start'] : -1;
+            $spanEnd = is_int($span['end'] ?? null) ? (int) $span['end'] : -1;
+            if ($spanStart < 0 || $spanEnd <= $spanStart || trim($spanText) === '') {
+                continue;
+            }
+            $leadingWhitespaceLength = strlen($spanText) - strlen(ltrim($spanText));
+            $trailingWhitespaceLength = strlen($spanText) - strlen(rtrim($spanText));
+            $start = $spanStart + max(0, $leadingWhitespaceLength);
+            $end = max($start + 1, $spanEnd - max(0, $trailingWhitespaceLength));
+            $raw = substr($line, $start, $end - $start);
+            $raw = is_string($raw) ? trim($raw) : trim($spanText);
+            $text = normalize_inline_whitespace($raw);
+            if ($text === '') {
+                continue;
+            }
+            if (count_pattern_matches('/\p{L}/u', $text) < 2 || title_candidate_word_count($text) > 16) {
+                continue;
+            }
+            if (preg_match('/^\W*[\d\s:.,;\/-]+\W*$/u', $text) === 1) {
+                continue;
+            }
+            $bbox = $lineGeometry !== null
+                ? line_geometry_span_bbox($lineGeometry, $start, $end)
+                : null;
+            $candidates[] = [
+                'value' => $text,
+                'raw' => $raw,
+                'line' => $line,
+                'lineIndex' => is_int($lineIndex) ? $lineIndex : 0,
+                'start' => $start,
+                'end' => $end,
+                'bbox' => $bbox,
+                'pageNumber' => is_int($lineIndex) ? matching_line_page_number($lineGeometries, $lineIndex) : null,
+            ];
+        }
     }
     return $candidates;
 }
@@ -16674,12 +16696,13 @@ function score_title_candidate(array $candidate, array $lines, array $lineGeomet
     return $result;
 }
 
-function extract_title_field_result(array $lines, array $lineGeometries = [], array $heuristics = []): array
+function extract_title_field_result(array $lines, array $lineGeometries = [], array $heuristics = [], array $positionSettings = []): array
 {
     $heuristics = normalize_title_heuristics($heuristics);
+    $spanSettings = matching_bbox_span_building_from_position_settings($positionSettings);
     $candidates = array_map(
         static fn(array $candidate): array => score_title_candidate($candidate, $lines, $lineGeometries, $heuristics),
-        title_candidates_from_lines($lines, $lineGeometries)
+        title_candidates_from_lines($lines, $lineGeometries, $spanSettings)
     );
 
     usort($candidates, static function (array $a, array $b): int {
@@ -18957,6 +18980,7 @@ function title_result_matches(array $result, array $lineGeometries = []): array
         $value = is_string($candidate['value'] ?? null) ? (string) $candidate['value'] : null;
         $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
         $start = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : 0;
+        $end = is_int($candidate['end'] ?? null) ? (int) $candidate['end'] : -1;
         $raw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : $value;
         if ($lineIndex < 0 || $value === null || $value === '') {
             continue;
@@ -18971,7 +18995,9 @@ function title_result_matches(array $result, array $lineGeometries = []): array
             );
         $candidateBbox = is_array($candidate['bbox'] ?? null) ? normalize_debug_word_bbox($candidate['bbox']) : null;
         if ($candidateBbox === null && is_array($lineGeometries[$lineIndex] ?? null)) {
-            $candidateBbox = line_geometry_span_bbox($lineGeometries[$lineIndex], 0, strlen(is_string($candidate['line'] ?? null) ? (string) $candidate['line'] : $value));
+            $candidateBbox = $end > $start
+                ? line_geometry_span_bbox($lineGeometries[$lineIndex], $start, $end)
+                : line_geometry_span_bbox($lineGeometries[$lineIndex], 0, strlen(is_string($candidate['line'] ?? null) ? (string) $candidate['line'] : $value));
         }
         $candidatePageNumber = matching_line_page_number($lineGeometries, $lineIndex);
 
@@ -19745,7 +19771,8 @@ function extract_configured_text_field_results(
             $result = extract_title_field_result(
                 $lines,
                 $lineGeometries,
-                is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : []
+                is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : [],
+                $positionSettings
             );
             $ruleSets = [];
             $matches = title_result_matches($result, $lineGeometries);
