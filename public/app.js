@@ -239,6 +239,7 @@ let matchingDownYDistanceCurveAddPointEl = null;
 let matchingPenaltyCurveEditors = new Map();
 let matchingMaxHorizontalGapMultiplierEl = null;
 let matchingMaxVerticalOffsetMultiplierEl = null;
+let matchingMaxLineHeightDifferenceMultiplierEl = null;
 let matchingDataFieldAcceptanceThresholdEl = null;
 let ocrSkipExistingTextEl = null;
 let ocrOptimizeLevelEl = null;
@@ -19732,6 +19733,7 @@ function bindSettingsPanelRefs(tabId) {
     matchingPenaltyCurveEditors = setupMatchingPenaltyCurveEditors();
     matchingMaxHorizontalGapMultiplierEl = document.getElementById('matching-max-horizontal-gap-multiplier');
     matchingMaxVerticalOffsetMultiplierEl = document.getElementById('matching-max-vertical-offset-multiplier');
+    matchingMaxLineHeightDifferenceMultiplierEl = document.getElementById('matching-max-line-height-difference-multiplier');
     matchingDataFieldAcceptanceThresholdEl = document.getElementById('matching-data-field-acceptance-threshold');
     const bindMatchingPenaltyInput = (inputEl, key) => {
       if (!(inputEl instanceof HTMLInputElement)) {
@@ -19767,6 +19769,7 @@ function bindSettingsPanelRefs(tabId) {
     };
     bindMatchingBboxSpanInput(matchingMaxHorizontalGapMultiplierEl, 'maxHorizontalGapMultiplier');
     bindMatchingBboxSpanInput(matchingMaxVerticalOffsetMultiplierEl, 'maxVerticalOffsetMultiplier');
+    bindMatchingBboxSpanInput(matchingMaxLineHeightDifferenceMultiplierEl, 'maxLineHeightDifferenceMultiplier');
     bindMatchingPenaltyCurveEditorEvents(matchingPenaltyCurveEditors);
     if (matchingDataFieldAcceptanceThresholdEl instanceof HTMLInputElement) {
       matchingDataFieldAcceptanceThresholdEl.addEventListener('input', () => {
@@ -21317,6 +21320,7 @@ function defaultMatchingBboxSpanBuildingSettings() {
   return {
     maxHorizontalGapMultiplier: 2.5,
     maxVerticalOffsetMultiplier: 0.4,
+    maxLineHeightDifferenceMultiplier: 0.5,
   };
 }
 
@@ -21326,6 +21330,7 @@ function sanitizeMatchingBboxSpanBuildingSettings(value) {
   return {
     maxHorizontalGapMultiplier: clampMatchingDecimal(input.maxHorizontalGapMultiplier, defaults.maxHorizontalGapMultiplier, null),
     maxVerticalOffsetMultiplier: clampMatchingDecimal(input.maxVerticalOffsetMultiplier, defaults.maxVerticalOffsetMultiplier, null),
+    maxLineHeightDifferenceMultiplier: clampMatchingDecimal(input.maxLineHeightDifferenceMultiplier, defaults.maxLineHeightDifferenceMultiplier, null),
   };
 }
 
@@ -27007,6 +27012,9 @@ function syncMatchingPositionAdjustmentInputs() {
   }
   if (matchingMaxVerticalOffsetMultiplierEl) {
     matchingMaxVerticalOffsetMultiplierEl.value = formatMatchingMultiplierInput(matchingBboxSpanBuildingDraft.maxVerticalOffsetMultiplier);
+  }
+  if (matchingMaxLineHeightDifferenceMultiplierEl) {
+    matchingMaxLineHeightDifferenceMultiplierEl.value = formatMatchingMultiplierInput(matchingBboxSpanBuildingDraft.maxLineHeightDifferenceMultiplier);
   }
   if (matchingDataFieldAcceptanceThresholdEl) {
     matchingDataFieldAcceptanceThresholdEl.value = formatMatchingPercentInput(matchingDataFieldAcceptanceThresholdDraft, null);

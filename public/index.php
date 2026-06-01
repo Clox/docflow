@@ -644,6 +644,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <input id="matching-max-vertical-offset-multiplier" type="number" min="0" step="0.1" inputmode="decimal">
           <p class="settings-help-text">Hur mycket två bboxar får skilja i höjdled för att räknas som samma rad/textspann. Värdet multipliceras med textens ungefärliga höjd.</p>
         </div>
+        <div class="matching-threshold-field">
+          <label class="settings-label" for="matching-max-line-height-difference-multiplier">Max skillnad i radhöjd</label>
+          <input id="matching-max-line-height-difference-multiplier" type="number" min="0" step="0.1" inputmode="decimal">
+          <p class="settings-help-text">Hur mycket två bboxars textstorlek/radhöjd får skilja för att räknas som samma textspann. Värdet multipliceras med textens ungefärliga höjd.</p>
+        </div>
       </div>
     </div>
     <div id="matching-replacements-section" class="matching-replacements-section">

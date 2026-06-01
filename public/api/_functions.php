@@ -5824,6 +5824,7 @@ function default_matching_bbox_span_building_settings(): array
     return [
         'maxHorizontalGapMultiplier' => 2.5,
         'maxVerticalOffsetMultiplier' => 0.4,
+        'maxLineHeightDifferenceMultiplier' => 0.5,
     ];
 }
 
@@ -5903,6 +5904,11 @@ function normalize_matching_bbox_span_building_settings(mixed $input): array
         'maxVerticalOffsetMultiplier' => normalize_matching_decimal_setting(
             $source['maxVerticalOffsetMultiplier'] ?? $source['max_vertical_offset_multiplier'] ?? null,
             $defaults['maxVerticalOffsetMultiplier'],
+            null
+        ),
+        'maxLineHeightDifferenceMultiplier' => normalize_matching_decimal_setting(
+            $source['maxLineHeightDifferenceMultiplier'] ?? $source['max_line_height_difference_multiplier'] ?? null,
+            $defaults['maxLineHeightDifferenceMultiplier'],
             null
         ),
     ];
@@ -17248,6 +17254,7 @@ function line_geometry_segments_can_share_value_span(array $left, array $right, 
     $leftHeight = line_geometry_segment_height($left);
     $rightHeight = line_geometry_segment_height($right);
     $averageHeight = max(1.0, (($leftHeight > 0.0 ? $leftHeight : 1.0) + ($rightHeight > 0.0 ? $rightHeight : 1.0)) / 2.0);
+    $lineHeightDifference = abs($leftHeight - $rightHeight);
     $horizontalGap = max(0.0, (float) ($rightBbox['x0'] ?? 0.0) - (float) ($leftBbox['x1'] ?? 0.0));
     $leftCenterY = line_geometry_segment_center_y($left);
     $rightCenterY = line_geometry_segment_center_y($right);
@@ -17255,8 +17262,11 @@ function line_geometry_segments_can_share_value_span(array $left, array $right, 
 
     $maxHorizontalGap = $averageHeight * max(0.0, (float) ($spanSettings['maxHorizontalGapMultiplier'] ?? 2.5));
     $maxVerticalOffset = $averageHeight * max(0.0, (float) ($spanSettings['maxVerticalOffsetMultiplier'] ?? 0.4));
+    $maxLineHeightDifference = $averageHeight * max(0.0, (float) ($spanSettings['maxLineHeightDifferenceMultiplier'] ?? 0.5));
 
-    return $horizontalGap <= $maxHorizontalGap && $verticalOffset <= $maxVerticalOffset;
+    return $horizontalGap <= $maxHorizontalGap
+        && $verticalOffset <= $maxVerticalOffset
+        && $lineHeightDifference <= $maxLineHeightDifference;
 }
 
 function extraction_field_layout_value_spans_for_line(
