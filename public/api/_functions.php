@@ -14126,6 +14126,35 @@ function line_geometry_span_bbox(?array $lineGeometry, int $start, int $end): ?a
     return $bbox;
 }
 
+function line_geometry_span_word_bbox_indexes(?array $lineGeometry, int $start, int $end): array
+{
+    if (!is_array($lineGeometry) || $start < 0 || $end <= $start) {
+        return [];
+    }
+
+    $indexes = [];
+    foreach (is_array($lineGeometry['segments'] ?? null) ? $lineGeometry['segments'] : [] as $segment) {
+        if (!is_array($segment)) {
+            continue;
+        }
+
+        $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+        $segmentEnd = is_int($segment['end'] ?? null) ? (int) $segment['end'] : -1;
+        $wordIndex = is_int($segment['wordIndex'] ?? null) ? (int) $segment['wordIndex'] : null;
+        if ($segmentStart < 0 || $segmentEnd <= $segmentStart || $wordIndex === null || $wordIndex < 0) {
+            continue;
+        }
+        if ($segmentEnd <= $start || $segmentStart >= $end) {
+            continue;
+        }
+        $indexes[$wordIndex + 1] = true;
+    }
+
+    $result = array_keys($indexes);
+    sort($result, SORT_NUMERIC);
+    return array_values($result);
+}
+
 function bbox_center_point(array $bbox): array
 {
     return [
@@ -16587,6 +16616,9 @@ function title_candidates_from_lines(array $lines, array $lineGeometries = [], a
             $bbox = $lineGeometry !== null
                 ? line_geometry_span_bbox($lineGeometry, $start, $end)
                 : null;
+            $valueBBoxIndexes = $lineGeometry !== null
+                ? line_geometry_span_word_bbox_indexes($lineGeometry, $start, $end)
+                : [];
             $candidates[] = [
                 'value' => $text,
                 'raw' => $raw,
@@ -16595,6 +16627,7 @@ function title_candidates_from_lines(array $lines, array $lineGeometries = [], a
                 'start' => $start,
                 'end' => $end,
                 'bbox' => $bbox,
+                'valueBBoxIndexes' => $valueBBoxIndexes,
                 'pageNumber' => is_int($lineIndex) ? matching_line_page_number($lineGeometries, $lineIndex) : null,
             ];
         }
@@ -19029,6 +19062,12 @@ function title_result_matches(array $result, array $lineGeometries = []): array
                 $matchesByKey[$matchKey][$numericKey] = (float) $candidate[$numericKey];
             }
         }
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['valueBBoxIndexes'] ?? null)) {
+            $matchesByKey[$matchKey]['valueBBoxIndexes'] = array_values(array_filter(
+                $candidate['valueBBoxIndexes'],
+                static fn($index): bool => is_int($index) && $index > 0
+            ));
+        }
         if (isset($matchesByKey[$matchKey]) && is_numeric($candidate['wordCount'] ?? null)) {
             $matchesByKey[$matchKey]['wordCount'] = (int) $candidate['wordCount'];
         }
@@ -20026,6 +20065,10 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'positionNormalizedDiff' => is_numeric($match['positionNormalizedDiff'] ?? null) ? (float) $match['positionNormalizedDiff'] : null,
                         'labelBbox' => is_array($match['labelBbox'] ?? null) ? $match['labelBbox'] : null,
                         'valueBbox' => is_array($match['valueBbox'] ?? null) ? $match['valueBbox'] : null,
+                        'valueBBoxIndexes' => is_array($match['valueBBoxIndexes'] ?? null) ? array_values(array_filter(
+                            $match['valueBBoxIndexes'],
+                            static fn($index): bool => is_int($index) && $index > 0
+                        )) : [],
                         'pageNumber' => is_int($match['pageNumber'] ?? null) ? (int) $match['pageNumber'] : null,
                         'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : null,
                         'noiseSegments' => array_values(array_filter(array_map(

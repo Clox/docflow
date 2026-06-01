@@ -330,6 +330,10 @@ try {
                     'invalidReason' => is_string($match['invalidReason'] ?? null) ? trim((string) $match['invalidReason']) : '',
                     'labelBbox' => $hasKey && is_array($match['labelBbox'] ?? null) ? $match['labelBbox'] : null,
                     'valueBbox' => is_array($match['valueBbox'] ?? null) ? $match['valueBbox'] : null,
+                    'valueBBoxIndexes' => is_array($match['valueBBoxIndexes'] ?? null) ? array_values(array_filter(
+                        $match['valueBBoxIndexes'],
+                        static fn($index): bool => is_int($index) && $index > 0
+                    )) : [],
                     'pageNumber' => is_int($match['pageNumber'] ?? null) ? (int) $match['pageNumber'] : null,
                     'noiseText' => is_string($match['noiseText'] ?? null) ? (string) $match['noiseText'] : '',
                     'noiseSegments' => array_values(array_filter(array_map(
