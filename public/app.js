@@ -29056,10 +29056,10 @@ function renderExtractionFieldsEditor() {
 
     const builtInGroup = createEditorGroup('Fördefinierade', extractionFieldsBuiltInCollapsed, () => {
       extractionFieldsBuiltInCollapsed = !extractionFieldsBuiltInCollapsed;
-    }, renderExtractionFieldsEditor);
+    }, renderExtractionFieldsEditor, { id: 'extraction-fields-predefined-section' });
     const ownGroup = createEditorGroup('Egna', extractionFieldsCustomCollapsed, () => {
       extractionFieldsCustomCollapsed = !extractionFieldsCustomCollapsed;
-    }, renderExtractionFieldsEditor);
+    }, renderExtractionFieldsEditor, { id: 'extraction-fields-custom-section' });
     ownGroup.section.classList.add('labels-editor-group--spaced');
 
     extractionFieldsEditorEl.appendChild(builtInGroup.section);
@@ -29668,6 +29668,7 @@ function renderSystemExtractionFieldsEditor() {
   systemExtractionFieldsEditorEl.innerHTML = '';
 
   const label = document.createElement('div');
+  label.id = 'system-extraction-fields-section';
   label.className = 'archive-folders-label';
   label.textContent = 'Systemdatafält';
   systemExtractionFieldsEditorEl.appendChild(label);
@@ -29737,6 +29738,7 @@ function renderValuePatternsEditor() {
   resetMatchPatternInspectorGroup('value-patterns');
   valuePatternsListEl.innerHTML = '';
   const label = document.createElement('div');
+  label.id = 'value-patterns-editor-section';
   label.className = 'archive-folders-label';
   label.textContent = 'Värdemönster';
   valuePatternsListEl.appendChild(label);
@@ -29892,6 +29894,7 @@ function renderExtractionZonesEditor() {
   resetMatchPatternInspectorGroup('zones');
   extractionZonesEditorEl.innerHTML = '';
   const label = document.createElement('div');
+  label.id = 'extraction-zones-section';
   label.className = 'archive-folders-label';
   label.textContent = 'Zoner';
   extractionZonesEditorEl.appendChild(label);
@@ -30099,9 +30102,12 @@ function syncLabelsEditorValidation() {
   });
 }
 
-function createEditorGroup(title, collapsed, onToggle, onRender) {
+function createEditorGroup(title, collapsed, onToggle, onRender, options = {}) {
   const section = document.createElement('section');
   section.className = 'labels-editor-group';
+  if (typeof options.id === 'string' && options.id.trim() !== '') {
+    section.id = options.id.trim();
+  }
 
   const toggle = document.createElement('button');
   toggle.type = 'button';
@@ -30765,10 +30771,10 @@ function renderLabelsEditor() {
     labelsListEl.innerHTML = '';
     const builtInGroup = createEditorGroup('Fördefinerade', labelsBuiltInCollapsed, () => {
       labelsBuiltInCollapsed = !labelsBuiltInCollapsed;
-    }, renderLabelsEditor);
+    }, renderLabelsEditor, { id: 'labels-predefined-section' });
     const ownGroup = createEditorGroup('Egna', labelsCustomCollapsed, () => {
       labelsCustomCollapsed = !labelsCustomCollapsed;
-    }, renderLabelsEditor);
+    }, renderLabelsEditor, { id: 'labels-custom-section' });
     ownGroup.section.classList.add('labels-editor-group--spaced');
 
     labelsListEl.appendChild(builtInGroup.section);
@@ -32452,8 +32458,11 @@ function renderArchiveStructureEditor() {
     archiveStructureFolderSortEl.value = folderSortMode;
   }
 
-  const renderSectionLabel = (text) => {
+  const renderSectionLabel = (text, id = '') => {
     const label = document.createElement('div');
+    if (typeof id === 'string' && id.trim() !== '') {
+      label.id = id.trim();
+    }
     label.className = 'archive-folders-label';
     label.textContent = text;
     archiveStructureListEl.appendChild(label);
@@ -32522,7 +32531,7 @@ function renderArchiveStructureEditor() {
     return left.folderIndex - right.folderIndex;
   });
 
-  renderSectionLabel('Mappar');
+  renderSectionLabel('Mappar', 'archive-structure-folders-section');
   if (folderEntries.length < 1) {
     const empty = document.createElement('div');
     empty.className = 'categories-empty';

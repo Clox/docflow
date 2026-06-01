@@ -401,17 +401,17 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       <div class="settings-dialog-body">
         <aside id="settings-dialog-nav" class="settings-nav">
         <h2>Inställningar</h2>
-        <div class="settings-nav-section">
+        <div id="settings-nav-register-section" class="settings-nav-section">
           <div class="settings-nav-group-title">Register</div>
           <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
           <button class="settings-tab" data-settings-tab="senders" type="button">Avsändare</button>
         </div>
-        <div class="settings-nav-section">
+        <div id="settings-nav-document-interpretation-section" class="settings-nav-section">
           <div class="settings-nav-group-title">Dokumenttolkning</div>
           <button class="settings-tab" data-settings-tab="ocr-processing" type="button">Textigenkänning</button>
           <button class="settings-tab" data-settings-tab="matching" type="button">Textmatchning</button>
         </div>
-        <div class="settings-nav-section">
+        <div id="settings-nav-archiving-section" class="settings-nav-section">
           <div class="settings-nav-group-title">Arkivering</div>
           <button class="settings-tab" data-settings-tab="archiving-review" type="button">Uppdatera arkiverade dokument <span class="settings-tab-indicator" aria-hidden="true">●</span></button>
           <button class="settings-tab" data-settings-tab="archive-structure" type="button">Arkivstruktur</button>
@@ -419,11 +419,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <button class="settings-tab" data-settings-tab="value-patterns" type="button">Värdemönster</button>
           <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
         </div>
-        <div class="settings-nav-section">
+        <div id="settings-nav-storage-section" class="settings-nav-section">
           <div class="settings-nav-group-title">Lagring</div>
           <button class="settings-tab" data-settings-tab="paths" type="button">Sökvägar</button>
         </div>
-        <div class="settings-nav-section">
+        <div id="settings-nav-system-section" class="settings-nav-section">
           <div class="settings-nav-group-title">System</div>
           <button class="settings-tab" data-settings-tab="system" type="button">System</button>
           <button class="settings-tab" data-settings-tab="extensions" type="button">Tillägg</button>
@@ -462,7 +462,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <h3>Huvudmän</h3>
     <p>Redigera huvudmän som lagras i databasen.</p>
     <div id="clients-list" class="categories-list"></div>
-    <div class="categories-actions settings-section-actions">
+    <div id="clients-actions-section" class="categories-actions settings-section-actions">
       <button id="clients-add-row" type="button">Lägg till huvudman</button>
     </div>
     <div class="panel-actions">
@@ -486,7 +486,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <p>Redigera avsändare som lagras i databasen. Fälten här styr listan i väljaren för avsändare och vilka dokumentidentifierare som kan matchas mot avsändaren.</p>
     <p>Om du tar bort en avsändare här tas även dess kopplade betalnummer bort ur databasen.</p>
     <div id="senders-view-senders" class="archive-view">
-      <div class="settings-group senders-toolbar">
+      <div id="senders-toolbar-section" class="settings-group senders-toolbar">
         <div class="senders-toolbar-group">
           <label class="settings-label" for="senders-sort-order">Sortering</label>
           <select id="senders-sort-order" class="settings-select">
@@ -502,7 +502,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         </div>
       </div>
       <div id="senders-list" class="categories-list"></div>
-      <div class="settings-section-actions senders-footer-actions">
+      <div id="senders-actions-section" class="settings-section-actions senders-footer-actions">
         <div class="senders-selected-count-row">
           <span id="senders-selected-count" class="senders-selected-count">Antal markerade avsändare: 0</span>
           <button id="senders-clear-selection" class="senders-clear-selection" type="button">(Avmarkera alla)</button>
@@ -534,7 +534,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-matching">
     <h3>Textmatchning</h3>
-    <div class="matching-threshold-section">
+    <div id="matching-penalties-section" class="matching-threshold-section">
       <h4>Straff</h4>
       <p>Straffen gäller matchning av datafältsvärden och sänker säkerheten när OCR-texten innehåller brus, avslutstecken, nyckelkrockar eller positionsavvikelser. Kandidater till vänster eller ovanför fältets nyckel förkastas; kandidater till höger bedöms på y-avvikelse och kandidater under på x-avvikelse samt vertikalt avstånd.</p>
       <div class="matching-threshold-row">
@@ -618,7 +618,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         </div>
       </div>
     </div>
-    <div class="matching-acceptance-threshold-section">
+    <div id="matching-accepted-values-section" class="matching-acceptance-threshold-section">
       <h4>Accepterade datafältsvärden</h4>
       <p>Minsta säkerhet som krävs för att en datafältsmatchning ska accepteras som ett giltigt värde.</p>
       <div class="matching-threshold-field">
@@ -630,7 +630,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </div>
       <p>Matchningar under denna tröskel visas fortfarande i matchningsvyer men används inte som accepterade värden i fakturadetaljer, filnamnsmallar eller arkiveringslogik.</p>
     </div>
-    <div class="matching-bbox-span-section">
+    <div id="matching-bbox-span-section" class="matching-bbox-span-section">
       <h4>Bbox-sammanslagning</h4>
       <p>Styr hur närliggande OCR-bboxar får byggas ihop till söktext och värden.</p>
       <div class="matching-threshold-row">
@@ -646,12 +646,12 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         </div>
       </div>
     </div>
-    <div class="matching-replacements-section">
+    <div id="matching-replacements-section" class="matching-replacements-section">
       <h4>Teckenersättningar före matchning</h4>
       <p>Definiera teckenersättningar för OCR-text före matchning.</p>
       <p>Exempel: mappa <code>é</code> till <code>ö</code> så att <code>Férfallodatum</code> kan matcha <code>Förfallodatum</code>.</p>
       <div id="matching-list" class="matching-list"></div>
-      <div class="categories-actions settings-section-actions">
+      <div id="matching-replacements-actions-section" class="categories-actions settings-section-actions">
         <button id="matching-add-row" type="button">Lägg till ersättning</button>
       </div>
     </div>
@@ -665,7 +665,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
   <template id="settings-template-ocr-processing">
     <h3>Textigenkänning</h3>
     <p>Kör <code>ocrmypdf</code> som ett steg i bearbetningen innan OCR-text läses ut för analys.</p>
-    <div class="ocr-status-card">
+    <div id="ocr-jbig2-section" class="ocr-status-card">
       <div class="ocr-status-row">
         <span class="ocr-status-label">JBIG2-optimering</span>
         <div class="ocr-status-actions">
@@ -700,7 +700,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         <button class="settings-command-copy" type="button" data-copy-target="python-install-command">Kopiera</button>
         <pre id="python-install-command" class="settings-command"></pre>
       </div>
-      <div class="ocr-status-card ocr-status-card-child">
+      <div id="ocr-rapidocr-section" class="ocr-status-card ocr-status-card-child">
         <div class="ocr-status-row">
           <span class="ocr-status-label">RapidOCR</span>
           <div class="ocr-status-actions">
@@ -721,12 +721,12 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </div>
     </div>
     <p>OCRmyPDF-kommandot som körs är i praktiken:</p>
-    <div class="settings-command-wrap">
+    <div id="ocr-processing-command-section" class="settings-command-wrap">
       <button class="settings-command-copy" type="button" data-copy-target="ocr-processing-command">Kopiera</button>
       <pre id="ocr-processing-command" class="settings-command"></pre>
     </div>
     <p>Textuttag (OCR-data) görs i praktiken med:</p>
-    <div class="settings-command-wrap">
+    <div id="ocr-text-extraction-command-section" class="settings-command-wrap">
       <button class="settings-command-copy" type="button" data-copy-target="ocr-text-extraction-command">Kopiera</button>
       <pre id="ocr-text-extraction-command" class="settings-command"></pre>
     </div>
@@ -736,7 +736,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       <span>Hoppa över dokument som redan har OCR-text</span>
     </label>
     <p class="settings-help">Ikryssad använder <code>--mode skip</code>. Avmarkerad använder <code>--mode redo</code>. I <code>redo</code>-läge utelämnas <code>--deskew</code> eftersom OCRmyPDF 17 inte tillåter den kombinationen.</p>
-    <div class="settings-group">
+    <div id="ocr-optimization-section" class="settings-group">
       <label class="settings-label" for="ocr-optimize-level">Komprimeringsnivå</label>
       <select id="ocr-optimize-level" class="settings-select">
         <option value="0">Ingen (-O0)</option>
@@ -745,7 +745,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         <option value="3">Max (-O3)</option>
       </select>
     </div>
-    <div class="settings-group">
+    <div id="ocr-text-extraction-section" class="settings-group">
       <label class="settings-label" for="ocr-text-extraction-method">Textuttag för OCR-data</label>
       <select id="ocr-text-extraction-method" class="settings-select">
         <option value="layout">pdftotext -layout</option>
@@ -753,11 +753,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </select>
     </div>
     <p class="settings-help"><code>pdftotext -layout</code> är den äldre direkta textutläsningen. <code>bbox-grid</code> läser ord och koordinater via <code>pdftotext -bbox-layout</code> och bygger sedan en rutnätstext från samma data.</p>
-    <div class="settings-group">
+    <div id="ocr-pdf-substitutions-section" class="settings-group">
       <h3>Textersättningar</h3>
       <p>Textersättningar ändrar OCR-texten innan PDF-filens textlager byggs.</p>
       <div id="ocr-pdf-substitutions-list" class="matching-list"></div>
-      <div class="categories-actions settings-section-actions">
+      <div id="ocr-pdf-substitutions-actions-section" class="categories-actions settings-section-actions">
         <button id="ocr-pdf-substitutions-add-row" type="button">Lägg till textersättning</button>
       </div>
     </div>
@@ -770,7 +770,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
   <template id="settings-template-archive-structure">
     <h3>Arkivstruktur</h3>
     <p>Hantera mappar och filnamnsregler. Varje mapp har en sökvägsmall, en matchningsprioritet och egna filnamnsregler som väljs inom mappen.</p>
-    <div class="archive-structure-toolbar">
+    <div id="archive-structure-toolbar-section" class="archive-structure-toolbar">
       <label class="archive-structure-sort" for="archive-structure-folder-sort">
         <span>Sortera mappar i vyn</span>
         <select id="archive-structure-folder-sort">
@@ -781,7 +781,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </label>
     </div>
     <div id="archive-structure-list" class="categories-list"></div>
-    <div class="categories-actions settings-section-actions">
+    <div id="archive-structure-actions-section" class="categories-actions settings-section-actions">
       <button id="archive-structure-add-folder" type="button">Lägg till mapp</button>
       <button id="archive-structure-import" type="button">Importera...</button>
     </div>
@@ -805,7 +805,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <div id="labels-view-system" class="archive-view hidden">
       <div id="system-label-editor" class="categories-list"></div>
     </div>
-    <div class="settings-section-actions labels-section-actions">
+    <div id="labels-actions-section" class="settings-section-actions labels-section-actions">
       <div id="labels-split-button" class="split-button">
         <button id="labels-add-row" class="split-button-main" type="button">Lägg till etikett</button>
         <button
@@ -864,7 +864,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <div id="extraction-fields-view-zones" class="archive-view hidden">
       <div id="extraction-zones-editor" class="categories-list"></div>
     </div>
-    <div class="categories-actions settings-section-actions">
+    <div id="extraction-fields-actions-section" class="categories-actions settings-section-actions">
       <div id="extraction-fields-split-button" class="split-button">
         <button id="extraction-fields-add-row" class="split-button-main" type="button">Lägg till datafält</button>
         <button
@@ -910,7 +910,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <h3>Värdemönster</h3>
     <p>Definiera återanvändbara OCR-mönster för datafält och zoner.</p>
     <div id="value-patterns-list" class="categories-list"></div>
-    <div class="settings-section-actions value-patterns-section-actions">
+    <div id="value-patterns-actions-section" class="settings-section-actions value-patterns-section-actions">
       <div id="value-patterns-split-button" class="split-button">
         <button id="value-patterns-add-row" class="split-button-main" type="button">Lägg till värdemönster</button>
         <button
@@ -955,6 +955,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
   <template id="settings-template-paths">
     <h3>Sökvägar</h3>
     <p>Ange sökvägen för in-mappen som läses av för nya jobb, samt grundsökväg för utdata.</p>
+    <div id="paths-inbox-section">
     <label class="settings-label" for="input-inbox-path">In-mapp för nya jobb</label>
     <input
       id="input-inbox-path"
@@ -965,6 +966,8 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       autocapitalize="off"
     >
     <p>Det ska finnas en undermapp per huvudman, och varje mappnamn ska matcha huvudmannens <code>folderName</code>.</p>
+    </div>
+    <div id="paths-output-section">
     <label class="settings-label" for="output-base-path">Bas-sökväg för utdata</label>
     <input
       id="output-base-path"
@@ -974,6 +977,8 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       autocorrect="off"
       autocapitalize="off"
     >
+    </div>
+    <div id="paths-snapshots-section">
     <label class="settings-label" for="snapshot-directory">Snapshots</label>
     <input
       id="snapshot-directory"
@@ -984,6 +989,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       autocapitalize="off"
     >
     <p>Relativ sökväg tolkas mot projektroten. En snapshot skapas som en ny tidsstämplad mapp per körning.</p>
+    </div>
     <div class="panel-actions">
       <button id="paths-cancel" class="button-danger" type="button">Avbryt</button>
       <button id="paths-apply" class="button-success" type="button">Spara</button>
@@ -992,17 +998,21 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-system">
     <h3>System</h3>
+    <div id="system-dev-mode-section">
     <label class="settings-checkbox" for="system-dev-mode">
       <input id="system-dev-mode" type="checkbox">
       <span>Utvecklarläge</span>
     </label>
     <p>Visar extra menyer och verktyg i gränssnittet. Gäller bara på localhost.</p>
+    </div>
+    <div id="system-state-transport-section">
     <label class="settings-label" for="system-state-transport">Uppdateringsmetod</label>
     <select id="system-state-transport" class="settings-select">
       <option value="polling">Polling</option>
       <option value="sse">Automatisk push (SSE)</option>
     </select>
-    <div class="settings-danger">
+    </div>
+    <div id="system-reset-jobs-section" class="settings-danger">
       <p>Återställ alla oarkiverade jobb och flytta tillbaka deras <code>source.pdf</code> till inbox. Arkiverade dokument lämnas orörda.</p>
       <button id="settings-reset-jobs" type="button">Återställ oarkiverade jobb</button>
     </div>
@@ -1010,7 +1020,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-extensions">
     <h3>Tillägg</h3>
-    <section class="system-extension-card">
+    <section id="extensions-chrome-section" class="system-extension-card">
       <div class="system-extension-header-row">
         <div>
           <h4>Chrome-tillägg</h4>
@@ -1064,7 +1074,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 <p>Ingår inte: sökvägar och data kopplad till specifika dokument.</p>
 <p>Skapa inställningsbackup sparar nuvarande version. Import lägger till en version från fil. Återställ ersätter nuvarande konfiguration.</p>
     <input id="settings-backup-file" type="file" accept=".json,application/json" hidden>
-    <div class="settings-section-actions backup-section-actions">
+    <div id="settings-backup-actions-section" class="settings-section-actions backup-section-actions">
       <span id="settings-backup-export-shell" class="settings-backup-export-shell" title="">
         <button id="settings-backup-export" type="button" aria-busy="false">
           <span class="spinner settings-backup-export-spinner hidden" aria-hidden="true"></span>
@@ -1074,7 +1084,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       <button id="settings-backup-import" type="button">Importera inställningsbackup</button>
     </div>
     <div id="settings-backup-status" class="settings-backup-status" aria-live="polite"></div>
-    <div class="settings-backup-history">
+    <div id="settings-backup-history-section" class="settings-backup-history">
       <div class="settings-backup-history-title">Inställningsbackuper</div>
       <div id="settings-backup-list" class="settings-backup-list" aria-live="polite"></div>
     </div>
