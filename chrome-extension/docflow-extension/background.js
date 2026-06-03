@@ -269,6 +269,23 @@ async function executeOrganizationLookupInTab(tabId, payload) {
     func: async ({ organizationNumber }) => {
       const prefix = '[Docflow Chrome Connector]';
       const normalizedOrganizationNumber = String(organizationNumber || '').replace(/\D+/g, '');
+      const slugPart = (value, fallback = 'okand') => {
+        const normalized = String(value || '')
+          .trim()
+          .toLowerCase()
+          .replace(/&/g, ' ')
+          .replace(/[^\p{L}\p{N}]+/gu, '-')
+          .replace(/^-+|-+$/g, '');
+        return normalized || fallback;
+      };
+      const firstNonEmptyString = (values) => {
+        for (const value of values) {
+          if (typeof value === 'string' && value.trim() !== '') {
+            return value.trim();
+          }
+        }
+        return '';
+      };
       const waitForNextData = async () => {
         const startedAt = Date.now();
         while ((Date.now() - startedAt) < 8000) {
@@ -280,6 +297,98 @@ async function executeOrganizationLookupInTab(tabId, payload) {
         }
         throw new Error('Allabolag-data saknas på sidan.');
       };
+      const nextDataFromHtml = (html) => {
+        const parsed = new DOMParser().parseFromString(String(html || ''), 'text/html');
+        const nextDataEl = parsed.getElementById('__NEXT_DATA__');
+        if (!nextDataEl || typeof nextDataEl.textContent !== 'string' || nextDataEl.textContent.trim() === '') {
+          throw new Error('Allabolag-detaljdata saknas på sidan.');
+        }
+        return JSON.parse(nextDataEl.textContent);
+      };
+      const companyListingId = (company) => firstNonEmptyString([
+        company?.listingId,
+        company?.companyId,
+      ]);
+      const companyDetailUrlFromDom = (listingId) => {
+        if (listingId === '') {
+          return '';
+        }
+        const links = Array.from(document.querySelectorAll('a[href]'));
+        const link = links.find((candidate) => {
+          const href = typeof candidate?.href === 'string' ? candidate.href : '';
+          return href.includes('/foretag/') && href.includes(listingId);
+        });
+        return typeof link?.href === 'string' ? link.href : '';
+      };
+      const companyDetailUrlFromFields = (company, listingId) => {
+        const keys = ['url', 'href', 'link', 'path', 'companyUrl', 'companyPageUrl', 'detailUrl'];
+        for (const key of keys) {
+          const value = typeof company?.[key] === 'string' ? company[key].trim() : '';
+          if (value !== '' && (value.includes('/foretag/') || value.includes(listingId))) {
+            return new URL(value, window.location.origin).href;
+          }
+        }
+        return '';
+      };
+      const companyDetailUrlFallback = (company, listingId) => {
+        if (listingId === '') {
+          return '';
+        }
+        const name = slugPart(company?.name, 'foretag');
+        const city = slugPart(
+          firstNonEmptyString([
+            company?.city,
+            company?.municipality,
+            company?.address?.city,
+            company?.address?.municipality,
+          ]),
+          'okand'
+        );
+        const category = slugPart(
+          firstNonEmptyString([
+            company?.industry,
+            company?.category,
+            company?.business,
+            company?.businessDescription,
+          ]),
+          'verksamhet'
+        );
+        return `${window.location.origin}/foretag/${name}/${city}/${category}/${encodeURIComponent(listingId)}`;
+      };
+      const companyDetailUrl = (company) => {
+        const listingId = companyListingId(company);
+        return companyDetailUrlFromDom(listingId)
+          || companyDetailUrlFromFields(company, listingId)
+          || companyDetailUrlFallback(company, listingId);
+      };
+      const fetchCompanyAlternativeNames = async (company) => {
+        const detailUrl = companyDetailUrl(company);
+        if (detailUrl === '') {
+          return { detailUrl: '', alternativeNames: [] };
+        }
+        const response = await fetch(detailUrl, {
+          credentials: 'include',
+          headers: {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+        });
+        if (!response.ok) {
+          throw new Error(`Allabolag-detaljsidan svarade med HTTP ${response.status}.`);
+        }
+        const detailData = nextDataFromHtml(await response.text());
+        const detailAlternativeNamesRaw = Array.isArray(detailData?.props?.pageProps?.company?.alternativeNames)
+          ? detailData.props.pageProps.company.alternativeNames
+          : [];
+        const alternativeNames = detailAlternativeNamesRaw
+          .map((item) => {
+            if (!item || typeof item !== 'object') {
+              return '';
+            }
+            return String(item.name || '').trim();
+          })
+          .filter((value, index, values) => value !== '' && values.indexOf(value) === index);
+        return { detailUrl, alternativeNames };
+      };
 
       try {
         console.info(`${prefix} injected organization lookup start`, {
@@ -289,13 +398,6 @@ async function executeOrganizationLookupInTab(tabId, payload) {
         const nextDataEl = await waitForNextData();
         const nextData = JSON.parse(nextDataEl.innerHTML);
         const companyInformation = nextData?.props?.pageProps?.hydrationData?.searchStore?.companies?.companies?.[0] || null;
-        const alternativeNamesRaw = Array.isArray(nextData?.props?.pageProps?.company?.alternativeNames)
-          ? nextData.props.pageProps.company.alternativeNames
-          : (
-            Array.isArray(companyInformation?.alternativeNames)
-              ? companyInformation.alternativeNames
-              : []
-          );
         const matchedOrganizationNumber = String(companyInformation?.orgnr || '').replace(/\D+/g, '');
         if (matchedOrganizationNumber !== normalizedOrganizationNumber) {
           throw new Error(
@@ -309,20 +411,25 @@ async function executeOrganizationLookupInTab(tabId, payload) {
         if (organizationName === '') {
           throw new Error('Allabolag returnerade inget företagsnamn.');
         }
-        const alternativeNames = alternativeNamesRaw
-          .map((item) => {
-            if (!item || typeof item !== 'object') {
-              return '';
-            }
-            return String(item.name || '').trim();
-          })
-          .filter((value) => value !== '');
+        let alternativeNames = [];
+        let detailUrl = '';
+        try {
+          const detail = await fetchCompanyAlternativeNames(companyInformation);
+          detailUrl = detail.detailUrl;
+          alternativeNames = detail.alternativeNames;
+        } catch (error) {
+          console.warn(`${prefix} injected organization detail lookup failed`, {
+            organizationNumber: normalizedOrganizationNumber,
+            message: error instanceof Error ? error.message : String(error || 'Unknown error'),
+          });
+        }
 
         console.info(`${prefix} injected organization lookup result`, {
           organizationNumber: normalizedOrganizationNumber,
           matchedOrganizationNumber,
           organizationName,
           alternativeNames,
+          detailUrl,
         });
 
         return {
