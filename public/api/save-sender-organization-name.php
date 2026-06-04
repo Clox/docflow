@@ -81,8 +81,8 @@ try {
     json_response([
         'ok' => true,
         'organizationId' => $organizationId,
-        'organizationName' => is_string($organizationName) ? trim($organizationName) : null,
-        'alternativeNames' => array_values(array_filter($alternativeNames, static fn (string $name): bool => $name !== '')),
+        'organizationName' => $resolved['organizationName'] ?? null,
+        'alternativeNames' => is_array($resolved['alternativeNames'] ?? null) ? $resolved['alternativeNames'] : [],
         'senderId' => isset($resolved['senderId']) ? $resolved['senderId'] : null,
         'followup' => $followup,
         'remainingCount' => $repository->countOrganizationNumbersMissingName(),

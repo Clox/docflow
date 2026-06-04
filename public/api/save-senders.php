@@ -197,7 +197,6 @@ try {
 
     $existingSenderRows = $pdo->query('SELECT id, name FROM senders')->fetchAll(PDO::FETCH_ASSOC);
     $existingSenderIds = [];
-    $existingSenderNamesById = [];
     foreach ($existingSenderRows as $row) {
         if (!is_array($row)) {
             continue;
@@ -205,7 +204,6 @@ try {
         $senderId = isset($row['id']) ? (int) $row['id'] : 0;
         if ($senderId > 0) {
             $existingSenderIds[$senderId] = true;
-            $existingSenderNamesById[$senderId] = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
         }
     }
 
@@ -291,55 +289,9 @@ try {
         }
     }
 
-    $detachPayment = $pdo->prepare(
-        'UPDATE sender_payment_numbers
-        SET sender_id = NULL,
-            payee_name = NULL,
-            payee_lookup_status = NULL,
-            updated_at = :updated_at
-        WHERE id = :id'
-    );
-    $detachOrganization = $pdo->prepare(
-        'UPDATE sender_organization_numbers
-        SET sender_id = NULL,
-            organization_name = NULL,
-            updated_at = :updated_at
-        WHERE id = :id'
-    );
+    $deletePayment = $pdo->prepare('DELETE FROM sender_payment_numbers WHERE id = :id');
+    $deleteOrganization = $pdo->prepare('DELETE FROM sender_organization_numbers WHERE id = :id');
     $deleteRemovedSender = $pdo->prepare('DELETE FROM senders WHERE id = :id');
-    $insertAlternativeName = $pdo->prepare(
-        'INSERT OR IGNORE INTO sender_alternative_names (
-            sender_id,
-            name,
-            created_at,
-            updated_at
-        ) VALUES (
-            :sender_id,
-            :name,
-            :created_at,
-            :updated_at
-        )'
-    );
-    $copyAlternativeNamesToTarget = $pdo->prepare(
-        'INSERT OR IGNORE INTO sender_alternative_names (
-            sender_id,
-            name,
-            created_at,
-            updated_at
-        )
-        SELECT
-            :target_sender_id,
-            name,
-            :created_at,
-            :updated_at
-        FROM sender_alternative_names
-        WHERE sender_id = :source_sender_id
-          AND lower(trim(name)) <> lower(:target_name)'
-    );
-    $deleteSourceAlternativeNames = $pdo->prepare(
-        'DELETE FROM sender_alternative_names
-        WHERE sender_id = :sender_id'
-    );
     $insertSender = $pdo->prepare(
         'INSERT INTO senders (
             name,
@@ -471,14 +423,13 @@ try {
         if ($shouldTouchExistingSender($senderId)) {
             $touchSender($senderId);
         }
-        $detachPayment->execute([
+        $deletePayment->execute([
             ':id' => $paymentId,
-            ':updated_at' => date(DATE_ATOM),
         ]);
-        $existingPaymentRowsById[$paymentId]['senderId'] = 0;
+        unset($existingPaymentRowsById[$paymentId]);
         $paymentKey = (string) ($paymentRow['type'] ?? '') . ':' . (string) ($paymentRow['number'] ?? '');
         if (isset($existingPaymentsByKey[$paymentKey])) {
-            $existingPaymentsByKey[$paymentKey]['senderId'] = 0;
+            unset($existingPaymentsByKey[$paymentKey]);
         }
     }
 
@@ -491,12 +442,11 @@ try {
             if ($shouldTouchExistingSender($senderId)) {
                 $touchSender($senderId);
             }
-            $detachOrganization->execute([
+            $deleteOrganization->execute([
                 ':id' => $organizationId,
-                ':updated_at' => date(DATE_ATOM),
             ]);
-            $existingOrganizationRowsById[$organizationId]['senderId'] = 0;
-            $existingOrganizationsByNumber[$organizationRow['organizationNumber']]['senderId'] = 0;
+            unset($existingOrganizationRowsById[$organizationId]);
+            unset($existingOrganizationsByNumber[$organizationRow['organizationNumber']]);
         }
     }
 
@@ -562,7 +512,7 @@ try {
                 if (is_array($existingByNumber)) {
                     $existingId = (int) ($existingByNumber['id'] ?? 0);
                     $existingSenderId = (int) ($existingByNumber['senderId'] ?? 0);
-                    $canClaimExistingRow = $existingId > 0 && ($existingSenderId < 1 || !isset($submittedSenderIds[$existingSenderId]) || isset($claimedMergedSourceIds[$existingSenderId]));
+                    $canClaimExistingRow = $existingId > 0 && (!isset($submittedSenderIds[$existingSenderId]) || isset($claimedMergedSourceIds[$existingSenderId]));
                     if (!$canClaimExistingRow) {
                         throw new RuntimeException('Organisationsnummer måste vara unikt');
                     }
@@ -642,7 +592,7 @@ try {
                 if (is_array($existingByKey)) {
                     $existingId = (int) ($existingByKey['id'] ?? 0);
                     $existingSenderId = (int) ($existingByKey['senderId'] ?? 0);
-                    $canClaimExistingRow = $existingId > 0 && ($existingSenderId < 1 || !isset($submittedSenderIds[$existingSenderId]) || isset($claimedMergedSourceIds[$existingSenderId]));
+                    $canClaimExistingRow = $existingId > 0 && (!isset($submittedSenderIds[$existingSenderId]) || isset($claimedMergedSourceIds[$existingSenderId]));
                     if (!$canClaimExistingRow) {
                         throw new RuntimeException('Betalnummer måste vara unikt');
                     }
@@ -709,29 +659,6 @@ try {
             if ($sourceSenderId < 1 || $sourceSenderId === $senderId) {
                 continue;
             }
-            $sourceName = is_string($existingSenderNamesById[$sourceSenderId] ?? null)
-                ? trim((string) $existingSenderNamesById[$sourceSenderId])
-                : '';
-            if ($sourceName !== '' && strcasecmp($sourceName, $row['name']) !== 0) {
-                $timestamp = date(DATE_ATOM);
-                $insertAlternativeName->execute([
-                    ':sender_id' => $senderId,
-                    ':name' => $sourceName,
-                    ':created_at' => $timestamp,
-                    ':updated_at' => $timestamp,
-                ]);
-            }
-            $timestamp = date(DATE_ATOM);
-            $copyAlternativeNamesToTarget->execute([
-                ':target_sender_id' => $senderId,
-                ':source_sender_id' => $sourceSenderId,
-                ':target_name' => $row['name'],
-                ':created_at' => $timestamp,
-                ':updated_at' => $timestamp,
-            ]);
-            $deleteSourceAlternativeNames->execute([
-                ':sender_id' => $sourceSenderId,
-            ]);
             $deleteRemovedSender->execute([':id' => $sourceSenderId]);
         }
     }
@@ -741,7 +668,7 @@ try {
     json_response([
         'ok' => true,
         'senders' => $repository->listEditorRows(),
-        'unlinkedIdentifiers' => $repository->listUnlinkedIdentifierRows(),
+        'unlinkedIdentifiers' => [],
     ]);
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {

@@ -368,14 +368,6 @@ function load_sender_export_rows(): array
             ];
         }
 
-        $alternativeNames = [];
-        foreach (is_array($row['alternativeNames'] ?? null) ? $row['alternativeNames'] : [] as $alternativeName) {
-            $nameValue = is_string($alternativeName) ? trim($alternativeName) : '';
-            if ($nameValue !== '') {
-                $alternativeNames[] = $nameValue;
-            }
-        }
-
         $senders[] = [
             'id' => $senderId,
             'name' => $name,
@@ -384,7 +376,6 @@ function load_sender_export_rows(): array
             'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
             'organizationNumbers' => $organizationNumbers,
             'paymentNumbers' => $paymentNumbers,
-            'alternativeNames' => $alternativeNames,
         ];
     }
 
@@ -899,14 +890,6 @@ function normalize_export_sender_rows(array $rows): array
             ];
         }
 
-        $alternativeNames = [];
-        foreach (is_array($row['alternativeNames'] ?? null) ? $row['alternativeNames'] : [] as $alternativeName) {
-            $nameValue = is_string($alternativeName) ? trim($alternativeName) : '';
-            if ($nameValue !== '') {
-                $alternativeNames[] = $nameValue;
-            }
-        }
-
         $senders[] = [
             'id' => isset($row['id']) && is_numeric($row['id']) ? (int) $row['id'] : null,
             'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
@@ -915,7 +898,6 @@ function normalize_export_sender_rows(array $rows): array
             'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
             'organizationNumbers' => $organizationNumbers,
             'paymentNumbers' => $paymentNumbers,
-            'alternativeNames' => $alternativeNames,
         ];
     }
 
@@ -12582,8 +12564,6 @@ function build_label_matching_field_name_map(array $fields): array
 
 function resolve_label_matching_sender_context(array $fieldValues): array
 {
-    sync_named_sender_identifier_links();
-
     $organizationNumbers = normalize_auto_archiving_field_value_list($fieldValues['organisationsnummer'] ?? null);
     $bankgiroValues = normalize_auto_archiving_field_value_list($fieldValues['bankgiro'] ?? null);
     $plusgiroValues = normalize_auto_archiving_field_value_list($fieldValues['plusgiro'] ?? null);
@@ -23599,26 +23579,6 @@ function extracted_field_string_values(array $extracted, string $fieldKey): arra
     return $strings;
 }
 
-function sync_named_sender_identifier_links(): void
-{
-    static $done = false;
-    if ($done) {
-        return;
-    }
-    $done = true;
-
-    $repository = sender_repository_instance();
-    if ($repository === null) {
-        return;
-    }
-
-    try {
-        $repository->resolveUnlinkedNamedIdentifiers();
-    } catch (Throwable $e) {
-        // Best effort only. State rendering should still work if link sync fails.
-    }
-}
-
 function cached_sender_editor_rows_by_id(): array
 {
     static $cache = null;
@@ -23692,8 +23652,6 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
     if (!is_array($extracted)) {
         return null;
     }
-
-    sync_named_sender_identifier_links();
 
     $organizationNumbers = extracted_field_string_values($extracted, 'organisationsnummer');
     $bankgiroValues = extracted_field_string_values($extracted, 'bankgiro');
@@ -24272,8 +24230,6 @@ function single_preselected_sender_from_summary(?array $senderSummary): array
 
 function build_sender_payee_lookup_queue_state_payload(int $limit = 1): array
 {
-    sync_named_sender_identifier_links();
-
     $repository = sender_repository_instance();
     if ($repository === null) {
         return [
@@ -24305,8 +24261,6 @@ function build_sender_payee_lookup_queue_state_payload(int $limit = 1): array
 
 function build_sender_organization_lookup_queue_state_payload(int $limit = 1): array
 {
-    sync_named_sender_identifier_links();
-
     $repository = sender_repository_instance();
     if ($repository === null) {
         return [
