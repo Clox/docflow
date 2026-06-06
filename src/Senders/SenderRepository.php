@@ -137,13 +137,7 @@ final class SenderRepository
 
     public function listAll(): array
     {
-        $statement = $this->pdo->query(
-            'SELECT id, name, domain, kind, notes, confidence, matching_updated_at, created_at, updated_at
-            FROM senders
-            ORDER BY name ASC, id ASC'
-        );
-        $rows = $statement->fetchAll();
-        return is_array($rows) ? $rows : [];
+        return $this->listEditorRows();
     }
 
     public function listEditorRows(): array
@@ -185,7 +179,7 @@ final class SenderRepository
                 'domain' => is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '',
                 'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
                 'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
-                'alternativeNames' => [],
+                'displayName' => '',
                 'organizationNumbers' => [],
                 'paymentNumbers' => [],
             ];
@@ -272,34 +266,185 @@ final class SenderRepository
             }
         }
 
-        $alternativeNameRows = $this->pdo->query(
+        foreach ($sendersById as $senderId => $senderRow) {
+            $sendersById[$senderId]['displayName'] = $this->senderDisplayName($senderRow);
+        }
+
+        $rows = array_values($sendersById);
+        usort(
+            $rows,
+            static function (array $left, array $right): int {
+                $leftName = is_string($left['displayName'] ?? null) ? trim((string) $left['displayName']) : '';
+                $rightName = is_string($right['displayName'] ?? null) ? trim((string) $right['displayName']) : '';
+                $compare = strcasecmp($leftName, $rightName);
+                if ($compare !== 0) {
+                    return $compare;
+                }
+                return ((int) ($left['id'] ?? 0)) <=> ((int) ($right['id'] ?? 0));
+            }
+        );
+
+        return $rows;
+    }
+
+    public function listUnlinkedIdentifierRows(): array
+    {
+        $items = [];
+
+        $organizationRows = $this->pdo->query(
             'SELECT
-                o.sender_id,
-                a.name
-            FROM sender_alternative_names a
-            INNER JOIN sender_organization_numbers o ON o.id = a.sender_organization_number_id
-            INNER JOIN senders s ON s.id = o.sender_id
-            ORDER BY s.name ASC, s.id ASC, a.name ASC, a.id ASC'
+                id,
+                organization_number,
+                organization_name,
+                source,
+                created_at,
+                updated_at
+            FROM sender_organization_numbers
+            WHERE sender_id IS NULL
+            ORDER BY updated_at DESC, organization_number ASC, id ASC'
         )->fetchAll();
 
-        if (is_array($alternativeNameRows)) {
-            foreach ($alternativeNameRows as $row) {
+        if (is_array($organizationRows)) {
+            foreach ($organizationRows as $row) {
                 if (!is_array($row)) {
                     continue;
                 }
-                $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
-                if ($senderId < 1 || !isset($sendersById[$senderId])) {
+                $organizationId = isset($row['id']) ? (int) $row['id'] : 0;
+                $normalizedNumber = is_string($row['organization_number'] ?? null)
+                    ? trim((string) $row['organization_number'])
+                    : '';
+                if ($organizationId < 1 || $normalizedNumber === '') {
                     continue;
                 }
-                $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
-                if ($name === '') {
-                    continue;
-                }
-                $sendersById[$senderId]['alternativeNames'][] = $name;
+
+                $items[] = [
+                    'key' => 'organization:' . $normalizedNumber,
+                    'kind' => 'organization',
+                    'id' => $organizationId,
+                    'typeLabel' => 'ORG.NR',
+                    'paymentType' => '',
+                    'number' => $this->formatOrganizationNumberForDisplay($normalizedNumber),
+                    'normalizedNumber' => $normalizedNumber,
+                    'name' => is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '',
+                    'source' => is_string($row['source'] ?? null) ? trim((string) $row['source']) : '',
+                    'updatedAt' => is_string($row['updated_at'] ?? null) ? trim((string) $row['updated_at']) : '',
+                ];
             }
         }
 
-        return array_values($sendersById);
+        $paymentRows = $this->pdo->query(
+            'SELECT
+                id,
+                type,
+                number,
+                payee_name,
+                payee_lookup_status,
+                source,
+                created_at,
+                updated_at
+            FROM sender_payment_numbers
+            WHERE sender_id IS NULL
+            ORDER BY updated_at DESC, type ASC, number ASC, id ASC'
+        )->fetchAll();
+
+        if (is_array($paymentRows)) {
+            foreach ($paymentRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $paymentId = isset($row['id']) ? (int) $row['id'] : 0;
+                $type = is_string($row['type'] ?? null) ? trim(strtolower((string) $row['type'])) : 'bankgiro';
+                $normalizedNumber = is_string($row['number'] ?? null) ? trim((string) $row['number']) : '';
+                if ($paymentId < 1 || $normalizedNumber === '') {
+                    continue;
+                }
+                if ($type !== 'plusgiro') {
+                    $type = 'bankgiro';
+                }
+
+                $items[] = [
+                    'key' => 'payment:' . $type . ':' . $normalizedNumber,
+                    'kind' => 'payment',
+                    'id' => $paymentId,
+                    'typeLabel' => $type === 'plusgiro' ? 'PG' : 'BG',
+                    'paymentType' => $type,
+                    'number' => $this->formatPaymentNumberForDisplay($type, $normalizedNumber),
+                    'normalizedNumber' => $normalizedNumber,
+                    'name' => is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '',
+                    'lookupStatus' => is_string($row['payee_lookup_status'] ?? null) ? trim((string) $row['payee_lookup_status']) : '',
+                    'source' => is_string($row['source'] ?? null) ? trim((string) $row['source']) : '',
+                    'updatedAt' => is_string($row['updated_at'] ?? null) ? trim((string) $row['updated_at']) : '',
+                ];
+            }
+        }
+
+        usort(
+            $items,
+            static function (array $left, array $right): int {
+                $leftUpdated = is_string($left['updatedAt'] ?? null) ? trim((string) $left['updatedAt']) : '';
+                $rightUpdated = is_string($right['updatedAt'] ?? null) ? trim((string) $right['updatedAt']) : '';
+                if ($leftUpdated !== $rightUpdated) {
+                    return strcmp($rightUpdated, $leftUpdated);
+                }
+                return strcmp(
+                    (string) ($left['key'] ?? ''),
+                    (string) ($right['key'] ?? '')
+                );
+            }
+        );
+
+        return $items;
+    }
+
+    private function senderDisplayName(array $senderRow): string
+    {
+        $manualName = is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '';
+        if ($manualName !== '') {
+            return $manualName;
+        }
+
+        foreach (is_array($senderRow['organizationNumbers'] ?? null) ? $senderRow['organizationNumbers'] : [] as $organizationRow) {
+            if (!is_array($organizationRow)) {
+                continue;
+            }
+            $organizationName = is_string($organizationRow['organizationName'] ?? null) ? trim((string) $organizationRow['organizationName']) : '';
+            if ($organizationName !== '') {
+                return $organizationName;
+            }
+        }
+
+        foreach (is_array($senderRow['paymentNumbers'] ?? null) ? $senderRow['paymentNumbers'] : [] as $paymentRow) {
+            if (!is_array($paymentRow)) {
+                continue;
+            }
+            $payeeName = is_string($paymentRow['payeeName'] ?? null) ? trim((string) $paymentRow['payeeName']) : '';
+            if ($payeeName !== '') {
+                return $payeeName;
+            }
+        }
+
+        $organizationRows = is_array($senderRow['organizationNumbers'] ?? null) ? $senderRow['organizationNumbers'] : [];
+        $firstOrganization = $organizationRows[0] ?? null;
+        if (is_array($firstOrganization)) {
+            $organizationNumber = is_string($firstOrganization['organizationNumber'] ?? null)
+                ? trim((string) $firstOrganization['organizationNumber'])
+                : '';
+            if ($organizationNumber !== '') {
+                return 'Org.nr ' . $organizationNumber;
+            }
+        }
+
+        $paymentRows = is_array($senderRow['paymentNumbers'] ?? null) ? $senderRow['paymentNumbers'] : [];
+        $firstPayment = $paymentRows[0] ?? null;
+        if (is_array($firstPayment)) {
+            $paymentType = is_string($firstPayment['type'] ?? null) ? trim(strtolower((string) $firstPayment['type'])) : 'bankgiro';
+            $paymentNumber = is_string($firstPayment['number'] ?? null) ? trim((string) $firstPayment['number']) : '';
+            if ($paymentNumber !== '') {
+                return ($paymentType === 'plusgiro' ? 'Plusgiro ' : 'Bankgiro ') . $paymentNumber;
+            }
+        }
+
+        return 'Avsändare utan namn';
     }
 
     public function replaceAll(array $senders): array
@@ -340,10 +485,6 @@ final class SenderRepository
                 continue;
             }
 
-            if ($name === '') {
-                throw new RuntimeException('Each sender must have a name.');
-            }
-
             $normalizedOrganizations = [];
             foreach ($organizationRows as $organizationRow) {
                 $organizationId = isset($organizationRow['id']) && is_numeric($organizationRow['id'])
@@ -362,7 +503,7 @@ final class SenderRepository
 
                 $organizationNumber = IdentifierNormalizer::normalizeOrgNumber($organizationNumberRaw);
                 if ($organizationNumber === null) {
-                    throw new RuntimeException('Invalid organization number in sender import: ' . $name);
+                    throw new RuntimeException('Invalid organization number in sender import.');
                 }
 
                 if (isset($seenOrganizationNumbers[$organizationNumber])) {
@@ -404,7 +545,7 @@ final class SenderRepository
                     ? IdentifierNormalizer::normalizePlusgiro($numberRaw)
                     : IdentifierNormalizer::normalizeBankgiro($numberRaw);
                 if ($number === null) {
-                    throw new RuntimeException('Invalid payment number in sender import: ' . $name);
+                    throw new RuntimeException('Invalid payment number in sender import.');
                 }
 
                 $paymentKey = $type . ':' . $number;
@@ -422,7 +563,7 @@ final class SenderRepository
 
             $normalizedSenders[] = [
                 'id' => $id,
-                'name' => $name,
+                'name' => $name !== '' ? $name : null,
                 'domain' => $domain !== '' ? strtolower($domain) : null,
                 'kind' => $kind !== '' ? $kind : null,
                 'notes' => $notes !== '' ? $notes : null,
@@ -542,9 +683,7 @@ final class SenderRepository
                     $organizationInsert->execute([
                         ':id' => $organizationRow['id'],
                         ':organization_number' => $organizationRow['organizationNumber'],
-                        ':organization_name' => $organizationRow['organizationName'] !== ''
-                            ? $organizationRow['organizationName']
-                            : $sender['name'],
+                        ':organization_name' => $organizationRow['organizationName'] !== '' ? $organizationRow['organizationName'] : null,
                         ':sender_id' => $senderId,
                         ':source' => null,
                         ':created_at' => $timestamp,
@@ -1059,16 +1198,13 @@ final class SenderRepository
     }
 
     public function createSender(
-        string $name,
+        ?string $name,
         ?string $domain = null,
         ?string $kind = null,
         ?string $notes = null,
         float $confidence = 1.0
     ): int {
-        $name = trim($name);
-        if ($name === '') {
-            throw new RuntimeException('Sender name is required.');
-        }
+        $normalizedName = is_string($name) && trim($name) !== '' ? trim($name) : null;
 
         $timestamp = date(DATE_ATOM);
         $statement = $this->pdo->prepare(
@@ -1094,7 +1230,7 @@ final class SenderRepository
         );
 
         $statement->execute([
-            ':name' => $name,
+            ':name' => $normalizedName,
             ':domain' => $domain !== null ? trim($domain) : null,
             ':kind' => $kind !== null ? trim($kind) : null,
             ':notes' => $notes,
@@ -1107,64 +1243,11 @@ final class SenderRepository
         return (int) $this->pdo->lastInsertId();
     }
 
-    private function createIdentifierSender(string $name, ?string $createdAt = null, ?string $updatedAt = null): int
+    public function updateSenderBasic(int $id, ?string $name): void
     {
-        $normalizedName = trim($name);
-        if ($normalizedName === '') {
-            throw new RuntimeException('Sender name is required.');
-        }
-
-        $timestamp = date(DATE_ATOM);
-        $created = is_string($createdAt) && trim($createdAt) !== '' ? trim($createdAt) : $timestamp;
-        $updated = is_string($updatedAt) && trim($updatedAt) !== '' ? trim($updatedAt) : $timestamp;
-        $statement = $this->pdo->prepare(
-            'INSERT INTO senders (
-                name,
-                domain,
-                kind,
-                notes,
-                confidence,
-                matching_updated_at,
-                created_at,
-                updated_at
-            ) VALUES (
-                :name,
-                NULL,
-                NULL,
-                \'\',
-                1.0,
-                :matching_updated_at,
-                :created_at,
-                :updated_at
-            )'
-        );
-        $statement->execute([
-            ':name' => $normalizedName,
-            ':matching_updated_at' => $updated,
-            ':created_at' => $created,
-            ':updated_at' => $updated,
-        ]);
-
-        return (int) $this->pdo->lastInsertId();
-    }
-
-    private function senderNameForOrganizationNumber(string $organizationNumber): string
-    {
-        return 'Org.nr ' . $this->formatOrganizationNumberForDisplay($organizationNumber);
-    }
-
-    private function senderNameForPaymentNumber(string $type, string $number): string
-    {
-        $normalizedType = trim(strtolower($type));
-        $label = $normalizedType === 'plusgiro' ? 'Plusgiro' : 'Bankgiro';
-        return $label . ' ' . $this->formatPaymentNumberForDisplay($normalizedType, $number);
-    }
-
-    public function updateSenderBasic(int $id, string $name): void
-    {
-        $name = trim($name);
-        if ($id < 1 || $name === '') {
-            throw new RuntimeException('Sender id and name are required.');
+        $normalizedName = is_string($name) && trim($name) !== '' ? trim($name) : null;
+        if ($id < 1) {
+            throw new RuntimeException('Sender id is required.');
         }
 
         $statement = $this->pdo->prepare(
@@ -1174,7 +1257,7 @@ final class SenderRepository
         );
         $statement->execute([
             ':id' => $id,
-            ':name' => $name,
+            ':name' => $normalizedName,
             ':updated_at' => date(DATE_ATOM),
         ]);
 
@@ -1300,21 +1383,9 @@ final class SenderRepository
                 ? trim((string) $existing['source'])
                 : '';
             $resolvedName = $currentName !== '' ? $currentName : $normalizedName;
-            $senderId = isset($existing['sender_id']) && (int) $existing['sender_id'] > 0
-                ? (int) $existing['sender_id']
-                : 0;
-            if ($senderId < 1) {
-                $senderId = $this->createIdentifierSender(
-                    $this->senderNameForOrganizationNumber($normalizedNumber),
-                    is_string($existing['created_at'] ?? null) ? trim((string) $existing['created_at']) : null,
-                    is_string($existing['updated_at'] ?? null) ? trim((string) $existing['updated_at']) : null
-                );
-            }
-
             $update = $this->pdo->prepare(
                 'UPDATE sender_organization_numbers
                 SET organization_name = :organization_name,
-                    sender_id = :sender_id,
                     source = :source,
                     updated_at = :updated_at
                 WHERE id = :id'
@@ -1322,7 +1393,6 @@ final class SenderRepository
             $update->execute([
                 ':id' => $organizationId,
                 ':organization_name' => $resolvedName !== '' ? $resolvedName : null,
-                ':sender_id' => $senderId,
                 ':source' => $currentSource !== '' ? $currentSource : $normalizedSource,
                 ':updated_at' => $timestamp,
             ]);
@@ -1330,50 +1400,32 @@ final class SenderRepository
             return $organizationId;
         }
 
-        $ownsTransaction = !$this->pdo->inTransaction();
-        if ($ownsTransaction) {
-            $this->pdo->beginTransaction();
-        }
+        $insert = $this->pdo->prepare(
+            'INSERT INTO sender_organization_numbers (
+                organization_number,
+                organization_name,
+                sender_id,
+                source,
+                created_at,
+                updated_at
+            ) VALUES (
+                :organization_number,
+                :organization_name,
+                NULL,
+                :source,
+                :created_at,
+                :updated_at
+            )'
+        );
+        $insert->execute([
+            ':organization_number' => $normalizedNumber,
+            ':organization_name' => $normalizedName,
+            ':source' => $normalizedSource,
+            ':created_at' => $timestamp,
+            ':updated_at' => $timestamp,
+        ]);
 
-        try {
-            $senderId = $this->createIdentifierSender($this->senderNameForOrganizationNumber($normalizedNumber), $timestamp, $timestamp);
-            $insert = $this->pdo->prepare(
-                'INSERT INTO sender_organization_numbers (
-                    organization_number,
-                    organization_name,
-                    sender_id,
-                    source,
-                    created_at,
-                    updated_at
-                ) VALUES (
-                    :organization_number,
-                    :organization_name,
-                    :sender_id,
-                    :source,
-                    :created_at,
-                    :updated_at
-                )'
-            );
-            $insert->execute([
-                ':organization_number' => $normalizedNumber,
-                ':organization_name' => $normalizedName,
-                ':sender_id' => $senderId,
-                ':source' => $normalizedSource,
-                ':created_at' => $timestamp,
-                ':updated_at' => $timestamp,
-            ]);
-
-            $organizationId = (int) $this->pdo->lastInsertId();
-            if ($ownsTransaction) {
-                $this->pdo->commit();
-            }
-            return $organizationId;
-        } catch (\Throwable $e) {
-            if ($ownsTransaction && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
-            throw $e;
-        }
+        return (int) $this->pdo->lastInsertId();
     }
 
     public function observePaymentNumber(
@@ -1431,21 +1483,9 @@ final class SenderRepository
                 ? trim((string) $existing['source'])
                 : '';
             $currentConfidence = isset($existing['confidence']) ? (float) $existing['confidence'] : 1.0;
-            $senderId = isset($existing['sender_id']) && (int) $existing['sender_id'] > 0
-                ? (int) $existing['sender_id']
-                : 0;
-            if ($senderId < 1) {
-                $senderId = $this->createIdentifierSender(
-                    $this->senderNameForPaymentNumber($normalizedType, $normalizedNumber),
-                    is_string($existing['created_at'] ?? null) ? trim((string) $existing['created_at']) : null,
-                    is_string($existing['updated_at'] ?? null) ? trim((string) $existing['updated_at']) : null
-                );
-            }
-
             $update = $this->pdo->prepare(
                 'UPDATE sender_payment_numbers
-                SET sender_id = :sender_id,
-                    original_number = :original_number,
+                SET original_number = :original_number,
                     source = :source,
                     confidence = :confidence,
                     updated_at = :updated_at
@@ -1453,7 +1493,6 @@ final class SenderRepository
             );
             $update->execute([
                 ':id' => $paymentId,
-                ':sender_id' => $senderId,
                 ':original_number' => $currentOriginalNumber !== '' ? $currentOriginalNumber : $normalizedOriginalNumber,
                 ':source' => $currentSource !== '' ? $currentSource : $normalizedSource,
                 ':confidence' => max($currentConfidence, $confidence),
@@ -1463,58 +1502,40 @@ final class SenderRepository
             return $paymentId;
         }
 
-        $ownsTransaction = !$this->pdo->inTransaction();
-        if ($ownsTransaction) {
-            $this->pdo->beginTransaction();
-        }
+        $insert = $this->pdo->prepare(
+            'INSERT INTO sender_payment_numbers (
+                sender_id,
+                type,
+                number,
+                original_number,
+                requires_ocr,
+                source,
+                confidence,
+                created_at,
+                updated_at
+            ) VALUES (
+                NULL,
+                :type,
+                :number,
+                :original_number,
+                0,
+                :source,
+                :confidence,
+                :created_at,
+                :updated_at
+            )'
+        );
+        $insert->execute([
+            ':type' => $normalizedType,
+            ':number' => $normalizedNumber,
+            ':original_number' => $normalizedOriginalNumber,
+            ':source' => $normalizedSource,
+            ':confidence' => $confidence,
+            ':created_at' => $timestamp,
+            ':updated_at' => $timestamp,
+        ]);
 
-        try {
-            $senderId = $this->createIdentifierSender($this->senderNameForPaymentNumber($normalizedType, $normalizedNumber), $timestamp, $timestamp);
-            $insert = $this->pdo->prepare(
-                'INSERT INTO sender_payment_numbers (
-                    sender_id,
-                    type,
-                    number,
-                    original_number,
-                    requires_ocr,
-                    source,
-                    confidence,
-                    created_at,
-                    updated_at
-                ) VALUES (
-                    :sender_id,
-                    :type,
-                    :number,
-                    :original_number,
-                    0,
-                    :source,
-                    :confidence,
-                    :created_at,
-                    :updated_at
-                )'
-            );
-            $insert->execute([
-                ':sender_id' => $senderId,
-                ':type' => $normalizedType,
-                ':number' => $normalizedNumber,
-                ':original_number' => $normalizedOriginalNumber,
-                ':source' => $normalizedSource,
-                ':confidence' => $confidence,
-                ':created_at' => $timestamp,
-                ':updated_at' => $timestamp,
-            ]);
-
-            $paymentId = (int) $this->pdo->lastInsertId();
-            if ($ownsTransaction) {
-                $this->pdo->commit();
-            }
-            return $paymentId;
-        } catch (\Throwable $e) {
-            if ($ownsTransaction && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
-            throw $e;
-        }
+        return (int) $this->pdo->lastInsertId();
     }
 
     public function mergeSenders(int $targetSenderId, array $sourceSenderIds): array

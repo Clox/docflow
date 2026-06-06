@@ -86,7 +86,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <div id="selected-job-name" class="selected-job-name">Inget jobb markerat</div>
           <div id="selected-job-meta" class="selected-job-meta">Markera ett jobb i listan för att visa åtgärder.</div>
           <div id="selected-job-sender-unknown-section" class="selected-job-panel-section" hidden>
-            <div class="selected-job-panel-section-title">Okända avsändaruppgifter</div>
+            <div class="selected-job-panel-section-title">Okopplade uppgifter</div>
             <div id="selected-job-sender-unknown-info" class="selected-job-sender-info"></div>
           </div>
           <div id="selected-job-clients-section" class="selected-job-panel-section">
@@ -484,7 +484,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
   <template id="settings-template-senders">
     <h3>Avsändare</h3>
     <p>Redigera avsändare som lagras i databasen. Fälten här styr listan i väljaren för avsändare och vilka dokumentidentifierare som kan matchas mot avsändaren.</p>
-    <p>Om du tar bort en avsändare här tas även dess kopplade betalnummer bort ur databasen.</p>
+    <p>Om du tar bort en avsändare här ligger dess org.nr och betalnummer kvar som okopplade uppgifter.</p>
+    <div class="senders-tabs" role="tablist" aria-label="Avsändarvyer">
+      <button id="senders-tab-senders" class="senders-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="senders-view-senders">Avsändare</button>
+      <button id="senders-tab-unlinked" class="senders-tab" type="button" role="tab" aria-selected="false" aria-controls="senders-view-unlinked">Okopplade uppgifter</button>
+    </div>
     <div id="senders-view-senders" class="archive-view">
       <div id="senders-toolbar-section" class="settings-group senders-toolbar">
         <div class="senders-toolbar-group">
@@ -509,6 +513,13 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         </div>
         <button id="senders-add-row" type="button">Lägg till avsändare</button>
         <button id="senders-merge-selected" type="button" disabled>Slå ihop...</button>
+      </div>
+    </div>
+    <div id="senders-view-unlinked" class="archive-view hidden">
+      <div id="senders-unlinked-section" class="settings-group">
+        <h4>Okopplade uppgifter</h4>
+        <p>Org.nr och betalnummer som hittats i dokument men ännu inte kopplats till en avsändare.</p>
+        <div id="senders-unlinked-list" class="senders-unlinked-list"></div>
       </div>
     </div>
     <div id="sender-merge-overlay" class="modal-overlay hidden">

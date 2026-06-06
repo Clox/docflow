@@ -77,11 +77,6 @@ foreach ($payload['senders'] as $row) {
         continue;
     }
 
-    if ($name === '') {
-        json_response(['error' => 'Varje avsändare måste ha ett namn'], 400);
-        exit;
-    }
-
     $organizationNumbers = [];
     foreach ($organizationRows as $organizationRow) {
         $organizationId = isset($organizationRow['id']) && is_numeric($organizationRow['id'])
@@ -94,21 +89,14 @@ foreach ($payload['senders'] as $row) {
         $organizationNumberRaw = is_string($organizationRow['organizationNumber'] ?? null)
             ? trim((string) $organizationRow['organizationNumber'])
             : '';
-        $organizationNameRaw = is_string($organizationRow['organizationName'] ?? null)
-            ? trim((string) $organizationRow['organizationName'])
-            : '';
 
-        if ($organizationNumberRaw === '' && $organizationNameRaw === '') {
-            continue;
-        }
         if ($organizationNumberRaw === '') {
-            json_response(['error' => 'Organisationsnummer kräver ett nummer'], 400);
-            exit;
+            continue;
         }
 
         $organizationNumber = IdentifierNormalizer::normalizeOrgNumber($organizationNumberRaw);
         if ($organizationNumber === null) {
-            json_response(['error' => 'Ogiltigt organisationsnummer för avsändare: ' . $name], 400);
+            json_response(['error' => 'Ogiltigt organisationsnummer för avsändare'], 400);
             exit;
         }
 
@@ -121,7 +109,6 @@ foreach ($payload['senders'] as $row) {
         $organizationNumbers[] = [
             'id' => $organizationId,
             'organizationNumber' => $organizationNumber,
-            'organizationName' => $organizationNameRaw !== '' ? $organizationNameRaw : $name,
         ];
     }
 
@@ -147,7 +134,7 @@ foreach ($payload['senders'] as $row) {
             ? IdentifierNormalizer::normalizePlusgiro($numberRaw)
             : IdentifierNormalizer::normalizeBankgiro($numberRaw);
         if ($normalizedNumber === null) {
-            json_response(['error' => 'Ogiltigt betalnummer för avsändare: ' . $name], 400);
+            json_response(['error' => 'Ogiltigt betalnummer för avsändare'], 400);
             exit;
         }
 
@@ -171,7 +158,7 @@ foreach ($payload['senders'] as $row) {
 
     $normalized[] = [
         'id' => $id,
-        'name' => $name,
+        'name' => $name !== '' ? $name : null,
         'domain' => $domainRaw !== '' ? strtolower($domainRaw) : null,
         'kind' => $kindRaw !== '' ? $kindRaw : null,
         'notes' => $notesRaw !== '' ? $notesRaw : null,
@@ -273,24 +260,9 @@ try {
             ...$rowData,
         ];
     }
+    $originalPaymentRowsById = $existingPaymentRowsById;
+    $originalOrganizationRowsById = $existingOrganizationRowsById;
 
-    $submittedPaymentIds = [];
-    $submittedOrganizationIds = [];
-    foreach ($normalized as $row) {
-        foreach ($row['paymentNumbers'] as $paymentRow) {
-            if ($paymentRow['id'] !== null) {
-                $submittedPaymentIds[(int) $paymentRow['id']] = true;
-            }
-        }
-        foreach ($row['organizationNumbers'] as $organizationRow) {
-            if ($organizationRow['id'] !== null) {
-                $submittedOrganizationIds[(int) $organizationRow['id']] = true;
-            }
-        }
-    }
-
-    $deletePayment = $pdo->prepare('DELETE FROM sender_payment_numbers WHERE id = :id');
-    $deleteOrganization = $pdo->prepare('DELETE FROM sender_organization_numbers WHERE id = :id');
     $deleteRemovedSender = $pdo->prepare('DELETE FROM senders WHERE id = :id');
     $insertSender = $pdo->prepare(
         'INSERT INTO senders (
@@ -332,24 +304,29 @@ try {
     $insertOrganization = $pdo->prepare(
         'INSERT INTO sender_organization_numbers (
             organization_number,
-            organization_name,
             sender_id,
+            source,
             created_at,
             updated_at
         ) VALUES (
             :organization_number,
-            :organization_name,
             :sender_id,
+            :source,
             :created_at,
             :updated_at
         )'
     );
-    $updateOrganization = $pdo->prepare(
+    $linkOrganization = $pdo->prepare(
         'UPDATE sender_organization_numbers
         SET
-            organization_number = :organization_number,
-            organization_name = :organization_name,
             sender_id = :sender_id,
+            updated_at = :updated_at
+        WHERE id = :id'
+    );
+    $unlinkOrganization = $pdo->prepare(
+        'UPDATE sender_organization_numbers
+        SET
+            sender_id = NULL,
             updated_at = :updated_at
         WHERE id = :id'
     );
@@ -360,7 +337,6 @@ try {
             number,
             original_number,
             requires_ocr,
-            payee_name,
             source,
             confidence,
             created_at,
@@ -371,25 +347,23 @@ try {
             :number,
             :original_number,
             0,
-            :payee_name,
             :source,
             1,
             :created_at,
             :updated_at
         )'
     );
-    $updatePayment = $pdo->prepare(
+    $linkPayment = $pdo->prepare(
         'UPDATE sender_payment_numbers
         SET
             sender_id = :sender_id,
-            type = :type,
-            number = :number,
-            original_number = NULL,
-            requires_ocr = 0,
-            source = :source,
-            confidence = 1,
-            payee_name = :payee_name,
-            payee_lookup_status = NULL,
+            updated_at = :updated_at
+        WHERE id = :id'
+    );
+    $unlinkPayment = $pdo->prepare(
+        'UPDATE sender_payment_numbers
+        SET
+            sender_id = NULL,
             updated_at = :updated_at
         WHERE id = :id'
     );
@@ -412,49 +386,9 @@ try {
         ]);
     };
 
-    foreach ($existingPaymentRowsById as $paymentId => $paymentRow) {
-        if (isset($submittedPaymentIds[$paymentId])) {
-            continue;
-        }
-        $senderId = (int) ($paymentRow['senderId'] ?? 0);
-        if ($senderId < 1) {
-            continue;
-        }
-        if ($shouldTouchExistingSender($senderId)) {
-            $touchSender($senderId);
-        }
-        $deletePayment->execute([
-            ':id' => $paymentId,
-        ]);
-        unset($existingPaymentRowsById[$paymentId]);
-        $paymentKey = (string) ($paymentRow['type'] ?? '') . ':' . (string) ($paymentRow['number'] ?? '');
-        if (isset($existingPaymentsByKey[$paymentKey])) {
-            unset($existingPaymentsByKey[$paymentKey]);
-        }
-    }
-
-    foreach ($existingOrganizationRowsById as $organizationId => $organizationRow) {
-        if (isset($submittedOrganizationIds[$organizationId])) {
-            continue;
-        }
-        $senderId = (int) ($organizationRow['senderId'] ?? 0);
-        if ($senderId > 0) {
-            if ($shouldTouchExistingSender($senderId)) {
-                $touchSender($senderId);
-            }
-            $deleteOrganization->execute([
-                ':id' => $organizationId,
-            ]);
-            unset($existingOrganizationRowsById[$organizationId]);
-            unset($existingOrganizationsByNumber[$organizationRow['organizationNumber']]);
-        }
-    }
-
-    foreach ($existingSenderIds as $senderId => $_unused) {
-        if (!isset($submittedSenderIds[$senderId]) && !isset($claimedMergedSourceIds[$senderId])) {
-            $deleteRemovedSender->execute([':id' => $senderId]);
-        }
-    }
+    $intendedOrganizationAssignments = [];
+    $intendedPaymentAssignments = [];
+    $mergedSourceTargetIds = [];
 
     foreach ($normalized as $row) {
         $timestamp = date(DATE_ATOM);
@@ -487,50 +421,58 @@ try {
             $senderId = (int) $pdo->lastInsertId();
         }
 
+        foreach ($row['mergedSourceSenderIds'] as $sourceSenderId) {
+            if ($sourceSenderId > 0 && $sourceSenderId !== $senderId) {
+                $mergedSourceTargetIds[$sourceSenderId] = $senderId;
+            }
+        }
+
         foreach ($row['organizationNumbers'] as $organizationRow) {
             $organizationId = $organizationRow['id'];
             $organizationNumber = $organizationRow['organizationNumber'];
-            $organizationName = $organizationRow['organizationName'];
             $organizationTimestamp = date(DATE_ATOM);
             $previousSenderId = 0;
             $previousNumber = '';
 
-            if ($organizationId !== null && isset($existingOrganizationRowsById[$organizationId])) {
+            if (
+                $organizationId !== null
+                && isset($existingOrganizationRowsById[$organizationId])
+                && (string) ($existingOrganizationRowsById[$organizationId]['organizationNumber'] ?? '') === $organizationNumber
+            ) {
                 $previousSenderId = (int) ($existingOrganizationRowsById[$organizationId]['senderId'] ?? 0);
                 $previousNumber = (string) ($existingOrganizationRowsById[$organizationId]['organizationNumber'] ?? '');
-                $updateOrganization->execute([
+                $linkOrganization->execute([
                     ':id' => $organizationId,
-                    ':organization_number' => $organizationNumber,
-                    ':organization_name' => $organizationName,
                     ':sender_id' => $senderId,
                     ':updated_at' => $organizationTimestamp,
                 ]);
-            } elseif ($organizationId !== null) {
-                throw new RuntimeException('Organisationsnumret som skulle uppdateras finns inte längre.');
             } else {
                 $existingByNumber = $existingOrganizationsByNumber[$organizationNumber] ?? null;
                 if (is_array($existingByNumber)) {
                     $existingId = (int) ($existingByNumber['id'] ?? 0);
                     $existingSenderId = (int) ($existingByNumber['senderId'] ?? 0);
-                    $canClaimExistingRow = $existingId > 0 && (!isset($submittedSenderIds[$existingSenderId]) || isset($claimedMergedSourceIds[$existingSenderId]));
+                    $canClaimExistingRow = $existingId > 0
+                        && (
+                            $existingSenderId === $senderId
+                            || !isset($submittedSenderIds[$existingSenderId])
+                            || isset($claimedMergedSourceIds[$existingSenderId])
+                        );
                     if (!$canClaimExistingRow) {
                         throw new RuntimeException('Organisationsnummer måste vara unikt');
                     }
                     $organizationId = $existingId;
                     $previousSenderId = $existingSenderId;
                     $previousNumber = (string) ($existingByNumber['organizationNumber'] ?? '');
-                    $updateOrganization->execute([
+                    $linkOrganization->execute([
                         ':id' => $organizationId,
-                        ':organization_number' => $organizationNumber,
-                        ':organization_name' => $organizationName,
                         ':sender_id' => $senderId,
                         ':updated_at' => $organizationTimestamp,
                     ]);
                 } else {
                     $insertOrganization->execute([
                         ':organization_number' => $organizationNumber,
-                        ':organization_name' => $organizationName,
                         ':sender_id' => $senderId,
+                        ':source' => 'docflow_editor',
                         ':created_at' => $organizationTimestamp,
                         ':updated_at' => $organizationTimestamp,
                     ]);
@@ -539,16 +481,19 @@ try {
             }
 
             if ($organizationId !== null) {
+                $intendedOrganizationAssignments[$organizationId] = $senderId;
                 $existingOrganizationRowsById[$organizationId] = [
                     'senderId' => $senderId,
                     'organizationNumber' => $organizationNumber,
-                    'organizationName' => $organizationName ?? '',
+                    'organizationName' => is_string($existingOrganizationRowsById[$organizationId]['organizationName'] ?? null)
+                        ? (string) $existingOrganizationRowsById[$organizationId]['organizationName']
+                        : '',
                 ];
                 $existingOrganizationsByNumber[$organizationNumber] = [
                     'id' => $organizationId,
                     'senderId' => $senderId,
                     'organizationNumber' => $organizationNumber,
-                    'organizationName' => $organizationName ?? '',
+                    'organizationName' => $existingOrganizationRowsById[$organizationId]['organizationName'],
                 ];
             }
 
@@ -571,28 +516,32 @@ try {
             $previousType = '';
             $previousNumber = '';
 
-            if ($paymentId !== null && isset($existingPaymentRowsById[$paymentId])) {
+            if (
+                $paymentId !== null
+                && isset($existingPaymentRowsById[$paymentId])
+                && (string) ($existingPaymentRowsById[$paymentId]['type'] ?? '') === $paymentRow['type']
+                && (string) ($existingPaymentRowsById[$paymentId]['number'] ?? '') === $paymentRow['number']
+            ) {
                 $previousSenderId = (int) ($existingPaymentRowsById[$paymentId]['senderId'] ?? 0);
                 $previousType = (string) ($existingPaymentRowsById[$paymentId]['type'] ?? '');
                 $previousNumber = (string) ($existingPaymentRowsById[$paymentId]['number'] ?? '');
-                $updatePayment->execute([
+                $linkPayment->execute([
                     ':id' => $paymentId,
                     ':sender_id' => $senderId,
-                    ':type' => $paymentRow['type'],
-                    ':number' => $paymentRow['number'],
-                    ':payee_name' => $row['name'],
-                    ':source' => 'docflow_editor',
                     ':updated_at' => $paymentTimestamp,
                 ]);
-            } elseif ($paymentId !== null) {
-                throw new RuntimeException('Betalnumret som skulle uppdateras finns inte längre.');
             } else {
                 $paymentKey = $paymentRow['type'] . ':' . $paymentRow['number'];
                 $existingByKey = $existingPaymentsByKey[$paymentKey] ?? null;
                 if (is_array($existingByKey)) {
                     $existingId = (int) ($existingByKey['id'] ?? 0);
                     $existingSenderId = (int) ($existingByKey['senderId'] ?? 0);
-                    $canClaimExistingRow = $existingId > 0 && (!isset($submittedSenderIds[$existingSenderId]) || isset($claimedMergedSourceIds[$existingSenderId]));
+                    $canClaimExistingRow = $existingId > 0
+                        && (
+                            $existingSenderId === $senderId
+                            || !isset($submittedSenderIds[$existingSenderId])
+                            || isset($claimedMergedSourceIds[$existingSenderId])
+                        );
                     if (!$canClaimExistingRow) {
                         throw new RuntimeException('Betalnummer måste vara unikt');
                     }
@@ -600,13 +549,9 @@ try {
                     $previousSenderId = $existingSenderId;
                     $previousType = (string) ($existingByKey['type'] ?? '');
                     $previousNumber = (string) ($existingByKey['number'] ?? '');
-                    $updatePayment->execute([
+                    $linkPayment->execute([
                         ':id' => $paymentId,
                         ':sender_id' => $senderId,
-                        ':type' => $paymentRow['type'],
-                        ':number' => $paymentRow['number'],
-                        ':payee_name' => $row['name'],
-                        ':source' => 'docflow_editor',
                         ':updated_at' => $paymentTimestamp,
                     ]);
                 } else {
@@ -615,7 +560,6 @@ try {
                         ':type' => $paymentRow['type'],
                         ':number' => $paymentRow['number'],
                         ':original_number' => null,
-                        ':payee_name' => $row['name'],
                         ':source' => 'docflow_editor',
                         ':created_at' => $paymentTimestamp,
                         ':updated_at' => $paymentTimestamp,
@@ -625,9 +569,7 @@ try {
             }
 
             if ($paymentId !== null) {
-                if ($previousType !== '' && $previousNumber !== '') {
-                    unset($existingPaymentsByKey[$previousType . ':' . $previousNumber]);
-                }
+                $intendedPaymentAssignments[$paymentId] = $senderId;
                 $existingPaymentRowsById[$paymentId] = [
                     'senderId' => $senderId,
                     'type' => $paymentRow['type'],
@@ -654,13 +596,90 @@ try {
                 }
             }
         }
+    }
 
-        foreach ($row['mergedSourceSenderIds'] as $sourceSenderId) {
-            if ($sourceSenderId < 1 || $sourceSenderId === $senderId) {
-                continue;
-            }
-            $deleteRemovedSender->execute([':id' => $sourceSenderId]);
+    foreach ($originalOrganizationRowsById as $organizationId => $organizationRow) {
+        if (isset($intendedOrganizationAssignments[$organizationId])) {
+            continue;
         }
+        $originalSenderId = (int) ($organizationRow['senderId'] ?? 0);
+        if ($originalSenderId < 1) {
+            continue;
+        }
+
+        $targetSenderId = null;
+        if (isset($mergedSourceTargetIds[$originalSenderId])) {
+            $targetSenderId = (int) $mergedSourceTargetIds[$originalSenderId];
+        }
+
+        if ($targetSenderId !== null && $targetSenderId > 0) {
+            $timestamp = date(DATE_ATOM);
+            $linkOrganization->execute([
+                ':id' => $organizationId,
+                ':sender_id' => $targetSenderId,
+                ':updated_at' => $timestamp,
+            ]);
+            $touchSender($targetSenderId, $timestamp);
+            if ($shouldTouchExistingSender($originalSenderId)) {
+                $touchSender($originalSenderId, $timestamp);
+            }
+        } else {
+            $timestamp = date(DATE_ATOM);
+            $unlinkOrganization->execute([
+                ':id' => $organizationId,
+                ':updated_at' => $timestamp,
+            ]);
+            if ($shouldTouchExistingSender($originalSenderId)) {
+                $touchSender($originalSenderId, $timestamp);
+            }
+        }
+    }
+
+    foreach ($originalPaymentRowsById as $paymentId => $paymentRow) {
+        if (isset($intendedPaymentAssignments[$paymentId])) {
+            continue;
+        }
+        $originalSenderId = (int) ($paymentRow['senderId'] ?? 0);
+        if ($originalSenderId < 1) {
+            continue;
+        }
+
+        $targetSenderId = null;
+        if (isset($mergedSourceTargetIds[$originalSenderId])) {
+            $targetSenderId = (int) $mergedSourceTargetIds[$originalSenderId];
+        }
+
+        if ($targetSenderId !== null && $targetSenderId > 0) {
+            $timestamp = date(DATE_ATOM);
+            $linkPayment->execute([
+                ':id' => $paymentId,
+                ':sender_id' => $targetSenderId,
+                ':updated_at' => $timestamp,
+            ]);
+            $touchSender($targetSenderId, $timestamp);
+            if ($shouldTouchExistingSender($originalSenderId)) {
+                $touchSender($originalSenderId, $timestamp);
+            }
+        } else {
+            $timestamp = date(DATE_ATOM);
+            $unlinkPayment->execute([
+                ':id' => $paymentId,
+                ':updated_at' => $timestamp,
+            ]);
+            if ($shouldTouchExistingSender($originalSenderId)) {
+                $touchSender($originalSenderId, $timestamp);
+            }
+        }
+    }
+
+    foreach ($existingSenderIds as $senderId => $_unused) {
+        if (!isset($submittedSenderIds[$senderId]) && !isset($claimedMergedSourceIds[$senderId])) {
+            $deleteRemovedSender->execute([':id' => $senderId]);
+        }
+    }
+
+    foreach ($claimedMergedSourceIds as $sourceSenderId => $_unused) {
+        $deleteRemovedSender->execute([':id' => $sourceSenderId]);
     }
 
     $pdo->commit();
@@ -668,7 +687,7 @@ try {
     json_response([
         'ok' => true,
         'senders' => $repository->listEditorRows(),
-        'unlinkedIdentifiers' => [],
+        'unlinkedIdentifiers' => $repository->listUnlinkedIdentifierRows(),
     ]);
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {

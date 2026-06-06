@@ -11,7 +11,7 @@ try {
 
     json_response([
         'senders' => $repository->listEditorRows(),
-        'unlinkedIdentifiers' => [],
+        'unlinkedIdentifiers' => $repository->listUnlinkedIdentifierRows(),
     ]);
 } catch (Throwable $e) {
     json_response([

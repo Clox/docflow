@@ -214,6 +214,9 @@ let sendersSortOrderEl = null;
 let sendersExpandAllEl = null;
 let sendersCollapseAllEl = null;
 let sendersViewSendersEl = null;
+let sendersViewUnlinkedEl = null;
+let sendersTabSendersEl = null;
+let sendersTabUnlinkedEl = null;
 let sendersSelectedCountEl = null;
 let sendersClearSelectionEl = null;
 let sendersMergeSelectedEl = null;
@@ -932,7 +935,7 @@ function renderSenderSelect(senders) {
   const options = senders
     .map((sender) => ({
       value: sender && Number.isInteger(sender.id) && sender.id > 0 ? String(sender.id) : '',
-      label: sender && typeof sender.name === 'string' ? sender.name.trim() : ''
+      label: senderDisplayName(sender)
     }))
     .filter((sender) => sender.value !== '' && sender.label !== '');
   const signature = JSON.stringify({
@@ -11449,6 +11452,9 @@ function effectiveSenderId(job) {
   if (Number.isInteger(job.selectedSenderId) && job.selectedSenderId > 0 && isKnownSender(job.selectedSenderId)) {
     return String(job.selectedSenderId);
   }
+  if (senderUnknownObservationRowsForJob(job).length > 0) {
+    return '';
+  }
 
   const senderRows = senderLinkedRowsForJob(job);
   const firstSummarySender = senderRows.find((row) => {
@@ -11490,21 +11496,6 @@ function clientMatchRowsForJob(job) {
   return analysis && Array.isArray(analysis.clientMatches)
     ? analysis.clientMatches.filter((row) => row && typeof row === 'object')
     : [];
-}
-
-function selectedJobSenderObservationSpinnerPaused(observation) {
-  if (!observation || typeof observation !== 'object') {
-    return false;
-  }
-  const type = typeof observation.type === 'string' ? observation.type.trim().toLowerCase() : '';
-  if (type === 'organization_number') {
-    return currentSenderOrganizationLookupRemainingCount() > 0
-      && chromeExtensionRuntime.hasAnyAllabolagTab === false;
-  }
-  return (
-    (chromeExtensionRuntime.loginRequired === true || chromeExtensionRuntime.profileSelectionRequired === true)
-    && chromeExtensionRuntime.missingPayeeCount > 0
-  );
 }
 
 function setSelectedJobSenderSectionVisibility(sectionEl, visible) {
@@ -11966,6 +11957,277 @@ function renderSelectedJobClientSection(job) {
   }
 }
 
+function bestSenderCandidateIdForJob(job) {
+  const candidate = senderLinkedRowsForJob(job).find((row) => {
+    const senderId = Number.parseInt(String(row && row.senderId || ''), 10);
+    return Number.isInteger(senderId) && senderId > 0;
+  }) || null;
+  return candidate ? Number.parseInt(String(candidate.senderId), 10) : 0;
+}
+
+function openSelectedJobSenderLinkDialog(job) {
+  const jobId = job && typeof job.id === 'string' ? job.id : '';
+  if (jobId === '') {
+    return;
+  }
+
+  document.querySelectorAll('.selected-job-sender-link-overlay').forEach((existingOverlay) => {
+    existingOverlay.remove();
+  });
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay selected-job-sender-link-overlay';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'settings-dialog selected-job-sender-link-dialog';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-labelledby', 'selected-job-sender-link-title');
+
+  const content = document.createElement('section');
+  content.className = 'settings-content selected-job-sender-link-content';
+
+  const title = document.createElement('h3');
+  title.id = 'selected-job-sender-link-title';
+  title.textContent = 'Koppla okopplade uppgifter';
+
+  const observationsList = document.createElement('div');
+  observationsList.className = 'selected-job-sender-link-observations';
+
+  const waitingMessage = document.createElement('div');
+  waitingMessage.className = 'selected-job-sender-link-waiting';
+
+  const options = document.createElement('fieldset');
+  options.className = 'selected-job-sender-link-options';
+
+  const optionsLegend = document.createElement('legend');
+  optionsLegend.textContent = 'Åtgärd';
+
+  const createLabel = document.createElement('label');
+  createLabel.className = 'selected-job-sender-link-option';
+  const createRadio = document.createElement('input');
+  createRadio.type = 'radio';
+  createRadio.name = 'selected-job-sender-link-mode';
+  createRadio.value = 'create';
+  const createText = document.createElement('span');
+  createText.textContent = 'Skapa ny avsändare';
+  createLabel.append(createRadio, createText);
+
+  const existingLabel = document.createElement('label');
+  existingLabel.className = 'selected-job-sender-link-option';
+  const existingRadio = document.createElement('input');
+  existingRadio.type = 'radio';
+  existingRadio.name = 'selected-job-sender-link-mode';
+  existingRadio.value = 'existing';
+  const existingText = document.createElement('span');
+  existingText.textContent = 'Koppla till befintlig avsändare';
+  existingLabel.append(existingRadio, existingText);
+
+  const senderField = document.createElement('label');
+  senderField.className = 'selected-job-sender-link-sender-field';
+  const senderFieldLabel = document.createElement('span');
+  senderFieldLabel.textContent = 'Avsändare';
+  const senderSelect = document.createElement('select');
+  senderSelect.className = 'settings-select';
+  senderSelect.setAttribute('aria-label', 'Välj befintlig avsändare');
+  senderField.append(senderFieldLabel, senderSelect);
+
+  options.append(optionsLegend, createLabel, existingLabel, senderField);
+
+  const actions = document.createElement('div');
+  actions.className = 'panel-actions selected-job-sender-link-actions';
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'button-danger';
+  cancelButton.textContent = 'Avbryt';
+  const executeButton = document.createElement('button');
+  executeButton.type = 'button';
+  executeButton.className = 'button-success';
+  executeButton.textContent = 'Utför';
+  actions.append(cancelButton, executeButton);
+
+  content.append(title, observationsList, waitingMessage, options, actions);
+  dialog.appendChild(content);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  let submitting = false;
+  let refreshTimer = 0;
+  const bestCandidateId = bestSenderCandidateIdForJob(job);
+
+  const closeDialog = () => {
+    if (refreshTimer) {
+      window.clearInterval(refreshTimer);
+      refreshTimer = 0;
+    }
+    overlay.remove();
+  };
+
+  const populateSenderOptions = () => {
+    const previousValue = String(senderSelect.value || '');
+    senderSelect.replaceChildren();
+    (Array.isArray(state.senders) ? state.senders : []).forEach((sender) => {
+      const senderId = Number.parseInt(String(sender && sender.id || ''), 10);
+      if (!Number.isInteger(senderId) || senderId < 1) {
+        return;
+      }
+      const option = document.createElement('option');
+      option.value = String(senderId);
+      option.textContent = senderDisplayName(sanitizeSenderDraft(sender));
+      senderSelect.appendChild(option);
+    });
+    const preferredValue = previousValue || (bestCandidateId > 0 ? String(bestCandidateId) : '');
+    if (preferredValue !== '' && Array.from(senderSelect.options).some((option) => option.value === preferredValue)) {
+      senderSelect.value = preferredValue;
+    }
+  };
+
+  const currentObservations = () => senderUnknownObservationRowsForJob(findJobById(jobId));
+  const syncDialog = () => {
+    const observations = currentObservations();
+    observationsList.replaceChildren();
+
+    observations.forEach((observation) => {
+      const row = document.createElement('div');
+      row.className = 'selected-job-sender-link-observation';
+
+      const heading = document.createElement('div');
+      heading.className = 'selected-job-sender-link-observation-heading';
+      const type = typeof observation.type === 'string' ? observation.type.trim().toLowerCase() : '';
+      const rawValue = typeof observation.itemValue === 'string' ? observation.itemValue.trim() : '';
+      const normalizedValue = digitsOnly(observation.normalizedNumber || rawValue);
+      let itemLabel = 'Org.nr';
+      let itemValue = normalizedValue;
+      if (type === 'bankgiro') {
+        itemLabel = 'Bankgiro';
+        itemValue = formatSenderPaymentNumberForDisplay('bankgiro', normalizedValue);
+      } else if (type === 'plusgiro') {
+        itemLabel = 'Plusgiro';
+        itemValue = formatSenderPaymentNumberForDisplay('plusgiro', normalizedValue);
+      } else if (normalizedValue.length === 10) {
+        itemValue = `${normalizedValue.slice(0, 6)}-${normalizedValue.slice(6)}`;
+      }
+      heading.textContent = `${itemLabel} ${itemValue || rawValue}`.trim();
+
+      const lookupRow = document.createElement('div');
+      lookupRow.className = 'selected-job-sender-link-observation-detail';
+      const lookupName = typeof observation.lookupName === 'string' ? observation.lookupName.trim() : '';
+      const status = typeof observation.status === 'string' ? observation.status.trim() : 'pending';
+      lookupRow.textContent = `Namn: ${status === 'pending' ? 'Hämtar...' : (lookupName || 'Saknas')}`;
+
+      const statusRow = document.createElement('div');
+      statusRow.className = 'selected-job-sender-link-observation-status';
+      statusRow.textContent = `Status: ${status === 'pending' ? 'Hämtar...' : 'Klar'}`;
+
+      row.append(heading, lookupRow, statusRow);
+      observationsList.appendChild(row);
+    });
+
+    const pending = observations.some((observation) => (
+      String(observation && observation.status || 'pending').trim() === 'pending'
+    ));
+    waitingMessage.textContent = pending ? 'Väntar på uppslag av uppgifter...' : '';
+    waitingMessage.classList.toggle('hidden', !pending);
+
+    const useExisting = existingRadio.checked;
+    senderField.classList.toggle('hidden', !useExisting);
+    senderSelect.disabled = submitting || !useExisting;
+    executeButton.disabled = submitting
+      || observations.length < 1
+      || pending
+      || (useExisting && String(senderSelect.value || '').trim() === '');
+  };
+
+  populateSenderOptions();
+  if (bestCandidateId > 0 && senderSelect.options.length > 0) {
+    existingRadio.checked = true;
+  } else {
+    createRadio.checked = true;
+  }
+  syncDialog();
+
+  createRadio.addEventListener('change', syncDialog);
+  existingRadio.addEventListener('change', syncDialog);
+  senderSelect.addEventListener('change', syncDialog);
+  cancelButton.addEventListener('click', closeDialog);
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      closeDialog();
+    }
+  });
+  dialog.addEventListener('click', (event) => event.stopPropagation());
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeDialog();
+    }
+  });
+
+  executeButton.addEventListener('click', async () => {
+    const observations = currentObservations();
+    const pending = observations.some((observation) => (
+      String(observation && observation.status || 'pending').trim() === 'pending'
+    ));
+    const createSender = createRadio.checked;
+    const senderId = createSender ? null : (Number.parseInt(String(senderSelect.value || ''), 10) || null);
+    if (pending || observations.length < 1 || (!createSender && (!Number.isInteger(senderId) || senderId < 1))) {
+      syncDialog();
+      return;
+    }
+
+    submitting = true;
+    cancelButton.disabled = true;
+    syncDialog();
+    try {
+      const response = await fetch('/api/link-sender-identifiers.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          createSender,
+          senderId,
+          identifiers: observations,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload || payload.ok !== true || !Number.isInteger(payload.senderId)) {
+        throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte koppla uppgifterna.');
+      }
+      if (Array.isArray(payload.senders)) {
+        state = {
+          ...state,
+          senders: payload.senders.map(sanitizeSenderDraft),
+        };
+        renderSenderSelect(state.senders);
+      }
+      if (hasLoadedSenders && Array.isArray(payload.senders) && Array.isArray(payload.unlinkedIdentifiers)) {
+        sendersDraft = payload.senders.map(sanitizeSenderDraft);
+        sendersUnlinkedIdentifiers = payload.unlinkedIdentifiers.map(sanitizeUnlinkedSenderIdentifier);
+        sendersBaselineJson = normalizedSendersJson(sendersDraft);
+        renderSendersEditor();
+        updateSettingsActionButtons();
+      }
+      closeDialog();
+      await fetchState({ refreshSenders: true, force: true });
+      applySelectedSenderValue(String(payload.senderId));
+    } catch (error) {
+      submitting = false;
+      cancelButton.disabled = false;
+      syncDialog();
+      alert(error && error.message ? error.message : 'Kunde inte koppla uppgifterna.');
+    }
+  });
+
+  refreshTimer = window.setInterval(() => {
+    if (selectedJobId !== jobId || !document.body.contains(overlay)) {
+      closeDialog();
+      return;
+    }
+    populateSenderOptions();
+    syncDialog();
+  }, 500);
+  dialog.tabIndex = -1;
+  dialog.focus();
+}
+
 function renderSelectedJobSenderSection(job) {
   if (!(selectedJobSenderLinkedInfoEl instanceof HTMLElement) || !(selectedJobSenderUnknownInfoEl instanceof HTMLElement)) {
     return;
@@ -11984,31 +12246,24 @@ function renderSelectedJobSenderSection(job) {
   }
 
   if (observations.length > 0) {
-    const unknownList = document.createElement('ul');
-    unknownList.className = 'selected-job-sender-unknown-list';
-    observations.forEach((observation) => {
-      const item = document.createElement('li');
-      item.className = 'selected-job-sender-unknown-item';
+    const unknownWrap = document.createElement('div');
+    unknownWrap.className = 'selected-job-sender-unknown-wrap';
 
-      const text = document.createElement('span');
-      text.className = 'selected-job-sender-unknown-text';
-      const itemLabel = typeof observation.itemLabel === 'string' ? observation.itemLabel.trim() : '';
-      const itemValue = typeof observation.itemValue === 'string' ? observation.itemValue.trim() : '';
-      text.textContent = `${itemLabel} ${itemValue}`.trim();
-      item.appendChild(text);
+    const notice = document.createElement('div');
+    notice.className = 'selected-job-sender-unknown-notice';
+    notice.textContent = observations.length === 1
+      ? 'Dokumentet innehåller 1 okopplad uppgift som kan påverka avsändaren.'
+      : `Dokumentet innehåller ${observations.length} okopplade uppgifter som kan påverka avsändaren.`;
 
-      const status = typeof observation.status === 'string' ? observation.status.trim() : 'pending';
-      if (status === 'pending') {
-        const spinner = document.createElement('span');
-        spinner.className = 'spinner selected-job-sender-observation-spinner';
-        spinner.setAttribute('aria-hidden', 'true');
-        spinner.classList.toggle('is-paused', selectedJobSenderObservationSpinnerPaused(observation));
-        item.appendChild(spinner);
-      }
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'selected-job-sender-unknown-open';
+    openButton.textContent = 'Koppla...';
+    openButton.disabled = !selectedJobArchivingEditable(job);
+    openButton.addEventListener('click', () => openSelectedJobSenderLinkDialog(job));
 
-      unknownList.appendChild(item);
-    });
-    selectedJobSenderUnknownInfoEl.replaceChildren(unknownList);
+    unknownWrap.append(notice, openButton);
+    selectedJobSenderUnknownInfoEl.replaceChildren(unknownWrap);
     setSelectedJobSenderSectionVisibility(selectedJobSenderUnknownSectionEl, true);
   } else {
     selectedJobSenderUnknownInfoEl.replaceChildren();
@@ -12453,7 +12708,7 @@ function buildFilenameFieldValues(job, options = {}) {
   setValue('folder', archiveFolderDisplayName(folder));
   setValue('client', clientDirName);
   setValue('main_client', clientDirName);
-  setValue('sender', sender && sender.name);
+  setValue('sender', senderDisplayName(sender));
   setValue('bankgiro_name', senderPaymentNameForFilenameValues(sender, extractionFields, 'bankgiro'));
   setValue('plusgiro_name', senderPaymentNameForFilenameValues(sender, extractionFields, 'plusgiro'));
   setValue('organization_number_name', senderOrganizationNameForFilenameValues(sender, extractionFields));
@@ -12884,9 +13139,7 @@ function proposedResetTooltip(fieldKey, job) {
   }
   if (fieldKey === 'sender') {
     const sender = findSenderById(proposed.senderId);
-    const value = sender && typeof sender.name === 'string' && sender.name.trim() !== ''
-      ? sender.name.trim()
-      : (proposed.senderId ? String(proposed.senderId).trim() : '');
+    const value = sender ? senderDisplayName(sender) : (proposed.senderId ? String(proposed.senderId).trim() : '');
     return value ? `Återställ till föreslagen avsändare:\n${value}` : '';
   }
   if (fieldKey === 'folder') {
@@ -13052,10 +13305,14 @@ function updateArchiveAction(job) {
   });
 
   archiveActionEl.disabled = job.status !== 'ready' || missingFields.length > 0;
+  const hasUnknownSenderObservations = senderUnknownObservationRowsForJob(job).length > 0;
   archiveActionEl.title = archiveActionEl.disabled
     ? (job.status !== 'ready'
       ? 'Jobbet måste vara klart innan det kan arkiveras.'
+      : (hasUnknownSenderObservations && !effectiveSenderId(job)
+        ? 'Dokumentet innehåller okopplade uppgifter som kan påverka avsändaren.'
       : `Fyll i ${missingFields.join(', ')} innan jobbet kan arkiveras.`)
+      )
     : 'Flyttar review.pdf till vald huvudmans arkivmapp med angivet filnamn.';
 }
 
@@ -19642,6 +19899,9 @@ function bindSettingsPanelRefs(tabId) {
     sendersExpandAllEl = document.getElementById('senders-expand-all');
     sendersCollapseAllEl = document.getElementById('senders-collapse-all');
     sendersViewSendersEl = document.getElementById('senders-view-senders');
+    sendersViewUnlinkedEl = document.getElementById('senders-view-unlinked');
+    sendersTabSendersEl = document.getElementById('senders-tab-senders');
+    sendersTabUnlinkedEl = document.getElementById('senders-tab-unlinked');
     sendersSelectedCountEl = document.getElementById('senders-selected-count');
     sendersClearSelectionEl = document.getElementById('senders-clear-selection');
     sendersMergeSelectedEl = document.getElementById('senders-merge-selected');
@@ -19654,6 +19914,12 @@ function bindSettingsPanelRefs(tabId) {
       sendersSortOrder = String(sendersSortOrderEl.value || 'name');
     }
     setSendersPanelTab();
+    if (sendersTabSendersEl instanceof HTMLButtonElement) {
+      sendersTabSendersEl.addEventListener('click', () => setSendersPanelTab('senders'));
+    }
+    if (sendersTabUnlinkedEl instanceof HTMLButtonElement) {
+      sendersTabUnlinkedEl.addEventListener('click', () => setSendersPanelTab('unlinked'));
+    }
     sendersAddRowEl.addEventListener('click', () => {
       sendersDraft.push(defaultSenderDraft());
       renderSendersEditor();
@@ -21442,6 +21708,7 @@ function sanitizeSenderDraft(row) {
     uiKey,
     id,
     name: typeof input.name === 'string' ? input.name : '',
+    displayName: typeof input.displayName === 'string' ? input.displayName : '',
     domain: typeof input.domain === 'string' ? input.domain : '',
     kind: typeof input.kind === 'string' ? input.kind : '',
     notes: typeof input.notes === 'string' ? input.notes : '',
@@ -21453,6 +21720,52 @@ function sanitizeSenderDraft(row) {
         .filter((value) => Number.isInteger(value) && value > 0)))
       : []
   };
+}
+
+function senderDisplayName(row) {
+  const input = row && typeof row === 'object' ? row : {};
+  const manualName = typeof input.name === 'string' ? input.name.trim() : '';
+  if (manualName !== '') {
+    return manualName;
+  }
+
+  const organizationRows = Array.isArray(input.organizationNumbers) ? input.organizationNumbers : [];
+  for (const organization of organizationRows) {
+    const organizationName = typeof organization?.organizationName === 'string' ? organization.organizationName.trim() : '';
+    if (organizationName !== '') {
+      return organizationName;
+    }
+  }
+
+  const paymentRows = Array.isArray(input.paymentNumbers) ? input.paymentNumbers : [];
+  for (const payment of paymentRows) {
+    const payeeName = typeof payment?.payeeName === 'string' ? payment.payeeName.trim() : '';
+    if (payeeName !== '') {
+      return payeeName;
+    }
+  }
+
+  const firstOrganization = organizationRows.find((organization) => (
+    typeof organization?.organizationNumber === 'string' && organization.organizationNumber.trim() !== ''
+  ));
+  if (firstOrganization) {
+    return `Org.nr ${firstOrganization.organizationNumber.trim()}`;
+  }
+
+  const firstPayment = paymentRows.find((payment) => (
+    typeof payment?.number === 'string' && payment.number.trim() !== ''
+  ));
+  if (firstPayment) {
+    const type = String(firstPayment.type || '').trim().toLowerCase() === 'plusgiro' ? 'Plusgiro' : 'Bankgiro';
+    return `${type} ${formatSenderPaymentNumberForDisplay(String(firstPayment.type || ''), firstPayment.number)}`;
+  }
+
+  const apiDisplayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
+  if (apiDisplayName !== '') {
+    return apiDisplayName;
+  }
+
+  return 'Avsändare utan namn';
 }
 
 function sanitizeSenderOrganizationDraft(row) {
@@ -21515,13 +21828,14 @@ function sanitizeUnlinkedSenderIdentifier(row) {
     number: typeof input.number === 'string' ? input.number : '',
     normalizedNumber,
     name: typeof input.name === 'string' ? input.name : '',
+    updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt : '',
   };
 }
 
 function sortSenderLinkOptions(rows) {
   return [...rows].sort((left, right) => {
-    const leftName = String(left && left.name || '').trim().toLowerCase();
-    const rightName = String(right && right.name || '').trim().toLowerCase();
+    const leftName = String(left && left.label || '').trim().toLowerCase();
+    const rightName = String(right && right.label || '').trim().toLowerCase();
     if (leftName !== rightName) {
       if (leftName === '') {
         return 1;
@@ -21539,11 +21853,11 @@ function senderLinkOptions() {
   return sortSenderLinkOptions(
     sendersDraft
       .map((row) => sanitizeSenderDraft(row))
-      .filter((row) => String(row.name || '').trim() !== '')
       .map((row) => ({
         value: senderUiKey(row),
-        label: row.name,
+        label: senderDisplayName(row),
       }))
+      .filter((row) => row.label !== '')
   );
 }
 
@@ -21594,9 +21908,21 @@ function visibleUnlinkedSenderIdentifiers() {
   return sendersUnlinkedIdentifiers.filter((row) => !claimedKeys.has(row.key));
 }
 
-function setSendersPanelTab() {
+function setSendersPanelTab(tabId = 'senders') {
+  const normalizedTabId = tabId === 'unlinked' ? 'unlinked' : 'senders';
   if (sendersViewSendersEl) {
-    sendersViewSendersEl.classList.remove('hidden');
+    sendersViewSendersEl.classList.toggle('hidden', normalizedTabId !== 'senders');
+  }
+  if (sendersViewUnlinkedEl) {
+    sendersViewUnlinkedEl.classList.toggle('hidden', normalizedTabId !== 'unlinked');
+  }
+  if (sendersTabSendersEl instanceof HTMLButtonElement) {
+    sendersTabSendersEl.classList.toggle('is-active', normalizedTabId === 'senders');
+    sendersTabSendersEl.setAttribute('aria-selected', normalizedTabId === 'senders' ? 'true' : 'false');
+  }
+  if (sendersTabUnlinkedEl instanceof HTMLButtonElement) {
+    sendersTabUnlinkedEl.classList.toggle('is-active', normalizedTabId === 'unlinked');
+    sendersTabUnlinkedEl.setAttribute('aria-selected', normalizedTabId === 'unlinked' ? 'true' : 'false');
   }
 }
 
@@ -21680,9 +22006,6 @@ function focusSenderDraftRow(senderUiKeyValue) {
 
 function createSenderDraftFromUnlinkedIdentifier(identifier) {
   const draft = defaultSenderDraft();
-  if (String(identifier && identifier.name || '').trim() !== '') {
-    draft.name = String(identifier.name);
-  }
   applyUnlinkedIdentifierToSenderDraft(draft, identifier);
   return draft;
 }
@@ -21734,7 +22057,7 @@ function senderSortFieldValue(row, field) {
     return String(row.domain || '').trim().toLowerCase();
   }
 
-  return String(row.name || '').trim().toLowerCase();
+  return senderDisplayName(row).trim().toLowerCase();
 }
 
 function senderUiKey(row) {
@@ -22068,7 +22391,7 @@ function buildSimilarSenderGroups() {
 
   for (let leftIndex = 0; leftIndex < entries.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < entries.length; rightIndex += 1) {
-      const score = senderNameSimilarity(entries[leftIndex].row.name, entries[rightIndex].row.name);
+      const score = senderNameSimilarity(senderDisplayName(entries[leftIndex].row), senderDisplayName(entries[rightIndex].row));
       pairScores.set(`${leftIndex}:${rightIndex}`, score);
       if (score >= threshold) {
         adjacency.get(leftIndex).push({ index: rightIndex, score });
@@ -22679,7 +23002,7 @@ function labelRuleSenderOptions() {
   return sourceRows
     .map((sender) => ({
       value: Number.isInteger(sender && sender.id) && sender.id > 0 ? sender.id : null,
-      label: typeof sender?.name === 'string' ? sender.name.trim() : '',
+      label: senderDisplayName(sender),
     }))
     .filter((sender) => sender.value !== null && sender.label !== '' && !seen.has(sender.value) && seen.add(sender.value))
     .sort((left, right) => left.label.localeCompare(right.label, 'sv', { sensitivity: 'base', numeric: true }));
@@ -27045,7 +27368,6 @@ function buildSenderEditorNode(row, rowIndex) {
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
-  nameInput.placeholder = 'Ex: Region Värmland';
   nameInput.value = row.name;
   nameInput.addEventListener('input', () => {
     sendersDraft[rowIndex].name = nameInput.value;
@@ -27054,7 +27376,6 @@ function buildSenderEditorNode(row, rowIndex) {
 
   const domainInput = document.createElement('input');
   domainInput.type = 'text';
-  domainInput.placeholder = 'Ex: regionvarmland.se';
   domainInput.value = row.domain;
   domainInput.addEventListener('input', () => {
     sendersDraft[rowIndex].domain = domainInput.value;
@@ -27062,7 +27383,6 @@ function buildSenderEditorNode(row, rowIndex) {
   });
 
   const notesInput = document.createElement('textarea');
-  notesInput.placeholder = 'Anteckningar';
   notesInput.value = row.notes;
   notesInput.addEventListener('input', () => {
     sendersDraft[rowIndex].notes = notesInput.value;
@@ -27153,21 +27473,18 @@ function buildSenderEditorNode(row, rowIndex) {
 
     const organizationNumberInput = document.createElement('input');
     organizationNumberInput.type = 'text';
-    organizationNumberInput.placeholder = 'Ex: 212000-1850';
     organizationNumberInput.value = organization.organizationNumber;
     organizationNumberInput.addEventListener('input', () => {
       sendersDraft[rowIndex].organizationNumbers[organizationIndex].organizationNumber = organizationNumberInput.value;
+      sendersDraft[rowIndex].organizationNumbers[organizationIndex].organizationName = '';
+      organizationNameInput.value = '';
       updateSettingsActionButtons();
     });
 
     const organizationNameInput = document.createElement('input');
     organizationNameInput.type = 'text';
-    organizationNameInput.placeholder = 'Observerat namn';
     organizationNameInput.value = organization.organizationName;
-    organizationNameInput.addEventListener('input', () => {
-      sendersDraft[rowIndex].organizationNumbers[organizationIndex].organizationName = organizationNameInput.value;
-      updateSettingsActionButtons();
-    });
+    organizationNameInput.readOnly = true;
 
     const removeOrganizationButton = createTrashButton({
       variant: 'row',
@@ -27180,7 +27497,7 @@ function buildSenderEditorNode(row, rowIndex) {
     });
 
     organizationFields.appendChild(createFloatingField('Org.nr', organizationNumberInput));
-    organizationFields.appendChild(createFloatingField('Namn', organizationNameInput));
+    organizationFields.appendChild(createFloatingField('Lookup-namn', organizationNameInput));
     organizationFields.appendChild(removeOrganizationButton);
     organizationBody.appendChild(organizationFields);
     organizationRowEl.appendChild(organizationBody);
@@ -27227,15 +27544,18 @@ function buildSenderEditorNode(row, rowIndex) {
         numberInput.value
       );
       sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
+      sendersDraft[rowIndex].paymentNumbers[paymentIndex].payeeName = '';
+      payeeNameInput.value = '';
       updateSettingsActionButtons();
     });
 
     const numberInput = document.createElement('input');
     numberInput.type = 'text';
-    numberInput.placeholder = 'Ex: 5051-6822';
     numberInput.value = formatSenderPaymentNumberForDisplay(payment.type, payment.number);
     numberInput.addEventListener('input', () => {
       sendersDraft[rowIndex].paymentNumbers[paymentIndex].number = numberInput.value;
+      sendersDraft[rowIndex].paymentNumbers[paymentIndex].payeeName = '';
+      payeeNameInput.value = '';
       updateSettingsActionButtons();
     });
     numberInput.addEventListener('blur', () => {
@@ -27255,8 +27575,14 @@ function buildSenderEditorNode(row, rowIndex) {
       },
     });
 
+    const payeeNameInput = document.createElement('input');
+    payeeNameInput.type = 'text';
+    payeeNameInput.value = payment.payeeName;
+    payeeNameInput.readOnly = true;
+
     paymentFields.appendChild(createFloatingField('Typ', typeSelect));
     paymentFields.appendChild(createFloatingField('Nummer', numberInput));
+    paymentFields.appendChild(createFloatingField('Lookup-namn', payeeNameInput));
     paymentFields.appendChild(removePaymentButton);
     paymentBody.appendChild(paymentFields);
     paymentRow.appendChild(paymentBody);
@@ -27379,7 +27705,7 @@ function renderUnlinkedSenderIdentifiers() {
 
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  ['Typ', 'Nummer', 'Namn', 'Åtgärd'].forEach((label) => {
+  ['Typ', 'Nummer', 'Namn', 'Senast', 'Åtgärd'].forEach((label) => {
     const th = document.createElement('th');
     th.scope = 'col';
     th.textContent = label;
@@ -27404,6 +27730,13 @@ function renderUnlinkedSenderIdentifiers() {
     const nameCell = document.createElement('td');
     nameCell.className = 'senders-unlinked-name-cell';
     nameCell.textContent = String(row.name || '').trim() !== '' ? row.name : '—';
+
+    const updatedCell = document.createElement('td');
+    updatedCell.className = 'senders-unlinked-updated-cell';
+    const updatedAt = String(row.updatedAt || '').trim();
+    updatedCell.textContent = updatedAt !== ''
+      ? updatedAt.replace('T', ' ').replace(/([+-]\d{2}:\d{2}|Z)$/u, '').trim()
+      : '—';
 
     const actionCell = document.createElement('td');
     actionCell.className = 'senders-unlinked-action-cell';
@@ -27459,6 +27792,7 @@ function renderUnlinkedSenderIdentifiers() {
     tr.appendChild(typeCell);
     tr.appendChild(numberCell);
     tr.appendChild(nameCell);
+    tr.appendChild(updatedCell);
     tr.appendChild(actionCell);
     tbody.appendChild(tr);
   });
@@ -27559,7 +27893,6 @@ function renderSenderMergeEditor() {
   }));
 
   const notesInput = document.createElement('textarea');
-  notesInput.placeholder = 'Anteckningar';
   notesInput.value = draft.notes;
   notesInput.addEventListener('input', () => {
     senderMergeState.draft.notes = notesInput.value;
@@ -27592,14 +27925,14 @@ function renderSenderMergeEditor() {
     organizationNumberInput.value = organization.organizationNumber;
     organizationNumberInput.addEventListener('input', () => {
       senderMergeState.draft.organizationNumbers[organizationIndex].organizationNumber = organizationNumberInput.value;
+      senderMergeState.draft.organizationNumbers[organizationIndex].organizationName = '';
+      organizationNameInput.value = '';
     });
 
     const organizationNameInput = document.createElement('input');
     organizationNameInput.type = 'text';
     organizationNameInput.value = organization.organizationName;
-    organizationNameInput.addEventListener('input', () => {
-      senderMergeState.draft.organizationNumbers[organizationIndex].organizationName = organizationNameInput.value;
-    });
+    organizationNameInput.readOnly = true;
 
     const removeOrganizationButton = createTrashButton({
       variant: 'row',
@@ -27611,7 +27944,7 @@ function renderSenderMergeEditor() {
     });
 
     organizationFields.appendChild(createFloatingField('Org.nr', organizationNumberInput));
-    organizationFields.appendChild(createFloatingField('Namn', organizationNameInput));
+    organizationFields.appendChild(createFloatingField('Lookup-namn', organizationNameInput));
     organizationFields.appendChild(removeOrganizationButton);
     organizationBody.appendChild(organizationFields);
     organizationRowEl.appendChild(organizationBody);
@@ -27659,6 +27992,8 @@ function renderSenderMergeEditor() {
         numberInput.value
       );
       senderMergeState.draft.paymentNumbers[paymentIndex].number = numberInput.value;
+      senderMergeState.draft.paymentNumbers[paymentIndex].payeeName = '';
+      payeeNameInput.value = '';
     });
 
     const numberInput = document.createElement('input');
@@ -27666,6 +28001,8 @@ function renderSenderMergeEditor() {
     numberInput.value = formatSenderPaymentNumberForDisplay(payment.type, payment.number);
     numberInput.addEventListener('input', () => {
       senderMergeState.draft.paymentNumbers[paymentIndex].number = numberInput.value;
+      senderMergeState.draft.paymentNumbers[paymentIndex].payeeName = '';
+      payeeNameInput.value = '';
     });
     numberInput.addEventListener('blur', () => {
       const formatted = formatSenderPaymentNumberForDisplay(typeSelect.value, numberInput.value);
@@ -27682,8 +28019,14 @@ function renderSenderMergeEditor() {
       },
     });
 
+    const payeeNameInput = document.createElement('input');
+    payeeNameInput.type = 'text';
+    payeeNameInput.value = payment.payeeName;
+    payeeNameInput.readOnly = true;
+
     paymentFields.appendChild(createFloatingField('Typ', typeSelect));
     paymentFields.appendChild(createFloatingField('Nummer', numberInput));
+    paymentFields.appendChild(createFloatingField('Lookup-namn', payeeNameInput));
     paymentFields.appendChild(removePaymentButton);
     paymentBody.appendChild(paymentFields);
     paymentRow.appendChild(paymentBody);

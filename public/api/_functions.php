@@ -327,7 +327,8 @@ function load_sender_export_rows(): array
 
         $senderId = isset($row['id']) ? (int) $row['id'] : 0;
         $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
-        if ($senderId < 1 || $name === '') {
+        $displayName = is_string($row['displayName'] ?? null) ? trim((string) $row['displayName']) : '';
+        if ($senderId < 1) {
             continue;
         }
 
@@ -371,6 +372,7 @@ function load_sender_export_rows(): array
         $senders[] = [
             'id' => $senderId,
             'name' => $name,
+            'displayName' => $displayName,
             'domain' => is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '',
             'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
             'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
@@ -6433,6 +6435,19 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     }
     if (!$clientExists) {
         throw new RuntimeException('Ogiltig huvudman');
+    }
+    $extractedForSenderCheck = load_json_file($jobDir . DIRECTORY_SEPARATOR . 'extracted.json');
+    $senderSummaryForArchive = is_array($extractedForSenderCheck)
+        ? build_job_sender_summary($extractedForSenderCheck, $jobDir, null, $selectedSenderId > 0 ? $selectedSenderId : null)
+        : null;
+    $unknownSenderObservations = is_array($senderSummaryForArchive) && is_array($senderSummaryForArchive['unknownObservations'] ?? null)
+        ? array_values(array_filter(
+            $senderSummaryForArchive['unknownObservations'],
+            static fn (mixed $row): bool => is_array($row)
+        ))
+        : [];
+    if ($unknownSenderObservations !== [] && $selectedSenderId < 1) {
+        throw new RuntimeException('Dokumentet innehåller okopplade uppgifter som kan påverka avsändaren.');
     }
     if ($selectedSenderId < 1 || !sender_exists_by_id($senders, $selectedSenderId)) {
         throw new RuntimeException('Ogiltig avsändare');
@@ -12622,7 +12637,9 @@ function resolve_label_matching_sender_context(array $fieldValues): array
         if (!is_array($senderRow)) {
             continue;
         }
-        $name = is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '';
+        $name = is_string($senderRow['displayName'] ?? null) && trim((string) $senderRow['displayName']) !== ''
+            ? trim((string) $senderRow['displayName'])
+            : (is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '');
         if ($name === '') {
             continue;
         }
@@ -12683,7 +12700,9 @@ function resolve_label_matching_sender_context(array $fieldValues): array
         if (!is_array($senderRow)) {
             continue;
         }
-        $name = is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '';
+        $name = is_string($senderRow['displayName'] ?? null) && trim((string) $senderRow['displayName']) !== ''
+            ? trim((string) $senderRow['displayName'])
+            : (is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '');
         if ($name !== '') {
             $senderNamesById[(int) $senderId] = $name;
         }
@@ -23700,14 +23719,20 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 continue;
             }
             $observationKeys[$observationKey] = true;
+            $lookupName = is_string($observedRow['organizationName'] ?? null) ? trim((string) $observedRow['organizationName']) : '';
+            $normalizedValue = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($organizationNumber)
+                ?? preg_replace('/\D+/', '', $organizationNumber)
+                ?? $organizationNumber;
             $observations[] = [
                 'key' => $observationKey,
                 'type' => 'organization_number',
+                'kind' => 'organization',
+                'identifierId' => isset($observedRow['id']) ? (int) $observedRow['id'] : null,
                 'itemLabel' => 'ORG.NR',
-                'itemValue' => \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($organizationNumber)
-                    ?? preg_replace('/\D+/', '', $organizationNumber)
-                    ?? $organizationNumber,
-                'status' => 'pending',
+                'itemValue' => $normalizedValue,
+                'normalizedNumber' => $normalizedValue,
+                'lookupName' => $lookupName,
+                'status' => $lookupName !== '' ? 'resolved' : 'pending',
             ];
         }
     }
@@ -23726,12 +23751,19 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 continue;
             }
             $observationKeys[$observationKey] = true;
+            $lookupName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
+            $normalizedValue = \Docflow\Senders\IdentifierNormalizer::normalizeBankgiro($bankgiro) ?? preg_replace('/\D+/', '', $bankgiro) ?? $bankgiro;
             $observations[] = [
                 'key' => $observationKey,
                 'type' => 'bankgiro',
+                'kind' => 'payment',
+                'paymentType' => 'bankgiro',
+                'identifierId' => isset($observedRow['id']) ? (int) $observedRow['id'] : null,
                 'itemLabel' => 'BANKGIRO',
                 'itemValue' => $bankgiro,
-                'status' => $lookupStatus === 'not_found' ? 'not_found' : 'pending',
+                'normalizedNumber' => $normalizedValue,
+                'lookupName' => $lookupName,
+                'status' => $lookupName !== '' ? 'resolved' : ($lookupStatus === 'not_found' ? 'not_found' : 'pending'),
             ];
         }
     }
@@ -23750,12 +23782,19 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 continue;
             }
             $observationKeys[$observationKey] = true;
+            $lookupName = is_string($observedRow['payeeName'] ?? null) ? trim((string) $observedRow['payeeName']) : '';
+            $normalizedValue = \Docflow\Senders\IdentifierNormalizer::normalizePlusgiro($plusgiro) ?? preg_replace('/\D+/', '', $plusgiro) ?? $plusgiro;
             $observations[] = [
                 'key' => $observationKey,
                 'type' => 'plusgiro',
+                'kind' => 'payment',
+                'paymentType' => 'plusgiro',
+                'identifierId' => isset($observedRow['id']) ? (int) $observedRow['id'] : null,
                 'itemLabel' => 'PLUSGIRO',
                 'itemValue' => $plusgiro,
-                'status' => $lookupStatus === 'not_found' ? 'not_found' : 'pending',
+                'normalizedNumber' => $normalizedValue,
+                'lookupName' => $lookupName,
+                'status' => $lookupName !== '' ? 'resolved' : ($lookupStatus === 'not_found' ? 'not_found' : 'pending'),
             ];
         }
     }
@@ -23773,7 +23812,9 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
             continue;
         }
 
-        $name = is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '';
+        $name = is_string($senderRow['displayName'] ?? null) && trim((string) $senderRow['displayName']) !== ''
+            ? trim((string) $senderRow['displayName'])
+            : (is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '');
         if ($name === '') {
             continue;
         }
@@ -23974,6 +24015,7 @@ function observed_sender_organization_summary_row(string $organizationNumber): a
     }
 
     $cache[$normalized] = is_array($row) ? [
+        'id' => isset($row['id']) ? (int) $row['id'] : null,
         'organizationNumber' => is_string($row['organization_number'] ?? null) ? trim((string) $row['organization_number']) : $normalized,
         'organizationName' => is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '',
         'senderId' => isset($row['sender_id']) ? (int) $row['sender_id'] : null,
@@ -24013,6 +24055,7 @@ function observed_sender_payment_summary_row(string $type, string $number): arra
     }
 
     $cache[$cacheKey] = is_array($row) ? [
+        'id' => isset($row['id']) ? (int) $row['id'] : null,
         'type' => is_string($row['type'] ?? null) ? trim((string) $row['type']) : $normalizedType,
         'number' => is_string($row['number'] ?? null) ? trim((string) $row['number']) : $normalizedNumber,
         'payeeName' => is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '',
@@ -24198,6 +24241,19 @@ function sender_analysis_matches_from_summary(?array $senderSummary): array
 function single_preselected_sender_from_summary(?array $senderSummary): array
 {
     $matches = sender_analysis_matches_from_summary($senderSummary);
+    $unknownObservations = is_array($senderSummary) && is_array($senderSummary['unknownObservations'] ?? null)
+        ? array_values(array_filter(
+            $senderSummary['unknownObservations'],
+            static fn (mixed $row): bool => is_array($row)
+        ))
+        : [];
+    if ($unknownObservations !== []) {
+        return [
+            'matchedSenderId' => null,
+            'preselectedSender' => null,
+            'senderMatches' => $matches,
+        ];
+    }
     if ($matches === []) {
         return [
             'matchedSenderId' => null,
