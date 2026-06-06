@@ -124,6 +124,14 @@ async function findAllabolagTab() {
   };
 }
 
+async function prepareAllabolagLookupTab(searchUrl, preferredTab = null) {
+  if (preferredTab && typeof preferredTab.id === 'number' && preferredTab.id > 0) {
+    return chrome.tabs.update(preferredTab.id, { url: searchUrl, active: false });
+  }
+
+  return chrome.tabs.create({ url: searchUrl, active: false });
+}
+
 async function waitForTabComplete(tabId, timeoutMs = 15000) {
   const startedAt = Date.now();
   while ((Date.now() - startedAt) < timeoutMs) {
@@ -607,7 +615,6 @@ function normalizeOrganizationLookupResponse(organizationNumber, result) {
 async function handlePing() {
   const manifest = chrome.runtime.getManifest();
   const swedbank = await findSwedbankSessionTab();
-  const allabolag = await findAllabolagTab();
   const payload = {
     ok: true,
     type: 'docflow.pong',
@@ -615,7 +622,6 @@ async function handlePing() {
     extensionId: chrome.runtime.id,
     swedbankSessionAvailable: swedbank.sessionAvailable === true,
     hasAnySwedbankTab: !!swedbank.tab,
-    hasAnyAllabolagTab: !!allabolag.tab,
   };
   logInfo('ping', payload);
   return payload;
@@ -724,90 +730,57 @@ async function handleLookupOrganization(message) {
   }
 
   const allabolag = await findAllabolagTab();
-  const candidateTabs = Array.isArray(allabolag.tabs) ? allabolag.tabs : [];
+  const searchUrl = `${DOCFLOW_ALLABOLAG_SEARCH_BASE}${encodeURIComponent(organizationNumber)}`;
   logInfo('organization lookup requested', {
     organizationNumber,
     hasAnyAllabolagTab: !!allabolag.tab,
-    tabIds: candidateTabs.map((tab) => tab.id).filter((id) => typeof id === 'number'),
+    tabIds: (Array.isArray(allabolag.tabs) ? allabolag.tabs : [])
+      .map((tab) => tab.id)
+      .filter((id) => typeof id === 'number'),
   });
-  if (candidateTabs.length < 1) {
-    const payload = {
-      ok: false,
-      errorCode: 'ALLABOLAG_TAB_REQUIRED',
-      message: 'Allabolag.se behöver vara öppet för att hämta namn för organisationsnummer.',
-      openRequired: true,
-    };
-    logWarn('organization lookup aborted: no Allabolag tab', payload);
-    return payload;
-  }
 
-  const tab = candidateTabs[0];
-  if (typeof tab?.id !== 'number' || tab.id < 1) {
-    return {
-      ok: false,
-      errorCode: 'ALLABOLAG_TAB_REQUIRED',
-      message: 'Allabolag.se behöver vara öppet för att hämta namn för organisationsnummer.',
-      openRequired: true,
-    };
-  }
-
-  const searchUrl = `${DOCFLOW_ALLABOLAG_SEARCH_BASE}${encodeURIComponent(organizationNumber)}`;
-  try {
-    await chrome.tabs.update(tab.id, { url: searchUrl });
-    await waitForTabComplete(tab.id);
-    const result = await executeOrganizationLookupInTab(tab.id, { organizationNumber });
-    const normalized = normalizeOrganizationLookupResponse(organizationNumber, result);
-    logInfo('organization lookup tab result', {
-      tabId: tab.id,
-      ok: normalized.ok === true,
-      errorCode: normalized.errorCode || '',
-      message: normalized.message || '',
-      organizationName: normalized.organizationName || '',
-    });
-    return normalized;
-  } catch (error) {
-    if (isRecoverableTabControlError(error)) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const preferredTab = attempt === 0 ? allabolag.tab : null;
+      const tab = await prepareAllabolagLookupTab(searchUrl, preferredTab);
+      if (typeof tab?.id !== 'number' || tab.id < 1) {
+        throw new Error('Allabolag-fliken kunde inte skapas.');
+      }
+      await waitForTabComplete(tab.id);
+      const result = await executeOrganizationLookupInTab(tab.id, { organizationNumber });
+      const normalized = normalizeOrganizationLookupResponse(organizationNumber, result);
+      logInfo('organization lookup tab result', {
+        tabId: tab.id,
+        openedAutomatically: !preferredTab,
+        ok: normalized.ok === true,
+        errorCode: normalized.errorCode || '',
+        message: normalized.message || '',
+        organizationName: normalized.organizationName || '',
+      });
+      return normalized;
+    } catch (error) {
+      if (attempt === 0 && isRecoverableTabControlError(error)) {
+        logWarn('organization lookup tab disappeared; retrying with a new tab', {
+          organizationNumber,
+          message: error instanceof Error ? error.message : String(error || 'Unknown error'),
+        });
+        continue;
+      }
       const payload = {
         ok: false,
-        errorCode: 'ALLABOLAG_TAB_REQUIRED',
-        message: 'Allabolag.se behöver öppnas igen för att hämta namn för organisationsnummer.',
-        openRequired: true,
+        errorCode: 'ORG_LOOKUP_FAILED',
+        message: error instanceof Error ? error.message : String(error || 'Allabolag-uppslaget misslyckades.'),
       };
-      logWarn('organization lookup needs reopened Allabolag tab', {
-        organizationNumber,
-        message: error instanceof Error ? error.message : String(error || 'Unknown error'),
-      });
+      logError('organization lookup failed', payload);
       return payload;
     }
-    const payload = {
-      ok: false,
-      errorCode: 'ORG_LOOKUP_FAILED',
-      message: error instanceof Error ? error.message : String(error || 'Allabolag-uppslaget misslyckades.'),
-    };
-    logError('organization lookup failed', payload);
-    return payload;
-  }
-}
-
-async function handleOpenAllabolagSearch(message) {
-  const organizationNumber = digitsOnly(message?.organizationNumber);
-  if (organizationNumber === '') {
-    return {
-      ok: false,
-      errorCode: 'INVALID_ORGANIZATION_NUMBER',
-      message: 'Organisationsnummer saknas.',
-    };
   }
 
-  const searchUrl = `${DOCFLOW_ALLABOLAG_SEARCH_BASE}${encodeURIComponent(organizationNumber)}`;
-  const allabolag = await findAllabolagTab();
-  if (allabolag.tab && typeof allabolag.tab.id === 'number') {
-    await chrome.tabs.update(allabolag.tab.id, { url: searchUrl });
-    return { ok: true, action: 'focus', tabId: allabolag.tab.id, url: searchUrl };
-  }
-
-  const createdTab = await chrome.tabs.create({ url: searchUrl, active: false });
-  return { ok: true, action: 'open', tabId: createdTab?.id || null, url: searchUrl };
+  return {
+    ok: false,
+    errorCode: 'ORG_LOOKUP_FAILED',
+    message: 'Allabolag-uppslaget misslyckades.',
+  };
 }
 
 chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) => {
@@ -825,9 +798,6 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
     }
     if (type === 'docflow.openSwedbankLogin') {
       return handleOpenLogin();
-    }
-    if (type === 'docflow.openAllabolagSearch') {
-      return handleOpenAllabolagSearch(message);
     }
     return {
       ok: false,

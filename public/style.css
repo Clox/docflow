@@ -592,6 +592,12 @@ body.is-resizing-sidebar {
   color: #92400e;
 }
 
+.selected-job-sender-lookup-status-badge.is-queued {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+}
+
 .selected-job-sender-lookup-status-badge.is-failed {
   border-color: #fecaca;
   background: #fef2f2;

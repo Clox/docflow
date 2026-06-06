@@ -730,7 +730,6 @@ let chromeExtensionRuntime = {
   organizationLookupLastError: '',
   swedbankSessionAvailable: null,
   hasAnySwedbankTab: false,
-  hasAnyAllabolagTab: false,
   loginRequired: false,
   profileSelectionRequired: false,
   missingOrganizationCount: 0,
@@ -6059,7 +6058,6 @@ async function pingChromeExtension(options = {}) {
     const swedbankSessionAvailable = payload.swedbankSessionAvailable === true;
     const pendingPayeeLookups = currentSenderPayeeLookupRemainingCount();
     const pendingOrganizationLookups = currentSenderOrganizationLookupRemainingCount();
-    const hasAnyAllabolagTab = payload.hasAnyAllabolagTab === true;
     setChromeExtensionRuntime({
       status: nextStatus,
       version: payload.version.trim(),
@@ -6067,7 +6065,6 @@ async function pingChromeExtension(options = {}) {
       organizationLookupLastError: '',
       swedbankSessionAvailable,
       hasAnySwedbankTab: payload.hasAnySwedbankTab === true,
-      hasAnyAllabolagTab,
       loginRequired: swedbankSessionAvailable
         ? false
         : (chromeExtensionRuntime.loginRequired === true && pendingPayeeLookups > 0),
@@ -6100,7 +6097,6 @@ async function pingChromeExtension(options = {}) {
       organizationLookupLastError: '',
       swedbankSessionAvailable: null,
       hasAnySwedbankTab: false,
-      hasAnyAllabolagTab: false,
       profileSelectionRequired: false,
     });
   } finally {
@@ -6130,7 +6126,7 @@ function shouldRetrySwedbankLookupAfterLogin() {
     && currentSenderPayeeLookupRemainingCount() > 0;
 }
 
-function shouldRetryOrganizationLookupAfterOpen() {
+function shouldRetryOrganizationLookup() {
   return chromeExtensionIsUsable()
     && currentSenderOrganizationLookupRemainingCount() > 0;
 }
@@ -6196,12 +6192,6 @@ function syncChromeExtensionOrganizationQueueRuntimeFromState() {
   });
 }
 
-function shouldShowAllabolagOpenNotice() {
-  return chromeExtensionRuntime.status === 'installed'
-    && currentSenderOrganizationLookupRemainingCount() > 0
-    && chromeExtensionRuntime.hasAnyAllabolagTab === false;
-}
-
 function maybeStartChromeExtensionOrganizationLookup() {
   if (chromeExtensionOrganizationLookupInFlight || !chromeExtensionIsUsable()) {
     return;
@@ -6210,13 +6200,6 @@ function maybeStartChromeExtensionOrganizationLookup() {
   const remainingCount = currentSenderOrganizationLookupRemainingCount();
   const item = currentSenderOrganizationLookupQueueItem();
   if (remainingCount < 1 || !item) {
-    return;
-  }
-  if (chromeExtensionRuntime.hasAnyAllabolagTab === false) {
-    setChromeExtensionRuntime({
-      missingOrganizationCount: remainingCount,
-      organizationLookupLastError: '',
-    });
     return;
   }
 
@@ -6281,10 +6264,6 @@ async function processMissingOrganizationNames() {
     return;
   }
 
-  if (chromeExtensionRuntime.hasAnyAllabolagTab === false) {
-    return;
-  }
-
   chromeExtensionOrganizationLookupInFlight = true;
   renderSelectedJobSenderSection(findJobById(selectedJobId));
   let continueQueue = false;
@@ -6295,26 +6274,17 @@ async function processMissingOrganizationNames() {
     });
 
     if (!extensionPayload || extensionPayload.ok !== true) {
-      const openRequired = extensionPayload && extensionPayload.openRequired === true;
-      if (!openRequired) {
-        const savePayload = await saveOrganizationLookupFailure(
-          item,
-          extensionPayload && extensionPayload.errorCode,
-          extensionPayload && extensionPayload.message
-        );
-        setChromeExtensionRuntime({
-          missingOrganizationCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
-          organizationLookupLastError: '',
-        });
-        await fetchState({ refreshSenders: true, force: true, syncTransport: false });
-        continueQueue = true;
-        return;
-      }
+      const savePayload = await saveOrganizationLookupFailure(
+        item,
+        extensionPayload && extensionPayload.errorCode,
+        extensionPayload && extensionPayload.message
+      );
       setChromeExtensionRuntime({
-        hasAnyAllabolagTab: false,
-        missingOrganizationCount: remainingCount,
+        missingOrganizationCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
         organizationLookupLastError: '',
       });
+      await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+      continueQueue = true;
       return;
     }
 
@@ -6359,7 +6329,6 @@ async function processMissingOrganizationNames() {
     }
 
     setChromeExtensionRuntime({
-      hasAnyAllabolagTab: true,
       missingOrganizationCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
       organizationLookupLastError: '',
     });
@@ -6379,34 +6348,6 @@ async function processMissingOrganizationNames() {
         maybeStartChromeExtensionOrganizationLookup();
       });
     }
-  }
-}
-
-async function openAllabolagLookupFlow() {
-  const item = currentSenderOrganizationLookupQueueItem();
-  if (!item) {
-    return;
-  }
-
-  try {
-    const payload = await sendMessageToChromeExtension({
-      type: 'docflow.openAllabolagSearch',
-      organizationNumber: item.normalizedOrganizationNumber || item.organizationNumber,
-    });
-    if (!payload || payload.ok !== true) {
-      throw new Error(payload && typeof payload.message === 'string' ? payload.message : 'Kunde inte öppna allabolag.se.');
-    }
-    setChromeExtensionRuntime({
-      hasAnyAllabolagTab: true,
-      organizationLookupLastError: '',
-    });
-    window.setTimeout(() => {
-      pingChromeExtension().finally(() => {
-        maybeStartChromeExtensionOrganizationLookup();
-      });
-    }, 1200);
-  } catch (error) {
-    alert(error instanceof Error ? error.message : 'Kunde inte öppna allabolag.se.');
   }
 }
 
@@ -6875,8 +6816,6 @@ function collectAppNoticeDescriptors() {
       chromeExtensionRuntime.loginRequired === true
       || chromeExtensionRuntime.hasAnySwedbankTab === false
     );
-  const showAllabolagOpenNotice = shouldShowAllabolagOpenNotice();
-
   if (state.archivingRules && state.archivingRules.hasPendingArchivedUpdates === true) {
     notices.push({
       kind: 'warning',
@@ -6938,18 +6877,7 @@ function collectAppNoticeDescriptors() {
     });
   }
 
-  if (showAllabolagOpenNotice) {
-    notices.push({
-      kind: 'warning',
-      text: 'Allabolag.se behöver vara öppet för att hämta namn för organisationsnummer.',
-      action: {
-        label: 'Öppna allabolag.se',
-        onClick: () => {
-          openAllabolagLookupFlow();
-        }
-      }
-    });
-  } else if (
+  if (
     chromeExtensionRuntime.status === 'installed'
     && pendingOrganizationLookups > 0
     && chromeExtensionRuntime.organizationLookupLastError
@@ -11635,21 +11563,22 @@ function senderObservationLookupPresentation(observation) {
     };
   }
 
+  if (isOrganization) {
+    return {
+      kind: 'queued',
+      text: 'Köad',
+      title: '',
+      icon: '⏳',
+      active: false,
+    };
+  }
+
   if (!chromeExtensionIsUsable()) {
     return {
       kind: 'waiting',
       text: 'Väntar på Chrome-tillägget',
       title: '',
       icon: '◷',
-      active: false,
-    };
-  }
-  if (isOrganization && chromeExtensionRuntime.hasAnyAllabolagTab === false) {
-    return {
-      kind: 'waiting',
-      text: 'Väntar på att Allabolag öppnas',
-      title: '',
-      icon: '↗',
       active: false,
     };
   }
@@ -35954,7 +35883,7 @@ document.addEventListener('visibilitychange', () => {
       maybeStartChromeExtensionPayeeLookup();
     });
   }
-  if (shouldRetryOrganizationLookupAfterOpen()) {
+  if (shouldRetryOrganizationLookup()) {
     pingChromeExtension().finally(() => {
       maybeStartChromeExtensionOrganizationLookup();
     });
@@ -35969,7 +35898,7 @@ window.addEventListener('focus', () => {
       maybeStartChromeExtensionPayeeLookup();
     });
   }
-  if (shouldRetryOrganizationLookupAfterOpen()) {
+  if (shouldRetryOrganizationLookup()) {
     pingChromeExtension().finally(() => {
       maybeStartChromeExtensionOrganizationLookup();
     });
