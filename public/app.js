@@ -11588,6 +11588,7 @@ function senderObservationLookupPresentation(observation) {
       text: 'Väntar på profilval',
       title: '',
       icon: '🔑',
+      action: 'swedbank-login',
       active: false,
     };
   }
@@ -11603,6 +11604,7 @@ function senderObservationLookupPresentation(observation) {
       text: 'Väntar på inloggning',
       title: '',
       icon: '🔑',
+      action: 'swedbank-login',
       active: false,
     };
   }
@@ -11617,8 +11619,17 @@ function senderObservationLookupPresentation(observation) {
 }
 
 function createSenderLookupStatusBadge(presentation) {
-  const badge = document.createElement('span');
+  const isActionable = presentation.action === 'swedbank-login';
+  const badge = document.createElement(isActionable ? 'button' : 'span');
   badge.className = `selected-job-sender-lookup-status-badge is-${presentation.kind}`;
+  if (isActionable) {
+    badge.type = 'button';
+    badge.classList.add('is-actionable');
+    badge.setAttribute('aria-label', `${presentation.text}. Öppna Swedbank.`);
+    badge.addEventListener('click', () => {
+      openSwedbankLoginFlow();
+    });
+  }
   if (presentation.title !== '') {
     badge.title = presentation.title;
   }

@@ -565,6 +565,7 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-sender-lookup-status-badge {
+  font-family: inherit;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -578,6 +579,20 @@ body.is-resizing-sidebar {
   font-size: 11px;
   font-weight: 600;
   line-height: 1.35;
+}
+
+.selected-job-sender-lookup-status-badge.is-actionable {
+  cursor: pointer;
+}
+
+.selected-job-sender-lookup-status-badge.is-actionable:hover {
+  border-color: #f59e0b;
+  background: #fef3c7;
+}
+
+.selected-job-sender-lookup-status-badge.is-actionable:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
 }
 
 .selected-job-sender-lookup-status-badge.is-running {
