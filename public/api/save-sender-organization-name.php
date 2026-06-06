@@ -34,6 +34,20 @@ if ($organizationName !== null && !is_string($organizationName)) {
     exit;
 }
 
+$lookupStatus = is_string($payload['lookupStatus'] ?? null)
+    ? trim(strtolower((string) $payload['lookupStatus']))
+    : '';
+$lookupErrorCode = is_string($payload['lookupErrorCode'] ?? null)
+    ? trim((string) $payload['lookupErrorCode'])
+    : '';
+$lookupErrorMessage = is_string($payload['lookupErrorMessage'] ?? null)
+    ? trim((string) $payload['lookupErrorMessage'])
+    : '';
+if ($lookupStatus !== '' && !in_array($lookupStatus, ['resolved', 'failed'], true)) {
+    json_response(['error' => 'Unsupported lookupStatus'], 400);
+    exit;
+}
+
 $alternativeNames = [];
 if (array_key_exists('alternativeNames', $payload)) {
     if (!is_array($payload['alternativeNames'])) {
@@ -62,14 +76,19 @@ try {
         throw new RuntimeException('Sender repository is unavailable.');
     }
 
-    $resolved = $repository->resolveOrganizationName($organizationId, $organizationName, $alternativeNames);
+    $resolved = $lookupStatus === 'failed'
+        ? $repository->failOrganizationNameLookup($organizationId, $lookupErrorCode, $lookupErrorMessage)
+        : $repository->resolveOrganizationName($organizationId, $organizationName, $alternativeNames);
     $config = load_config();
     $followup = [
         'affectedJobIds' => [],
         'markedOutdatedJobIds' => [],
         'autoReprocessedJobIds' => [],
     ];
-    if (($resolved['senderId'] ?? null) !== null) {
+    if (
+        ($resolved['senderId'] ?? null) !== null
+        && ($resolved['lookupStatus'] ?? ($lookupStatus !== '' ? $lookupStatus : 'resolved')) === 'resolved'
+    ) {
         $followup = handle_resolved_sender_identifier_followups(
             $config,
             'organization_number',
@@ -82,6 +101,9 @@ try {
         'ok' => true,
         'organizationId' => $organizationId,
         'organizationName' => $resolved['organizationName'] ?? null,
+        'lookupStatus' => $resolved['lookupStatus'] ?? ($lookupStatus !== '' ? $lookupStatus : 'resolved'),
+        'lookupErrorCode' => $resolved['lookupErrorCode'] ?? null,
+        'lookupErrorMessage' => $resolved['lookupErrorMessage'] ?? null,
         'alternativeNames' => is_array($resolved['alternativeNames'] ?? null) ? $resolved['alternativeNames'] : [],
         'senderId' => isset($resolved['senderId']) ? $resolved['senderId'] : null,
         'followup' => $followup,

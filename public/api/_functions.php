@@ -6437,6 +6437,19 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
         throw new RuntimeException('Ogiltig huvudman');
     }
     $extractedForSenderCheck = load_json_file($jobDir . DIRECTORY_SEPARATOR . 'extracted.json');
+    $actualSenderDataValues = document_metadata_actual_data_values($jobId);
+    if (!is_array($actualSenderDataValues) && array_key_exists('selectedExtractionFieldValues', $job)) {
+        $actualSenderDataValues = document_actual_data_values_from_selected(
+            $job,
+            normalize_stored_job_extraction_field_values($job['selectedExtractionFieldValues'])
+        );
+    }
+    if (is_array($extractedForSenderCheck)) {
+        $extractedForSenderCheck = sender_summary_extracted_with_actual_data_values(
+            $extractedForSenderCheck,
+            $actualSenderDataValues
+        );
+    }
     $senderSummaryForArchive = is_array($extractedForSenderCheck)
         ? build_job_sender_summary($extractedForSenderCheck, $jobDir, null, $selectedSenderId > 0 ? $selectedSenderId : null)
         : null;
@@ -23666,6 +23679,17 @@ function sender_summary_text_contains(string $haystack, string $needle): bool
     return str_contains($haystack, $normalizedNeedle);
 }
 
+function sender_summary_extracted_with_actual_data_values(array $extracted, ?array $actualValues): array
+{
+    if (!is_array($actualValues)) {
+        return $extracted;
+    }
+
+    $next = $extracted;
+    $next['extractionFields'] = auto_archiving_fields_from_document_actual_data_values($actualValues);
+    return $next;
+}
+
 function build_job_sender_summary(?array $extracted, string $jobDir, ?int $matchedSenderId, ?int $selectedSenderId): ?array
 {
     if (!is_array($extracted)) {
@@ -23720,6 +23744,7 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
             }
             $observationKeys[$observationKey] = true;
             $lookupName = is_string($observedRow['organizationName'] ?? null) ? trim((string) $observedRow['organizationName']) : '';
+            $lookupStatus = is_string($observedRow['lookupStatus'] ?? null) ? trim((string) $observedRow['lookupStatus']) : '';
             $normalizedValue = \Docflow\Senders\IdentifierNormalizer::normalizeOrgNumber($organizationNumber)
                 ?? preg_replace('/\D+/', '', $organizationNumber)
                 ?? $organizationNumber;
@@ -23732,7 +23757,11 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 'itemValue' => $normalizedValue,
                 'normalizedNumber' => $normalizedValue,
                 'lookupName' => $lookupName,
-                'status' => $lookupName !== '' ? 'resolved' : 'pending',
+                'status' => $lookupName !== '' || $lookupStatus === 'resolved'
+                    ? 'resolved'
+                    : ($lookupStatus === 'failed' ? 'failed' : 'pending'),
+                'lookupErrorCode' => is_string($observedRow['lookupErrorCode'] ?? null) ? trim((string) $observedRow['lookupErrorCode']) : '',
+                'lookupErrorMessage' => is_string($observedRow['lookupErrorMessage'] ?? null) ? trim((string) $observedRow['lookupErrorMessage']) : '',
             ];
         }
     }
@@ -23763,7 +23792,11 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 'itemValue' => $bankgiro,
                 'normalizedNumber' => $normalizedValue,
                 'lookupName' => $lookupName,
-                'status' => $lookupName !== '' ? 'resolved' : ($lookupStatus === 'not_found' ? 'not_found' : 'pending'),
+                'status' => $lookupName !== '' || $lookupStatus === 'resolved'
+                    ? 'resolved'
+                    : (in_array($lookupStatus, ['failed', 'not_found'], true) ? 'failed' : 'pending'),
+                'lookupErrorCode' => is_string($observedRow['lookupErrorCode'] ?? null) ? trim((string) $observedRow['lookupErrorCode']) : '',
+                'lookupErrorMessage' => is_string($observedRow['lookupErrorMessage'] ?? null) ? trim((string) $observedRow['lookupErrorMessage']) : '',
             ];
         }
     }
@@ -23794,7 +23827,11 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 'itemValue' => $plusgiro,
                 'normalizedNumber' => $normalizedValue,
                 'lookupName' => $lookupName,
-                'status' => $lookupName !== '' ? 'resolved' : ($lookupStatus === 'not_found' ? 'not_found' : 'pending'),
+                'status' => $lookupName !== '' || $lookupStatus === 'resolved'
+                    ? 'resolved'
+                    : (in_array($lookupStatus, ['failed', 'not_found'], true) ? 'failed' : 'pending'),
+                'lookupErrorCode' => is_string($observedRow['lookupErrorCode'] ?? null) ? trim((string) $observedRow['lookupErrorCode']) : '',
+                'lookupErrorMessage' => is_string($observedRow['lookupErrorMessage'] ?? null) ? trim((string) $observedRow['lookupErrorMessage']) : '',
             ];
         }
     }
@@ -24020,6 +24057,9 @@ function observed_sender_organization_summary_row(string $organizationNumber): a
         'organizationName' => is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '',
         'senderId' => isset($row['sender_id']) ? (int) $row['sender_id'] : null,
         'source' => is_string($row['source'] ?? null) ? trim((string) $row['source']) : '',
+        'lookupStatus' => is_string($row['lookup_status'] ?? null) ? trim((string) $row['lookup_status']) : '',
+        'lookupErrorCode' => is_string($row['lookup_error_code'] ?? null) ? trim((string) $row['lookup_error_code']) : '',
+        'lookupErrorMessage' => is_string($row['lookup_error_message'] ?? null) ? trim((string) $row['lookup_error_message']) : '',
     ] : [];
 
     return $cache[$normalized];
@@ -24060,6 +24100,8 @@ function observed_sender_payment_summary_row(string $type, string $number): arra
         'number' => is_string($row['number'] ?? null) ? trim((string) $row['number']) : $normalizedNumber,
         'payeeName' => is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '',
         'payeeLookupStatus' => is_string($row['payee_lookup_status'] ?? null) ? trim((string) $row['payee_lookup_status']) : '',
+        'lookupErrorCode' => is_string($row['lookup_error_code'] ?? null) ? trim((string) $row['lookup_error_code']) : '',
+        'lookupErrorMessage' => is_string($row['lookup_error_message'] ?? null) ? trim((string) $row['lookup_error_message']) : '',
         'senderId' => isset($row['sender_id']) ? (int) $row['sender_id'] : null,
     ] : [];
 
@@ -24610,7 +24652,15 @@ function build_job_state_entry(
     $archivedVersion = job_archived_version($job);
     $dismissedAnalysisVersion = job_dismissed_analysis_version($job);
     $extracted = load_json_file($jobDir . '/extracted.json');
-    $senderSummary = build_job_sender_summary($extracted, $jobDir, null, $selectedSenderId);
+    $senderSummaryActualValues = is_array($storedDocumentDataValues)
+        ? $storedDocumentDataValues
+        : (is_array($selectedExtractionFieldValues)
+            ? document_actual_data_values_from_selected($job, $selectedExtractionFieldValues)
+            : null);
+    $senderSummaryExtracted = is_array($extracted)
+        ? sender_summary_extracted_with_actual_data_values($extracted, $senderSummaryActualValues)
+        : $extracted;
+    $senderSummary = build_job_sender_summary($senderSummaryExtracted, $jobDir, null, $selectedSenderId);
     if (!$isArchived && $selectedSenderId === null && is_array($senderSummary)) {
         $senderSelection = single_preselected_sender_from_summary($senderSummary);
         $senderSelectionId = isset($senderSelection['matchedSenderId']) ? (int) $senderSelection['matchedSenderId'] : 0;
@@ -24618,7 +24668,7 @@ function build_job_state_entry(
         $liveSenderId = normalize_auto_archiving_result_sender_value($liveAutoResult['senderId'] ?? null);
         if ($senderSelectionId > 0 && $senderSelectionId === $storedSenderId) {
             $selectedSenderId = $liveSenderId;
-            $senderSummary = build_job_sender_summary($extracted, $jobDir, null, $selectedSenderId);
+            $senderSummary = build_job_sender_summary($senderSummaryExtracted, $jobDir, null, $selectedSenderId);
         }
     }
     $analysisOutdated = ($job['analysisOutdated'] ?? false) === true;
@@ -24718,7 +24768,7 @@ function build_job_state_entry(
         }
     }
 
-    $senderSummary = build_job_sender_summary($extracted, $jobDir, $matchedSenderId, $selectedSenderId);
+    $senderSummary = build_job_sender_summary($senderSummaryExtracted, $jobDir, $matchedSenderId, $selectedSenderId);
 
     $readyPayload = [
         'id' => $id,

@@ -63,6 +63,9 @@ final class SenderRepository
                 organization_name,
                 sender_id,
                 source,
+                lookup_status,
+                lookup_error_code,
+                lookup_error_message,
                 created_at,
                 updated_at
             FROM sender_organization_numbers
@@ -95,6 +98,8 @@ final class SenderRepository
                 original_number,
                 payee_name,
                 payee_lookup_status,
+                lookup_error_code,
+                lookup_error_message,
                 source,
                 confidence,
                 created_at,
@@ -297,6 +302,9 @@ final class SenderRepository
                 organization_number,
                 organization_name,
                 source,
+                lookup_status,
+                lookup_error_code,
+                lookup_error_message,
                 created_at,
                 updated_at
             FROM sender_organization_numbers
@@ -326,6 +334,9 @@ final class SenderRepository
                     'number' => $this->formatOrganizationNumberForDisplay($normalizedNumber),
                     'normalizedNumber' => $normalizedNumber,
                     'name' => is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '',
+                    'lookupStatus' => is_string($row['lookup_status'] ?? null) ? trim((string) $row['lookup_status']) : 'pending',
+                    'lookupErrorCode' => is_string($row['lookup_error_code'] ?? null) ? trim((string) $row['lookup_error_code']) : '',
+                    'lookupErrorMessage' => is_string($row['lookup_error_message'] ?? null) ? trim((string) $row['lookup_error_message']) : '',
                     'source' => is_string($row['source'] ?? null) ? trim((string) $row['source']) : '',
                     'updatedAt' => is_string($row['updated_at'] ?? null) ? trim((string) $row['updated_at']) : '',
                 ];
@@ -339,6 +350,8 @@ final class SenderRepository
                 number,
                 payee_name,
                 payee_lookup_status,
+                lookup_error_code,
+                lookup_error_message,
                 source,
                 created_at,
                 updated_at
@@ -372,6 +385,8 @@ final class SenderRepository
                     'normalizedNumber' => $normalizedNumber,
                     'name' => is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '',
                     'lookupStatus' => is_string($row['payee_lookup_status'] ?? null) ? trim((string) $row['payee_lookup_status']) : '',
+                    'lookupErrorCode' => is_string($row['lookup_error_code'] ?? null) ? trim((string) $row['lookup_error_code']) : '',
+                    'lookupErrorMessage' => is_string($row['lookup_error_message'] ?? null) ? trim((string) $row['lookup_error_message']) : '',
                     'source' => is_string($row['source'] ?? null) ? trim((string) $row['source']) : '',
                     'updatedAt' => is_string($row['updated_at'] ?? null) ? trim((string) $row['updated_at']) : '',
                 ];
@@ -752,11 +767,13 @@ final class SenderRepository
                 p.type,
                 p.number,
                 p.payee_name,
-                p.payee_lookup_status
+                p.payee_lookup_status,
+                p.lookup_error_code,
+                p.lookup_error_message
             FROM sender_payment_numbers p
             LEFT JOIN senders s ON s.id = p.sender_id
             WHERE (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
-              AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\')
+              AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\' OR p.payee_lookup_status = \'pending\')
             ORDER BY
                 CASE WHEN s.name IS NULL OR trim(s.name) = \'\' THEN 1 ELSE 0 END ASC,
                 s.name ASC,
@@ -798,6 +815,8 @@ final class SenderRepository
                 'normalizedNumber' => $normalizedNumber,
                 'payeeName' => is_string($row['payee_name'] ?? null) ? trim((string) $row['payee_name']) : '',
                 'payeeLookupStatus' => is_string($row['payee_lookup_status'] ?? null) ? trim((string) $row['payee_lookup_status']) : '',
+                'lookupErrorCode' => is_string($row['lookup_error_code'] ?? null) ? trim((string) $row['lookup_error_code']) : '',
+                'lookupErrorMessage' => is_string($row['lookup_error_message'] ?? null) ? trim((string) $row['lookup_error_message']) : '',
             ];
         }
 
@@ -810,7 +829,7 @@ final class SenderRepository
             'SELECT COUNT(*)
             FROM sender_payment_numbers p
             WHERE (p.payee_name IS NULL OR trim(p.payee_name) = \'\')
-              AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\')'
+              AND (p.payee_lookup_status IS NULL OR trim(p.payee_lookup_status) = \'\' OR p.payee_lookup_status = \'pending\')'
         );
         if ($statement === false) {
             return 0;
@@ -829,10 +848,14 @@ final class SenderRepository
                 s.name AS sender_name,
                 o.organization_number,
                 o.organization_name,
-                o.source
+                o.source,
+                o.lookup_status,
+                o.lookup_error_code,
+                o.lookup_error_message
             FROM sender_organization_numbers o
             LEFT JOIN senders s ON s.id = o.sender_id
-            WHERE o.organization_name IS NULL OR trim(o.organization_name) = \'\'
+            WHERE (o.organization_name IS NULL OR trim(o.organization_name) = \'\')
+              AND (o.lookup_status IS NULL OR trim(o.lookup_status) = \'\' OR o.lookup_status = \'pending\')
             ORDER BY
                 CASE WHEN s.name IS NULL OR trim(s.name) = \'\' THEN 1 ELSE 0 END ASC,
                 s.name ASC,
@@ -876,6 +899,9 @@ final class SenderRepository
                 'normalizedOrganizationNumber' => $normalizedNumber,
                 'organizationName' => is_string($row['organization_name'] ?? null) ? trim((string) $row['organization_name']) : '',
                 'source' => is_string($row['source'] ?? null) ? trim((string) $row['source']) : '',
+                'lookupStatus' => is_string($row['lookup_status'] ?? null) ? trim((string) $row['lookup_status']) : '',
+                'lookupErrorCode' => is_string($row['lookup_error_code'] ?? null) ? trim((string) $row['lookup_error_code']) : '',
+                'lookupErrorMessage' => is_string($row['lookup_error_message'] ?? null) ? trim((string) $row['lookup_error_message']) : '',
             ];
         }
 
@@ -887,7 +913,8 @@ final class SenderRepository
         $statement = $this->pdo->query(
             'SELECT COUNT(*)
             FROM sender_organization_numbers o
-            WHERE o.organization_name IS NULL OR trim(o.organization_name) = \'\''
+            WHERE (o.organization_name IS NULL OR trim(o.organization_name) = \'\')
+              AND (o.lookup_status IS NULL OR trim(o.lookup_status) = \'\' OR o.lookup_status = \'pending\')'
         );
         if ($statement === false) {
             return 0;
@@ -939,12 +966,16 @@ final class SenderRepository
             $update = $this->pdo->prepare(
                 'UPDATE sender_organization_numbers
                 SET organization_name = :organization_name,
+                    lookup_status = :lookup_status,
+                    lookup_error_code = NULL,
+                    lookup_error_message = NULL,
                     updated_at = :updated_at
                 WHERE id = :id'
             );
             $update->execute([
                 ':id' => $organizationId,
                 ':organization_name' => $normalizedOrganizationName,
+                ':lookup_status' => $normalizedOrganizationName !== null ? 'resolved' : 'pending',
                 ':updated_at' => $timestamp,
             ]);
 
@@ -963,6 +994,7 @@ final class SenderRepository
                 'organizationId' => $organizationId,
                 'organizationNumber' => is_string($row['organization_number'] ?? null) ? trim((string) $row['organization_number']) : '',
                 'organizationName' => $normalizedOrganizationName,
+                'lookupStatus' => $normalizedOrganizationName !== null ? 'resolved' : 'pending',
                 'alternativeNames' => $resolvedAlternativeNames,
                 'senderId' => $senderId,
                 'linkChanged' => false,
@@ -973,6 +1005,57 @@ final class SenderRepository
             }
             throw $e;
         }
+    }
+
+    public function failOrganizationNameLookup(int $organizationId, string $errorCode, string $errorMessage): array
+    {
+        if ($organizationId < 1) {
+            throw new RuntimeException('Organization id is required.');
+        }
+
+        $select = $this->pdo->prepare(
+            'SELECT id, organization_number, sender_id
+            FROM sender_organization_numbers
+            WHERE id = :id
+            LIMIT 1'
+        );
+        $select->execute([':id' => $organizationId]);
+        $row = $select->fetch();
+        if (!is_array($row)) {
+            throw new RuntimeException('Organization number not found.');
+        }
+
+        $number = is_string($row['organization_number'] ?? null) ? trim((string) $row['organization_number']) : '';
+        $normalizedCode = trim($errorCode) !== '' ? trim($errorCode) : 'ORG_LOOKUP_FAILED';
+        $normalizedMessage = trim($errorMessage);
+        if ($normalizedMessage === '') {
+            $normalizedMessage = 'Org.nr ' . $this->formatOrganizationNumberForDisplay($number) . ' kunde inte slås upp hos Allabolag.';
+        }
+
+        $timestamp = date(DATE_ATOM);
+        $update = $this->pdo->prepare(
+            'UPDATE sender_organization_numbers
+            SET lookup_status = \'failed\',
+                lookup_error_code = :error_code,
+                lookup_error_message = :error_message,
+                updated_at = :updated_at
+            WHERE id = :id'
+        );
+        $update->execute([
+            ':id' => $organizationId,
+            ':error_code' => $normalizedCode,
+            ':error_message' => $normalizedMessage,
+            ':updated_at' => $timestamp,
+        ]);
+
+        return [
+            'organizationId' => $organizationId,
+            'organizationNumber' => $number,
+            'lookupStatus' => 'failed',
+            'lookupErrorCode' => $normalizedCode,
+            'lookupErrorMessage' => $normalizedMessage,
+            'senderId' => isset($row['sender_id']) && (int) $row['sender_id'] > 0 ? (int) $row['sender_id'] : null,
+        ];
     }
 
     public function updateOrganizationName(int $organizationId, ?string $organizationName): void
@@ -992,12 +1075,16 @@ final class SenderRepository
         $statement = $this->pdo->prepare(
             'UPDATE sender_organization_numbers
             SET organization_name = :organization_name,
+                lookup_status = :lookup_status,
+                lookup_error_code = NULL,
+                lookup_error_message = NULL,
                 updated_at = :updated_at
             WHERE id = :id'
         );
         $statement->execute([
             ':id' => $organizationId,
             ':organization_name' => $normalizedOrganizationName,
+            ':lookup_status' => $normalizedOrganizationName !== null ? 'resolved' : 'pending',
             ':updated_at' => date(DATE_ATOM),
         ]);
 
@@ -1025,11 +1112,16 @@ final class SenderRepository
         if ($normalizedLookupStatus === '') {
             $normalizedLookupStatus = null;
         }
-        if ($normalizedLookupStatus !== null && $normalizedLookupStatus !== 'not_found') {
+        if ($normalizedLookupStatus === 'not_found') {
+            $normalizedLookupStatus = 'failed';
+        }
+        if ($normalizedLookupStatus !== null && !in_array($normalizedLookupStatus, ['pending', 'resolved', 'failed'], true)) {
             throw new RuntimeException('Unsupported payee lookup status.');
         }
         if ($normalizedPayeeName !== null) {
-            $normalizedLookupStatus = null;
+            $normalizedLookupStatus = 'resolved';
+        } elseif ($normalizedLookupStatus === null) {
+            $normalizedLookupStatus = 'pending';
         }
 
         $ownsTransaction = !$this->pdo->inTransaction();
@@ -1055,6 +1147,8 @@ final class SenderRepository
                 'UPDATE sender_payment_numbers
                 SET payee_name = :payee_name,
                     payee_lookup_status = :payee_lookup_status,
+                    lookup_error_code = NULL,
+                    lookup_error_message = NULL,
                     updated_at = :updated_at
                 WHERE id = :id'
             );
@@ -1093,6 +1187,63 @@ final class SenderRepository
         }
     }
 
+    public function failPaymentPayeeLookup(int $paymentId, string $errorCode, string $errorMessage): array
+    {
+        if ($paymentId < 1) {
+            throw new RuntimeException('Payment id is required.');
+        }
+
+        $select = $this->pdo->prepare(
+            'SELECT id, type, number, sender_id
+            FROM sender_payment_numbers
+            WHERE id = :id
+            LIMIT 1'
+        );
+        $select->execute([':id' => $paymentId]);
+        $row = $select->fetch();
+        if (!is_array($row)) {
+            throw new RuntimeException('Payment number not found.');
+        }
+
+        $type = is_string($row['type'] ?? null) && trim(strtolower((string) $row['type'])) === 'plusgiro'
+            ? 'plusgiro'
+            : 'bankgiro';
+        $number = is_string($row['number'] ?? null) ? trim((string) $row['number']) : '';
+        $normalizedCode = trim($errorCode) !== '' ? trim($errorCode) : 'PAYEE_LOOKUP_FAILED';
+        $normalizedMessage = trim($errorMessage);
+        if ($normalizedMessage === '') {
+            $normalizedMessage = ($type === 'plusgiro' ? 'Plusgiro ' : 'Bankgiro ')
+                . $this->formatPaymentNumberForDisplay($type, $number)
+                . ' kunde inte slås upp.';
+        }
+
+        $timestamp = date(DATE_ATOM);
+        $update = $this->pdo->prepare(
+            'UPDATE sender_payment_numbers
+            SET payee_lookup_status = \'failed\',
+                lookup_error_code = :error_code,
+                lookup_error_message = :error_message,
+                updated_at = :updated_at
+            WHERE id = :id'
+        );
+        $update->execute([
+            ':id' => $paymentId,
+            ':error_code' => $normalizedCode,
+            ':error_message' => $normalizedMessage,
+            ':updated_at' => $timestamp,
+        ]);
+
+        return [
+            'paymentId' => $paymentId,
+            'type' => $type,
+            'number' => $number,
+            'lookupStatus' => 'failed',
+            'lookupErrorCode' => $normalizedCode,
+            'lookupErrorMessage' => $normalizedMessage,
+            'senderId' => isset($row['sender_id']) && (int) $row['sender_id'] > 0 ? (int) $row['sender_id'] : null,
+        ];
+    }
+
     public function updatePaymentPayeeName(int $paymentId, ?string $payeeName, ?string $lookupStatus = null): void
     {
         if ($paymentId < 1) {
@@ -1114,17 +1265,24 @@ final class SenderRepository
                 $normalizedLookupStatus = null;
             }
         }
-        if ($normalizedLookupStatus !== null && $normalizedLookupStatus !== 'not_found') {
+        if ($normalizedLookupStatus === 'not_found') {
+            $normalizedLookupStatus = 'failed';
+        }
+        if ($normalizedLookupStatus !== null && !in_array($normalizedLookupStatus, ['pending', 'resolved', 'failed'], true)) {
             throw new RuntimeException('Unsupported payee lookup status.');
         }
         if ($normalizedPayeeName !== null) {
-            $normalizedLookupStatus = null;
+            $normalizedLookupStatus = 'resolved';
+        } elseif ($normalizedLookupStatus === null) {
+            $normalizedLookupStatus = 'pending';
         }
 
         $statement = $this->pdo->prepare(
             'UPDATE sender_payment_numbers
             SET payee_name = :payee_name,
                 payee_lookup_status = :payee_lookup_status,
+                lookup_error_code = NULL,
+                lookup_error_message = NULL,
                 updated_at = :updated_at
             WHERE id = :id'
         );

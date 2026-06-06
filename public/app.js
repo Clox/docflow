@@ -5831,6 +5831,8 @@ function normalizeSenderPayeeLookupQueueItem(input) {
     normalizedNumber: normalizedNumber !== '' ? normalizedNumber : number,
     payeeName: String(input.payeeName || '').trim(),
     payeeLookupStatus: String(input.payeeLookupStatus || '').trim(),
+    lookupErrorCode: String(input.lookupErrorCode || '').trim(),
+    lookupErrorMessage: String(input.lookupErrorMessage || '').trim(),
   };
 }
 
@@ -5865,6 +5867,9 @@ function normalizeSenderOrganizationLookupQueueItem(input) {
     normalizedOrganizationNumber: normalizedOrganizationNumber !== '' ? normalizedOrganizationNumber : organizationNumber,
     organizationName: String(input.organizationName || '').trim(),
     source: String(input.source || '').trim(),
+    lookupStatus: String(input.lookupStatus || '').trim(),
+    lookupErrorCode: String(input.lookupErrorCode || '').trim(),
+    lookupErrorMessage: String(input.lookupErrorMessage || '').trim(),
   };
 }
 
@@ -6224,6 +6229,42 @@ function maybeStartChromeExtensionOrganizationLookup() {
   });
 }
 
+function organizationLookupFailureMessage(item, message = '') {
+  const number = String(item && (item.organizationNumber || item.normalizedOrganizationNumber) || '').trim();
+  const detail = String(message || '').trim();
+  const prefix = `Org.nr ${number || 'okänt nummer'} kunde inte slås upp hos Allabolag.`;
+  return detail !== '' && !detail.includes(prefix) ? `${prefix} ${detail}` : (detail || prefix);
+}
+
+function paymentLookupFailureMessage(item, message = '') {
+  const type = String(item && item.type || '').trim().toLowerCase() === 'plusgiro' ? 'Plusgiro' : 'Bankgiro';
+  const number = String(item && item.number || item && item.normalizedNumber || '').trim();
+  const detail = String(message || '').trim();
+  const prefix = `${type} ${number || 'okänt nummer'} kunde inte slås upp.`;
+  return detail !== '' && !detail.includes(prefix) ? `${prefix} ${detail}` : (detail || prefix);
+}
+
+async function saveOrganizationLookupFailure(item, errorCode, message) {
+  const response = await fetch('/api/save-sender-organization-name.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      organizationId: item.organizationId,
+      organizationName: null,
+      alternativeNames: [],
+      lookupStatus: 'failed',
+      lookupErrorCode: String(errorCode || 'ORG_LOOKUP_FAILED').trim(),
+      lookupErrorMessage: organizationLookupFailureMessage(item, message),
+      currentSelectedJobId: selectedJobId || null,
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte spara lookupfelet för organisationsnumret.');
+  }
+  return payload;
+}
+
 async function processMissingOrganizationNames() {
   if (chromeExtensionOrganizationLookupInFlight || !chromeExtensionIsUsable()) {
     return;
@@ -6245,6 +6286,8 @@ async function processMissingOrganizationNames() {
   }
 
   chromeExtensionOrganizationLookupInFlight = true;
+  renderSelectedJobSenderSection(findJobById(selectedJobId));
+  let continueQueue = false;
   try {
     const extensionPayload = await sendMessageToChromeExtension({
       type: 'docflow.lookupOrganizationName',
@@ -6253,16 +6296,24 @@ async function processMissingOrganizationNames() {
 
     if (!extensionPayload || extensionPayload.ok !== true) {
       const openRequired = extensionPayload && extensionPayload.openRequired === true;
+      if (!openRequired) {
+        const savePayload = await saveOrganizationLookupFailure(
+          item,
+          extensionPayload && extensionPayload.errorCode,
+          extensionPayload && extensionPayload.message
+        );
+        setChromeExtensionRuntime({
+          missingOrganizationCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
+          organizationLookupLastError: '',
+        });
+        await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+        continueQueue = true;
+        return;
+      }
       setChromeExtensionRuntime({
-        hasAnyAllabolagTab: openRequired ? false : chromeExtensionRuntime.hasAnyAllabolagTab,
+        hasAnyAllabolagTab: false,
         missingOrganizationCount: remainingCount,
-        organizationLookupLastError: openRequired
-          ? ''
-          : (
-            extensionPayload && typeof extensionPayload.message === 'string'
-              ? extensionPayload.message
-              : 'Allabolag-uppslaget misslyckades.'
-          ),
+        organizationLookupLastError: '',
       });
       return;
     }
@@ -6276,10 +6327,17 @@ async function processMissingOrganizationNames() {
           .filter((value) => value !== '')
       : [];
     if (resolvedOrganizationName === '') {
+      const savePayload = await saveOrganizationLookupFailure(
+        item,
+        'ORG_NAME_MISSING',
+        'Allabolag svarade utan företagsnamn.'
+      );
       setChromeExtensionRuntime({
-        missingOrganizationCount: remainingCount,
-        organizationLookupLastError: 'Allabolag svarade utan företagsnamn för organisationsnumret.',
+        missingOrganizationCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
+        organizationLookupLastError: '',
       });
+      await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+      continueQueue = true;
       return;
     }
 
@@ -6306,6 +6364,7 @@ async function processMissingOrganizationNames() {
       organizationLookupLastError: '',
     });
     await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+    continueQueue = true;
   } catch (error) {
     setChromeExtensionRuntime({
       missingOrganizationCount: remainingCount,
@@ -6314,6 +6373,12 @@ async function processMissingOrganizationNames() {
     throw error;
   } finally {
     chromeExtensionOrganizationLookupInFlight = false;
+    renderSelectedJobSenderSection(findJobById(selectedJobId));
+    if (continueQueue) {
+      queueMicrotask(() => {
+        maybeStartChromeExtensionOrganizationLookup();
+      });
+    }
   }
 }
 
@@ -6355,7 +6420,11 @@ function maybeStartChromeExtensionPayeeLookup() {
   if (remainingCount < 1 || !item) {
     return;
   }
-  if (chromeExtensionRuntime.loginRequired === true) {
+  if (
+    chromeExtensionRuntime.loginRequired === true
+    || chromeExtensionRuntime.profileSelectionRequired === true
+    || chromeExtensionRuntime.hasAnySwedbankTab === false
+  ) {
     return;
   }
 
@@ -6369,6 +6438,26 @@ function maybeStartChromeExtensionPayeeLookup() {
     });
     console.error(error);
   });
+}
+
+async function savePaymentLookupFailure(item, errorCode, message) {
+  const response = await fetch('/api/save-sender-payment-payee.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      paymentId: item.paymentId,
+      payeeName: null,
+      lookupStatus: 'failed',
+      lookupErrorCode: String(errorCode || 'PAYEE_LOOKUP_FAILED').trim(),
+      lookupErrorMessage: paymentLookupFailureMessage(item, message),
+      currentSelectedJobId: selectedJobId || null,
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true) {
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte spara lookupfelet för betalnumret.');
+  }
+  return payload;
 }
 
 async function processMissingPayeeNames() {
@@ -6390,6 +6479,8 @@ async function processMissingPayeeNames() {
   }
 
   chromeExtensionPayeeLookupInFlight = true;
+  renderSelectedJobSenderSection(findJobById(selectedJobId));
+  let continueQueue = false;
   try {
     const extensionPayload = await sendMessageToChromeExtension({
       type: 'docflow.lookupPayee',
@@ -6398,25 +6489,14 @@ async function processMissingPayeeNames() {
     });
 
     if (!extensionPayload || extensionPayload.ok !== true) {
-      const payeeNotFound = extensionPayload && extensionPayload.errorCode === 'PAYEE_NOT_FOUND';
-      if (payeeNotFound) {
-        const saveResponse = await fetch('/api/save-sender-payment-payee.php', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            paymentId: item.paymentId,
-            payeeName: null,
-            lookupStatus: 'not_found',
-            currentSelectedJobId: selectedJobId || null,
-          }),
-        });
-        const savePayload = await saveResponse.json().catch(() => null);
-        if (!saveResponse.ok || !savePayload || savePayload.ok !== true) {
-          throw new Error(savePayload && typeof savePayload.error === 'string' ? savePayload.error : 'Kunde inte spara status för betalnummer utan mottagare.');
-        }
-
+      const loginRequired = extensionPayload && extensionPayload.loginRequired === true;
+      const profileSelectionRequired = extensionPayload && extensionPayload.profileSelectionRequired === true;
+      if (!loginRequired && !profileSelectionRequired) {
+        const savePayload = await savePaymentLookupFailure(
+          item,
+          extensionPayload && extensionPayload.errorCode,
+          extensionPayload && extensionPayload.message
+        );
         setChromeExtensionRuntime({
           swedbankSessionAvailable: true,
           loginRequired: false,
@@ -6425,11 +6505,10 @@ async function processMissingPayeeNames() {
           lastError: '',
         });
         await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+        continueQueue = true;
         return;
       }
 
-      const loginRequired = extensionPayload && extensionPayload.loginRequired === true;
-      const profileSelectionRequired = extensionPayload && extensionPayload.profileSelectionRequired === true;
       setChromeExtensionRuntime({
         swedbankSessionAvailable: profileSelectionRequired
           ? true
@@ -6448,13 +6527,20 @@ async function processMissingPayeeNames() {
       ? extensionPayload.payeeName.trim()
       : '';
     if (resolvedPayeeName === '') {
+      const savePayload = await savePaymentLookupFailure(
+        item,
+        'PAYEE_NAME_MISSING',
+        'Swedbank svarade utan mottagarnamn.'
+      );
       setChromeExtensionRuntime({
         swedbankSessionAvailable: true,
         loginRequired: false,
         profileSelectionRequired: false,
-        missingPayeeCount: remainingCount,
-        lastError: 'Swedbank svarade utan payeeName för betalnumret.',
+        missingPayeeCount: Number.parseInt(String(savePayload.remainingCount || 0), 10) || 0,
+        lastError: '',
       });
+      await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+      continueQueue = true;
       return;
     }
 
@@ -6482,6 +6568,7 @@ async function processMissingPayeeNames() {
       lastError: '',
     });
     await fetchState({ refreshSenders: true, force: true, syncTransport: false });
+    continueQueue = true;
   } catch (error) {
     setChromeExtensionRuntime({
       missingPayeeCount: remainingCount,
@@ -6495,6 +6582,12 @@ async function processMissingPayeeNames() {
     throw error;
   } finally {
     chromeExtensionPayeeLookupInFlight = false;
+    renderSelectedJobSenderSection(findJobById(selectedJobId));
+    if (continueQueue) {
+      queueMicrotask(() => {
+        maybeStartChromeExtensionPayeeLookup();
+      });
+    }
   }
 }
 
@@ -11482,6 +11575,145 @@ function senderUnknownObservationRowsForJob(job) {
     : [];
 }
 
+function senderObservationMatchesLookupQueueItem(observation, queueItem) {
+  if (!observation || typeof observation !== 'object' || !queueItem || typeof queueItem !== 'object') {
+    return false;
+  }
+
+  const observationId = Number.parseInt(String(observation.identifierId || ''), 10);
+  const queueId = Number.parseInt(String(queueItem.organizationId || queueItem.paymentId || ''), 10);
+  if (Number.isInteger(observationId) && observationId > 0 && observationId === queueId) {
+    return true;
+  }
+
+  const observationNumber = digitsOnly(observation.normalizedNumber || observation.itemValue);
+  const queueNumber = digitsOnly(
+    queueItem.normalizedOrganizationNumber
+    || queueItem.normalizedNumber
+    || queueItem.organizationNumber
+    || queueItem.number
+  );
+  return observationNumber !== '' && observationNumber === queueNumber;
+}
+
+function senderObservationLookupPresentation(observation) {
+  const status = typeof observation.status === 'string' ? observation.status.trim() : 'pending';
+  const lookupName = typeof observation.lookupName === 'string' ? observation.lookupName.trim() : '';
+  if (status === 'resolved') {
+    return {
+      kind: 'resolved',
+      text: lookupName || 'Uppslag klart',
+      title: lookupName,
+      icon: '',
+      active: false,
+    };
+  }
+  if (status === 'failed') {
+    return {
+      kind: 'failed',
+      text: 'Kunde inte slås upp',
+      title: typeof observation.lookupErrorMessage === 'string' ? observation.lookupErrorMessage.trim() : '',
+      icon: '⚠',
+      active: false,
+    };
+  }
+
+  const type = typeof observation.type === 'string' ? observation.type.trim().toLowerCase() : '';
+  const isOrganization = type === 'organization_number';
+  const queueItem = isOrganization
+    ? currentSenderOrganizationLookupQueueItem()
+    : currentSenderPayeeLookupQueueItem();
+  const active = senderObservationMatchesLookupQueueItem(observation, queueItem)
+    && (isOrganization ? chromeExtensionOrganizationLookupInFlight : chromeExtensionPayeeLookupInFlight);
+  if (active) {
+    return {
+      kind: 'running',
+      text: 'Hämtar...',
+      title: '',
+      icon: '',
+      active: true,
+    };
+  }
+
+  if (!chromeExtensionIsUsable()) {
+    return {
+      kind: 'waiting',
+      text: 'Väntar på Chrome-tillägget',
+      title: '',
+      icon: '◷',
+      active: false,
+    };
+  }
+  if (isOrganization && chromeExtensionRuntime.hasAnyAllabolagTab === false) {
+    return {
+      kind: 'waiting',
+      text: 'Väntar på att Allabolag öppnas',
+      title: '',
+      icon: '↗',
+      active: false,
+    };
+  }
+  if (!isOrganization && chromeExtensionRuntime.profileSelectionRequired === true) {
+    return {
+      kind: 'waiting',
+      text: 'Väntar på profilval',
+      title: '',
+      icon: '🔑',
+      active: false,
+    };
+  }
+  if (
+    !isOrganization
+    && (
+      chromeExtensionRuntime.loginRequired === true
+      || chromeExtensionRuntime.hasAnySwedbankTab === false
+    )
+  ) {
+    return {
+      kind: 'waiting',
+      text: 'Väntar på inloggning',
+      title: '',
+      icon: '🔑',
+      active: false,
+    };
+  }
+
+  return {
+    kind: 'waiting',
+    text: 'Väntar...',
+    title: '',
+    icon: '⏳',
+    active: false,
+  };
+}
+
+function createSenderLookupStatusBadge(presentation) {
+  const badge = document.createElement('span');
+  badge.className = `selected-job-sender-lookup-status-badge is-${presentation.kind}`;
+  if (presentation.title !== '') {
+    badge.title = presentation.title;
+  }
+
+  if (presentation.active) {
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner selected-job-sender-observation-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    badge.appendChild(spinner);
+  } else if (presentation.icon !== '') {
+    const icon = document.createElement('span');
+    icon.className = 'selected-job-sender-lookup-status-icon';
+    icon.textContent = presentation.icon;
+    icon.setAttribute('aria-hidden', 'true');
+    badge.appendChild(icon);
+  }
+
+  const text = document.createElement('span');
+  text.className = 'selected-job-sender-lookup-status-text';
+  text.textContent = presentation.text;
+  badge.appendChild(text);
+  return badge;
+}
+
 function senderLinkedRowsForJob(job) {
   const summary = senderSummaryForJob(job);
   return summary && Array.isArray(summary.senders)
@@ -12109,17 +12341,19 @@ function openSelectedJobSenderLinkDialog(job) {
       }
       heading.textContent = `${itemLabel} ${itemValue || rawValue}`.trim();
 
+      const presentation = senderObservationLookupPresentation(observation);
       const lookupRow = document.createElement('div');
       lookupRow.className = 'selected-job-sender-link-observation-detail';
-      const lookupName = typeof observation.lookupName === 'string' ? observation.lookupName.trim() : '';
-      const status = typeof observation.status === 'string' ? observation.status.trim() : 'pending';
-      lookupRow.textContent = `Namn: ${status === 'pending' ? 'Hämtar...' : (lookupName || 'Saknas')}`;
+      if (presentation.kind === 'resolved') {
+        lookupRow.textContent = presentation.text;
+        if (presentation.title !== '') {
+          lookupRow.title = presentation.title;
+        }
+      } else {
+        lookupRow.appendChild(createSenderLookupStatusBadge(presentation));
+      }
 
-      const statusRow = document.createElement('div');
-      statusRow.className = 'selected-job-sender-link-observation-status';
-      statusRow.textContent = `Status: ${status === 'pending' ? 'Hämtar...' : 'Klar'}`;
-
-      row.append(heading, lookupRow, statusRow);
+      row.append(heading, lookupRow);
       observationsList.appendChild(row);
     });
 
@@ -12255,6 +12489,47 @@ function renderSelectedJobSenderSection(job) {
       ? 'Dokumentet innehåller 1 okopplad uppgift som kan påverka avsändaren.'
       : `Dokumentet innehåller ${observations.length} okopplade uppgifter som kan påverka avsändaren.`;
 
+    const statusList = document.createElement('ul');
+    statusList.className = 'selected-job-sender-unknown-status-list';
+    observations.forEach((observation) => {
+      const item = document.createElement('li');
+      item.className = 'selected-job-sender-unknown-status-item';
+
+      const type = typeof observation.type === 'string' ? observation.type.trim().toLowerCase() : '';
+      const rawValue = typeof observation.itemValue === 'string' ? observation.itemValue.trim() : '';
+      const normalizedValue = digitsOnly(observation.normalizedNumber || rawValue);
+      let itemLabel = 'Org.nr';
+      let itemValue = normalizedValue;
+      if (type === 'bankgiro') {
+        itemLabel = 'Bankgiro';
+        itemValue = formatSenderPaymentNumberForDisplay('bankgiro', normalizedValue);
+      } else if (type === 'plusgiro') {
+        itemLabel = 'Plusgiro';
+        itemValue = formatSenderPaymentNumberForDisplay('plusgiro', normalizedValue);
+      } else if (normalizedValue.length === 10) {
+        itemValue = `${normalizedValue.slice(0, 6)}-${normalizedValue.slice(6)}`;
+      }
+
+      const heading = document.createElement('div');
+      heading.className = 'selected-job-sender-unknown-status-heading';
+      heading.textContent = `${itemLabel} ${itemValue || rawValue}`.trim();
+
+      const presentation = senderObservationLookupPresentation(observation);
+      const detail = document.createElement('div');
+      detail.className = `selected-job-sender-unknown-status-detail is-${presentation.kind}`;
+      if (presentation.kind === 'resolved') {
+        detail.textContent = presentation.text;
+        if (presentation.title !== '') {
+          detail.title = presentation.title;
+        }
+      } else {
+        detail.appendChild(createSenderLookupStatusBadge(presentation));
+      }
+
+      item.append(heading, detail);
+      statusList.appendChild(item);
+    });
+
     const openButton = document.createElement('button');
     openButton.type = 'button';
     openButton.className = 'selected-job-sender-unknown-open';
@@ -12262,7 +12537,7 @@ function renderSelectedJobSenderSection(job) {
     openButton.disabled = !selectedJobArchivingEditable(job);
     openButton.addEventListener('click', () => openSelectedJobSenderLinkDialog(job));
 
-    unknownWrap.append(notice, openButton);
+    unknownWrap.append(notice, statusList, openButton);
     selectedJobSenderUnknownInfoEl.replaceChildren(unknownWrap);
     setSelectedJobSenderSectionVisibility(selectedJobSenderUnknownSectionEl, true);
   } else {
@@ -13716,6 +13991,10 @@ async function saveSelectedJobFields(jobId, payload) {
   if (requestSeq !== saveSelectedJobFieldsSeq) {
     return;
   }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'selectedExtractionFieldValues')) {
+    await fetchState({ force: true, refreshSenders: true, syncTransport: false });
+  }
 }
 
 function scheduleFilenameSave(jobId, filename) {
@@ -13775,6 +14054,7 @@ function renderSelectedJobPanel() {
     syncReviewViewModeAvailability(null, { allowFallback: false });
     selectedJobPanelEl.classList.add('is-empty');
     selectedJobNameEl.textContent = 'Inget jobb markerat';
+    selectedJobNameEl.removeAttribute('title');
     renderSelectedJobStatus(null);
     selectedJobMetaEl.textContent = 'Markera ett jobb i listan för att visa åtgärder.';
     renderSelectedJobClientSection(null);
@@ -13791,7 +14071,9 @@ function renderSelectedJobPanel() {
 
   syncReviewViewModeAvailability(selectedJob, { allowFallback: false });
   selectedJobPanelEl.classList.remove('is-empty');
-  selectedJobNameEl.textContent = selectedJob.originalFilename || selectedJob.id;
+  const selectedJobName = selectedJob.originalFilename || selectedJob.id;
+  selectedJobNameEl.textContent = selectedJobName;
+  selectedJobNameEl.title = selectedJobName;
   renderSelectedJobStatus(selectedJob);
 
   const metaLines = [];
@@ -21828,6 +22110,9 @@ function sanitizeUnlinkedSenderIdentifier(row) {
     number: typeof input.number === 'string' ? input.number : '',
     normalizedNumber,
     name: typeof input.name === 'string' ? input.name : '',
+    lookupStatus: typeof input.lookupStatus === 'string' ? input.lookupStatus : '',
+    lookupErrorCode: typeof input.lookupErrorCode === 'string' ? input.lookupErrorCode : '',
+    lookupErrorMessage: typeof input.lookupErrorMessage === 'string' ? input.lookupErrorMessage : '',
     updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt : '',
   };
 }

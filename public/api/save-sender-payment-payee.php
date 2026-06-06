@@ -40,6 +40,13 @@ if ($lookupStatus !== null && !is_string($lookupStatus)) {
     exit;
 }
 
+$lookupErrorCode = is_string($payload['lookupErrorCode'] ?? null)
+    ? trim((string) $payload['lookupErrorCode'])
+    : '';
+$lookupErrorMessage = is_string($payload['lookupErrorMessage'] ?? null)
+    ? trim((string) $payload['lookupErrorMessage'])
+    : '';
+
 $currentSelectedJobId = is_string($payload['currentSelectedJobId'] ?? null)
     ? trim((string) $payload['currentSelectedJobId'])
     : null;
@@ -53,7 +60,10 @@ try {
         throw new RuntimeException('Sender repository is unavailable.');
     }
 
-    $resolved = $repository->resolvePaymentPayeeName($paymentId, $payeeName, $lookupStatus);
+    $normalizedLookupStatus = is_string($lookupStatus) ? trim(strtolower($lookupStatus)) : '';
+    $resolved = in_array($normalizedLookupStatus, ['failed', 'not_found'], true)
+        ? $repository->failPaymentPayeeLookup($paymentId, $lookupErrorCode, $lookupErrorMessage)
+        : $repository->resolvePaymentPayeeName($paymentId, $payeeName, $lookupStatus);
     $config = load_config();
     $followup = [
         'affectedJobIds' => [],
@@ -73,7 +83,9 @@ try {
         'ok' => true,
         'paymentId' => $paymentId,
         'payeeName' => is_string($payeeName) ? trim($payeeName) : null,
-        'lookupStatus' => is_string($lookupStatus) ? trim(strtolower($lookupStatus)) : null,
+        'lookupStatus' => $resolved['lookupStatus'] ?? ($normalizedLookupStatus !== '' ? $normalizedLookupStatus : null),
+        'lookupErrorCode' => $resolved['lookupErrorCode'] ?? null,
+        'lookupErrorMessage' => $resolved['lookupErrorMessage'] ?? null,
         'senderId' => isset($resolved['senderId']) ? $resolved['senderId'] : null,
         'followup' => $followup,
         'remainingCount' => $repository->countPaymentNumbersMissingPayeeName(),

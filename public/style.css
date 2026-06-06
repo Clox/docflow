@@ -420,9 +420,12 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-name {
+  min-width: 0;
+  overflow: hidden;
   font-weight: 600;
   line-height: 1.35;
-  word-break: break-word;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .selected-job-panel-section {
@@ -521,6 +524,96 @@ body.is-resizing-sidebar {
   line-height: 1.35;
 }
 
+.selected-job-sender-unknown-status-list {
+  border-bottom: 1px solid #e5e7eb;
+  border-top: 1px solid #e5e7eb;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.selected-job-sender-unknown-status-item {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  min-width: 0;
+  padding: 8px 0;
+}
+
+.selected-job-sender-unknown-status-item + .selected-job-sender-unknown-status-item {
+  border-top: 1px solid #e5e7eb;
+}
+
+.selected-job-sender-unknown-status-heading {
+  color: #1f2937;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.selected-job-sender-unknown-status-detail {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: #4b5563;
+}
+
+.selected-job-sender-unknown-status-detail.is-resolved {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-job-sender-lookup-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.selected-job-sender-lookup-status-badge.is-running {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.selected-job-sender-lookup-status-badge.is-waiting {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.selected-job-sender-lookup-status-badge.is-failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b42318;
+}
+
+.selected-job-sender-lookup-status-icon,
+.selected-job-sender-lookup-status-badge .selected-job-sender-observation-spinner {
+  flex: 0 0 auto;
+}
+
+.selected-job-sender-lookup-status-icon {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.selected-job-sender-lookup-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .selected-job-sender-unknown-open {
   justify-self: start;
 }
@@ -599,7 +692,6 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-sender-link-observation-detail,
-.selected-job-sender-link-observation-status,
 .selected-job-sender-link-waiting {
   color: #4b5563;
   font-size: 13px;

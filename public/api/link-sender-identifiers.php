@@ -54,13 +54,13 @@ try {
     }
 
     $selectOrganizationById = $pdo->prepare(
-        'SELECT id, sender_id, organization_name
+        'SELECT id, sender_id, organization_name, lookup_status
         FROM sender_organization_numbers
         WHERE id = :id
         LIMIT 1'
     );
     $selectOrganizationByNumber = $pdo->prepare(
-        'SELECT id, sender_id, organization_name
+        'SELECT id, sender_id, organization_name, lookup_status
         FROM sender_organization_numbers
         WHERE organization_number = :organization_number
         LIMIT 1'
@@ -128,7 +128,10 @@ try {
             $organizationName = is_string($organizationRow['organization_name'] ?? null)
                 ? trim((string) $organizationRow['organization_name'])
                 : '';
-            if ($organizationName === '') {
+            $lookupStatus = is_string($organizationRow['lookup_status'] ?? null)
+                ? trim((string) $organizationRow['lookup_status'])
+                : '';
+            if ($organizationName === '' && $lookupStatus !== 'failed') {
                 throw new RuntimeException('Väntar på uppslag av uppgifter.');
             }
             $linkOrganization->execute([
@@ -178,7 +181,7 @@ try {
             $lookupStatus = is_string($paymentRow['payee_lookup_status'] ?? null)
                 ? trim((string) $paymentRow['payee_lookup_status'])
                 : '';
-            if ($payeeName === '' && $lookupStatus === '') {
+            if ($payeeName === '' && !in_array($lookupStatus, ['failed', 'not_found'], true)) {
                 throw new RuntimeException('Väntar på uppslag av uppgifter.');
             }
             $linkPayment->execute([
