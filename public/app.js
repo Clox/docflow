@@ -22256,6 +22256,7 @@ function defaultSenderDraft() {
     domain: '',
     kind: '',
     notes: '',
+    matchNames: [],
     organizationNumbers: [],
     paymentNumbers: [],
     mergedSourceSenderIds: []
@@ -22267,6 +22268,13 @@ function defaultSenderOrganizationDraft() {
     id: null,
     organizationNumber: '',
     organizationName: '',
+  };
+}
+
+function defaultSenderMatchNameDraft() {
+  return {
+    id: null,
+    name: '',
   };
 }
 
@@ -22327,6 +22335,7 @@ function sanitizeSenderDraft(row) {
     : `tmp-${senderDraftUiKeySeq++}`;
   const rawOrganizationNumbers = Array.isArray(input.organizationNumbers) ? input.organizationNumbers : [];
   const rawPaymentNumbers = Array.isArray(input.paymentNumbers) ? input.paymentNumbers : [];
+  const rawMatchNames = Array.isArray(input.matchNames) ? input.matchNames : [];
   const fallbackOrgNumber = typeof input.orgNumber === 'string' ? input.orgNumber : '';
   const organizationNumbers = rawOrganizationNumbers.map(sanitizeSenderOrganizationDraft);
   if (organizationNumbers.length === 0 && fallbackOrgNumber.trim() !== '') {
@@ -22343,6 +22352,7 @@ function sanitizeSenderDraft(row) {
     domain: typeof input.domain === 'string' ? input.domain : '',
     kind: typeof input.kind === 'string' ? input.kind : '',
     notes: typeof input.notes === 'string' ? input.notes : '',
+    matchNames: rawMatchNames.map(sanitizeSenderMatchNameDraft),
     organizationNumbers,
     paymentNumbers: rawPaymentNumbers.map(sanitizeSenderPaymentDraft),
     mergedSourceSenderIds: Array.isArray(input.mergedSourceSenderIds)
@@ -22350,6 +22360,15 @@ function sanitizeSenderDraft(row) {
         .map((value) => Number.parseInt(String(value || ''), 10))
         .filter((value) => Number.isInteger(value) && value > 0)))
       : []
+  };
+}
+
+function sanitizeSenderMatchNameDraft(row) {
+  const input = row && typeof row === 'object' ? row : {};
+  const idValue = input.id;
+  return {
+    id: Number.isInteger(idValue) && idValue > 0 ? idValue : null,
+    name: typeof input.name === 'string' ? input.name : '',
   };
 }
 
@@ -22849,6 +22868,23 @@ function mergedSenderOrganizationNumbers(rows) {
     .map(([, value]) => value);
 }
 
+function mergedSenderMatchNames(rows) {
+  const namesByKey = new Map();
+  rows.forEach((row) => {
+    const matchNames = Array.isArray(row && row.matchNames) ? row.matchNames : [];
+    matchNames.forEach((matchName) => {
+      const normalized = sanitizeSenderMatchNameDraft(matchName);
+      const key = normalized.name.trim().toLocaleLowerCase('sv');
+      if (key !== '' && !namesByKey.has(key)) {
+        namesByKey.set(key, normalized);
+      }
+    });
+  });
+  return Array.from(namesByKey.values()).sort((left, right) => (
+    left.name.localeCompare(right.name, 'sv')
+  ));
+}
+
 function mergedSenderPaymentNumbers(rows) {
   const seen = new Set();
   const payments = [];
@@ -22958,6 +22994,7 @@ function buildSenderMergeState() {
       name: nameOptions[0] || '',
       domain: domainOptions[0] || '',
       notes: mergedSenderNotes(rows),
+      matchNames: mergedSenderMatchNames(rows),
       organizationNumbers: mergedSenderOrganizationNumbers(rows),
       paymentNumbers: mergedSenderPaymentNumbers(rows)
     }),
@@ -27987,6 +28024,49 @@ function syncMatchingPositionAdjustmentInputs() {
   }
 }
 
+function buildSenderMatchNamesSection(matchNames, handlers) {
+  const list = createTreeChildren({ markerless: true });
+
+  const label = document.createElement('div');
+  label.className = 'archive-level-label';
+  label.textContent = 'Matchningsnamn';
+  list.appendChild(label);
+
+  const help = document.createElement('div');
+  help.className = 'archive-level-help sender-match-names-help';
+  help.textContent = 'Matchningsnamn söks alltid i dokument och kan användas för att känna igen avsändare även när org.nr, bankgiro eller plusgiro saknas.';
+  list.appendChild(help);
+
+  matchNames.forEach((matchName, matchNameIndex) => {
+    const node = document.createElement('div');
+    node.className = 'tree-node tree-category has-parent';
+    const row = createTreeRow({ markerless: true });
+    const body = document.createElement('div');
+    body.className = 'tree-body category-body';
+    appendTreeBodyIcon(body, 'tree-body-icon sender-match-name-icon');
+
+    const fields = document.createElement('div');
+    fields.className = 'sender-match-name-fields';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = matchName.name;
+    input.addEventListener('input', () => handlers.onChange(matchNameIndex, input.value));
+    const removeButton = createTrashButton({
+      variant: 'row',
+      title: 'Ta bort matchningsnamn',
+      onClick: () => handlers.onRemove(matchNameIndex),
+    });
+
+    fields.append(createFloatingField('Matchningsnamn', input), removeButton);
+    body.appendChild(fields);
+    row.appendChild(body);
+    node.appendChild(row);
+    list.appendChild(node);
+  });
+
+  return list;
+}
+
 function buildSenderEditorNode(row, rowIndex) {
   const currentSenderUiKey = senderUiKey(row);
   const isCollapsed = collapsedSenderUiKeys.has(currentSenderUiKey);
@@ -28084,6 +28164,18 @@ function buildSenderEditorNode(row, rowIndex) {
   senderFields.appendChild(createFloatingField('Domän', domainInput));
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   senderDetails.appendChild(senderFields);
+
+  senderDetails.appendChild(buildSenderMatchNamesSection(row.matchNames, {
+    onChange: (matchNameIndex, value) => {
+      sendersDraft[rowIndex].matchNames[matchNameIndex].name = value;
+      updateSettingsActionButtons();
+    },
+    onRemove: (matchNameIndex) => {
+      sendersDraft[rowIndex].matchNames.splice(matchNameIndex, 1);
+      renderSendersEditor();
+      updateSettingsActionButtons();
+    },
+  }));
 
   const organizationList = createTreeChildren({ markerless: true });
 
@@ -28244,6 +28336,15 @@ function buildSenderEditorNode(row, rowIndex) {
     renderSendersEditor();
     updateSettingsActionButtons();
   });
+  const addMatchNameButton = document.createElement('button');
+  addMatchNameButton.type = 'button';
+  addMatchNameButton.textContent = 'Lägg till matchningsnamn';
+  addMatchNameButton.addEventListener('click', () => {
+    sendersDraft[rowIndex].matchNames.push(defaultSenderMatchNameDraft());
+    renderSendersEditor();
+    updateSettingsActionButtons();
+  });
+  senderActions.appendChild(addMatchNameButton);
   senderActions.appendChild(addOrganizationButton);
   senderActions.appendChild(addPaymentButton);
   senderDetails.appendChild(senderActions);
@@ -28536,6 +28637,16 @@ function renderSenderMergeEditor() {
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   rootBody.appendChild(senderFields);
 
+  rootBody.appendChild(buildSenderMatchNamesSection(draft.matchNames, {
+    onChange: (matchNameIndex, value) => {
+      senderMergeState.draft.matchNames[matchNameIndex].name = value;
+    },
+    onRemove: (matchNameIndex) => {
+      senderMergeState.draft.matchNames.splice(matchNameIndex, 1);
+      renderSenderMergeEditor();
+    },
+  }));
+
   const organizationList = createTreeChildren({ markerless: true });
 
   const organizationsLabel = document.createElement('div');
@@ -28688,6 +28799,14 @@ function renderSenderMergeEditor() {
     senderMergeState.draft.paymentNumbers.push(defaultSenderPaymentDraft());
     renderSenderMergeEditor();
   });
+  const addMatchNameButton = document.createElement('button');
+  addMatchNameButton.type = 'button';
+  addMatchNameButton.textContent = 'Lägg till matchningsnamn';
+  addMatchNameButton.addEventListener('click', () => {
+    senderMergeState.draft.matchNames.push(defaultSenderMatchNameDraft());
+    renderSenderMergeEditor();
+  });
+  mergeActions.appendChild(addMatchNameButton);
   mergeActions.appendChild(addOrganizationButton);
   mergeActions.appendChild(addPaymentButton);
   rootBody.appendChild(mergeActions);

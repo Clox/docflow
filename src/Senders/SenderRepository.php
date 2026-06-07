@@ -185,6 +185,7 @@ final class SenderRepository
                 'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
                 'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
                 'displayName' => '',
+                'matchNames' => [],
                 'organizationNumbers' => [],
                 'paymentNumbers' => [],
             ];
@@ -271,6 +272,38 @@ final class SenderRepository
             }
         }
 
+        $matchNameRows = $this->pdo->query(
+            'SELECT
+                m.id AS match_name_id,
+                m.sender_id,
+                m.name AS match_name,
+                m.normalized_name
+            FROM sender_match_names m
+            INNER JOIN senders s ON s.id = m.sender_id
+            ORDER BY s.name ASC, s.id ASC, m.name COLLATE NOCASE ASC, m.id ASC'
+        )->fetchAll();
+
+        if (is_array($matchNameRows)) {
+            foreach ($matchNameRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
+                $matchNameId = isset($row['match_name_id']) ? (int) $row['match_name_id'] : 0;
+                $name = is_string($row['match_name'] ?? null) ? trim((string) $row['match_name']) : '';
+                if ($senderId < 1 || $matchNameId < 1 || $name === '' || !isset($sendersById[$senderId])) {
+                    continue;
+                }
+                $sendersById[$senderId]['matchNames'][] = [
+                    'id' => $matchNameId,
+                    'name' => $name,
+                    'normalizedName' => is_string($row['normalized_name'] ?? null)
+                        ? trim((string) $row['normalized_name'])
+                        : MatchNameNormalizer::normalize($name),
+                ];
+            }
+        }
+
         foreach ($sendersById as $senderId => $senderRow) {
             $sendersById[$senderId]['displayName'] = $this->senderDisplayName($senderRow);
         }
@@ -290,6 +323,46 @@ final class SenderRepository
         );
 
         return $rows;
+    }
+
+    public function listMatchNamesForAnalysis(): array
+    {
+        $rows = $this->pdo->query(
+            'SELECT
+                m.sender_id,
+                m.name,
+                m.normalized_name
+            FROM sender_match_names m
+            INNER JOIN senders s ON s.id = m.sender_id
+            WHERE trim(m.normalized_name) <> \'\'
+            ORDER BY m.sender_id ASC, m.id ASC'
+        )->fetchAll();
+
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $items = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
+            $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
+            $normalizedName = is_string($row['normalized_name'] ?? null)
+                ? trim((string) $row['normalized_name'])
+                : '';
+            if ($senderId < 1 || $name === '' || $normalizedName === '') {
+                continue;
+            }
+            $items[] = [
+                'senderId' => $senderId,
+                'name' => $name,
+                'normalizedName' => $normalizedName,
+            ];
+        }
+
+        return $items;
     }
 
     public function listUnlinkedIdentifierRows(): array
@@ -490,10 +563,15 @@ final class SenderRepository
                 is_array($senderRow['paymentNumbers'] ?? null) ? $senderRow['paymentNumbers'] : [],
                 static fn (mixed $payment): bool => is_array($payment)
             ));
+            $matchNameRows = array_values(array_filter(
+                is_array($senderRow['matchNames'] ?? null) ? $senderRow['matchNames'] : [],
+                static fn (mixed $matchName): bool => is_array($matchName) || is_string($matchName)
+            ));
             $isEffectivelyEmpty = $name === ''
                 && $domain === ''
                 && $kind === ''
                 && $notes === ''
+                && $matchNameRows === []
                 && $organizationRows === []
                 && $paymentRows === [];
             if ($isEffectivelyEmpty) {
@@ -576,12 +654,33 @@ final class SenderRepository
                 ];
             }
 
+            $normalizedMatchNames = [];
+            $seenMatchNames = [];
+            foreach ($matchNameRows as $matchNameRow) {
+                $matchName = is_string($matchNameRow)
+                    ? trim($matchNameRow)
+                    : (is_string($matchNameRow['name'] ?? null) ? trim((string) $matchNameRow['name']) : '');
+                if ($matchName === '') {
+                    continue;
+                }
+                $normalizedMatchName = MatchNameNormalizer::normalize($matchName);
+                if ($normalizedMatchName === '' || isset($seenMatchNames[$normalizedMatchName])) {
+                    continue;
+                }
+                $seenMatchNames[$normalizedMatchName] = true;
+                $normalizedMatchNames[] = [
+                    'name' => $matchName,
+                    'normalizedName' => $normalizedMatchName,
+                ];
+            }
+
             $normalizedSenders[] = [
                 'id' => $id,
                 'name' => $name !== '' ? $name : null,
                 'domain' => $domain !== '' ? strtolower($domain) : null,
                 'kind' => $kind !== '' ? $kind : null,
                 'notes' => $notes !== '' ? $notes : null,
+                'matchNames' => $normalizedMatchNames,
                 'organizationNumbers' => $normalizedOrganizations,
                 'paymentNumbers' => $normalizedPayments,
             ];
@@ -595,6 +694,7 @@ final class SenderRepository
 
         try {
             $this->pdo->exec('DELETE FROM sender_alternative_names');
+            $this->pdo->exec('DELETE FROM sender_match_names');
             $this->pdo->exec('DELETE FROM sender_payment_numbers');
             $this->pdo->exec('DELETE FROM sender_organization_numbers');
             $this->pdo->exec('DELETE FROM senders');
@@ -670,6 +770,21 @@ final class SenderRepository
                     :payee_lookup_status
                 )'
             );
+            $matchNameInsert = $this->pdo->prepare(
+                'INSERT INTO sender_match_names (
+                    sender_id,
+                    name,
+                    normalized_name,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    :sender_id,
+                    :name,
+                    :normalized_name,
+                    :created_at,
+                    :updated_at
+                )'
+            );
             $resolvedSenderIds = [];
             foreach ($normalizedSenders as $senderIndex => $sender) {
                 $senderInsert->execute([
@@ -692,6 +807,16 @@ final class SenderRepository
                 $senderId = isset($resolvedSenderIds[$senderIndex]) ? (int) $resolvedSenderIds[$senderIndex] : 0;
                 if ($senderId < 1) {
                     continue;
+                }
+
+                foreach ($sender['matchNames'] as $matchNameRow) {
+                    $matchNameInsert->execute([
+                        ':sender_id' => $senderId,
+                        ':name' => $matchNameRow['name'],
+                        ':normalized_name' => $matchNameRow['normalizedName'],
+                        ':created_at' => $timestamp,
+                        ':updated_at' => $timestamp,
+                    ]);
                 }
 
                 foreach ($sender['organizationNumbers'] as $organizationRow) {
@@ -1782,6 +1907,27 @@ final class SenderRepository
                     updated_at = :updated_at
                 WHERE sender_id = :source_sender_id'
             );
+            $copyMatchNames = $this->pdo->prepare(
+                'INSERT OR IGNORE INTO sender_match_names (
+                    sender_id,
+                    name,
+                    normalized_name,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    :sender_id,
+                    name,
+                    normalized_name,
+                    created_at,
+                    :updated_at
+                FROM sender_match_names
+                WHERE sender_id = :source_sender_id'
+            );
+            $deleteSourceMatchNames = $this->pdo->prepare(
+                'DELETE FROM sender_match_names
+                WHERE sender_id = :source_sender_id'
+            );
             $deleteSender = $this->pdo->prepare(
                 'DELETE FROM senders
                 WHERE id = :id'
@@ -1834,6 +1980,14 @@ final class SenderRepository
                 $movePayments->execute([
                     ':sender_id' => $targetSenderId,
                     ':updated_at' => $timestamp,
+                    ':source_sender_id' => $sourceSenderId,
+                ]);
+                $copyMatchNames->execute([
+                    ':sender_id' => $targetSenderId,
+                    ':updated_at' => $timestamp,
+                    ':source_sender_id' => $sourceSenderId,
+                ]);
+                $deleteSourceMatchNames->execute([
                     ':source_sender_id' => $sourceSenderId,
                 ]);
                 $deleteSender->execute([

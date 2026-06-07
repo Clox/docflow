@@ -369,6 +369,23 @@ function load_sender_export_rows(): array
             ];
         }
 
+        $matchNames = [];
+        foreach (is_array($row['matchNames'] ?? null) ? $row['matchNames'] : [] as $matchName) {
+            if (!is_array($matchName)) {
+                continue;
+            }
+            $matchNameValue = is_string($matchName['name'] ?? null)
+                ? trim((string) $matchName['name'])
+                : '';
+            if ($matchNameValue === '') {
+                continue;
+            }
+            $matchNames[] = [
+                'id' => isset($matchName['id']) && is_numeric($matchName['id']) ? (int) $matchName['id'] : null,
+                'name' => $matchNameValue,
+            ];
+        }
+
         $senders[] = [
             'id' => $senderId,
             'name' => $name,
@@ -376,6 +393,7 @@ function load_sender_export_rows(): array
             'domain' => is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '',
             'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
             'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
+            'matchNames' => $matchNames,
             'organizationNumbers' => $organizationNumbers,
             'paymentNumbers' => $paymentNumbers,
         ];
@@ -892,12 +910,31 @@ function normalize_export_sender_rows(array $rows): array
             ];
         }
 
+        $matchNames = [];
+        foreach (is_array($row['matchNames'] ?? null) ? $row['matchNames'] : [] as $matchName) {
+            $matchNameValue = is_string($matchName)
+                ? trim($matchName)
+                : (is_array($matchName) && is_string($matchName['name'] ?? null)
+                    ? trim((string) $matchName['name'])
+                    : '');
+            if ($matchNameValue === '') {
+                continue;
+            }
+            $matchNames[] = [
+                'id' => is_array($matchName) && isset($matchName['id']) && is_numeric($matchName['id'])
+                    ? (int) $matchName['id']
+                    : null,
+                'name' => $matchNameValue,
+            ];
+        }
+
         $senders[] = [
             'id' => isset($row['id']) && is_numeric($row['id']) ? (int) $row['id'] : null,
             'name' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
             'domain' => is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '',
             'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
             'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
+            'matchNames' => $matchNames,
             'organizationNumbers' => $organizationNumbers,
             'paymentNumbers' => $paymentNumbers,
         ];
@@ -23644,11 +23681,31 @@ function cached_sender_editor_rows_by_id(): array
     return $cache;
 }
 
+function cached_sender_match_names_for_analysis(): array
+{
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
+
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        $cache = [];
+        return $cache;
+    }
+
+    try {
+        $cache = $repository->listMatchNamesForAnalysis();
+    } catch (Throwable $e) {
+        $cache = [];
+    }
+
+    return $cache;
+}
+
 function normalized_sender_summary_search_text(string $value): string
 {
-    $lowered = function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
-    $collapsed = preg_replace('/\s+/u', ' ', $lowered);
-    return is_string($collapsed) ? trim($collapsed) : trim($lowered);
+    return \Docflow\Senders\MatchNameNormalizer::normalize($value);
 }
 
 function sender_summary_document_text(string $jobDir): string
@@ -23729,6 +23786,24 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
     $observations = [];
     $observationKeys = [];
     $senderIds = [];
+    $matchedMatchNamesBySenderId = [];
+
+    if ($documentText !== '') {
+        foreach (cached_sender_match_names_for_analysis() as $matchNameRow) {
+            if (!is_array($matchNameRow)) {
+                continue;
+            }
+            $senderId = isset($matchNameRow['senderId']) ? (int) $matchNameRow['senderId'] : 0;
+            $normalizedName = is_string($matchNameRow['normalizedName'] ?? null)
+                ? trim((string) $matchNameRow['normalizedName'])
+                : '';
+            if ($senderId < 1 || $normalizedName === '' || !str_contains($documentText, $normalizedName)) {
+                continue;
+            }
+            $senderIds[$senderId] = true;
+            $matchedMatchNamesBySenderId[$senderId][$normalizedName] = true;
+        }
+    }
 
     foreach ($organizationNumbers as $organizationNumber) {
         $observedRow = observed_sender_organization_summary_row($organizationNumber);
@@ -23890,7 +23965,34 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 'label' => 'Namn',
                 'value' => $organizationName,
                 'found' => sender_summary_text_contains($documentText, $organizationName),
+                'type' => 'lookup_name',
             ];
+        }
+
+        $matchedAlias = null;
+        $matchNameRows = is_array($senderRow['matchNames'] ?? null) ? $senderRow['matchNames'] : [];
+        foreach ($matchNameRows as $matchNameRow) {
+            if (!is_array($matchNameRow)) {
+                continue;
+            }
+            $matchName = is_string($matchNameRow['name'] ?? null) ? trim((string) $matchNameRow['name']) : '';
+            $normalizedMatchName = is_string($matchNameRow['normalizedName'] ?? null)
+                ? trim((string) $matchNameRow['normalizedName'])
+                : normalized_sender_summary_search_text($matchName);
+            if ($matchName === '' || $normalizedMatchName === '' || isset($nameComponentMap['match:' . $normalizedMatchName])) {
+                continue;
+            }
+            $found = isset($matchedMatchNamesBySenderId[$senderId][$normalizedMatchName]);
+            $nameComponentMap['match:' . $normalizedMatchName] = true;
+            $nameComponents[] = [
+                'label' => 'Matchningsnamn',
+                'value' => $matchName,
+                'found' => $found,
+                'type' => 'match_name',
+            ];
+            if ($found && $matchedAlias === null) {
+                $matchedAlias = $matchName;
+            }
         }
 
         $paymentEntries = [];
@@ -23925,6 +24027,7 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                         'label' => 'Namn',
                         'value' => $payeeName,
                         'found' => sender_summary_text_contains($documentText, $payeeName),
+                        'type' => 'lookup_name',
                     ];
                 }
             }
@@ -23933,8 +24036,9 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         $matchKinds = [];
         foreach ($nameComponents as $nameComponent) {
             if (($nameComponent['found'] ?? false) === true) {
-                $matchKinds[] = 'name';
-                break;
+                $matchKinds[] = ($nameComponent['type'] ?? '') === 'match_name'
+                    ? 'match_name'
+                    : 'name';
             }
         }
         if (is_array($organizationEntry) && ($organizationEntry['found'] ?? false) === true) {
@@ -23956,6 +24060,14 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                 $strongMatchCount++;
             }
         }
+        foreach ($nameComponents as $nameComponent) {
+            if (
+                ($nameComponent['found'] ?? false) === true
+                && ($nameComponent['type'] ?? '') === 'match_name'
+            ) {
+                $strongMatchCount++;
+            }
+        }
         $headerFound = $strongMatchCount > 0;
         $matchedBy = count($matchKinds) > 1
             ? 'kombination'
@@ -23967,7 +24079,7 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
             'name' => $name,
             'headerFound' => $headerFound,
             'matchedBy' => $matchedBy,
-            'matchedAlias' => null,
+            'matchedAlias' => $matchedAlias,
             'nameComponents' => $nameComponents,
             'organizationNumber' => $organizationEntry,
             'paymentNumbers' => $paymentEntries,
@@ -23987,13 +24099,26 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                         $count++;
                     }
                 }
+                foreach (is_array($row['nameComponents'] ?? null) ? $row['nameComponents'] : [] as $nameComponent) {
+                    if (
+                        is_array($nameComponent)
+                        && (($nameComponent['found'] ?? false) === true)
+                        && (($nameComponent['type'] ?? '') === 'match_name')
+                    ) {
+                        $count++;
+                    }
+                }
                 return $count;
             };
 
             $countAllFoundMarks = static function (array $row) use ($countStrongMatches): int {
                 $count = $countStrongMatches($row);
                 foreach (is_array($row['nameComponents'] ?? null) ? $row['nameComponents'] : [] as $nameComponent) {
-                    if (is_array($nameComponent) && (($nameComponent['found'] ?? false) === true)) {
+                    if (
+                        is_array($nameComponent)
+                        && (($nameComponent['found'] ?? false) === true)
+                        && (($nameComponent['type'] ?? '') !== 'match_name')
+                    ) {
                         $count++;
                     }
                 }

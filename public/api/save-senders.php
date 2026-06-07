@@ -5,6 +5,7 @@ require_once __DIR__ . '/_bootstrap.php';
 
 use Docflow\Database\Connection;
 use Docflow\Senders\IdentifierNormalizer;
+use Docflow\Senders\MatchNameNormalizer;
 use Docflow\Senders\SenderRepository;
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -52,6 +53,10 @@ foreach ($payload['senders'] as $row) {
         is_array($row['paymentNumbers'] ?? null) ? $row['paymentNumbers'] : [],
         static fn (mixed $payment): bool => is_array($payment)
     ));
+    $matchNameRows = array_values(array_filter(
+        is_array($row['matchNames'] ?? null) ? $row['matchNames'] : [],
+        static fn (mixed $matchName): bool => is_array($matchName) || is_string($matchName)
+    ));
 
     $mergedSourceSenderIds = [];
     foreach (is_array($row['mergedSourceSenderIds'] ?? null) ? $row['mergedSourceSenderIds'] : [] as $value) {
@@ -71,6 +76,7 @@ foreach ($payload['senders'] as $row) {
         && $domainRaw === ''
         && $kindRaw === ''
         && $notesRaw === ''
+        && count($matchNameRows) === 0
         && count($organizationRows) === 0
         && count($paymentRows) === 0;
     if ($isEffectivelyEmpty) {
@@ -152,6 +158,26 @@ foreach ($payload['senders'] as $row) {
         ];
     }
 
+    $matchNames = [];
+    $seenMatchNames = [];
+    foreach ($matchNameRows as $matchNameRow) {
+        $matchName = is_string($matchNameRow)
+            ? trim($matchNameRow)
+            : (is_string($matchNameRow['name'] ?? null) ? trim((string) $matchNameRow['name']) : '');
+        if ($matchName === '') {
+            continue;
+        }
+        $normalizedMatchName = MatchNameNormalizer::normalize($matchName);
+        if ($normalizedMatchName === '' || isset($seenMatchNames[$normalizedMatchName])) {
+            continue;
+        }
+        $seenMatchNames[$normalizedMatchName] = true;
+        $matchNames[] = [
+            'name' => $matchName,
+            'normalizedName' => $normalizedMatchName,
+        ];
+    }
+
     if ($id !== null) {
         $submittedSenderIds[$id] = true;
     }
@@ -162,6 +188,7 @@ foreach ($payload['senders'] as $row) {
         'domain' => $domainRaw !== '' ? strtolower($domainRaw) : null,
         'kind' => $kindRaw !== '' ? $kindRaw : null,
         'notes' => $notesRaw !== '' ? $notesRaw : null,
+        'matchNames' => $matchNames,
         'organizationNumbers' => $organizationNumbers,
         'paymentNumbers' => $paymentNumbers,
         'mergedSourceSenderIds' => $mergedSourceSenderIds,
@@ -262,6 +289,24 @@ try {
     }
     $originalPaymentRowsById = $existingPaymentRowsById;
     $originalOrganizationRowsById = $existingOrganizationRowsById;
+    $existingMatchNameRows = $pdo->query(
+        'SELECT sender_id, normalized_name
+        FROM sender_match_names
+        ORDER BY sender_id ASC, normalized_name ASC'
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $existingMatchNamesBySenderId = [];
+    foreach ($existingMatchNameRows as $matchNameRow) {
+        if (!is_array($matchNameRow)) {
+            continue;
+        }
+        $senderId = isset($matchNameRow['sender_id']) ? (int) $matchNameRow['sender_id'] : 0;
+        $normalizedName = is_string($matchNameRow['normalized_name'] ?? null)
+            ? trim((string) $matchNameRow['normalized_name'])
+            : '';
+        if ($senderId > 0 && $normalizedName !== '') {
+            $existingMatchNamesBySenderId[$senderId][] = $normalizedName;
+        }
+    }
 
     $deleteRemovedSender = $pdo->prepare('DELETE FROM senders WHERE id = :id');
     $insertSender = $pdo->prepare(
@@ -367,6 +412,25 @@ try {
             updated_at = :updated_at
         WHERE id = :id'
     );
+    $deleteSenderMatchNames = $pdo->prepare(
+        'DELETE FROM sender_match_names
+        WHERE sender_id = :sender_id'
+    );
+    $insertSenderMatchName = $pdo->prepare(
+        'INSERT INTO sender_match_names (
+            sender_id,
+            name,
+            normalized_name,
+            created_at,
+            updated_at
+        ) VALUES (
+            :sender_id,
+            :name,
+            :normalized_name,
+            :created_at,
+            :updated_at
+        )'
+    );
 
     $shouldTouchExistingSender = static function (int $senderId) use ($submittedSenderIds, $claimedMergedSourceIds): bool {
         return $senderId > 0
@@ -419,6 +483,27 @@ try {
                 ':updated_at' => $timestamp,
             ]);
             $senderId = (int) $pdo->lastInsertId();
+        }
+
+        $previousMatchNames = $existingMatchNamesBySenderId[$senderId] ?? [];
+        sort($previousMatchNames, SORT_STRING);
+        $nextMatchNames = array_map(
+            static fn (array $matchName): string => (string) $matchName['normalizedName'],
+            $row['matchNames']
+        );
+        sort($nextMatchNames, SORT_STRING);
+        $deleteSenderMatchNames->execute([':sender_id' => $senderId]);
+        foreach ($row['matchNames'] as $matchName) {
+            $insertSenderMatchName->execute([
+                ':sender_id' => $senderId,
+                ':name' => $matchName['name'],
+                ':normalized_name' => $matchName['normalizedName'],
+                ':created_at' => $timestamp,
+                ':updated_at' => $timestamp,
+            ]);
+        }
+        if ($previousMatchNames !== $nextMatchNames) {
+            $touchSender($senderId, $timestamp);
         }
 
         foreach ($row['mergedSourceSenderIds'] as $sourceSenderId) {
