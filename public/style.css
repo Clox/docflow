@@ -6642,12 +6642,12 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   display: flex;
   gap: 4px;
   margin: 12px 0;
+  position: relative;
 }
 
 .senders-tab {
   background: transparent;
   border: 0;
-  border-bottom: 2px solid transparent;
   color: #4b5563;
   cursor: pointer;
   font: inherit;
@@ -6655,9 +6655,29 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .senders-tab.is-active {
-  border-bottom-color: #2563eb;
   color: #111827;
   font-weight: 600;
+}
+
+.senders-tab-indicator {
+  background: #2563eb;
+  bottom: -1px;
+  height: 2px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(0);
+  width: 0;
+}
+
+.senders-tabs.is-indicator-ready .senders-tab-indicator {
+  transition: transform 180ms ease, width 180ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .senders-tabs.is-indicator-ready .senders-tab-indicator {
+    transition: none;
+  }
 }
 
 .senders-unlinked-list {

@@ -22561,6 +22561,36 @@ function visibleUnlinkedSenderIdentifiers() {
   return sendersUnlinkedIdentifiers.filter((row) => !claimedKeys.has(row.key));
 }
 
+function updateSendersTabIndicator(activeTabEl) {
+  if (!(activeTabEl instanceof HTMLButtonElement)) {
+    return;
+  }
+  const tabsEl = activeTabEl.closest('.senders-tabs');
+  const indicatorEl = tabsEl?.querySelector('.senders-tab-indicator');
+  if (!(tabsEl instanceof HTMLElement) || !(indicatorEl instanceof HTMLElement)) {
+    return;
+  }
+
+  indicatorEl.style.transform = `translateX(${activeTabEl.offsetLeft}px)`;
+  indicatorEl.style.width = `${activeTabEl.offsetWidth}px`;
+
+  if (!tabsEl.classList.contains('is-indicator-ready')) {
+    requestAnimationFrame(() => tabsEl.classList.add('is-indicator-ready'));
+  }
+
+  if (typeof ResizeObserver === 'function' && !(tabsEl._sendersTabResizeObserver instanceof ResizeObserver)) {
+    const resizeObserver = new ResizeObserver(() => {
+      const selectedTabEl = tabsEl.querySelector('.senders-tab.is-active');
+      if (selectedTabEl instanceof HTMLButtonElement) {
+        indicatorEl.style.transform = `translateX(${selectedTabEl.offsetLeft}px)`;
+        indicatorEl.style.width = `${selectedTabEl.offsetWidth}px`;
+      }
+    });
+    resizeObserver.observe(tabsEl);
+    tabsEl._sendersTabResizeObserver = resizeObserver;
+  }
+}
+
 function setSendersPanelTab(tabId = 'senders') {
   const normalizedTabId = tabId === 'unlinked' ? 'unlinked' : 'senders';
   if (sendersViewSendersEl) {
@@ -22577,6 +22607,7 @@ function setSendersPanelTab(tabId = 'senders') {
     sendersTabUnlinkedEl.classList.toggle('is-active', normalizedTabId === 'unlinked');
     sendersTabUnlinkedEl.setAttribute('aria-selected', normalizedTabId === 'unlinked' ? 'true' : 'false');
   }
+  updateSendersTabIndicator(normalizedTabId === 'unlinked' ? sendersTabUnlinkedEl : sendersTabSendersEl);
 }
 
 function applyUnlinkedIdentifierToSenderDraft(senderDraft, identifier) {

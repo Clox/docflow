@@ -488,6 +488,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <div class="senders-tabs" role="tablist" aria-label="Avsändarvyer">
       <button id="senders-tab-senders" class="senders-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="senders-view-senders">Avsändare</button>
       <button id="senders-tab-unlinked" class="senders-tab" type="button" role="tab" aria-selected="false" aria-controls="senders-view-unlinked">Okopplade uppgifter</button>
+      <span class="senders-tab-indicator" aria-hidden="true"></span>
     </div>
     <div id="senders-view-senders" class="archive-view">
       <div id="senders-toolbar-section" class="settings-group senders-toolbar">
