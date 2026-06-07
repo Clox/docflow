@@ -684,6 +684,7 @@ const mountedSettingsPanels = new Set();
 const boundSettingsPanels = new Set();
 const loadedSettingsPanels = new Set();
 const loadingSettingsPanels = new Set();
+const settingsPanelLoadPromises = new Map();
 const EDIT_CLIENTS_OPTION_VALUE = '__edit_clients__';
 const EDIT_SENDERS_OPTION_VALUE = '__edit_senders__';
 const EDIT_ARCHIVE_STRUCTURE_OPTION_VALUE = '__edit_archive_structure__';
@@ -695,6 +696,7 @@ const SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX = 50;
 let settingsDialogLayout = null;
 let settingsDialogDragState = null;
 let settingsDialogResizeState = null;
+let pendingUnlinkedSenderIdentifierKey = '';
 const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'archived-review', 'processing', 'archived']);
 const SIDEBAR_LIST_SIZE_STORAGE_KEY = 'docflow.sidebar.listSizePercent';
 const DEFAULT_SIDEBAR_LIST_SIZE_PERCENT = 35;
@@ -11552,11 +11554,35 @@ function createOpenUnlinkedSenderIdentifierButton(observation, beforeOpen = null
   button.textContent = '↗';
   button.title = 'Öppna i avsändarregister';
   button.setAttribute('aria-label', 'Öppna i avsändarregister');
-  button.addEventListener('click', () => {
+  let opening = false;
+  const activate = async () => {
+    if (opening) {
+      return;
+    }
+    opening = true;
     if (typeof beforeOpen === 'function') {
       beforeOpen();
     }
-    openUnlinkedSenderIdentifierInRegister(identifierKey);
+    try {
+      await openUnlinkedSenderIdentifierInRegister(identifierKey);
+    } catch (error) {
+      console.error('Kunde inte öppna den okopplade uppgiften i avsändarregistret.', error);
+    } finally {
+      opening = false;
+    }
+  };
+  button.addEventListener('pointerdown', (event) => {
+    if (event.isPrimary && event.button === 0) {
+      event.preventDefault();
+      activate();
+    }
+  });
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (event.detail !== 0) {
+      return;
+    }
+    activate();
   });
   return button;
 }
@@ -20913,6 +20939,13 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
   }
 
   const reload = options.reload === true;
+  const existingLoad = settingsPanelLoadPromises.get(tabId);
+  if (existingLoad) {
+    await existingLoad;
+    if (!reload) {
+      return true;
+    }
+  }
   if (tabId === 'backup' && loadedSettingsPanels.has(tabId) && !reload) {
     await Promise.all([loadConfigurationBackups(), refreshConfigurationBackupCreateState()]);
     return true;
@@ -20924,7 +20957,7 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
   loadingSettingsPanels.add(tabId);
   updateSettingsActionButtons();
 
-  try {
+  const loadPromise = (async () => {
     if (tabId === 'clients') {
       await loadClientsSettings();
     } else if (tabId === 'senders') {
@@ -20956,9 +20989,17 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
 
     loadedSettingsPanels.add(tabId);
     return true;
+  })();
+  settingsPanelLoadPromises.set(tabId, loadPromise);
+
+  try {
+    return await loadPromise;
   } finally {
-    loadingSettingsPanels.delete(tabId);
-    updateSettingsActionButtons();
+    if (settingsPanelLoadPromises.get(tabId) === loadPromise) {
+      settingsPanelLoadPromises.delete(tabId);
+      loadingSettingsPanels.delete(tabId);
+      updateSettingsActionButtons();
+    }
   }
 }
 
@@ -21039,19 +21080,34 @@ async function openUnlinkedSenderIdentifierInRegister(identifierKey) {
     return;
   }
 
+  pendingUnlinkedSenderIdentifierKey = normalizedKey;
   const opened = await openSendersSettingsDirect();
   if (opened === false) {
+    pendingUnlinkedSenderIdentifierKey = '';
     return;
   }
 
   setSendersPanelTab('unlinked');
   renderUnlinkedSenderIdentifiers();
+  focusPendingUnlinkedSenderIdentifier();
+}
+
+function focusPendingUnlinkedSenderIdentifier() {
+  const identifierKey = pendingUnlinkedSenderIdentifierKey;
+  if (identifierKey === '') {
+    return;
+  }
+
   requestAnimationFrame(() => {
-    if (!(sendersUnlinkedListEl instanceof HTMLElement)) {
+    if (
+      pendingUnlinkedSenderIdentifierKey !== identifierKey
+      || settingsModalEl.classList.contains('hidden')
+      || !(sendersUnlinkedListEl instanceof HTMLElement)
+    ) {
       return;
     }
     const target = sendersUnlinkedListEl.querySelector(
-      `[data-sender-identifier-key="${CSS.escape(normalizedKey)}"]`
+      `[data-sender-identifier-key="${CSS.escape(identifierKey)}"]`
     );
     if (!(target instanceof HTMLElement)) {
       return;
@@ -21062,6 +21118,7 @@ async function openUnlinkedSenderIdentifierInRegister(identifierKey) {
     if (select instanceof HTMLSelectElement) {
       select.focus({ preventScroll: true });
     }
+    pendingUnlinkedSenderIdentifierKey = '';
   });
 }
 
@@ -21134,6 +21191,7 @@ function closeSettingsModal(force = false) {
   activeSettingsSectionFooterPanelId = '';
   closeSenderMergeOverlay();
   stopRapidocrInstallPolling();
+  pendingUnlinkedSenderIdentifierKey = '';
   settingsModalEl.classList.add('hidden');
   return true;
 }
@@ -28103,6 +28161,7 @@ function renderUnlinkedSenderIdentifiers() {
   table.appendChild(tbody);
   fragment.appendChild(table);
   sendersUnlinkedListEl.replaceChildren(fragment);
+  focusPendingUnlinkedSenderIdentifier();
 }
 
 function renderSendersEditor() {
