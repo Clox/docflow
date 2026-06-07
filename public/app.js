@@ -696,6 +696,7 @@ const SETTINGS_DIALOG_EDGE_DRAG_LIMIT_PX = 50;
 let settingsDialogLayout = null;
 let settingsDialogDragState = null;
 let settingsDialogResizeState = null;
+let selectedJobSenderLinkDialogLayout = null;
 let pendingUnlinkedSenderIdentifierKey = '';
 const VALID_JOB_LIST_MODES = new Set(['all', 'ready', 'archived-review', 'processing', 'archived']);
 const SIDEBAR_LIST_SIZE_STORAGE_KEY = 'docflow.sidebar.listSizePercent';
@@ -12219,6 +12220,23 @@ function openSelectedJobSenderLinkDialog(job) {
   dialog.setAttribute('aria-modal', 'true');
   dialog.setAttribute('aria-labelledby', 'selected-job-sender-link-title');
 
+  const titlebar = document.createElement('div');
+  titlebar.className = 'settings-dialog-titlebar';
+  titlebar.title = 'Dra för att flytta fönstret';
+  const titlebarGrab = document.createElement('div');
+  titlebarGrab.className = 'settings-dialog-titlebar-grab';
+  titlebarGrab.setAttribute('aria-hidden', 'true');
+  const titlebarActions = document.createElement('div');
+  titlebarActions.className = 'settings-dialog-titlebar-actions';
+  const titlebarCloseButton = document.createElement('button');
+  titlebarCloseButton.type = 'button';
+  titlebarCloseButton.className = 'settings-dialog-titlebar-button settings-dialog-titlebar-close';
+  titlebarCloseButton.setAttribute('aria-label', 'Stäng koppla-dialogen');
+  titlebarCloseButton.title = 'Stäng';
+  titlebarCloseButton.textContent = '×';
+  titlebarActions.appendChild(titlebarCloseButton);
+  titlebar.append(titlebarGrab, titlebarActions);
+
   const content = document.createElement('section');
   content.className = 'settings-content selected-job-sender-link-content';
 
@@ -12281,19 +12299,29 @@ function openSelectedJobSenderLinkDialog(job) {
   executeButton.textContent = 'Utför';
   actions.append(cancelButton, executeButton);
 
+  const resizeHandle = document.createElement('button');
+  resizeHandle.type = 'button';
+  resizeHandle.className = 'settings-dialog-resize-handle';
+  resizeHandle.setAttribute('aria-label', 'Ändra storlek på koppla-dialogen');
+  resizeHandle.title = 'Ändra storlek';
+
   content.append(title, observationsList, waitingMessage, options, actions);
-  dialog.appendChild(content);
+  dialog.append(titlebar, content, resizeHandle);
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
 
   let submitting = false;
   let refreshTimer = 0;
+  let floatingDialog = null;
   const bestCandidateId = bestSenderCandidateIdForJob(job);
 
   const closeDialog = () => {
     if (refreshTimer) {
       window.clearInterval(refreshTimer);
       refreshTimer = 0;
+    }
+    if (floatingDialog) {
+      floatingDialog.destroy();
     }
     overlay.remove();
   };
@@ -12387,10 +12415,33 @@ function openSelectedJobSenderLinkDialog(job) {
   }
   syncDialog();
 
+  const defaultDialogWidth = Math.min(560, Math.max(420, window.innerWidth - 32));
+  dialog.style.width = `${defaultDialogWidth}px`;
+  dialog.style.height = 'auto';
+  const defaultDialogHeight = Math.ceil(dialog.getBoundingClientRect().height);
+  dialog.style.removeProperty('width');
+  dialog.style.removeProperty('height');
+  const defaultDialogLayout = {
+    width: defaultDialogWidth,
+    height: defaultDialogHeight,
+    left: Math.round((window.innerWidth - defaultDialogWidth) / 2),
+    top: Math.round((window.innerHeight - defaultDialogHeight) / 2),
+  };
+  floatingDialog = enableFloatingSettingsDialog(dialog, titlebar, resizeHandle, {
+    minWidth: 420,
+    minHeight: 420,
+    initialLayout: selectedJobSenderLinkDialogLayout,
+    fallback: defaultDialogLayout,
+    onLayoutChange: (layout) => {
+      selectedJobSenderLinkDialogLayout = layout;
+    },
+  });
+
   createRadio.addEventListener('change', syncDialog);
   existingRadio.addEventListener('change', syncDialog);
   senderSelect.addEventListener('change', syncDialog);
   cancelButton.addEventListener('click', closeDialog);
+  titlebarCloseButton.addEventListener('click', closeDialog);
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) {
       closeDialog();
@@ -19908,6 +19959,128 @@ function applyFloatingDialogLayout(dialogEl, layout, options = {}) {
   dialogEl.style.left = `${nextLayout.left}px`;
   dialogEl.style.top = `${nextLayout.top}px`;
   return nextLayout;
+}
+
+function enableFloatingSettingsDialog(dialogEl, titlebarEl, resizeHandleEl, options = {}) {
+  let layout = options.initialLayout && typeof options.initialLayout === 'object'
+    ? options.initialLayout
+    : null;
+  let dragState = null;
+  let resizeState = null;
+
+  const resolvedLayoutOptions = () => ({
+    minWidth: options.minWidth,
+    minHeight: options.minHeight,
+    fallback: typeof options.fallback === 'function' ? options.fallback() : options.fallback,
+  });
+  const applyLayout = (nextLayout) => {
+    const appliedLayout = applyFloatingDialogLayout(
+      dialogEl,
+      nextLayout || layout || resolvedLayoutOptions().fallback,
+      resolvedLayoutOptions()
+    );
+    if (appliedLayout === null) {
+      return;
+    }
+    layout = appliedLayout;
+    if (typeof options.onLayoutChange === 'function') {
+      options.onLayoutChange(appliedLayout);
+    }
+  };
+  const stopInteractions = () => {
+    dragState = null;
+    resizeState = null;
+    document.body.classList.remove('is-dragging-settings-dialog', 'is-resizing-settings-dialog');
+    document.removeEventListener('pointermove', onPointerMove, true);
+    document.removeEventListener('pointerup', onPointerEnd, true);
+    document.removeEventListener('pointercancel', onPointerEnd, true);
+  };
+  const startInteractionListeners = () => {
+    document.addEventListener('pointermove', onPointerMove, true);
+    document.addEventListener('pointerup', onPointerEnd, true);
+    document.addEventListener('pointercancel', onPointerEnd, true);
+  };
+
+  function onPointerMove(event) {
+    if (dragState) {
+      applyLayout({
+        ...layout,
+        left: dragState.left + (event.clientX - dragState.startX),
+        top: dragState.top + (event.clientY - dragState.startY),
+      });
+      event.preventDefault();
+      return;
+    }
+    if (resizeState) {
+      applyLayout({
+        left: resizeState.left,
+        top: resizeState.top,
+        width: resizeState.width + (event.clientX - resizeState.startX),
+        height: resizeState.height + (event.clientY - resizeState.startY),
+      });
+      event.preventDefault();
+    }
+  }
+
+  function onPointerEnd() {
+    if (dragState || resizeState) {
+      stopInteractions();
+    }
+  }
+
+  const onTitlebarPointerDown = (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest('button')) {
+      return;
+    }
+    const rect = dialogEl.getBoundingClientRect();
+    dragState = {
+      startX: event.clientX,
+      startY: event.clientY,
+      left: layout ? layout.left : rect.left,
+      top: layout ? layout.top : rect.top,
+    };
+    resizeState = null;
+    document.body.classList.add('is-dragging-settings-dialog');
+    startInteractionListeners();
+    event.preventDefault();
+  };
+  const onResizePointerDown = (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const rect = dialogEl.getBoundingClientRect();
+    resizeState = {
+      startX: event.clientX,
+      startY: event.clientY,
+      left: layout ? layout.left : rect.left,
+      top: layout ? layout.top : rect.top,
+      width: layout ? layout.width : rect.width,
+      height: layout ? layout.height : rect.height,
+    };
+    dragState = null;
+    document.body.classList.add('is-resizing-settings-dialog');
+    startInteractionListeners();
+    event.preventDefault();
+  };
+  const onWindowResize = () => applyLayout(layout);
+
+  titlebarEl.addEventListener('pointerdown', onTitlebarPointerDown);
+  resizeHandleEl.addEventListener('pointerdown', onResizePointerDown);
+  window.addEventListener('resize', onWindowResize);
+  applyLayout(layout);
+
+  return {
+    destroy() {
+      stopInteractions();
+      titlebarEl.removeEventListener('pointerdown', onTitlebarPointerDown);
+      resizeHandleEl.removeEventListener('pointerdown', onResizePointerDown);
+      window.removeEventListener('resize', onWindowResize);
+    },
+  };
 }
 
 function restoreSettingsDialogLayout() {

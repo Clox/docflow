@@ -673,16 +673,19 @@ body.is-resizing-sidebar {
 }
 
 .selected-job-sender-link-dialog {
-  max-height: min(720px, calc(100vh - 48px));
-  max-width: min(560px, calc(100vw - 32px));
-  min-height: 0;
-  width: 560px;
+  position: fixed;
+  min-width: 420px;
+  min-height: 420px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
 }
 
 .selected-job-sender-link-content {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
   overflow: auto;
   padding: 20px;
 }
