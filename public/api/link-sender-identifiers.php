@@ -34,6 +34,7 @@ if ($identifiers === []) {
 }
 
 $createSender = ($payload['createSender'] ?? false) === true;
+$forceIncompleteLookup = ($payload['forceIncompleteLookup'] ?? false) === true;
 $senderId = isset($payload['senderId']) && is_numeric($payload['senderId'])
     ? (int) $payload['senderId']
     : 0;
@@ -54,25 +55,25 @@ try {
     }
 
     $selectOrganizationById = $pdo->prepare(
-        'SELECT id, sender_id, organization_name, lookup_status
+        'SELECT id, sender_id, organization_name
         FROM sender_organization_numbers
         WHERE id = :id
         LIMIT 1'
     );
     $selectOrganizationByNumber = $pdo->prepare(
-        'SELECT id, sender_id, organization_name, lookup_status
+        'SELECT id, sender_id, organization_name
         FROM sender_organization_numbers
         WHERE organization_number = :organization_number
         LIMIT 1'
     );
     $selectPaymentById = $pdo->prepare(
-        'SELECT id, sender_id, payee_name, payee_lookup_status
+        'SELECT id, sender_id, payee_name
         FROM sender_payment_numbers
         WHERE id = :id
         LIMIT 1'
     );
     $selectPaymentByNumber = $pdo->prepare(
-        'SELECT id, sender_id, payee_name, payee_lookup_status
+        'SELECT id, sender_id, payee_name
         FROM sender_payment_numbers
         WHERE type = :type
           AND number = :number
@@ -128,10 +129,7 @@ try {
             $organizationName = is_string($organizationRow['organization_name'] ?? null)
                 ? trim((string) $organizationRow['organization_name'])
                 : '';
-            $lookupStatus = is_string($organizationRow['lookup_status'] ?? null)
-                ? trim((string) $organizationRow['lookup_status'])
-                : '';
-            if ($organizationName === '' && $lookupStatus !== 'failed') {
+            if ($organizationName === '' && !$forceIncompleteLookup) {
                 throw new RuntimeException('Väntar på uppslag av uppgifter.');
             }
             $linkOrganization->execute([
@@ -178,10 +176,7 @@ try {
                 throw new RuntimeException('En av uppgifterna är redan kopplad till en avsändare.');
             }
             $payeeName = is_string($paymentRow['payee_name'] ?? null) ? trim((string) $paymentRow['payee_name']) : '';
-            $lookupStatus = is_string($paymentRow['payee_lookup_status'] ?? null)
-                ? trim((string) $paymentRow['payee_lookup_status'])
-                : '';
-            if ($payeeName === '' && !in_array($lookupStatus, ['failed', 'not_found'], true)) {
+            if ($payeeName === '' && !$forceIncompleteLookup) {
                 throw new RuntimeException('Väntar på uppslag av uppgifter.');
             }
             $linkPayment->execute([

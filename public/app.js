@@ -12247,9 +12247,6 @@ function openSelectedJobSenderLinkDialog(job) {
   const observationsList = document.createElement('div');
   observationsList.className = 'selected-job-sender-link-observations';
 
-  const waitingMessage = document.createElement('div');
-  waitingMessage.className = 'selected-job-sender-link-waiting';
-
   const options = document.createElement('fieldset');
   options.className = 'selected-job-sender-link-options';
 
@@ -12287,6 +12284,14 @@ function openSelectedJobSenderLinkDialog(job) {
 
   options.append(optionsLegend, createLabel, existingLabel, senderField);
 
+  const forceLookupLabel = document.createElement('label');
+  forceLookupLabel.className = 'selected-job-sender-link-force hidden';
+  const forceLookupCheckbox = document.createElement('input');
+  forceLookupCheckbox.type = 'checkbox';
+  const forceLookupText = document.createElement('span');
+  forceLookupText.textContent = 'Koppla ändå trots att uppslag saknas';
+  forceLookupLabel.append(forceLookupCheckbox, forceLookupText);
+
   const actions = document.createElement('div');
   actions.className = 'panel-actions selected-job-sender-link-actions';
   const cancelButton = document.createElement('button');
@@ -12305,7 +12310,7 @@ function openSelectedJobSenderLinkDialog(job) {
   resizeHandle.setAttribute('aria-label', 'Ändra storlek på koppla-dialogen');
   resizeHandle.title = 'Ändra storlek';
 
-  content.append(title, observationsList, waitingMessage, options, actions);
+  content.append(title, observationsList, options, forceLookupLabel, actions);
   dialog.append(titlebar, content, resizeHandle);
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
@@ -12314,6 +12319,8 @@ function openSelectedJobSenderLinkDialog(job) {
   let refreshTimer = 0;
   let floatingDialog = null;
   const bestCandidateId = bestSenderCandidateIdForJob(job);
+  const selectedObservationKeys = new Set();
+  const knownObservationKeys = new Set();
 
   const closeDialog = () => {
     if (refreshTimer) {
@@ -12346,13 +12353,94 @@ function openSelectedJobSenderLinkDialog(job) {
   };
 
   const currentObservations = () => senderUnknownObservationRowsForJob(findJobById(jobId));
+  const observationSelectionKey = (observation) => {
+    const identifierKey = senderIdentifierKeyFromObservation(observation);
+    if (identifierKey !== '') {
+      return identifierKey;
+    }
+    const identifierId = Number.parseInt(String(observation && observation.identifierId || ''), 10);
+    return Number.isInteger(identifierId) && identifierId > 0 ? `identifier:${identifierId}` : '';
+  };
+  const observationHasLookupName = (observation) => (
+    typeof observation.lookupName === 'string' && observation.lookupName.trim() !== ''
+  );
   const syncDialog = () => {
     const observations = currentObservations();
+    const observationRows = observations
+      .map((observation) => ({ observation, key: observationSelectionKey(observation) }))
+      .filter((row) => row.key !== '');
+    const currentKeys = new Set(observationRows.map((row) => row.key));
+    observationRows.forEach(({ key }) => {
+      if (!knownObservationKeys.has(key)) {
+        knownObservationKeys.add(key);
+        selectedObservationKeys.add(key);
+      }
+    });
+    Array.from(selectedObservationKeys).forEach((key) => {
+      if (!currentKeys.has(key)) {
+        selectedObservationKeys.delete(key);
+      }
+    });
     observationsList.replaceChildren();
 
-    observations.forEach((observation) => {
+    const selectAllLabel = document.createElement('label');
+    selectAllLabel.className = 'selected-job-sender-link-select-all';
+    const selectAllCheckbox = document.createElement('input');
+    selectAllCheckbox.type = 'checkbox';
+    const selectedCount = observationRows.filter(({ key }) => selectedObservationKeys.has(key)).length;
+    selectAllCheckbox.checked = observationRows.length > 0 && selectedCount === observationRows.length;
+    selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < observationRows.length;
+    selectAllCheckbox.disabled = submitting || observationRows.length < 1;
+    const selectAllText = document.createElement('span');
+    selectAllText.textContent = 'Välj alla';
+    selectAllLabel.append(selectAllCheckbox, selectAllText);
+    const setAllSelected = (selected) => {
+      observationRows.forEach(({ key }) => {
+        if (selected) {
+          selectedObservationKeys.add(key);
+        } else {
+          selectedObservationKeys.delete(key);
+        }
+      });
+      syncDialog();
+    };
+    selectAllLabel.addEventListener('pointerdown', (event) => {
+      if (event.isPrimary && event.button === 0) {
+        event.preventDefault();
+        setAllSelected(!selectAllCheckbox.checked);
+      }
+    });
+    selectAllCheckbox.addEventListener('change', () => {
+      setAllSelected(selectAllCheckbox.checked);
+    });
+    observationsList.appendChild(selectAllLabel);
+
+    observationRows.forEach(({ observation, key }) => {
       const row = document.createElement('div');
       row.className = 'selected-job-sender-link-observation';
+
+      const selectionCheckbox = document.createElement('input');
+      selectionCheckbox.type = 'checkbox';
+      selectionCheckbox.className = 'selected-job-sender-link-observation-checkbox';
+      selectionCheckbox.checked = selectedObservationKeys.has(key);
+      selectionCheckbox.disabled = submitting;
+      const setSelected = (selected) => {
+        if (selected) {
+          selectedObservationKeys.add(key);
+        } else {
+          selectedObservationKeys.delete(key);
+        }
+        syncDialog();
+      };
+      selectionCheckbox.addEventListener('pointerdown', (event) => {
+        if (event.isPrimary && event.button === 0) {
+          event.preventDefault();
+          setSelected(!selectionCheckbox.checked);
+        }
+      });
+      selectionCheckbox.addEventListener('change', () => {
+        setSelected(selectionCheckbox.checked);
+      });
 
       const heading = document.createElement('div');
       heading.className = 'selected-job-sender-link-observation-heading';
@@ -12371,6 +12459,7 @@ function openSelectedJobSenderLinkDialog(job) {
         itemValue = `${normalizedValue.slice(0, 6)}-${normalizedValue.slice(6)}`;
       }
       heading.textContent = `${itemLabel} ${itemValue || rawValue}`.trim();
+      selectionCheckbox.setAttribute('aria-label', `Välj ${heading.textContent}`);
 
       const presentation = senderObservationLookupPresentation(observation);
       const lookupRow = document.createElement('div');
@@ -12384,7 +12473,7 @@ function openSelectedJobSenderLinkDialog(job) {
         lookupRow.appendChild(createSenderLookupStatusBadge(presentation));
       }
 
-      row.append(heading, lookupRow);
+      row.append(selectionCheckbox, heading, lookupRow);
       const openButton = createOpenUnlinkedSenderIdentifierButton(observation, closeDialog);
       if (openButton) {
         row.appendChild(openButton);
@@ -12392,18 +12481,22 @@ function openSelectedJobSenderLinkDialog(job) {
       observationsList.appendChild(row);
     });
 
-    const pending = observations.some((observation) => (
-      String(observation && observation.status || 'pending').trim() === 'pending'
-    ));
-    waitingMessage.textContent = pending ? 'Väntar på uppslag av uppgifter...' : '';
-    waitingMessage.classList.toggle('hidden', !pending);
+    const selectedRows = observationRows.filter(({ key }) => selectedObservationKeys.has(key));
+    const hasIncompleteLookup = selectedRows.some(({ observation }) => !observationHasLookupName(observation));
+    forceLookupLabel.classList.toggle('hidden', !hasIncompleteLookup);
+    forceLookupCheckbox.disabled = submitting || !hasIncompleteLookup;
+    if (!hasIncompleteLookup) {
+      forceLookupCheckbox.checked = false;
+    }
 
+    const hasAction = createRadio.checked || existingRadio.checked;
     const useExisting = existingRadio.checked;
     senderField.classList.toggle('hidden', !useExisting);
     senderSelect.disabled = submitting || !useExisting;
     executeButton.disabled = submitting
-      || observations.length < 1
-      || pending
+      || selectedRows.length < 1
+      || !hasAction
+      || (hasIncompleteLookup && !forceLookupCheckbox.checked)
       || (useExisting && String(senderSelect.value || '').trim() === '');
   };
 
@@ -12440,6 +12533,7 @@ function openSelectedJobSenderLinkDialog(job) {
   createRadio.addEventListener('change', syncDialog);
   existingRadio.addEventListener('change', syncDialog);
   senderSelect.addEventListener('change', syncDialog);
+  forceLookupCheckbox.addEventListener('change', syncDialog);
   cancelButton.addEventListener('click', closeDialog);
   titlebarCloseButton.addEventListener('click', closeDialog);
   overlay.addEventListener('click', (event) => {
@@ -12455,13 +12549,19 @@ function openSelectedJobSenderLinkDialog(job) {
   });
 
   executeButton.addEventListener('click', async () => {
-    const observations = currentObservations();
-    const pending = observations.some((observation) => (
-      String(observation && observation.status || 'pending').trim() === 'pending'
+    const observations = currentObservations().filter((observation) => (
+      selectedObservationKeys.has(observationSelectionKey(observation))
     ));
+    const hasIncompleteLookup = observations.some((observation) => !observationHasLookupName(observation));
+    const hasAction = createRadio.checked || existingRadio.checked;
     const createSender = createRadio.checked;
     const senderId = createSender ? null : (Number.parseInt(String(senderSelect.value || ''), 10) || null);
-    if (pending || observations.length < 1 || (!createSender && (!Number.isInteger(senderId) || senderId < 1))) {
+    if (
+      observations.length < 1
+      || !hasAction
+      || (hasIncompleteLookup && !forceLookupCheckbox.checked)
+      || (!createSender && (!Number.isInteger(senderId) || senderId < 1))
+    ) {
       syncDialog();
       return;
     }
@@ -12477,6 +12577,7 @@ function openSelectedJobSenderLinkDialog(job) {
           createSender,
           senderId,
           identifiers: observations,
+          forceIncompleteLookup: hasIncompleteLookup && forceLookupCheckbox.checked,
         }),
       });
       const payload = await response.json().catch(() => null);
