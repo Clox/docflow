@@ -56,26 +56,23 @@ final class SenderRepository
             return null;
         }
 
-        $statement = $this->pdo->prepare(
-            'SELECT
-                id,
-                organization_number,
-                organization_name,
-                sender_id,
-                source,
-                lookup_status,
-                lookup_error_code,
-                lookup_error_message,
-                created_at,
-                updated_at
-            FROM sender_organization_numbers
-            WHERE organization_number = :organization_number
-            LIMIT 1'
-        );
-        $statement->execute([':organization_number' => $normalized]);
-        $row = $statement->fetch();
+        $row = $this->canonicalOrganizationNumberRow($normalized);
+        if (!is_array($row)) {
+            return null;
+        }
 
-        return is_array($row) ? $row : null;
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'organization_number' => $normalized,
+            'organization_name' => $row['organization_name'] ?? null,
+            'sender_id' => $row['sender_id'] ?? null,
+            'source' => $row['source'] ?? null,
+            'lookup_status' => $row['lookup_status'] ?? null,
+            'lookup_error_code' => $row['lookup_error_code'] ?? null,
+            'lookup_error_message' => $row['lookup_error_message'] ?? null,
+            'created_at' => $row['created_at'] ?? null,
+            'updated_at' => $row['updated_at'] ?? null,
+        ];
     }
 
     public function findObservedPaymentNumberRow(string $type, string $number): ?array
@@ -89,33 +86,26 @@ final class SenderRepository
             return null;
         }
 
-        $statement = $this->pdo->prepare(
-            'SELECT
-                id,
-                sender_id,
-                type,
-                number,
-                original_number,
-                payee_name,
-                payee_lookup_status,
-                lookup_error_code,
-                lookup_error_message,
-                source,
-                confidence,
-                created_at,
-                updated_at
-            FROM sender_payment_numbers
-            WHERE type = :type
-              AND number = :number
-            LIMIT 1'
-        );
-        $statement->execute([
-            ':type' => $normalizedType,
-            ':number' => $normalizedNumber,
-        ]);
-        $row = $statement->fetch();
+        $row = $this->canonicalPaymentNumberRow($normalizedType, $normalizedNumber);
+        if (!is_array($row)) {
+            return null;
+        }
 
-        return is_array($row) ? $row : null;
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'sender_id' => $row['sender_id'] ?? null,
+            'type' => $normalizedType,
+            'number' => $normalizedNumber,
+            'original_number' => $row['original_number'] ?? null,
+            'payee_name' => $row['payee_name'] ?? null,
+            'payee_lookup_status' => $row['payee_lookup_status'] ?? null,
+            'lookup_error_code' => $row['lookup_error_code'] ?? null,
+            'lookup_error_message' => $row['lookup_error_message'] ?? null,
+            'source' => $row['source'] ?? null,
+            'confidence' => $row['confidence'] ?? null,
+            'created_at' => $row['created_at'] ?? null,
+            'updated_at' => $row['updated_at'] ?? null,
+        ];
     }
 
     public function findByAlternativeNameCaseInsensitive(string $name): ?array
@@ -147,6 +137,8 @@ final class SenderRepository
 
     public function listEditorRows(): array
     {
+        $this->canonicalizeSenderIdentifierRows();
+
         $statement = $this->pdo->query(
             'SELECT
                 id,
@@ -367,6 +359,8 @@ final class SenderRepository
 
     public function listUnlinkedIdentifierRows(): array
     {
+        $this->canonicalizeSenderIdentifierRows();
+
         $items = [];
 
         $organizationRows = $this->pdo->query(
@@ -482,6 +476,331 @@ final class SenderRepository
         );
 
         return $items;
+    }
+
+    public function canonicalizeSenderIdentifierRows(): void
+    {
+        $organizationRows = $this->pdo->query(
+            'SELECT organization_number
+            FROM sender_organization_numbers
+            WHERE trim(organization_number) <> \'\'
+            GROUP BY organization_number
+            HAVING COUNT(*) > 1'
+        );
+        if ($organizationRows !== false) {
+            foreach ($organizationRows->fetchAll() ?: [] as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $number = is_string($row['organization_number'] ?? null)
+                    ? trim((string) $row['organization_number'])
+                    : '';
+                if ($number !== '') {
+                    $this->canonicalOrganizationNumberRow($number);
+                }
+            }
+        }
+
+        $paymentRows = $this->pdo->query(
+            'SELECT type, number
+            FROM sender_payment_numbers
+            WHERE trim(type) <> \'\'
+              AND trim(number) <> \'\'
+            GROUP BY type, number
+            HAVING COUNT(*) > 1'
+        );
+        if ($paymentRows !== false) {
+            foreach ($paymentRows->fetchAll() ?: [] as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $type = is_string($row['type'] ?? null) ? trim((string) $row['type']) : '';
+                $number = is_string($row['number'] ?? null) ? trim((string) $row['number']) : '';
+                if ($type !== '' && $number !== '') {
+                    $this->canonicalPaymentNumberRow($type, $number);
+                }
+            }
+        }
+    }
+
+    private function canonicalOrganizationNumberRow(string $organizationNumber): ?array
+    {
+        $normalized = IdentifierNormalizer::normalizeOrgNumber($organizationNumber);
+        if ($normalized === null) {
+            return null;
+        }
+
+        $select = $this->pdo->prepare(
+            'SELECT *
+            FROM sender_organization_numbers
+            WHERE organization_number = :organization_number
+            ORDER BY
+                CASE WHEN sender_id IS NULL THEN 1 ELSE 0 END ASC,
+                updated_at DESC,
+                id ASC'
+        );
+        $select->execute([':organization_number' => $normalized]);
+        $rows = $select->fetchAll();
+        if (!is_array($rows) || $rows === []) {
+            return null;
+        }
+
+        $canonical = is_array($rows[0]) ? $rows[0] : null;
+        if (!is_array($canonical)) {
+            return null;
+        }
+        $canonicalId = isset($canonical['id']) ? (int) $canonical['id'] : 0;
+        if ($canonicalId < 1 || count($rows) === 1) {
+            return $canonicalId > 0 ? $canonical : null;
+        }
+
+        $merged = $canonical;
+        $duplicateIds = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $rowId = isset($row['id']) ? (int) $row['id'] : 0;
+            if ($rowId < 1 || $rowId === $canonicalId) {
+                continue;
+            }
+            $duplicateIds[] = $rowId;
+            foreach ([
+                'organization_name',
+                'source',
+                'source_job_id',
+                'source_bbox_indexes',
+                'lookup_status',
+                'lookup_error_code',
+                'lookup_error_message',
+            ] as $column) {
+                $current = is_string($merged[$column] ?? null) ? trim((string) $merged[$column]) : '';
+                $candidate = is_string($row[$column] ?? null) ? trim((string) $row[$column]) : '';
+                if ($current === '' && $candidate !== '') {
+                    $merged[$column] = $candidate;
+                }
+            }
+            $currentCreated = is_string($merged['created_at'] ?? null) ? trim((string) $merged['created_at']) : '';
+            $candidateCreated = is_string($row['created_at'] ?? null) ? trim((string) $row['created_at']) : '';
+            if ($candidateCreated !== '' && ($currentCreated === '' || strcmp($candidateCreated, $currentCreated) < 0)) {
+                $merged['created_at'] = $candidateCreated;
+            }
+            $currentUpdated = is_string($merged['updated_at'] ?? null) ? trim((string) $merged['updated_at']) : '';
+            $candidateUpdated = is_string($row['updated_at'] ?? null) ? trim((string) $row['updated_at']) : '';
+            if ($candidateUpdated !== '' && ($currentUpdated === '' || strcmp($candidateUpdated, $currentUpdated) > 0)) {
+                $merged['updated_at'] = $candidateUpdated;
+            }
+        }
+
+        $timestamp = date(DATE_ATOM);
+        $update = $this->pdo->prepare(
+            'UPDATE sender_organization_numbers
+            SET organization_name = :organization_name,
+                source = :source,
+                source_job_id = :source_job_id,
+                source_bbox_indexes = :source_bbox_indexes,
+                lookup_status = :lookup_status,
+                lookup_error_code = :lookup_error_code,
+                lookup_error_message = :lookup_error_message,
+                created_at = :created_at,
+                updated_at = :updated_at
+            WHERE id = :id'
+        );
+        $update->execute([
+            ':id' => $canonicalId,
+            ':organization_name' => $this->nullableTrimmedString($merged['organization_name'] ?? null),
+            ':source' => $this->nullableTrimmedString($merged['source'] ?? null),
+            ':source_job_id' => $this->nullableTrimmedString($merged['source_job_id'] ?? null),
+            ':source_bbox_indexes' => $this->nullableTrimmedString($merged['source_bbox_indexes'] ?? null),
+            ':lookup_status' => $this->nullableTrimmedString($merged['lookup_status'] ?? null),
+            ':lookup_error_code' => $this->nullableTrimmedString($merged['lookup_error_code'] ?? null),
+            ':lookup_error_message' => $this->nullableTrimmedString($merged['lookup_error_message'] ?? null),
+            ':created_at' => $this->nullableTrimmedString($merged['created_at'] ?? null) ?? $timestamp,
+            ':updated_at' => $this->nullableTrimmedString($merged['updated_at'] ?? null) ?? $timestamp,
+        ]);
+
+        if ($duplicateIds !== []) {
+            $placeholders = implode(', ', array_fill(0, count($duplicateIds), '?'));
+            $copyAlternativeNames = $this->pdo->prepare(
+                'INSERT OR IGNORE INTO sender_alternative_names (
+                    sender_organization_number_id,
+                    name,
+                    normalized_name,
+                    source,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    ?,
+                    name,
+                    normalized_name,
+                    source,
+                    created_at,
+                    updated_at
+                FROM sender_alternative_names
+                WHERE sender_organization_number_id IN (' . $placeholders . ')'
+            );
+            $copyAlternativeNames->execute([$canonicalId, ...$duplicateIds]);
+            $delete = $this->pdo->prepare(
+                'DELETE FROM sender_organization_numbers
+                WHERE id IN (' . $placeholders . ')'
+            );
+            $delete->execute($duplicateIds);
+        }
+
+        $selectCanonical = $this->pdo->prepare(
+            'SELECT *
+            FROM sender_organization_numbers
+            WHERE id = :id
+            LIMIT 1'
+        );
+        $selectCanonical->execute([':id' => $canonicalId]);
+        $row = $selectCanonical->fetch();
+
+        return is_array($row) ? $row : null;
+    }
+
+    private function canonicalPaymentNumberRow(string $type, string $number): ?array
+    {
+        $normalizedType = trim(strtolower($type)) === 'plusgiro' ? 'plusgiro' : 'bankgiro';
+        $normalizedNumber = $normalizedType === 'plusgiro'
+            ? IdentifierNormalizer::normalizePlusgiro($number)
+            : IdentifierNormalizer::normalizeBankgiro($number);
+        if ($normalizedNumber === null) {
+            return null;
+        }
+
+        $select = $this->pdo->prepare(
+            'SELECT *
+            FROM sender_payment_numbers
+            WHERE type = :type
+              AND number = :number
+            ORDER BY
+                CASE WHEN sender_id IS NULL THEN 1 ELSE 0 END ASC,
+                updated_at DESC,
+                id ASC'
+        );
+        $select->execute([
+            ':type' => $normalizedType,
+            ':number' => $normalizedNumber,
+        ]);
+        $rows = $select->fetchAll();
+        if (!is_array($rows) || $rows === []) {
+            return null;
+        }
+
+        $canonical = is_array($rows[0]) ? $rows[0] : null;
+        if (!is_array($canonical)) {
+            return null;
+        }
+        $canonicalId = isset($canonical['id']) ? (int) $canonical['id'] : 0;
+        if ($canonicalId < 1 || count($rows) === 1) {
+            return $canonicalId > 0 ? $canonical : null;
+        }
+
+        $merged = $canonical;
+        $duplicateIds = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $rowId = isset($row['id']) ? (int) $row['id'] : 0;
+            if ($rowId < 1 || $rowId === $canonicalId) {
+                continue;
+            }
+            $duplicateIds[] = $rowId;
+            foreach ([
+                'original_number',
+                'source',
+                'source_job_id',
+                'source_bbox_indexes',
+                'payee_name',
+                'payee_lookup_status',
+                'lookup_error_code',
+                'lookup_error_message',
+            ] as $column) {
+                $current = is_string($merged[$column] ?? null) ? trim((string) $merged[$column]) : '';
+                $candidate = is_string($row[$column] ?? null) ? trim((string) $row[$column]) : '';
+                if ($current === '' && $candidate !== '') {
+                    $merged[$column] = $candidate;
+                }
+            }
+            $merged['requires_ocr'] = ((int) ($merged['requires_ocr'] ?? 0) === 1 || (int) ($row['requires_ocr'] ?? 0) === 1) ? 1 : 0;
+            $merged['confidence'] = max((float) ($merged['confidence'] ?? 0), (float) ($row['confidence'] ?? 0));
+            $currentCreated = is_string($merged['created_at'] ?? null) ? trim((string) $merged['created_at']) : '';
+            $candidateCreated = is_string($row['created_at'] ?? null) ? trim((string) $row['created_at']) : '';
+            if ($candidateCreated !== '' && ($currentCreated === '' || strcmp($candidateCreated, $currentCreated) < 0)) {
+                $merged['created_at'] = $candidateCreated;
+            }
+            $currentUpdated = is_string($merged['updated_at'] ?? null) ? trim((string) $merged['updated_at']) : '';
+            $candidateUpdated = is_string($row['updated_at'] ?? null) ? trim((string) $row['updated_at']) : '';
+            if ($candidateUpdated !== '' && ($currentUpdated === '' || strcmp($candidateUpdated, $currentUpdated) > 0)) {
+                $merged['updated_at'] = $candidateUpdated;
+            }
+        }
+
+        $timestamp = date(DATE_ATOM);
+        $update = $this->pdo->prepare(
+            'UPDATE sender_payment_numbers
+            SET original_number = :original_number,
+                requires_ocr = :requires_ocr,
+                source = :source,
+                source_job_id = :source_job_id,
+                source_bbox_indexes = :source_bbox_indexes,
+                confidence = :confidence,
+                payee_name = :payee_name,
+                payee_lookup_status = :payee_lookup_status,
+                lookup_error_code = :lookup_error_code,
+                lookup_error_message = :lookup_error_message,
+                created_at = :created_at,
+                updated_at = :updated_at
+            WHERE id = :id'
+        );
+        $update->execute([
+            ':id' => $canonicalId,
+            ':original_number' => $this->nullableTrimmedString($merged['original_number'] ?? null),
+            ':requires_ocr' => (int) ($merged['requires_ocr'] ?? 0) === 1 ? 1 : 0,
+            ':source' => $this->nullableTrimmedString($merged['source'] ?? null),
+            ':source_job_id' => $this->nullableTrimmedString($merged['source_job_id'] ?? null),
+            ':source_bbox_indexes' => $this->nullableTrimmedString($merged['source_bbox_indexes'] ?? null),
+            ':confidence' => isset($merged['confidence']) ? (float) $merged['confidence'] : 1.0,
+            ':payee_name' => $this->nullableTrimmedString($merged['payee_name'] ?? null),
+            ':payee_lookup_status' => $this->nullableTrimmedString($merged['payee_lookup_status'] ?? null),
+            ':lookup_error_code' => $this->nullableTrimmedString($merged['lookup_error_code'] ?? null),
+            ':lookup_error_message' => $this->nullableTrimmedString($merged['lookup_error_message'] ?? null),
+            ':created_at' => $this->nullableTrimmedString($merged['created_at'] ?? null) ?? $timestamp,
+            ':updated_at' => $this->nullableTrimmedString($merged['updated_at'] ?? null) ?? $timestamp,
+        ]);
+
+        if ($duplicateIds !== []) {
+            $placeholders = implode(', ', array_fill(0, count($duplicateIds), '?'));
+            $delete = $this->pdo->prepare(
+                'DELETE FROM sender_payment_numbers
+                WHERE id IN (' . $placeholders . ')'
+            );
+            $delete->execute($duplicateIds);
+        }
+
+        $selectCanonical = $this->pdo->prepare(
+            'SELECT *
+            FROM sender_payment_numbers
+            WHERE id = :id
+            LIMIT 1'
+        );
+        $selectCanonical->execute([':id' => $canonicalId]);
+        $row = $selectCanonical->fetch();
+
+        return is_array($row) ? $row : null;
+    }
+
+    private function nullableTrimmedString(mixed $value): ?string
+    {
+        if (!is_string($value) && !is_numeric($value)) {
+            return null;
+        }
+
+        $trimmed = trim((string) $value);
+        return $trimmed !== '' ? $trimmed : null;
     }
 
     private function senderDisplayName(array $senderRow): string
@@ -1541,6 +1860,46 @@ final class SenderRepository
         }
 
         $timestamp = date(DATE_ATOM);
+        $existing = $this->canonicalPaymentNumberRow($normalizedType, $normalizedNumber);
+        if (is_array($existing)) {
+            $existingId = isset($existing['id']) ? (int) $existing['id'] : 0;
+            $existingSenderId = isset($existing['sender_id']) ? (int) $existing['sender_id'] : 0;
+            if ($existingId < 1) {
+                throw new RuntimeException('Payment number row is invalid.');
+            }
+            if ($existingSenderId > 0 && $existingSenderId !== $senderId) {
+                throw new RuntimeException('Payment number is already linked to another sender.');
+            }
+
+            $currentOriginalNumber = is_string($existing['original_number'] ?? null)
+                ? trim((string) $existing['original_number'])
+                : '';
+            $currentSource = is_string($existing['source'] ?? null)
+                ? trim((string) $existing['source'])
+                : '';
+            $currentConfidence = isset($existing['confidence']) ? (float) $existing['confidence'] : 1.0;
+            $update = $this->pdo->prepare(
+                'UPDATE sender_payment_numbers
+                SET sender_id = :sender_id,
+                    original_number = :original_number,
+                    requires_ocr = :requires_ocr,
+                    source = :source,
+                    confidence = :confidence,
+                    updated_at = :updated_at
+                WHERE id = :id'
+            );
+            $update->execute([
+                ':id' => $existingId,
+                ':sender_id' => $senderId,
+                ':original_number' => $currentOriginalNumber !== '' ? $currentOriginalNumber : $originalNumber,
+                ':requires_ocr' => $requiresOcr ? 1 : (int) ($existing['requires_ocr'] ?? 0),
+                ':source' => $currentSource !== '' ? $currentSource : $source,
+                ':confidence' => max($currentConfidence, $confidence),
+                ':updated_at' => $timestamp,
+            ]);
+            return;
+        }
+
         $statement = $this->pdo->prepare(
             'INSERT INTO sender_payment_numbers (
                 sender_id,
@@ -1605,14 +1964,7 @@ final class SenderRepository
         }
         $normalizedSourceBboxIndexes = $this->normalizeSourceBboxIndexes($sourceBboxIndexes);
 
-        $select = $this->pdo->prepare(
-            'SELECT id, organization_name, sender_id, source, created_at, updated_at
-            FROM sender_organization_numbers
-            WHERE organization_number = :organization_number
-            LIMIT 1'
-        );
-        $select->execute([':organization_number' => $normalizedNumber]);
-        $existing = $select->fetch();
+        $existing = $this->canonicalOrganizationNumberRow($normalizedNumber);
         $timestamp = date(DATE_ATOM);
 
         if (is_array($existing)) {
@@ -1716,18 +2068,7 @@ final class SenderRepository
         }
         $normalizedSourceBboxIndexes = $this->normalizeSourceBboxIndexes($sourceBboxIndexes);
 
-        $select = $this->pdo->prepare(
-            'SELECT id, sender_id, original_number, source, confidence, created_at, updated_at
-            FROM sender_payment_numbers
-            WHERE type = :type
-              AND number = :number
-            LIMIT 1'
-        );
-        $select->execute([
-            ':type' => $normalizedType,
-            ':number' => $normalizedNumber,
-        ]);
-        $existing = $select->fetch();
+        $existing = $this->canonicalPaymentNumberRow($normalizedType, $normalizedNumber);
         $timestamp = date(DATE_ATOM);
 
         if (is_array($existing)) {
@@ -1886,26 +2227,26 @@ final class SenderRepository
 
         try {
             $organizationStatement = $this->pdo->prepare(
-                'SELECT organization_number
+                'SELECT id, organization_number
                 FROM sender_organization_numbers
                 WHERE sender_id = ?'
             );
             $paymentStatement = $this->pdo->prepare(
-                'SELECT type, number
+                'SELECT id, type, number
                 FROM sender_payment_numbers
                 WHERE sender_id = ?'
             );
-            $moveOrganizations = $this->pdo->prepare(
+            $moveOrganization = $this->pdo->prepare(
                 'UPDATE sender_organization_numbers
                 SET sender_id = :sender_id,
                     updated_at = :updated_at
-                WHERE sender_id = :source_sender_id'
+                WHERE id = :id'
             );
-            $movePayments = $this->pdo->prepare(
+            $movePayment = $this->pdo->prepare(
                 'UPDATE sender_payment_numbers
                 SET sender_id = :sender_id,
                     updated_at = :updated_at
-                WHERE sender_id = :source_sender_id'
+                WHERE id = :id'
             );
             $copyMatchNames = $this->pdo->prepare(
                 'INSERT OR IGNORE INTO sender_match_names (
@@ -1950,6 +2291,15 @@ final class SenderRepository
                             : '';
                         if ($organizationNumber !== '') {
                             $movedOrganizationNumbers[] = $organizationNumber;
+                            $canonical = $this->canonicalOrganizationNumberRow($organizationNumber);
+                            $canonicalId = is_array($canonical) && isset($canonical['id']) ? (int) $canonical['id'] : 0;
+                            if ($canonicalId > 0) {
+                                $moveOrganization->execute([
+                                    ':id' => $canonicalId,
+                                    ':sender_id' => $targetSenderId,
+                                    ':updated_at' => $timestamp,
+                                ]);
+                            }
                         }
                     }
                 }
@@ -1968,20 +2318,19 @@ final class SenderRepository
                                 'type' => $paymentType,
                                 'number' => $paymentNumber,
                             ];
+                            $canonical = $this->canonicalPaymentNumberRow($paymentType, $paymentNumber);
+                            $canonicalId = is_array($canonical) && isset($canonical['id']) ? (int) $canonical['id'] : 0;
+                            if ($canonicalId > 0) {
+                                $movePayment->execute([
+                                    ':id' => $canonicalId,
+                                    ':sender_id' => $targetSenderId,
+                                    ':updated_at' => $timestamp,
+                                ]);
+                            }
                         }
                     }
                 }
 
-                $moveOrganizations->execute([
-                    ':sender_id' => $targetSenderId,
-                    ':updated_at' => $timestamp,
-                    ':source_sender_id' => $sourceSenderId,
-                ]);
-                $movePayments->execute([
-                    ':sender_id' => $targetSenderId,
-                    ':updated_at' => $timestamp,
-                    ':source_sender_id' => $sourceSenderId,
-                ]);
                 $copyMatchNames->execute([
                     ':sender_id' => $targetSenderId,
                     ':updated_at' => $timestamp,

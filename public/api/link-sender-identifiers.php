@@ -47,6 +47,7 @@ try {
     $pdo = Connection::make();
     $repository = new SenderRepository($pdo);
     $pdo->beginTransaction();
+    $repository->canonicalizeSenderIdentifierRows();
 
     $selectOrganizationById = $pdo->prepare(
         'SELECT id, sender_id, organization_name
@@ -58,6 +59,10 @@ try {
         'SELECT id, sender_id, organization_name
         FROM sender_organization_numbers
         WHERE organization_number = :organization_number
+        ORDER BY
+            CASE WHEN sender_id IS NULL THEN 0 ELSE 1 END ASC,
+            updated_at DESC,
+            id ASC
         LIMIT 1'
     );
     $selectPaymentById = $pdo->prepare(
@@ -71,6 +76,10 @@ try {
         FROM sender_payment_numbers
         WHERE type = :type
           AND number = :number
+        ORDER BY
+            CASE WHEN sender_id IS NULL THEN 0 ELSE 1 END ASC,
+            updated_at DESC,
+            id ASC
         LIMIT 1'
     );
 

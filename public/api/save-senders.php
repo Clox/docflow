@@ -208,6 +208,7 @@ try {
     $pdo = Connection::make();
     $repository = new SenderRepository($pdo);
     $pdo->beginTransaction();
+    $repository->canonicalizeSenderIdentifierRows();
 
     $existingSenderRows = $pdo->query('SELECT id, name FROM senders')->fetchAll(PDO::FETCH_ASSOC);
     $existingSenderIds = [];
