@@ -2135,14 +2135,19 @@ function load_senders(): array
         }
 
         $id = isset($row['id']) ? (int) $row['id'] : 0;
-        $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
-        if ($id < 1 || $name === '') {
+        if ($id < 1) {
             continue;
         }
+        $manualName = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
+        $displayName = is_string($row['displayName'] ?? null)
+            ? trim((string) $row['displayName'])
+            : '';
+        $name = $manualName !== '' ? $manualName : $displayName;
 
         $senders[] = [
             'id' => $id,
             'name' => $name,
+            'displayName' => $displayName !== '' ? $displayName : $name,
             'organizationNumbers' => array_values(array_filter(
                 is_array($row['organizationNumbers'] ?? null) ? $row['organizationNumbers'] : [],
                 static fn (mixed $organization): bool => is_array($organization)
@@ -2665,7 +2670,7 @@ function predefined_extraction_field_definitions(): array
                     'useSearchText' => true,
                     'requiresSearchTerms' => true,
                     'searchTerms' => ['organisationsnr', 'org.nr', 'org nr'],
-                    'valuePattern' => '\d{2}[2-9]\d{3}[- ]?\d{4}',
+                    'valuePattern' => '(?<![\d-])\d{2}[2-9]\d{3}[- ]?\d{4}(?!\d)',
                     'normalizationType' => 'whitelist',
                     'normalizationChars' => '0123456789',
                 ],
@@ -23057,7 +23062,10 @@ function process_claimed_job(
         $jobDir
     );
 
-    observe_extracted_sender_identifiers($analysisPayload['extractionFieldResults']);
+    observe_extracted_sender_identifiers(
+        $analysisPayload['extractionFieldResults'],
+        is_string($jobId) ? $jobId : null
+    );
 
     $senderLinkSync = [
         'merged' => false,
@@ -24285,7 +24293,99 @@ function extraction_field_result_matches(array $results, string $key): array
     ]];
 }
 
-function observe_extracted_sender_identifiers(array $fieldResults): void
+function accepted_extraction_field_result_matches(array $results, string $key): array
+{
+    $result = $results[$key] ?? null;
+    if (!is_array($result)) {
+        return [];
+    }
+
+    $acceptedValues = [];
+    foreach (is_array($result['values'] ?? null) ? $result['values'] : [] as $value) {
+        if (!is_string($value) && !is_numeric($value)) {
+            continue;
+        }
+        $normalizedValue = trim((string) $value);
+        if ($normalizedValue !== '') {
+            $acceptedValues[$normalizedValue] = true;
+        }
+    }
+    if ($acceptedValues === []) {
+        return [];
+    }
+
+    $acceptedMatches = [];
+    foreach (extraction_field_result_matches($results, $key) as $match) {
+        $value = is_string($match['value'] ?? null) || is_numeric($match['value'] ?? null)
+            ? trim((string) $match['value'])
+            : '';
+        $invalidReason = is_string($match['invalidReason'] ?? null)
+            ? trim((string) $match['invalidReason'])
+            : '';
+        $finalConfidence = isset($match['finalConfidence'])
+            ? clamp_confidence((float) $match['finalConfidence'])
+            : (isset($match['confidence']) ? clamp_confidence((float) $match['confidence']) : 0.0);
+        if (
+            $value === ''
+            || !isset($acceptedValues[$value])
+            || ($match['accepted'] ?? true) === false
+            || $invalidReason !== ''
+            || $finalConfidence <= 0.0
+        ) {
+            continue;
+        }
+        $acceptedMatches[] = $match;
+    }
+
+    return $acceptedMatches;
+}
+
+function sender_identifier_source_bbox_indexes(array $match, ?string $jobId): array
+{
+    $indexes = [];
+    foreach (is_array($match['valueBBoxIndexes'] ?? null) ? $match['valueBBoxIndexes'] : [] as $index) {
+        if (is_int($index) && $index > 0) {
+            $indexes[$index] = true;
+        }
+    }
+    if ($indexes !== []) {
+        $values = array_keys($indexes);
+        sort($values, SORT_NUMERIC);
+        return $values;
+    }
+
+    $normalizedJobId = is_string($jobId) ? trim($jobId) : '';
+    $valueBbox = is_array($match['valueBbox'] ?? null) ? $match['valueBbox'] : null;
+    if ($normalizedJobId === '' || $valueBbox === null) {
+        return [];
+    }
+
+    static $pagesByJobId = [];
+    if (!array_key_exists($normalizedJobId, $pagesByJobId)) {
+        $pages = stored_merged_objects_pages($normalizedJobId);
+        if ($pages === []) {
+            $pages = fallback_merged_objects_pages_from_job_debug($normalizedJobId);
+        }
+        $pagesByNumber = [];
+        foreach ($pages as $page) {
+            if (!is_array($page)) {
+                continue;
+            }
+            $pageNumber = debug_export_int_or_null($page['pageNumber'] ?? null);
+            if ($pageNumber !== null && $pageNumber > 0) {
+                $pagesByNumber[$pageNumber] = $page;
+            }
+        }
+        $pagesByJobId[$normalizedJobId] = $pagesByNumber;
+    }
+
+    $page = debug_export_page_for_match($pagesByJobId[$normalizedJobId], $match);
+    return is_array($page)
+        ? debug_export_bbox_word_indexes_for_page($page, $valueBbox)
+        : [];
+}
+
+function observe_extracted_sender_identifiers(array $fieldResults, ?string $jobId = null): void
 {
     $repository = sender_repository_instance();
     if ($repository === null) {
@@ -24293,28 +24393,36 @@ function observe_extracted_sender_identifiers(array $fieldResults): void
     }
 
     $seenOrganizationNumbers = [];
-    foreach (extraction_field_result_matches($fieldResults, 'organisationsnummer') as $match) {
+    foreach (accepted_extraction_field_result_matches($fieldResults, 'organisationsnummer') as $match) {
         $organizationNumber = is_string($match['value'] ?? null) ? trim((string) $match['value']) : '';
         if ($organizationNumber === '' || isset($seenOrganizationNumbers[$organizationNumber])) {
             continue;
         }
         $seenOrganizationNumbers[$organizationNumber] = true;
+        $bboxIndexes = sender_identifier_source_bbox_indexes($match, $jobId);
 
         try {
-            $repository->observeOrganizationNumber($organizationNumber, null, 'document_auto');
+            $repository->observeOrganizationNumber(
+                $organizationNumber,
+                null,
+                'document_auto',
+                $jobId,
+                $bboxIndexes
+            );
         } catch (Throwable $e) {
             // Best effort only. Identifier observation should not fail the document analysis pipeline.
         }
     }
 
-    $observePaymentMatches = static function (string $type) use ($repository, $fieldResults): void {
+    $observePaymentMatches = static function (string $type) use ($repository, $fieldResults, $jobId): void {
         $seen = [];
-        foreach (extraction_field_result_matches($fieldResults, $type) as $match) {
+        foreach (accepted_extraction_field_result_matches($fieldResults, $type) as $match) {
             $number = is_string($match['value'] ?? null) ? trim((string) $match['value']) : '';
             if ($number === '' || isset($seen[$number])) {
                 continue;
             }
             $seen[$number] = true;
+            $bboxIndexes = sender_identifier_source_bbox_indexes($match, $jobId);
 
             try {
                 $repository->observePaymentNumber(
@@ -24322,7 +24430,9 @@ function observe_extracted_sender_identifiers(array $fieldResults): void
                     $number,
                     is_string($match['raw'] ?? null) ? (string) $match['raw'] : null,
                     'document_auto',
-                    1.0
+                    1.0,
+                    $jobId,
+                    $bboxIndexes
                 );
             } catch (Throwable $e) {
                 // Best effort only. Identifier observation should not fail the document analysis pipeline.

@@ -1626,7 +1626,9 @@ final class SenderRepository
     public function observeOrganizationNumber(
         string $organizationNumber,
         ?string $organizationName = null,
-        ?string $source = 'document_auto'
+        ?string $source = 'document_auto',
+        ?string $sourceJobId = null,
+        array $sourceBboxIndexes = []
     ): int
     {
         $normalizedNumber = IdentifierNormalizer::normalizeOrgNumber($organizationNumber);
@@ -1642,6 +1644,11 @@ final class SenderRepository
         if ($normalizedSource === '') {
             $normalizedSource = null;
         }
+        $normalizedSourceJobId = is_string($sourceJobId) ? trim($sourceJobId) : '';
+        if ($normalizedSourceJobId === '') {
+            $normalizedSourceJobId = null;
+        }
+        $normalizedSourceBboxIndexes = $this->normalizeSourceBboxIndexes($sourceBboxIndexes);
 
         $select = $this->pdo->prepare(
             'SELECT id, organization_name, sender_id, source, created_at, updated_at
@@ -1689,6 +1696,8 @@ final class SenderRepository
                 organization_name,
                 sender_id,
                 source,
+                source_job_id,
+                source_bbox_indexes,
                 created_at,
                 updated_at
             ) VALUES (
@@ -1696,6 +1705,8 @@ final class SenderRepository
                 :organization_name,
                 NULL,
                 :source,
+                :source_job_id,
+                :source_bbox_indexes,
                 :created_at,
                 :updated_at
             )'
@@ -1704,6 +1715,10 @@ final class SenderRepository
             ':organization_number' => $normalizedNumber,
             ':organization_name' => $normalizedName,
             ':source' => $normalizedSource,
+            ':source_job_id' => $normalizedSourceJobId,
+            ':source_bbox_indexes' => $normalizedSourceJobId !== null && $normalizedSourceBboxIndexes !== []
+                ? json_encode($normalizedSourceBboxIndexes, JSON_THROW_ON_ERROR)
+                : null,
             ':created_at' => $timestamp,
             ':updated_at' => $timestamp,
         ]);
@@ -1716,7 +1731,9 @@ final class SenderRepository
         string $number,
         ?string $originalNumber = null,
         ?string $source = 'document_auto',
-        float $confidence = 1.0
+        float $confidence = 1.0,
+        ?string $sourceJobId = null,
+        array $sourceBboxIndexes = []
     ): int {
         $normalizedType = trim(strtolower($type));
         if ($normalizedType !== 'bankgiro' && $normalizedType !== 'plusgiro') {
@@ -1738,6 +1755,11 @@ final class SenderRepository
         if ($normalizedSource === '') {
             $normalizedSource = null;
         }
+        $normalizedSourceJobId = is_string($sourceJobId) ? trim($sourceJobId) : '';
+        if ($normalizedSourceJobId === '') {
+            $normalizedSourceJobId = null;
+        }
+        $normalizedSourceBboxIndexes = $this->normalizeSourceBboxIndexes($sourceBboxIndexes);
 
         $select = $this->pdo->prepare(
             'SELECT id, sender_id, original_number, source, confidence, created_at, updated_at
@@ -1793,6 +1815,8 @@ final class SenderRepository
                 original_number,
                 requires_ocr,
                 source,
+                source_job_id,
+                source_bbox_indexes,
                 confidence,
                 created_at,
                 updated_at
@@ -1803,6 +1827,8 @@ final class SenderRepository
                 :original_number,
                 0,
                 :source,
+                :source_job_id,
+                :source_bbox_indexes,
                 :confidence,
                 :created_at,
                 :updated_at
@@ -1813,12 +1839,31 @@ final class SenderRepository
             ':number' => $normalizedNumber,
             ':original_number' => $normalizedOriginalNumber,
             ':source' => $normalizedSource,
+            ':source_job_id' => $normalizedSourceJobId,
+            ':source_bbox_indexes' => $normalizedSourceJobId !== null && $normalizedSourceBboxIndexes !== []
+                ? json_encode($normalizedSourceBboxIndexes, JSON_THROW_ON_ERROR)
+                : null,
             ':confidence' => $confidence,
             ':created_at' => $timestamp,
             ':updated_at' => $timestamp,
         ]);
 
         return (int) $this->pdo->lastInsertId();
+    }
+
+    private function normalizeSourceBboxIndexes(array $indexes): array
+    {
+        $normalized = [];
+        foreach ($indexes as $index) {
+            if (is_int($index) && $index > 0) {
+                $normalized[$index] = true;
+            }
+        }
+
+        $values = array_keys($normalized);
+        sort($values, SORT_NUMERIC);
+
+        return $values;
     }
 
     public function mergeSenders(int $targetSenderId, array $sourceSenderIds): array
