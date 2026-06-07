@@ -11154,6 +11154,7 @@ function proposedArchivingResultForJob(job) {
     : '';
   return {
     ...autoResult,
+    senderId: automaticSenderIdForJob(job) || null,
     folderId: proposedFolderId !== '' ? proposedFolderId : null,
     filenameTemplateId: proposedTemplateId !== '' ? proposedTemplateId : null,
     filename: generateFilenameForJob(job, {
@@ -11475,6 +11476,23 @@ function effectiveSenderId(job) {
   }
   if (Number.isInteger(job.selectedSenderId) && job.selectedSenderId > 0 && isKnownSender(job.selectedSenderId)) {
     return String(job.selectedSenderId);
+  }
+  return automaticSenderIdForJob(job);
+}
+
+function automaticSenderIdForJob(job) {
+  const isKnownSender = (value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      return false;
+    }
+    return Array.isArray(state.senders) && state.senders.some((sender) => {
+      return sender && Number.isInteger(sender.id) && String(sender.id) === normalized;
+    });
+  };
+
+  if (!job) {
+    return '';
   }
   if (senderUnknownObservationRowsForJob(job).length > 0) {
     return '';
@@ -11928,7 +11946,32 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
   if (fieldKey === 'sender') {
     const nextValue = proposed.senderId ? String(proposed.senderId).trim() : '';
     if (!archivedReviewMode) {
-      applySelectedSenderValue(nextValue);
+      const hadLocalValue = selectedSenderByJobId.has(job.id);
+      const previousLocalValue = selectedSenderByJobId.get(job.id);
+      const previousSelectedSenderId = job.selectedSenderId;
+      selectedSenderByJobId.delete(job.id);
+      delete job.selectedSenderId;
+      setSenderForJob(job);
+      renderSelectedJobSenderSection(job);
+      syncFilenameField(job);
+      updateArchiveAction(job);
+      updateSelectedJobResetActions(job);
+      try {
+        await saveSelectedJobFields(job.id, { selectedSenderId: null });
+      } catch (error) {
+        if (hadLocalValue) {
+          selectedSenderByJobId.set(job.id, previousLocalValue);
+        }
+        if (previousSelectedSenderId !== undefined) {
+          job.selectedSenderId = previousSelectedSenderId;
+        }
+        setSenderForJob(job);
+        renderSelectedJobSenderSection(job);
+        syncFilenameField(job);
+        updateArchiveAction(job);
+        updateSelectedJobResetActions(job);
+        throw error;
+      }
       return;
     }
     if (!nextValue) {
