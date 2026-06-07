@@ -217,6 +217,9 @@ let sendersViewSendersEl = null;
 let sendersViewUnlinkedEl = null;
 let sendersTabSendersEl = null;
 let sendersTabUnlinkedEl = null;
+let sendersUnlinkedFooterActionsEl = null;
+let sendersUnlinkedLinkButtonEl = null;
+let sendersUnlinkedLinkMenuEl = null;
 let sendersSelectedCountEl = null;
 let sendersClearSelectionEl = null;
 let sendersMergeSelectedEl = null;
@@ -20517,6 +20520,9 @@ function bindSettingsPanelRefs(tabId) {
     sendersViewUnlinkedEl = document.getElementById('senders-view-unlinked');
     sendersTabSendersEl = document.getElementById('senders-tab-senders');
     sendersTabUnlinkedEl = document.getElementById('senders-tab-unlinked');
+    sendersUnlinkedFooterActionsEl = document.getElementById('senders-unlinked-footer-actions');
+    sendersUnlinkedLinkButtonEl = document.getElementById('senders-unlinked-link-button');
+    sendersUnlinkedLinkMenuEl = document.getElementById('senders-unlinked-link-menu');
     sendersSelectedCountEl = document.getElementById('senders-selected-count');
     sendersClearSelectionEl = document.getElementById('senders-clear-selection');
     sendersMergeSelectedEl = document.getElementById('senders-merge-selected');
@@ -20535,6 +20541,21 @@ function bindSettingsPanelRefs(tabId) {
     if (sendersTabUnlinkedEl instanceof HTMLButtonElement) {
       sendersTabUnlinkedEl.addEventListener('click', () => setSendersPanelTab('unlinked'));
     }
+    if (sendersUnlinkedLinkButtonEl instanceof HTMLButtonElement) {
+      sendersUnlinkedLinkButtonEl.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleUnlinkedSenderLinkMenu();
+      });
+    }
+    if (sendersUnlinkedLinkMenuEl instanceof HTMLElement) {
+      sendersUnlinkedLinkMenuEl.addEventListener('click', (event) => event.stopPropagation());
+    }
+    document.addEventListener('click', closeUnlinkedSenderLinkMenu);
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeUnlinkedSenderLinkMenu();
+      }
+    });
     sendersAddRowEl.addEventListener('click', () => {
       sendersDraft.push(defaultSenderDraft());
       renderSendersEditor();
@@ -22587,6 +22608,7 @@ function updateSlidingTabIndicator(activeTabEl) {
 
 function setSendersPanelTab(tabId = 'senders') {
   const normalizedTabId = tabId === 'unlinked' ? 'unlinked' : 'senders';
+  closeUnlinkedSenderLinkMenu();
   if (sendersViewSendersEl) {
     sendersViewSendersEl.classList.toggle('hidden', normalizedTabId !== 'senders');
   }
@@ -22600,6 +22622,9 @@ function setSendersPanelTab(tabId = 'senders') {
   if (sendersTabUnlinkedEl instanceof HTMLButtonElement) {
     sendersTabUnlinkedEl.classList.toggle('is-active', normalizedTabId === 'unlinked');
     sendersTabUnlinkedEl.setAttribute('aria-selected', normalizedTabId === 'unlinked' ? 'true' : 'false');
+  }
+  if (sendersUnlinkedFooterActionsEl instanceof HTMLElement) {
+    sendersUnlinkedFooterActionsEl.classList.toggle('hidden', normalizedTabId !== 'unlinked');
   }
   updateSlidingTabIndicator(normalizedTabId === 'unlinked' ? sendersTabUnlinkedEl : sendersTabSendersEl);
 }
@@ -22726,6 +22751,86 @@ function linkSelectedUnlinkedIdentifiersToSender(senderUiKeyValue) {
   renderSendersEditor();
   renderUnlinkedSenderIdentifiers();
   updateSettingsActionButtons();
+}
+
+function closeUnlinkedSenderLinkMenu() {
+  if (sendersUnlinkedLinkButtonEl instanceof HTMLButtonElement) {
+    sendersUnlinkedLinkButtonEl.setAttribute('aria-expanded', 'false');
+  }
+  if (sendersUnlinkedLinkMenuEl instanceof HTMLElement) {
+    sendersUnlinkedLinkMenuEl.classList.add('hidden');
+  }
+}
+
+function toggleUnlinkedSenderLinkMenu() {
+  if (
+    !(sendersUnlinkedLinkButtonEl instanceof HTMLButtonElement)
+    || !(sendersUnlinkedLinkMenuEl instanceof HTMLElement)
+    || sendersUnlinkedLinkButtonEl.disabled
+  ) {
+    return;
+  }
+  const shouldOpen = sendersUnlinkedLinkMenuEl.classList.contains('hidden');
+  closeUnlinkedSenderLinkMenu();
+  if (shouldOpen) {
+    sendersUnlinkedLinkButtonEl.setAttribute('aria-expanded', 'true');
+    sendersUnlinkedLinkMenuEl.classList.remove('hidden');
+  }
+}
+
+function renderUnlinkedSenderLinkAction() {
+  if (
+    !(sendersUnlinkedLinkButtonEl instanceof HTMLButtonElement)
+    || !(sendersUnlinkedLinkMenuEl instanceof HTMLElement)
+  ) {
+    return;
+  }
+
+  const selectedCount = selectedVisibleUnlinkedSenderIdentifiers().length;
+  sendersUnlinkedLinkButtonEl.disabled = selectedCount < 1;
+  if (selectedCount < 1) {
+    closeUnlinkedSenderLinkMenu();
+  }
+
+  const fragment = document.createDocumentFragment();
+  const heading = document.createElement('div');
+  heading.className = 'senders-unlinked-link-menu-heading';
+  heading.textContent = 'Koppla valda uppgifter till';
+  fragment.appendChild(heading);
+
+  const createButton = document.createElement('button');
+  createButton.type = 'button';
+  createButton.className = 'senders-unlinked-link-menu-create';
+  createButton.setAttribute('role', 'menuitem');
+  const createButtonIcon = document.createElement('span');
+  createButtonIcon.className = 'senders-unlinked-link-menu-create-icon';
+  createButtonIcon.textContent = '+';
+  const createButtonText = document.createElement('span');
+  createButtonText.textContent = 'Skapa ny avsändare';
+  createButton.append(createButtonIcon, document.createTextNode(' '), createButtonText);
+  createButton.addEventListener('click', () => {
+    closeUnlinkedSenderLinkMenu();
+    createSenderFromSelectedUnlinkedIdentifiers();
+  });
+  fragment.appendChild(createButton);
+
+  const separator = document.createElement('div');
+  separator.className = 'senders-unlinked-link-menu-separator';
+  separator.setAttribute('role', 'separator');
+  fragment.appendChild(separator);
+
+  senderLinkOptions().forEach((optionData) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('role', 'menuitem');
+    button.textContent = optionData.label;
+    button.addEventListener('click', () => {
+      closeUnlinkedSenderLinkMenu();
+      linkSelectedUnlinkedIdentifiersToSender(optionData.value);
+    });
+    fragment.appendChild(button);
+  });
+  sendersUnlinkedLinkMenuEl.replaceChildren(fragment);
 }
 
 function senderSortFieldValue(row, field) {
@@ -28484,6 +28589,7 @@ function renderUnlinkedSenderIdentifiers() {
     empty.textContent = 'Det finns inga okopplade uppgifter.';
     fragment.appendChild(empty);
     sendersUnlinkedListEl.replaceChildren(fragment);
+    renderUnlinkedSenderLinkAction();
     return;
   }
 
@@ -28589,46 +28695,8 @@ function renderUnlinkedSenderIdentifiers() {
   table.appendChild(tbody);
   fragment.appendChild(table);
 
-  const footer = document.createElement('div');
-  footer.className = 'panel-actions senders-unlinked-footer';
-  const createButton = document.createElement('button');
-  createButton.type = 'button';
-  createButton.textContent = 'Skapa avsändare av valda';
-  createButton.disabled = selectedCount < 1;
-  createButton.addEventListener('click', createSenderFromSelectedUnlinkedIdentifiers);
-
-  const linkControls = document.createElement('div');
-  linkControls.className = 'senders-unlinked-link-controls';
-  const senderSelect = document.createElement('select');
-  senderSelect.className = 'settings-select senders-unlinked-footer-select';
-  senderSelect.setAttribute('aria-label', 'Välj befintlig avsändare');
-  const placeholderOption = document.createElement('option');
-  placeholderOption.value = '';
-  placeholderOption.textContent = 'Välj avsändare';
-  senderSelect.appendChild(placeholderOption);
-  senderLinkOptions().forEach((optionData) => {
-    const option = document.createElement('option');
-    option.value = optionData.value;
-    option.textContent = optionData.label;
-    senderSelect.appendChild(option);
-  });
-  const linkButton = document.createElement('button');
-  linkButton.type = 'button';
-  linkButton.textContent = 'Koppla valda...';
-  const syncFooterActions = () => {
-    senderSelect.disabled = selectedCount < 1;
-    linkButton.disabled = selectedCount < 1 || senderSelect.value === '';
-  };
-  senderSelect.addEventListener('change', syncFooterActions);
-  linkButton.addEventListener('click', () => {
-    linkSelectedUnlinkedIdentifiersToSender(String(senderSelect.value || ''));
-  });
-  syncFooterActions();
-  linkControls.append(senderSelect, linkButton);
-  footer.append(createButton, linkControls);
-  fragment.appendChild(footer);
-
   sendersUnlinkedListEl.replaceChildren(fragment);
+  renderUnlinkedSenderLinkAction();
   focusPendingUnlinkedSenderIdentifier();
 }
 

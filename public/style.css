@@ -6734,32 +6734,34 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   color: #1f2937;
 }
 
-.senders-unlinked-footer {
-  align-items: center;
-  border-top: 1px solid #e5e7eb;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: space-between;
-  padding: 12px 8px 0;
+.senders-unlinked-link-menu-wrap {
+  position: relative;
 }
 
-.senders-unlinked-link-controls {
-  align-items: center;
-  display: flex;
-  flex: 0 0 auto;
-  gap: 8px;
+.senders-unlinked-link-menu.split-button-menu {
+  bottom: calc(100% + 6px);
+  left: 0;
+  max-height: min(360px, 60vh);
+  overflow-y: auto;
+  top: auto;
 }
 
-.senders-unlinked-footer-select.settings-select {
-  margin: 0;
-  max-width: 260px;
-  min-width: 180px;
-}
-
-.senders-unlinked-link-controls button {
-  flex: 0 0 auto;
+.senders-unlinked-link-menu-heading {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px 7px;
   white-space: nowrap;
+}
+
+.senders-unlinked-link-menu-separator {
+  border-top: 1px solid #e2e8f0;
+  margin: 5px 4px;
+}
+
+.senders-unlinked-link-menu-create-icon {
+  color: #2563eb;
+  font-weight: 800;
 }
 
 .senders-footer-actions {

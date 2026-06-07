@@ -523,6 +523,12 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         <div id="senders-unlinked-list" class="senders-unlinked-list"></div>
       </div>
     </div>
+    <div id="senders-unlinked-footer-actions" class="settings-section-actions senders-footer-actions hidden">
+      <div class="senders-unlinked-link-menu-wrap">
+        <button id="senders-unlinked-link-button" type="button" aria-haspopup="menu" aria-expanded="false" disabled>Koppla till...</button>
+        <div id="senders-unlinked-link-menu" class="split-button-menu senders-unlinked-link-menu hidden" role="menu" aria-label="Koppla valda uppgifter till"></div>
+      </div>
+    </div>
     <div id="sender-merge-overlay" class="modal-overlay hidden">
       <div class="settings-dialog sender-merge-dialog">
         <section class="settings-content">
