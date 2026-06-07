@@ -184,7 +184,7 @@ foreach ($payload['senders'] as $row) {
 
     $normalized[] = [
         'id' => $id,
-        'name' => $name !== '' ? $name : null,
+        'name' => $name !== '' ? $name : '(Namnlös)',
         'domain' => $domainRaw !== '' ? strtolower($domainRaw) : null,
         'kind' => $kindRaw !== '' ? $kindRaw : null,
         'notes' => $notesRaw !== '' ? $notesRaw : null,

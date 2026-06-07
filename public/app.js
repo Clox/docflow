@@ -22256,7 +22256,7 @@ function defaultSenderDraft() {
   return {
     uiKey: `tmp-${senderDraftUiKeySeq++}`,
     id: null,
-    name: '',
+    name: '(Namnlös)',
     domain: '',
     kind: '',
     notes: '',
@@ -22382,44 +22382,7 @@ function senderDisplayName(row) {
   if (manualName !== '') {
     return manualName;
   }
-
-  const organizationRows = Array.isArray(input.organizationNumbers) ? input.organizationNumbers : [];
-  for (const organization of organizationRows) {
-    const organizationName = typeof organization?.organizationName === 'string' ? organization.organizationName.trim() : '';
-    if (organizationName !== '') {
-      return organizationName;
-    }
-  }
-
-  const paymentRows = Array.isArray(input.paymentNumbers) ? input.paymentNumbers : [];
-  for (const payment of paymentRows) {
-    const payeeName = typeof payment?.payeeName === 'string' ? payment.payeeName.trim() : '';
-    if (payeeName !== '') {
-      return payeeName;
-    }
-  }
-
-  const firstOrganization = organizationRows.find((organization) => (
-    typeof organization?.organizationNumber === 'string' && organization.organizationNumber.trim() !== ''
-  ));
-  if (firstOrganization) {
-    return `Org.nr ${firstOrganization.organizationNumber.trim()}`;
-  }
-
-  const firstPayment = paymentRows.find((payment) => (
-    typeof payment?.number === 'string' && payment.number.trim() !== ''
-  ));
-  if (firstPayment) {
-    const type = String(firstPayment.type || '').trim().toLowerCase() === 'plusgiro' ? 'Plusgiro' : 'Bankgiro';
-    return `${type} ${formatSenderPaymentNumberForDisplay(String(firstPayment.type || ''), firstPayment.number)}`;
-  }
-
-  const apiDisplayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
-  if (apiDisplayName !== '') {
-    return apiDisplayName;
-  }
-
-  return 'Avsändare utan namn';
+  return '(Namnlös)';
 }
 
 function sanitizeSenderOrganizationDraft(row) {
@@ -22694,6 +22657,8 @@ function focusSenderDraftRow(senderUiKeyValue) {
 
 function createSenderDraftFromUnlinkedIdentifier(identifier) {
   const draft = defaultSenderDraft();
+  const lookupName = typeof identifier?.name === 'string' ? identifier.name.trim() : '';
+  draft.name = lookupName !== '' ? lookupName : '(Namnlös)';
   applyUnlinkedIdentifierToSenderDraft(draft, identifier);
   return draft;
 }

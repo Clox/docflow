@@ -487,52 +487,7 @@ final class SenderRepository
     private function senderDisplayName(array $senderRow): string
     {
         $manualName = is_string($senderRow['name'] ?? null) ? trim((string) $senderRow['name']) : '';
-        if ($manualName !== '') {
-            return $manualName;
-        }
-
-        foreach (is_array($senderRow['organizationNumbers'] ?? null) ? $senderRow['organizationNumbers'] : [] as $organizationRow) {
-            if (!is_array($organizationRow)) {
-                continue;
-            }
-            $organizationName = is_string($organizationRow['organizationName'] ?? null) ? trim((string) $organizationRow['organizationName']) : '';
-            if ($organizationName !== '') {
-                return $organizationName;
-            }
-        }
-
-        foreach (is_array($senderRow['paymentNumbers'] ?? null) ? $senderRow['paymentNumbers'] : [] as $paymentRow) {
-            if (!is_array($paymentRow)) {
-                continue;
-            }
-            $payeeName = is_string($paymentRow['payeeName'] ?? null) ? trim((string) $paymentRow['payeeName']) : '';
-            if ($payeeName !== '') {
-                return $payeeName;
-            }
-        }
-
-        $organizationRows = is_array($senderRow['organizationNumbers'] ?? null) ? $senderRow['organizationNumbers'] : [];
-        $firstOrganization = $organizationRows[0] ?? null;
-        if (is_array($firstOrganization)) {
-            $organizationNumber = is_string($firstOrganization['organizationNumber'] ?? null)
-                ? trim((string) $firstOrganization['organizationNumber'])
-                : '';
-            if ($organizationNumber !== '') {
-                return 'Org.nr ' . $organizationNumber;
-            }
-        }
-
-        $paymentRows = is_array($senderRow['paymentNumbers'] ?? null) ? $senderRow['paymentNumbers'] : [];
-        $firstPayment = $paymentRows[0] ?? null;
-        if (is_array($firstPayment)) {
-            $paymentType = is_string($firstPayment['type'] ?? null) ? trim(strtolower((string) $firstPayment['type'])) : 'bankgiro';
-            $paymentNumber = is_string($firstPayment['number'] ?? null) ? trim((string) $firstPayment['number']) : '';
-            if ($paymentNumber !== '') {
-                return ($paymentType === 'plusgiro' ? 'Plusgiro ' : 'Bankgiro ') . $paymentNumber;
-            }
-        }
-
-        return 'Avsändare utan namn';
+        return $manualName !== '' ? $manualName : '(Namnlös)';
     }
 
     public function replaceAll(array $senders): array
@@ -676,7 +631,7 @@ final class SenderRepository
 
             $normalizedSenders[] = [
                 'id' => $id,
-                'name' => $name !== '' ? $name : null,
+                'name' => $name !== '' ? $name : '(Namnlös)',
                 'domain' => $domain !== '' ? strtolower($domain) : null,
                 'kind' => $kind !== '' ? $kind : null,
                 'notes' => $notes !== '' ? $notes : null,
@@ -1487,7 +1442,7 @@ final class SenderRepository
         ?string $notes = null,
         float $confidence = 1.0
     ): int {
-        $normalizedName = is_string($name) && trim($name) !== '' ? trim($name) : null;
+        $normalizedName = is_string($name) && trim($name) !== '' ? trim($name) : '(Namnlös)';
 
         $timestamp = date(DATE_ATOM);
         $statement = $this->pdo->prepare(

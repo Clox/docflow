@@ -48,12 +48,6 @@ try {
     $repository = new SenderRepository($pdo);
     $pdo->beginTransaction();
 
-    if ($createSender) {
-        $senderId = $repository->createSender(null);
-    } elseif ($repository->findById($senderId) === null) {
-        throw new RuntimeException('Avsändaren finns inte längre.');
-    }
-
     $selectOrganizationById = $pdo->prepare(
         'SELECT id, sender_id, organization_name
         FROM sender_organization_numbers
@@ -79,6 +73,107 @@ try {
           AND number = :number
         LIMIT 1'
     );
+
+    $resolveOrganization = static function (array $identifier) use (
+        $selectOrganizationById,
+        $selectOrganizationByNumber
+    ): ?array {
+        $identifierId = isset($identifier['identifierId']) && is_numeric($identifier['identifierId'])
+            ? (int) $identifier['identifierId']
+            : (isset($identifier['id']) && is_numeric($identifier['id']) ? (int) $identifier['id'] : 0);
+        if ($identifierId > 0) {
+            $selectOrganizationById->execute([':id' => $identifierId]);
+            $row = $selectOrganizationById->fetch(PDO::FETCH_ASSOC);
+            if (is_array($row)) {
+                return $row;
+            }
+        }
+
+        $number = is_string($identifier['normalizedNumber'] ?? null)
+            ? (string) $identifier['normalizedNumber']
+            : (is_string($identifier['itemValue'] ?? null) ? (string) $identifier['itemValue'] : '');
+        $normalizedNumber = IdentifierNormalizer::normalizeOrgNumber($number);
+        if ($normalizedNumber === null) {
+            return null;
+        }
+        $selectOrganizationByNumber->execute([':organization_number' => $normalizedNumber]);
+        $row = $selectOrganizationByNumber->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
+    };
+    $resolvePayment = static function (array $identifier) use (
+        $selectPaymentById,
+        $selectPaymentByNumber
+    ): ?array {
+        $type = is_string($identifier['paymentType'] ?? null)
+            && trim(strtolower((string) $identifier['paymentType'])) === 'plusgiro'
+            ? 'plusgiro'
+            : 'bankgiro';
+        $identifierId = isset($identifier['identifierId']) && is_numeric($identifier['identifierId'])
+            ? (int) $identifier['identifierId']
+            : (isset($identifier['id']) && is_numeric($identifier['id']) ? (int) $identifier['id'] : 0);
+        if ($identifierId > 0) {
+            $selectPaymentById->execute([':id' => $identifierId]);
+            $row = $selectPaymentById->fetch(PDO::FETCH_ASSOC);
+            if (is_array($row)) {
+                return ['type' => $type, 'row' => $row];
+            }
+        }
+
+        $number = is_string($identifier['normalizedNumber'] ?? null)
+            ? (string) $identifier['normalizedNumber']
+            : (is_string($identifier['itemValue'] ?? null) ? (string) $identifier['itemValue'] : '');
+        $normalizedNumber = $type === 'plusgiro'
+            ? IdentifierNormalizer::normalizePlusgiro($number)
+            : IdentifierNormalizer::normalizeBankgiro($number);
+        if ($normalizedNumber === null) {
+            return null;
+        }
+        $selectPaymentByNumber->execute([
+            ':type' => $type,
+            ':number' => $normalizedNumber,
+        ]);
+        $row = $selectPaymentByNumber->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? ['type' => $type, 'row' => $row] : null;
+    };
+
+    if ($createSender) {
+        $organizationNames = [];
+        $paymentNames = [];
+        foreach ($identifiers as $identifier) {
+            $kind = is_string($identifier['kind'] ?? null) ? trim(strtolower((string) $identifier['kind'])) : '';
+
+            if ($kind === 'organization' || $kind === 'organization_number') {
+                $organizationRow = $resolveOrganization($identifier);
+                $name = is_array($organizationRow) && is_string($organizationRow['organization_name'] ?? null)
+                    ? trim((string) $organizationRow['organization_name'])
+                    : '';
+                if ($name !== '') {
+                    $organizationNames[] = $name;
+                }
+                continue;
+            }
+
+            if ($kind === 'payment') {
+                $resolvedPayment = $resolvePayment($identifier);
+                $paymentRow = is_array($resolvedPayment) && is_array($resolvedPayment['row'] ?? null)
+                    ? $resolvedPayment['row']
+                    : null;
+                $name = is_array($paymentRow) && is_string($paymentRow['payee_name'] ?? null)
+                    ? trim((string) $paymentRow['payee_name'])
+                    : '';
+                if ($name !== '') {
+                    $paymentNames[] = $name;
+                }
+            }
+        }
+
+        $senderId = $repository->createSender($organizationNames[0] ?? $paymentNames[0] ?? '(Namnlös)');
+    } elseif ($repository->findById($senderId) === null) {
+        throw new RuntimeException('Avsändaren finns inte längre.');
+    }
+
     $linkOrganization = $pdo->prepare(
         'UPDATE sender_organization_numbers
         SET sender_id = :sender_id,
@@ -95,30 +190,10 @@ try {
     $linkedCount = 0;
     foreach ($identifiers as $identifier) {
         $kind = is_string($identifier['kind'] ?? null) ? trim(strtolower((string) $identifier['kind'])) : '';
-        $identifierId = isset($identifier['identifierId']) && is_numeric($identifier['identifierId'])
-            ? (int) $identifier['identifierId']
-            : (isset($identifier['id']) && is_numeric($identifier['id']) ? (int) $identifier['id'] : 0);
         $timestamp = date(DATE_ATOM);
 
         if ($kind === 'organization' || $kind === 'organization_number') {
-            $organizationRow = null;
-            if ($identifierId > 0) {
-                $selectOrganizationById->execute([':id' => $identifierId]);
-                $selectedRow = $selectOrganizationById->fetch(PDO::FETCH_ASSOC);
-                $organizationRow = is_array($selectedRow) ? $selectedRow : null;
-            }
-            if (!is_array($organizationRow)) {
-                $number = is_string($identifier['normalizedNumber'] ?? null)
-                    ? (string) $identifier['normalizedNumber']
-                    : (is_string($identifier['itemValue'] ?? null) ? (string) $identifier['itemValue'] : '');
-                $normalizedNumber = IdentifierNormalizer::normalizeOrgNumber($number);
-                if ($normalizedNumber === null) {
-                    continue;
-                }
-                $selectOrganizationByNumber->execute([':organization_number' => $normalizedNumber]);
-                $selectedRow = $selectOrganizationByNumber->fetch(PDO::FETCH_ASSOC);
-                $organizationRow = is_array($selectedRow) ? $selectedRow : null;
-            }
+            $organizationRow = $resolveOrganization($identifier);
             $organizationId = is_array($organizationRow) ? (int) ($organizationRow['id'] ?? 0) : 0;
             if ($organizationId < 1) {
                 continue;
@@ -142,32 +217,10 @@ try {
         }
 
         if ($kind === 'payment') {
-            $paymentType = is_string($identifier['paymentType'] ?? null) && trim(strtolower((string) $identifier['paymentType'])) === 'plusgiro'
-                ? 'plusgiro'
-                : 'bankgiro';
-            $paymentRow = null;
-            if ($identifierId > 0) {
-                $selectPaymentById->execute([':id' => $identifierId]);
-                $selectedRow = $selectPaymentById->fetch(PDO::FETCH_ASSOC);
-                $paymentRow = is_array($selectedRow) ? $selectedRow : null;
-            }
-            if (!is_array($paymentRow)) {
-                $number = is_string($identifier['normalizedNumber'] ?? null)
-                    ? (string) $identifier['normalizedNumber']
-                    : (is_string($identifier['itemValue'] ?? null) ? (string) $identifier['itemValue'] : '');
-                $normalizedNumber = $paymentType === 'plusgiro'
-                    ? IdentifierNormalizer::normalizePlusgiro($number)
-                    : IdentifierNormalizer::normalizeBankgiro($number);
-                if ($normalizedNumber === null) {
-                    continue;
-                }
-                $selectPaymentByNumber->execute([
-                    ':type' => $paymentType,
-                    ':number' => $normalizedNumber,
-                ]);
-                $selectedRow = $selectPaymentByNumber->fetch(PDO::FETCH_ASSOC);
-                $paymentRow = is_array($selectedRow) ? $selectedRow : null;
-            }
+            $resolvedPayment = $resolvePayment($identifier);
+            $paymentRow = is_array($resolvedPayment) && is_array($resolvedPayment['row'] ?? null)
+                ? $resolvedPayment['row']
+                : null;
             $paymentId = is_array($paymentRow) ? (int) ($paymentRow['id'] ?? 0) : 0;
             if ($paymentId < 1) {
                 continue;
