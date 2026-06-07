@@ -20418,6 +20418,10 @@ function mountSettingsPanel(tabId) {
   }
 
   panel.replaceChildren(template.content.cloneNode(true));
+  panel.querySelectorAll('.sliding-tabs').forEach((tabsEl) => {
+    const activeTabEl = tabsEl.querySelector('.sliding-tab:is(.active, .is-active)');
+    updateSlidingTabIndicator(activeTabEl);
+  });
   mountedSettingsPanels.add(tabId);
 }
 
@@ -22561,12 +22565,12 @@ function visibleUnlinkedSenderIdentifiers() {
   return sendersUnlinkedIdentifiers.filter((row) => !claimedKeys.has(row.key));
 }
 
-function updateSendersTabIndicator(activeTabEl) {
+function updateSlidingTabIndicator(activeTabEl) {
   if (!(activeTabEl instanceof HTMLButtonElement)) {
     return;
   }
-  const tabsEl = activeTabEl.closest('.senders-tabs');
-  const indicatorEl = tabsEl?.querySelector('.senders-tab-indicator');
+  const tabsEl = activeTabEl.closest('.sliding-tabs');
+  const indicatorEl = tabsEl?.querySelector('.sliding-tab-indicator');
   if (!(tabsEl instanceof HTMLElement) || !(indicatorEl instanceof HTMLElement)) {
     return;
   }
@@ -22578,16 +22582,16 @@ function updateSendersTabIndicator(activeTabEl) {
     requestAnimationFrame(() => tabsEl.classList.add('is-indicator-ready'));
   }
 
-  if (typeof ResizeObserver === 'function' && !(tabsEl._sendersTabResizeObserver instanceof ResizeObserver)) {
+  if (typeof ResizeObserver === 'function' && !(tabsEl._slidingTabResizeObserver instanceof ResizeObserver)) {
     const resizeObserver = new ResizeObserver(() => {
-      const selectedTabEl = tabsEl.querySelector('.senders-tab.is-active');
+      const selectedTabEl = tabsEl.querySelector('.sliding-tab:is(.active, .is-active)');
       if (selectedTabEl instanceof HTMLButtonElement) {
         indicatorEl.style.transform = `translateX(${selectedTabEl.offsetLeft}px)`;
         indicatorEl.style.width = `${selectedTabEl.offsetWidth}px`;
       }
     });
     resizeObserver.observe(tabsEl);
-    tabsEl._sendersTabResizeObserver = resizeObserver;
+    tabsEl._slidingTabResizeObserver = resizeObserver;
   }
 }
 
@@ -22607,7 +22611,7 @@ function setSendersPanelTab(tabId = 'senders') {
     sendersTabUnlinkedEl.classList.toggle('is-active', normalizedTabId === 'unlinked');
     sendersTabUnlinkedEl.setAttribute('aria-selected', normalizedTabId === 'unlinked' ? 'true' : 'false');
   }
-  updateSendersTabIndicator(normalizedTabId === 'unlinked' ? sendersTabUnlinkedEl : sendersTabSendersEl);
+  updateSlidingTabIndicator(normalizedTabId === 'unlinked' ? sendersTabUnlinkedEl : sendersTabSendersEl);
 }
 
 function applyUnlinkedIdentifierToSenderDraft(senderDraft, identifier) {
@@ -24495,16 +24499,25 @@ function showArchiveStructureImportDialog() {
     description.textContent = 'Klistra in JSON för en eller flera mappar eller filnamnsmallar. Importen ändrar bara lokala inställningar tills du klickar Spara.';
 
     const tabs = document.createElement('div');
-    tabs.className = 'archive-structure-import-tabs';
+    tabs.className = 'archive-structure-import-tabs sliding-tabs';
+    tabs.setAttribute('role', 'tablist');
+    tabs.setAttribute('aria-label', 'Importtyp');
     const folderTab = document.createElement('button');
     folderTab.type = 'button';
-    folderTab.className = 'archive-structure-import-tab active';
+    folderTab.className = 'archive-structure-import-tab sliding-tab active';
+    folderTab.setAttribute('role', 'tab');
+    folderTab.setAttribute('aria-selected', 'true');
     folderTab.textContent = 'Mapp';
     const templateTab = document.createElement('button');
     templateTab.type = 'button';
-    templateTab.className = 'archive-structure-import-tab';
+    templateTab.className = 'archive-structure-import-tab sliding-tab';
+    templateTab.setAttribute('role', 'tab');
+    templateTab.setAttribute('aria-selected', 'false');
     templateTab.textContent = 'Filnamnsmall';
-    tabs.append(folderTab, templateTab);
+    const tabIndicator = document.createElement('span');
+    tabIndicator.className = 'sliding-tab-indicator';
+    tabIndicator.setAttribute('aria-hidden', 'true');
+    tabs.append(folderTab, templateTab, tabIndicator);
 
     const sourceRow = document.createElement('div');
     sourceRow.className = 'label-import-source-row';
@@ -24625,6 +24638,9 @@ function showArchiveStructureImportDialog() {
       mode = nextMode === 'filename_template' ? 'filename_template' : 'folder';
       folderTab.classList.toggle('active', mode === 'folder');
       templateTab.classList.toggle('active', mode === 'filename_template');
+      folderTab.setAttribute('aria-selected', mode === 'folder' ? 'true' : 'false');
+      templateTab.setAttribute('aria-selected', mode === 'filename_template' ? 'true' : 'false');
+      updateSlidingTabIndicator(mode === 'folder' ? folderTab : templateTab);
       textarea.placeholder = mode === 'folder'
         ? '{\n  "type": "archive_folder",\n  "name": "Fakturor",\n  "pathTemplate": { "parts": [] },\n  "filenameTemplates": []\n}'
         : '{\n  "type": "filename_template",\n  "folderId": "fakturor",\n  "template": { "parts": [] },\n  "labelIds": []\n}';
@@ -31286,7 +31302,12 @@ function setExtractionFieldsTab(tabId) {
   extractionFieldsTabEls.forEach((button) => {
     const isActive = button.dataset.extractionFieldsTab === activeExtractionFieldsTabId;
     button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
+  const activeTabEl = extractionFieldsTabEls.find(
+    (button) => button.dataset.extractionFieldsTab === activeExtractionFieldsTabId
+  );
+  updateSlidingTabIndicator(activeTabEl);
   extractionFieldsViewCustomEl.classList.toggle('hidden', activeExtractionFieldsTabId !== 'fields');
   extractionFieldsViewSystemEl.classList.toggle('hidden', activeExtractionFieldsTabId !== 'system');
   extractionFieldsViewZonesEl.classList.toggle('hidden', activeExtractionFieldsTabId !== 'zones');

@@ -6192,27 +6192,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .archive-subtabs {
-  display: flex;
-  gap: 8px;
   margin-bottom: 10px;
-}
-
-.archive-subtab {
-  font: inherit;
-  padding: 6px 10px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #f3f4f6;
-  cursor: pointer;
-}
-
-.archive-subtab:hover {
-  background: #eaecef;
-}
-
-.archive-subtab.active {
-  background: #dbeafe;
-  border-color: #b6d2fd;
 }
 
 .archive-view {
@@ -6638,14 +6618,17 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .senders-tabs {
+  margin: 12px 0;
+}
+
+.sliding-tabs {
   border-bottom: 1px solid #d1d5db;
   display: flex;
   gap: 4px;
-  margin: 12px 0;
   position: relative;
 }
 
-.senders-tab {
+.sliding-tab {
   background: transparent;
   border: 0;
   color: #4b5563;
@@ -6654,12 +6637,12 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   padding: 8px 10px;
 }
 
-.senders-tab.is-active {
+.sliding-tab:is(.active, .is-active) {
   color: #111827;
   font-weight: 600;
 }
 
-.senders-tab-indicator {
+.sliding-tab-indicator {
   background: #2563eb;
   bottom: -1px;
   height: 2px;
@@ -6670,12 +6653,12 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   width: 0;
 }
 
-.senders-tabs.is-indicator-ready .senders-tab-indicator {
+.sliding-tabs.is-indicator-ready .sliding-tab-indicator {
   transition: transform 180ms ease, width 180ms ease;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .senders-tabs.is-indicator-ready .senders-tab-indicator {
+  .sliding-tabs.is-indicator-ready .sliding-tab-indicator {
     transition: none;
   }
 }
@@ -7516,29 +7499,8 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .archive-structure-import-tabs {
-  display: inline-flex;
   align-self: flex-start;
-  gap: 4px;
-  padding: 3px;
-  border: 1px solid #d8dee8;
-  border-radius: 999px;
-  background: #f8fafc;
-}
-
-.archive-structure-import-tab {
-  padding: 5px 12px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: #475569;
-  font: inherit;
-  cursor: pointer;
-}
-
-.archive-structure-import-tab.active {
-  background: #fff;
-  color: #0f172a;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+  width: fit-content;
 }
 
 .archive-structure-import-status,

@@ -485,10 +485,10 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <h3>Avsändare</h3>
     <p>Redigera avsändare som lagras i databasen. Fälten här styr listan i väljaren för avsändare och vilka dokumentidentifierare som kan matchas mot avsändaren.</p>
     <p>Om du tar bort en avsändare här ligger dess org.nr och betalnummer kvar som okopplade uppgifter.</p>
-    <div class="senders-tabs" role="tablist" aria-label="Avsändarvyer">
-      <button id="senders-tab-senders" class="senders-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="senders-view-senders">Avsändare</button>
-      <button id="senders-tab-unlinked" class="senders-tab" type="button" role="tab" aria-selected="false" aria-controls="senders-view-unlinked">Okopplade uppgifter</button>
-      <span class="senders-tab-indicator" aria-hidden="true"></span>
+    <div class="senders-tabs sliding-tabs" role="tablist" aria-label="Avsändarvyer">
+      <button id="senders-tab-senders" class="senders-tab sliding-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="senders-view-senders">Avsändare</button>
+      <button id="senders-tab-unlinked" class="senders-tab sliding-tab" type="button" role="tab" aria-selected="false" aria-controls="senders-view-unlinked">Okopplade uppgifter</button>
+      <span class="sliding-tab-indicator" aria-hidden="true"></span>
     </div>
     <div id="senders-view-senders" class="archive-view">
       <div id="senders-toolbar-section" class="settings-group senders-toolbar">
@@ -866,10 +866,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-data-fields">
     <h3>Datafält</h3>
-    <div class="archive-subtabs">
-      <button id="extraction-fields-tab-custom" class="archive-subtab active" type="button" data-extraction-fields-tab="fields">Datafält</button>
-      <button id="extraction-fields-tab-system" class="archive-subtab" type="button" data-extraction-fields-tab="system">Systemdatafält</button>
-      <button id="extraction-fields-tab-zones" class="archive-subtab" type="button" data-extraction-fields-tab="zones">Zoner</button>
+    <div class="archive-subtabs sliding-tabs" role="tablist" aria-label="Datafältsvyer">
+      <button id="extraction-fields-tab-custom" class="archive-subtab sliding-tab active" type="button" data-extraction-fields-tab="fields" role="tab" aria-selected="true">Datafält</button>
+      <button id="extraction-fields-tab-system" class="archive-subtab sliding-tab" type="button" data-extraction-fields-tab="system" role="tab" aria-selected="false">Systemdatafält</button>
+      <button id="extraction-fields-tab-zones" class="archive-subtab sliding-tab" type="button" data-extraction-fields-tab="zones" role="tab" aria-selected="false">Zoner</button>
+      <span class="sliding-tab-indicator" aria-hidden="true"></span>
     </div>
     <p id="extraction-fields-tab-description">Definiera egna datafält genom att kombinera hur värdet hittas med hur värdet tolkas och normaliseras.</p>
     <div id="extraction-fields-view-custom" class="archive-view">
