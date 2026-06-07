@@ -596,6 +596,7 @@ let labelsBuiltInCollapsed = true;
 let labelsCustomCollapsed = false;
 let sendersDraft = [];
 let sendersUnlinkedIdentifiers = [];
+const selectedUnlinkedSenderIdentifierKeys = new Set();
 let matchingDraft = [];
 let matchingPositionAdjustmentDraft = defaultMatchingPositionAdjustmentSettings();
 let matchingBboxSpanBuildingDraft = defaultMatchingBboxSpanBuildingSettings();
@@ -21435,9 +21436,9 @@ function focusPendingUnlinkedSenderIdentifier() {
     }
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     highlightSettingsElement(target);
-    const select = target.querySelector('.senders-unlinked-link-select');
-    if (select instanceof HTMLSelectElement) {
-      select.focus({ preventScroll: true });
+    const checkbox = target.querySelector('.senders-unlinked-selection-cell input[type="checkbox"]');
+    if (checkbox instanceof HTMLInputElement) {
+      checkbox.focus({ preventScroll: true });
     }
     pendingUnlinkedSenderIdentifierKey = '';
   });
@@ -22524,23 +22525,6 @@ function senderLinkOptions() {
   );
 }
 
-function senderLinkOptionsForIdentifier(identifier) {
-  const options = senderLinkOptions();
-  const identifierName = String(identifier && identifier.name || '').trim();
-  if (identifierName === '') {
-    return options;
-  }
-
-  return [...options].sort((left, right) => {
-    const leftScore = senderNameSimilarity(identifierName, left.label);
-    const rightScore = senderNameSimilarity(identifierName, right.label);
-    if (leftScore !== rightScore) {
-      return rightScore - leftScore;
-    }
-    return left.label.localeCompare(right.label, 'sv');
-  });
-}
-
 function claimedSenderIdentifierKeys() {
   const keys = new Set();
 
@@ -22698,43 +22682,50 @@ function focusSenderDraftRow(senderUiKeyValue) {
   });
 }
 
-function createSenderDraftFromUnlinkedIdentifier(identifier) {
+function selectedVisibleUnlinkedSenderIdentifiers() {
+  return visibleUnlinkedSenderIdentifiers().filter((row) => selectedUnlinkedSenderIdentifierKeys.has(row.key));
+}
+
+function createSenderDraftFromUnlinkedIdentifiers(identifiers) {
+  const rows = Array.isArray(identifiers) ? identifiers : [];
   const draft = defaultSenderDraft();
-  const lookupName = typeof identifier?.name === 'string' ? identifier.name.trim() : '';
-  draft.name = lookupName !== '' ? lookupName : '(Namnlös)';
-  applyUnlinkedIdentifierToSenderDraft(draft, identifier);
+  const organizationName = rows.find((row) => (
+    row?.kind === 'organization' && typeof row.name === 'string' && row.name.trim() !== ''
+  ))?.name?.trim();
+  const anyName = rows.find((row) => typeof row?.name === 'string' && row.name.trim() !== '')?.name?.trim();
+  draft.name = organizationName || anyName || '(Namnlös)';
+  rows.forEach((identifier) => applyUnlinkedIdentifierToSenderDraft(draft, identifier));
   return draft;
 }
 
-function linkUnlinkedIdentifierToSender(identifierKey, senderUiKeyValue) {
-  const identifier = visibleUnlinkedSenderIdentifiers().find((row) => row.key === identifierKey);
-  if (!identifier) {
+function createSenderFromSelectedUnlinkedIdentifiers() {
+  const identifiers = selectedVisibleUnlinkedSenderIdentifiers();
+  if (identifiers.length < 1) {
     return;
   }
-  const senderIndex = sendersDraft.findIndex((row) => senderUiKey(row) === senderUiKeyValue);
-  if (senderIndex < 0) {
-    return;
-  }
-
-  applyUnlinkedIdentifierToSenderDraft(sendersDraft[senderIndex], identifier);
-  renderSendersEditor();
-  renderUnlinkedSenderIdentifiers();
-  updateSettingsActionButtons();
-}
-
-function createSenderFromUnlinkedIdentifier(identifierKey) {
-  const identifier = visibleUnlinkedSenderIdentifiers().find((row) => row.key === identifierKey);
-  if (!identifier) {
-    return;
-  }
-
-  const draft = createSenderDraftFromUnlinkedIdentifier(identifier);
+  const draft = createSenderDraftFromUnlinkedIdentifiers(identifiers);
   sendersDraft.unshift(draft);
+  identifiers.forEach((identifier) => selectedUnlinkedSenderIdentifierKeys.delete(identifier.key));
   setSendersPanelTab('senders');
   renderSendersEditor();
   renderUnlinkedSenderIdentifiers();
   updateSettingsActionButtons();
   focusSenderDraftRow(senderUiKey(draft));
+}
+
+function linkSelectedUnlinkedIdentifiersToSender(senderUiKeyValue) {
+  const identifiers = selectedVisibleUnlinkedSenderIdentifiers();
+  const senderIndex = sendersDraft.findIndex((row) => senderUiKey(row) === senderUiKeyValue);
+  if (identifiers.length < 1 || senderIndex < 0) {
+    return;
+  }
+  identifiers.forEach((identifier) => {
+    applyUnlinkedIdentifierToSenderDraft(sendersDraft[senderIndex], identifier);
+    selectedUnlinkedSenderIdentifierKeys.delete(identifier.key);
+  });
+  renderSendersEditor();
+  renderUnlinkedSenderIdentifiers();
+  updateSettingsActionButtons();
 }
 
 function senderSortFieldValue(row, field) {
@@ -28479,6 +28470,12 @@ function renderUnlinkedSenderIdentifiers() {
   }
 
   const visibleRows = visibleUnlinkedSenderIdentifiers();
+  const visibleKeys = new Set(visibleRows.map((row) => row.key));
+  [...selectedUnlinkedSenderIdentifierKeys].forEach((key) => {
+    if (!visibleKeys.has(key)) {
+      selectedUnlinkedSenderIdentifierKeys.delete(key);
+    }
+  });
   const fragment = document.createDocumentFragment();
 
   if (visibleRows.length === 0) {
@@ -28495,7 +28492,33 @@ function renderUnlinkedSenderIdentifiers() {
 
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  ['Typ', 'Nummer', 'Namn', 'Senast', 'Åtgärd'].forEach((label) => {
+  const selectionHeader = document.createElement('th');
+  selectionHeader.scope = 'col';
+  selectionHeader.className = 'senders-unlinked-selection-cell';
+  const selectAllCheckbox = document.createElement('input');
+  selectAllCheckbox.type = 'checkbox';
+  selectAllCheckbox.setAttribute('aria-label', 'Markera alla okopplade uppgifter');
+  const selectedCount = visibleRows.filter((row) => selectedUnlinkedSenderIdentifierKeys.has(row.key)).length;
+  selectAllCheckbox.checked = selectedCount === visibleRows.length;
+  selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < visibleRows.length;
+  selectAllCheckbox.addEventListener('change', () => {
+    visibleRows.forEach((row) => {
+      if (selectAllCheckbox.checked) {
+        selectedUnlinkedSenderIdentifierKeys.add(row.key);
+      } else {
+        selectedUnlinkedSenderIdentifierKeys.delete(row.key);
+      }
+    });
+    renderUnlinkedSenderIdentifiers();
+  });
+  selectionHeader.addEventListener('click', (event) => {
+    if (event.target !== selectAllCheckbox) {
+      selectAllCheckbox.click();
+    }
+  });
+  selectionHeader.appendChild(selectAllCheckbox);
+  headRow.appendChild(selectionHeader);
+  ['Typ', 'Nummer', 'Namn/status'].forEach((label) => {
     const th = document.createElement('th');
     th.scope = 'col';
     th.textContent = label;
@@ -28510,6 +28533,27 @@ function renderUnlinkedSenderIdentifiers() {
     const tr = document.createElement('tr');
     tr.dataset.senderIdentifierKey = row.key;
 
+    const selectionCell = document.createElement('td');
+    selectionCell.className = 'senders-unlinked-selection-cell';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selectedUnlinkedSenderIdentifierKeys.has(row.key);
+    checkbox.setAttribute('aria-label', `Markera ${row.typeLabel} ${row.number}`);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        selectedUnlinkedSenderIdentifierKeys.add(row.key);
+      } else {
+        selectedUnlinkedSenderIdentifierKeys.delete(row.key);
+      }
+      renderUnlinkedSenderIdentifiers();
+    });
+    selectionCell.addEventListener('click', (event) => {
+      if (event.target !== checkbox) {
+        checkbox.click();
+      }
+    });
+    selectionCell.appendChild(checkbox);
+
     const typeCell = document.createElement('td');
     typeCell.className = 'senders-unlinked-type-cell';
     typeCell.textContent = row.typeLabel;
@@ -28520,76 +28564,70 @@ function renderUnlinkedSenderIdentifiers() {
 
     const nameCell = document.createElement('td');
     nameCell.className = 'senders-unlinked-name-cell';
-    nameCell.textContent = String(row.name || '').trim() !== '' ? row.name : '—';
+    const lookupName = String(row.name || '').trim();
+    if (lookupName !== '') {
+      nameCell.textContent = lookupName;
+    } else {
+      const presentation = senderObservationLookupPresentation({
+        type: row.kind === 'organization' ? 'organization_number' : row.paymentType,
+        normalizedNumber: row.normalizedNumber,
+        status: row.lookupStatus,
+        lookupName,
+        lookupErrorMessage: row.lookupErrorMessage,
+        identifierId: row.id,
+      });
+      nameCell.appendChild(createSenderLookupStatusBadge(presentation));
+    }
 
-    const updatedCell = document.createElement('td');
-    updatedCell.className = 'senders-unlinked-updated-cell';
-    const updatedAt = String(row.updatedAt || '').trim();
-    updatedCell.textContent = updatedAt !== ''
-      ? updatedAt.replace('T', ' ').replace(/([+-]\d{2}:\d{2}|Z)$/u, '').trim()
-      : '—';
-
-    const actionCell = document.createElement('td');
-    actionCell.className = 'senders-unlinked-action-cell';
-
-    const actionWrap = document.createElement('div');
-    actionWrap.className = 'senders-unlinked-actions';
-
-    const select = document.createElement('select');
-    select.className = 'settings-select senders-unlinked-link-select';
-    select.setAttribute('aria-label', `Koppla ${row.typeLabel} ${row.number}`);
-
-    const placeholderOption = document.createElement('option');
-    placeholderOption.value = '';
-    placeholderOption.hidden = true;
-    placeholderOption.textContent = 'Koppla';
-    select.appendChild(placeholderOption);
-
-    const createOption = document.createElement('option');
-    createOption.value = '__create_sender__';
-    createOption.textContent = '+ Skapa ny avsändare';
-    select.appendChild(createOption);
-
-    const separatorOption = document.createElement('option');
-    separatorOption.value = '';
-    separatorOption.disabled = true;
-    separatorOption.textContent = '────────';
-    select.appendChild(separatorOption);
-
-    senderLinkOptionsForIdentifier(row).forEach((optionData) => {
-      const option = document.createElement('option');
-      option.value = optionData.value;
-      option.textContent = optionData.label;
-      select.appendChild(option);
-    });
-
-    select.value = '';
-    select.addEventListener('change', () => {
-      const value = String(select.value || '').trim();
-      select.value = '';
-      if (value === '') {
-        return;
-      }
-      if (value === '__create_sender__') {
-        createSenderFromUnlinkedIdentifier(row.key);
-        return;
-      }
-      linkUnlinkedIdentifierToSender(row.key, value);
-    });
-
-    actionWrap.appendChild(select);
-    actionCell.appendChild(actionWrap);
-
+    tr.appendChild(selectionCell);
     tr.appendChild(typeCell);
     tr.appendChild(numberCell);
     tr.appendChild(nameCell);
-    tr.appendChild(updatedCell);
-    tr.appendChild(actionCell);
     tbody.appendChild(tr);
   });
 
   table.appendChild(tbody);
   fragment.appendChild(table);
+
+  const footer = document.createElement('div');
+  footer.className = 'panel-actions senders-unlinked-footer';
+  const createButton = document.createElement('button');
+  createButton.type = 'button';
+  createButton.textContent = 'Skapa avsändare av valda';
+  createButton.disabled = selectedCount < 1;
+  createButton.addEventListener('click', createSenderFromSelectedUnlinkedIdentifiers);
+
+  const linkControls = document.createElement('div');
+  linkControls.className = 'senders-unlinked-link-controls';
+  const senderSelect = document.createElement('select');
+  senderSelect.className = 'settings-select senders-unlinked-footer-select';
+  senderSelect.setAttribute('aria-label', 'Välj befintlig avsändare');
+  const placeholderOption = document.createElement('option');
+  placeholderOption.value = '';
+  placeholderOption.textContent = 'Välj avsändare';
+  senderSelect.appendChild(placeholderOption);
+  senderLinkOptions().forEach((optionData) => {
+    const option = document.createElement('option');
+    option.value = optionData.value;
+    option.textContent = optionData.label;
+    senderSelect.appendChild(option);
+  });
+  const linkButton = document.createElement('button');
+  linkButton.type = 'button';
+  linkButton.textContent = 'Koppla valda...';
+  const syncFooterActions = () => {
+    senderSelect.disabled = selectedCount < 1;
+    linkButton.disabled = selectedCount < 1 || senderSelect.value === '';
+  };
+  senderSelect.addEventListener('change', syncFooterActions);
+  linkButton.addEventListener('click', () => {
+    linkSelectedUnlinkedIdentifiersToSender(String(senderSelect.value || ''));
+  });
+  syncFooterActions();
+  linkControls.append(senderSelect, linkButton);
+  footer.append(createButton, linkControls);
+  fragment.appendChild(footer);
+
   sendersUnlinkedListEl.replaceChildren(fragment);
   focusPendingUnlinkedSenderIdentifier();
 }
