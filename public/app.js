@@ -11524,6 +11524,43 @@ function senderObservationMatchesLookupQueueItem(observation, queueItem) {
   return observationNumber !== '' && observationNumber === queueNumber;
 }
 
+function senderIdentifierKeyFromObservation(observation) {
+  if (!observation || typeof observation !== 'object') {
+    return '';
+  }
+
+  const type = typeof observation.type === 'string' ? observation.type.trim().toLowerCase() : '';
+  const normalizedNumber = digitsOnly(observation.normalizedNumber || observation.itemValue);
+  if (normalizedNumber === '') {
+    return '';
+  }
+  if (type === 'organization_number') {
+    return `organization:${normalizedNumber}`;
+  }
+  return `payment:${type === 'plusgiro' ? 'plusgiro' : 'bankgiro'}:${normalizedNumber}`;
+}
+
+function createOpenUnlinkedSenderIdentifierButton(observation, beforeOpen = null) {
+  const identifierKey = senderIdentifierKeyFromObservation(observation);
+  if (identifierKey === '') {
+    return null;
+  }
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'selected-job-sender-open';
+  button.textContent = '↗';
+  button.title = 'Öppna i avsändarregister';
+  button.setAttribute('aria-label', 'Öppna i avsändarregister');
+  button.addEventListener('click', () => {
+    if (typeof beforeOpen === 'function') {
+      beforeOpen();
+    }
+    openUnlinkedSenderIdentifierInRegister(identifierKey);
+  });
+  return button;
+}
+
 function senderObservationLookupPresentation(observation) {
   const status = typeof observation.status === 'string' ? observation.status.trim() : 'pending';
   const lookupName = typeof observation.lookupName === 'string' ? observation.lookupName.trim() : '';
@@ -12294,6 +12331,10 @@ function openSelectedJobSenderLinkDialog(job) {
       }
 
       row.append(heading, lookupRow);
+      const openButton = createOpenUnlinkedSenderIdentifierButton(observation, closeDialog);
+      if (openButton) {
+        row.appendChild(openButton);
+      }
       observationsList.appendChild(row);
     });
 
@@ -12467,6 +12508,10 @@ function renderSelectedJobSenderSection(job) {
       }
 
       item.append(heading, detail);
+      const openButton = createOpenUnlinkedSenderIdentifierButton(observation);
+      if (openButton) {
+        item.appendChild(openButton);
+      }
       statusList.appendChild(item);
     });
 
@@ -20988,6 +21033,38 @@ async function openSenderInRegister(senderId) {
   focusSenderDraftRow(senderUiKey(senderRow));
 }
 
+async function openUnlinkedSenderIdentifierInRegister(identifierKey) {
+  const normalizedKey = typeof identifierKey === 'string' ? identifierKey.trim() : '';
+  if (normalizedKey === '') {
+    return;
+  }
+
+  const opened = await openSendersSettingsDirect();
+  if (opened === false) {
+    return;
+  }
+
+  setSendersPanelTab('unlinked');
+  renderUnlinkedSenderIdentifiers();
+  requestAnimationFrame(() => {
+    if (!(sendersUnlinkedListEl instanceof HTMLElement)) {
+      return;
+    }
+    const target = sendersUnlinkedListEl.querySelector(
+      `[data-sender-identifier-key="${CSS.escape(normalizedKey)}"]`
+    );
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    highlightSettingsElement(target);
+    const select = target.querySelector('.senders-unlinked-link-select');
+    if (select instanceof HTMLSelectElement) {
+      select.focus({ preventScroll: true });
+    }
+  });
+}
+
 async function openClientInRegister(clientDirName) {
   const normalizedDirName = typeof clientDirName === 'string' ? clientDirName.trim() : '';
   if (!normalizedDirName) {
@@ -27943,6 +28020,7 @@ function renderUnlinkedSenderIdentifiers() {
 
   visibleRows.forEach((row) => {
     const tr = document.createElement('tr');
+    tr.dataset.senderIdentifierKey = row.key;
 
     const typeCell = document.createElement('td');
     typeCell.className = 'senders-unlinked-type-cell';
