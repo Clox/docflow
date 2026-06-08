@@ -28782,7 +28782,7 @@ function buildSenderEditorNode(row, rowIndex) {
     const organizationNameInput = document.createElement('input');
     organizationNameInput.type = 'text';
     organizationNameInput.value = organization.organizationName;
-    organizationNameInput.readOnly = true;
+    organizationNameInput.disabled = true;
 
     const removeOrganizationButton = createTrashButton({
       variant: 'row',
@@ -28795,7 +28795,7 @@ function buildSenderEditorNode(row, rowIndex) {
     });
 
     organizationFields.appendChild(createFloatingField('Org.nr', organizationNumberInput));
-    organizationFields.appendChild(createFloatingField('Lookup-namn', organizationNameInput));
+    organizationFields.appendChild(createFloatingField('Namn', organizationNameInput));
     organizationFields.appendChild(removeOrganizationButton);
     organizationBody.appendChild(organizationFields);
     organizationRowEl.appendChild(organizationBody);
@@ -28878,11 +28878,11 @@ function buildSenderEditorNode(row, rowIndex) {
     const payeeNameInput = document.createElement('input');
     payeeNameInput.type = 'text';
     payeeNameInput.value = payment.payeeName;
-    payeeNameInput.readOnly = true;
+    payeeNameInput.disabled = true;
 
     paymentFields.appendChild(createFloatingField('Typ', typeSelect));
     paymentFields.appendChild(createFloatingField('Nummer', numberInput));
-    paymentFields.appendChild(createFloatingField('Lookup-namn', payeeNameInput));
+    paymentFields.appendChild(createFloatingField('Namn', payeeNameInput));
     paymentFields.appendChild(removePaymentButton);
     paymentBody.appendChild(paymentFields);
     paymentRow.appendChild(paymentBody);
@@ -29278,7 +29278,7 @@ function renderSenderMergeEditor() {
     const organizationNameInput = document.createElement('input');
     organizationNameInput.type = 'text';
     organizationNameInput.value = organization.organizationName;
-    organizationNameInput.readOnly = true;
+    organizationNameInput.disabled = true;
 
     const removeOrganizationButton = createTrashButton({
       variant: 'row',
@@ -29290,7 +29290,7 @@ function renderSenderMergeEditor() {
     });
 
     organizationFields.appendChild(createFloatingField('Org.nr', organizationNumberInput));
-    organizationFields.appendChild(createFloatingField('Lookup-namn', organizationNameInput));
+    organizationFields.appendChild(createFloatingField('Namn', organizationNameInput));
     organizationFields.appendChild(removeOrganizationButton);
     organizationBody.appendChild(organizationFields);
     organizationRowEl.appendChild(organizationBody);
@@ -29370,11 +29370,11 @@ function renderSenderMergeEditor() {
     const payeeNameInput = document.createElement('input');
     payeeNameInput.type = 'text';
     payeeNameInput.value = payment.payeeName;
-    payeeNameInput.readOnly = true;
+    payeeNameInput.disabled = true;
 
     paymentFields.appendChild(createFloatingField('Typ', typeSelect));
     paymentFields.appendChild(createFloatingField('Nummer', numberInput));
-    paymentFields.appendChild(createFloatingField('Lookup-namn', payeeNameInput));
+    paymentFields.appendChild(createFloatingField('Namn', payeeNameInput));
     paymentFields.appendChild(removePaymentButton);
     paymentBody.appendChild(paymentFields);
     paymentRow.appendChild(paymentBody);

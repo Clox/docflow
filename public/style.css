@@ -6928,6 +6928,12 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   background: #fff;
 }
 
+.sender-organization-fields input:disabled,
+.sender-payment-fields input:disabled {
+  background: #e5e7eb;
+  color: #475569;
+}
+
 .sender-fields textarea {
   min-height: 74px;
   resize: vertical;
