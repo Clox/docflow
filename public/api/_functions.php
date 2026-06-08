@@ -2149,11 +2149,30 @@ function load_senders(): array
             ? trim((string) $row['displayName'])
             : '';
         $name = $manualName !== '' ? $manualName : $displayName;
+        $units = [];
+        foreach (is_array($row['units'] ?? null) ? $row['units'] : [] as $unit) {
+            if (!is_array($unit)) {
+                continue;
+            }
+            $unitId = isset($unit['id']) && is_numeric($unit['id']) ? (int) $unit['id'] : 0;
+            $unitName = is_string($unit['name'] ?? null) ? trim((string) $unit['name']) : '';
+            if ($unitId < 1 || $unitName === '') {
+                continue;
+            }
+            $units[] = [
+                'id' => $unitId,
+                'name' => $unitName,
+                'sortOrder' => isset($unit['sortOrder']) && is_numeric($unit['sortOrder'])
+                    ? (int) $unit['sortOrder']
+                    : count($units),
+            ];
+        }
 
         $senders[] = [
             'id' => $id,
             'name' => $name,
             'displayName' => $displayName !== '' ? $displayName : $name,
+            'units' => $units,
             'organizationNumbers' => array_values(array_filter(
                 is_array($row['organizationNumbers'] ?? null) ? $row['organizationNumbers'] : [],
                 static fn (mixed $organization): bool => is_array($organization)
@@ -6278,6 +6297,45 @@ function sender_exists_by_id(array $senders, int $senderId): bool
     return false;
 }
 
+function sender_unit_belongs_to_sender(array $senders, int $senderId, int $senderUnitId): bool
+{
+    foreach ($senders as $sender) {
+        if (!is_array($sender) || (int) ($sender['id'] ?? 0) !== $senderId) {
+            continue;
+        }
+        foreach (is_array($sender['units'] ?? null) ? $sender['units'] : [] as $unit) {
+            if (is_array($unit) && (int) ($unit['id'] ?? 0) === $senderUnitId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return false;
+}
+
+function sender_selection_display_name(array $senders, int $senderId, int $senderUnitId = 0): ?string
+{
+    foreach ($senders as $sender) {
+        if (!is_array($sender) || (int) ($sender['id'] ?? 0) !== $senderId) {
+            continue;
+        }
+        if ($senderUnitId > 0) {
+            foreach (is_array($sender['units'] ?? null) ? $sender['units'] : [] as $unit) {
+                if (!is_array($unit) || (int) ($unit['id'] ?? 0) !== $senderUnitId) {
+                    continue;
+                }
+                $unitName = is_string($unit['name'] ?? null) ? trim((string) $unit['name']) : '';
+                return $unitName !== '' ? $unitName : null;
+            }
+        }
+        $senderName = is_string($sender['name'] ?? null) ? trim((string) $sender['name']) : '';
+        return $senderName !== '' ? $senderName : null;
+    }
+
+    return null;
+}
+
 function update_job_user_fields(array $config, string $jobId, array $payload): array
 {
     if (!is_valid_job_id($jobId)) {
@@ -6330,6 +6388,28 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
             }
             $job['selectedSenderId'] = $senderId;
         }
+    }
+
+    if (array_key_exists('selectedSenderUnitId', $payload)) {
+        $value = $payload['selectedSenderUnitId'];
+        $senderId = array_key_exists('selectedSenderId', $payload)
+            ? (int) ($payload['selectedSenderId'] ?? 0)
+            : (int) ($job['selectedSenderId'] ?? 0);
+        if ($value === null || $value === '') {
+            if ($senderId > 0) {
+                $job['selectedSenderUnitId'] = null;
+            } else {
+                unset($job['selectedSenderUnitId']);
+            }
+        } else {
+            $senderUnitId = (int) $value;
+            if ($senderId < 1 || $senderUnitId < 1 || !sender_unit_belongs_to_sender($senders, $senderId, $senderUnitId)) {
+                throw new RuntimeException('Ogiltig underenhet');
+            }
+            $job['selectedSenderUnitId'] = $senderUnitId;
+        }
+    } elseif (array_key_exists('selectedSenderId', $payload)) {
+        unset($job['selectedSenderUnitId']);
     }
 
     if (array_key_exists('selectedFolderId', $payload)) {
@@ -6393,6 +6473,7 @@ function update_job_user_fields(array $config, string $jobId, array $payload): a
     if (($job['archived'] ?? false) === true && (
         array_key_exists('selectedClientDirName', $payload)
         || array_key_exists('selectedSenderId', $payload)
+        || array_key_exists('selectedSenderUnitId', $payload)
         || array_key_exists('selectedFolderId', $payload)
         || array_key_exists('selectedLabelIds', $payload)
         || array_key_exists('selectedExtractionFieldValues', $payload)
@@ -6475,6 +6556,9 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     $selectedSenderId = array_key_exists('selectedSenderId', $payload)
         ? (int) ($payload['selectedSenderId'] ?? 0)
         : (int) ($job['selectedSenderId'] ?? 0);
+    $selectedSenderUnitId = array_key_exists('selectedSenderUnitId', $payload)
+        ? (int) ($payload['selectedSenderUnitId'] ?? 0)
+        : (int) ($job['selectedSenderUnitId'] ?? 0);
     $selectedFolderId = array_key_exists('selectedFolderId', $payload)
         ? (is_string($payload['selectedFolderId'] ?? null) ? trim((string) $payload['selectedFolderId']) : '')
         : (is_string($job['selectedFolderId'] ?? null) ? trim((string) $job['selectedFolderId']) : '');
@@ -6527,6 +6611,9 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
     if ($selectedSenderId < 1 || !sender_exists_by_id($senders, $selectedSenderId)) {
         throw new RuntimeException('Ogiltig avsändare');
     }
+    if ($selectedSenderUnitId > 0 && !sender_unit_belongs_to_sender($senders, $selectedSenderId, $selectedSenderUnitId)) {
+        throw new RuntimeException('Ogiltig underenhet');
+    }
 
     $archiveFolder = find_loaded_archive_folder_by_id($archiveFolders, $selectedFolderId);
     if (!is_array($archiveFolder)) {
@@ -6564,6 +6651,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
 
     $job['selectedClientDirName'] = $selectedClientDirName;
     $job['selectedSenderId'] = $selectedSenderId;
+    $job['selectedSenderUnitId'] = $selectedSenderUnitId > 0 ? $selectedSenderUnitId : null;
     $job['selectedFolderId'] = $selectedFolderId;
     if ($selectedLabelIds === null) {
         unset($job['selectedLabelIds']);
@@ -6575,6 +6663,7 @@ function archive_job_by_id(array $config, string $jobId, bool $restore = false, 
         'filename' => $filename,
         'clientId' => $selectedClientDirName,
         'senderId' => $selectedSenderId,
+        'senderUnitId' => $selectedSenderUnitId > 0 ? $selectedSenderUnitId : null,
         'folderId' => $selectedFolderId,
         'archiveFolderPath' => $folderPath,
     ]));
@@ -21254,6 +21343,8 @@ function current_approved_archiving_for_job(array $job): array
 
     $selectedClientDirName = is_string($job['selectedClientDirName'] ?? null) ? trim((string) $job['selectedClientDirName']) : '';
     $selectedSenderId = resolve_active_sender_id(isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
+    $hasSelectedSenderUnitId = array_key_exists('selectedSenderUnitId', $job);
+    $selectedSenderUnitId = isset($job['selectedSenderUnitId']) ? (int) $job['selectedSenderUnitId'] : 0;
     $selectedFolderId = is_string($job['selectedFolderId'] ?? null) ? trim((string) $job['selectedFolderId']) : '';
     $selectedLabelIds = is_array($storedDocumentLabelIds)
         ? $storedDocumentLabelIds
@@ -21266,11 +21357,10 @@ function current_approved_archiving_for_job(array $job): array
         $normalized['clientId'] = $selectedClientDirName;
     }
     if ($selectedSenderId > 0) {
-        $previousSenderId = normalize_auto_archiving_result_sender_value($normalized['senderId'] ?? null);
         $normalized['senderId'] = $selectedSenderId;
-        if ($previousSenderId !== $selectedSenderId) {
-            $normalized['senderName'] = null;
-            $normalized['senderUnitId'] = null;
+        if ($hasSelectedSenderUnitId) {
+            $normalized['senderUnitId'] = $selectedSenderUnitId > 0 ? $selectedSenderUnitId : null;
+            $normalized['senderName'] = sender_selection_display_name(load_senders(), $selectedSenderId, $selectedSenderUnitId);
         }
     }
     if ($selectedFolderId !== '') {
@@ -21316,6 +21406,9 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
         ? (int) ($payload['selectedSenderId'] ?? 0)
         : (isset($job['selectedSenderId']) ? (int) $job['selectedSenderId'] : 0);
     $selectedSenderId = resolve_active_sender_id($selectedSenderId) ?? 0;
+    $selectedSenderUnitId = array_key_exists('selectedSenderUnitId', $payload)
+        ? (int) ($payload['selectedSenderUnitId'] ?? 0)
+        : (isset($job['selectedSenderUnitId']) ? (int) $job['selectedSenderUnitId'] : 0);
     $selectedFolderId = array_key_exists('selectedFolderId', $payload)
         ? (is_string($payload['selectedFolderId'] ?? null) ? trim((string) $payload['selectedFolderId']) : '')
         : (is_string($job['selectedFolderId'] ?? null) ? trim((string) $job['selectedFolderId']) : '');
@@ -21330,12 +21423,9 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
         $approved['clientId'] = $selectedClientDirName;
     }
     if ($selectedSenderId > 0) {
-        $previousSenderId = normalize_auto_archiving_result_sender_value($approved['senderId'] ?? null);
         $approved['senderId'] = $selectedSenderId;
-        if ($previousSenderId !== $selectedSenderId) {
-            $approved['senderName'] = null;
-            $approved['senderUnitId'] = null;
-        }
+        $approved['senderUnitId'] = $selectedSenderUnitId > 0 ? $selectedSenderUnitId : null;
+        $approved['senderName'] = sender_selection_display_name(load_senders(), $selectedSenderId, $selectedSenderUnitId);
     }
     if ($selectedFolderId !== '') {
         $approved['folderId'] = $selectedFolderId;
@@ -22761,6 +22851,10 @@ function resolved_active_review_value(array $payload, array $proposed, array $co
     if ($senderId > 0 && !sender_exists_by_id($senders, $senderId)) {
         throw new RuntimeException('Ogiltig avsändare');
     }
+    $senderUnitId = isset($payload['senderUnitId']) ? (int) $payload['senderUnitId'] : 0;
+    if ($senderUnitId > 0 && ($senderId < 1 || !sender_unit_belongs_to_sender($senders, $senderId, $senderUnitId))) {
+        throw new RuntimeException('Ogiltig underenhet');
+    }
 
     $folderId = is_string($payload['folderId'] ?? null) ? trim((string) $payload['folderId']) : '';
     $archiveFolder = $folderId !== '' ? find_loaded_archive_folder_by_id($archiveFolders, $folderId) : null;
@@ -22812,6 +22906,8 @@ function resolved_active_review_value(array $payload, array $proposed, array $co
     }
     if ($senderId > 0) {
         $next['senderId'] = $senderId;
+        $next['senderUnitId'] = $senderUnitId > 0 ? $senderUnitId : null;
+        $next['senderName'] = sender_selection_display_name($senders, $senderId, $senderUnitId);
     }
     if ($folderId !== '') {
         $next['folderId'] = $folderId;
@@ -22908,6 +23004,9 @@ function save_archived_job_review(array $config, string $jobId, string $action, 
         $job['approvedArchiving'] = $normalizedApproved;
         $job['selectedClientDirName'] = is_string($nextApproved['clientId'] ?? null) ? trim((string) $nextApproved['clientId']) : null;
         $job['selectedSenderId'] = isset($nextApproved['senderId']) ? (int) $nextApproved['senderId'] : null;
+        $job['selectedSenderUnitId'] = isset($nextApproved['senderUnitId']) && (int) $nextApproved['senderUnitId'] > 0
+            ? (int) $nextApproved['senderUnitId']
+            : null;
         $job['selectedFolderId'] = is_string($nextApproved['folderId'] ?? null) ? trim((string) $nextApproved['folderId']) : null;
         $job['selectedLabelIds'] = normalize_stored_job_label_ids($nextApproved['labels'] ?? null);
         $job['filename'] = is_string($nextApproved['filename'] ?? null) ? trim((string) $nextApproved['filename']) : null;
@@ -22960,6 +23059,7 @@ function initial_job_data(string $jobId, string $originalFilename, ?string $fall
         ],
         'selectedClientDirName' => null,
         'selectedSenderId' => null,
+        'selectedSenderUnitId' => null,
         'selectedFolderId' => null,
         'filename' => null,
         'archived' => false,
@@ -24973,6 +25073,25 @@ function build_job_state_entry(
     if ($selectedSenderId !== null && $selectedSenderId < 1) {
         $selectedSenderId = null;
     }
+    $hasSelectedSenderUnitOverride = array_key_exists('selectedSenderUnitId', $job);
+    $selectedSenderUnitId = isset($job['selectedSenderUnitId']) && (int) $job['selectedSenderUnitId'] > 0
+        ? (int) $job['selectedSenderUnitId']
+        : null;
+    if (
+        !array_key_exists('selectedSenderUnitId', $job)
+        && ($job['archived'] ?? false) === true
+        && $selectedSenderId !== null
+    ) {
+        $legacyApproved = current_approved_archiving_for_job($job);
+        $legacySenderUnitId = isset($legacyApproved['senderUnitId']) ? (int) $legacyApproved['senderUnitId'] : 0;
+        $selectedSenderUnitId = $legacySenderUnitId > 0 ? $legacySenderUnitId : null;
+    }
+    if (
+        $selectedSenderUnitId !== null
+        && ($selectedSenderId === null || !sender_unit_belongs_to_sender(load_senders(), $selectedSenderId, $selectedSenderUnitId))
+    ) {
+        $selectedSenderUnitId = null;
+    }
     $selectedFolderId = is_string($job['selectedFolderId'] ?? null)
         ? trim((string) $job['selectedFolderId'])
         : null;
@@ -25009,6 +25128,11 @@ function build_job_state_entry(
         $liveSenderId = normalize_auto_archiving_result_sender_value($liveAutoResult['senderId'] ?? null);
         if ($selectedSenderId !== null && $selectedSenderId === $storedSenderId) {
             $selectedSenderId = $liveSenderId;
+            $storedSenderUnitId = isset($storedAutoResult['senderUnitId']) ? (int) $storedAutoResult['senderUnitId'] : 0;
+            $liveSenderUnitId = isset($liveAutoResult['senderUnitId']) ? (int) $liveAutoResult['senderUnitId'] : 0;
+            if (!$hasSelectedSenderUnitOverride && ($selectedSenderUnitId ?? 0) === $storedSenderUnitId) {
+                $selectedSenderUnitId = $liveSenderUnitId > 0 ? $liveSenderUnitId : null;
+            }
         }
 
         $storedFolderId = normalize_auto_archiving_result_scalar_value($storedAutoResult['folderId'] ?? null);
@@ -25079,6 +25203,7 @@ function build_job_state_entry(
                 'analysis' => $analysis,
                 'selectedClientDirName' => $selectedClientDirName,
                 'selectedSenderId' => $selectedSenderId,
+                'selectedSenderUnitId' => $selectedSenderUnitId,
                 'selectedFolderId' => $selectedFolderId,
                 'selectedLabelIds' => $selectedLabelIds,
                 'selectedExtractionFieldValues' => $selectedExtractionFieldValues,
@@ -25112,6 +25237,7 @@ function build_job_state_entry(
                 'analysis' => $analysis,
                 'selectedClientDirName' => $selectedClientDirName,
                 'selectedSenderId' => $selectedSenderId,
+                'selectedSenderUnitId' => $selectedSenderUnitId,
                 'selectedFolderId' => $selectedFolderId,
                 'selectedLabelIds' => $selectedLabelIds,
                 'selectedExtractionFieldValues' => $selectedExtractionFieldValues,
@@ -25174,6 +25300,7 @@ function build_job_state_entry(
         'matchedSenderId' => $matchedSenderId,
         'selectedClientDirName' => $selectedClientDirName,
         'selectedSenderId' => $selectedSenderId,
+        'selectedSenderUnitId' => $selectedSenderUnitId,
         'selectedFolderId' => $selectedFolderId,
         'selectedLabelIds' => $selectedLabelIds,
         'selectedExtractionFieldValues' => $selectedExtractionFieldValues,

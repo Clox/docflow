@@ -887,7 +887,6 @@ body.is-resizing-sidebar {
   overflow-wrap: anywhere;
 }
 
-.selected-job-sender-linked-unit-line,
 .matches-sender-unit-line {
   margin-top: 2px;
   color: #475569;
@@ -2385,6 +2384,18 @@ body.is-resizing-sidebar {
   border: 1px solid #ccc;
   border-radius: 4px;
   background: #fff;
+}
+
+#sender-select .sender-select-option--sender {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+#sender-select .sender-select-option--unit {
+  padding-inline-start: 24px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
 }
 
 #filename-input {

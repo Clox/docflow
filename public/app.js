@@ -665,6 +665,7 @@ let hasLoadedInitialJobsState = false;
 let selectedJobStateSig = '';
 const selectedClientByJobId = new Map();
 const selectedSenderByJobId = new Map();
+const selectedSenderUnitByJobId = new Map();
 const selectedFolderByJobId = new Map();
 const selectedLabelIdsByJobId = new Map();
 const selectedExtractionFieldValuesByJobId = new Map();
@@ -939,10 +940,25 @@ function renderClientSelect(clients) {
 
 function renderSenderSelect(senders) {
   const options = senders
-    .map((sender) => ({
-      value: sender && Number.isInteger(sender.id) && sender.id > 0 ? String(sender.id) : '',
-      label: senderDisplayName(sender)
-    }))
+    .map((sender) => {
+      const value = sender && Number.isInteger(sender.id) && sender.id > 0 ? String(sender.id) : '';
+      const label = senderDisplayName(sender);
+      const units = Array.isArray(sender && sender.units)
+        ? sender.units
+          .map((unit, index) => ({
+            id: Number.isInteger(unit && unit.id) && unit.id > 0 ? unit.id : null,
+            name: unit && typeof unit.name === 'string' ? unit.name.trim() : '',
+            sortOrder: Number.isInteger(unit && unit.sortOrder) ? unit.sortOrder : index,
+            index,
+          }))
+          .filter((unit) => unit.id !== null && unit.name !== '')
+          .sort((left, right) => {
+            const sortOrderCompare = left.sortOrder - right.sortOrder;
+            return sortOrderCompare !== 0 ? sortOrderCompare : left.index - right.index;
+          })
+        : [];
+      return { value, label, units };
+    })
     .filter((sender) => sender.value !== '' && sender.label !== '');
   const signature = JSON.stringify({
     action: EDIT_SENDERS_OPTION_VALUE,
@@ -974,14 +990,57 @@ function renderSenderSelect(senders) {
 
   options.forEach((item) => {
     const option = document.createElement('option');
-    option.value = item.value;
+    option.value = `sender:${item.value}`;
     option.textContent = item.label;
+    option.className = 'sender-select-option sender-select-option--sender';
     senderSelectEl.appendChild(option);
+
+    item.units.forEach((unit, unitIndex) => {
+      const unitOption = document.createElement('option');
+      unitOption.value = `unit:${item.value}:${unit.id}`;
+      unitOption.textContent = `${unitIndex === item.units.length - 1 ? '└─' : '├─'} ${unit.name}`;
+      unitOption.className = 'sender-select-option sender-select-option--unit';
+      unitOption.setAttribute('aria-label', `Underenhet till ${item.label}: ${unit.name}`);
+      senderSelectEl.appendChild(unitOption);
+    });
   });
 
-  const hasCurrentValue = options.some((item) => item.value === currentValue);
+  const hasCurrentValue = Array.from(senderSelectEl.options).some((option) => option.value === currentValue);
   senderSelectEl.value = hasCurrentValue ? currentValue : '';
   senderOptionsSignature = signature;
+}
+
+function parseSenderSelectValue(value) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  const senderMatch = normalized.match(/^sender:(\d+)$/);
+  if (senderMatch) {
+    return {
+      senderId: senderMatch[1],
+      senderUnitId: '',
+    };
+  }
+  const unitMatch = normalized.match(/^unit:(\d+):(\d+)$/);
+  if (unitMatch) {
+    return {
+      senderId: unitMatch[1],
+      senderUnitId: unitMatch[2],
+    };
+  }
+  return {
+    senderId: '',
+    senderUnitId: '',
+  };
+}
+
+function senderSelectValue(senderId, senderUnitId = '') {
+  const normalizedSenderId = String(senderId || '').trim();
+  const normalizedSenderUnitId = String(senderUnitId || '').trim();
+  if (normalizedSenderId === '') {
+    return '';
+  }
+  return normalizedSenderUnitId !== ''
+    ? `unit:${normalizedSenderId}:${normalizedSenderUnitId}`
+    : `sender:${normalizedSenderId}`;
 }
 
 function archiveFolderDisplayName(folder) {
@@ -1253,11 +1312,12 @@ function setSenderForJob(job) {
 
   const resolvedValue = effectiveSenderId(job);
   if (resolvedValue) {
+    const selectValue = senderSelectValue(resolvedValue, effectiveSenderUnitId(job));
     const hasManualOption = Array.from(senderSelectEl.options).some(
-      (option) => option.value === resolvedValue
+      (option) => option.value === selectValue
     );
     if (hasManualOption) {
-      senderSelectEl.value = resolvedValue;
+      senderSelectEl.value = selectValue;
       return;
     }
   }
@@ -3374,6 +3434,7 @@ function clearArchivedReviewEditorState(jobId) {
   }
   selectedClientByJobId.delete(jobId);
   selectedSenderByJobId.delete(jobId);
+  selectedSenderUnitByJobId.delete(jobId);
   selectedFolderByJobId.delete(jobId);
   selectedLabelIdsByJobId.delete(jobId);
   selectedExtractionFieldValuesByJobId.delete(jobId);
@@ -3396,8 +3457,14 @@ function syncArchivedReviewEditorState(job, payload = null) {
   }
   if (draft.senderId) {
     selectedSenderByJobId.set(job.id, draft.senderId);
+    if (draft.senderUnitId) {
+      selectedSenderUnitByJobId.set(job.id, draft.senderUnitId);
+    } else {
+      selectedSenderUnitByJobId.delete(job.id);
+    }
   } else {
     selectedSenderByJobId.delete(job.id);
+    selectedSenderUnitByJobId.delete(job.id);
   }
   if (draft.folderId) {
     selectedFolderByJobId.set(job.id, draft.folderId);
@@ -3423,6 +3490,7 @@ function updateArchivedReviewDraftFromSidebar(job) {
   const draft = ensureArchivedReviewDraft(job.id, payload);
   draft.clientId = effectiveClientDirName(job) || '';
   draft.senderId = effectiveSenderId(job) ? String(effectiveSenderId(job)) : '';
+  draft.senderUnitId = effectiveSenderUnitId(job) ? String(effectiveSenderUnitId(job)) : '';
   draft.folderId = effectiveFolderId(job) || '';
   draft.filename = filenameByJobId.get(job.id) || displayedFilenameForJob(job) || '';
   draft.labels = effectiveSelectedLabelIds(job);
@@ -3436,12 +3504,14 @@ function archivedReviewDraftMatchesProposal(job, payload) {
   return JSON.stringify({
     clientId: draft.clientId || '',
     senderId: draft.senderId || '',
+    senderUnitId: draft.senderUnitId || '',
     folderId: draft.folderId || '',
     filename: draft.filename || '',
     labels: Array.isArray(draft.labels) ? [...draft.labels].sort() : [],
   }) === JSON.stringify({
     clientId: typeof source.clientId === 'string' ? source.clientId : '',
     senderId: source.senderId ? String(source.senderId) : '',
+    senderUnitId: source.senderUnitId ? String(source.senderUnitId) : '',
     folderId: typeof source.folderId === 'string' ? source.folderId : '',
     filename: typeof source.filename === 'string' ? source.filename : '',
     labels: Array.isArray(source.labels) ? [...source.labels].sort() : [],
@@ -4989,8 +5059,7 @@ function appendSenderMatchesSection(container, title, senderMatches, emptyMessag
   container.appendChild(heading);
 
   const selectedSenderId = Number.parseInt(String(effectiveSenderId(job) || ''), 10);
-  const autoResult = autoArchivingResultForJob(job);
-  const selectedSenderUnitId = Number.parseInt(String(autoResult && autoResult.senderUnitId || ''), 10);
+  const selectedSenderUnitId = Number.parseInt(String(effectiveSenderUnitId(job) || ''), 10);
   const groups = Array.isArray(senderMatches)
     ? senderMatches
       .map((sender) => {
@@ -5112,7 +5181,7 @@ function appendSenderMatchesSection(container, title, senderMatches, emptyMessag
         if (group.matchedUnit && typeof group.matchedUnit.name === 'string' && group.matchedUnit.name.trim() !== '') {
           const unitText = document.createElement('div');
           unitText.className = 'matches-sender-unit-line';
-          unitText.textContent = `└─ ${group.matchedUnit.name.trim()}`;
+          unitText.textContent = `Underenhet: ${group.matchedUnit.name.trim()}`;
           nameCell.appendChild(unitText);
         }
         if (group.selected) {
@@ -9939,6 +10008,7 @@ function ensureArchivedReviewDraft(jobId, payload) {
   const draft = {
     clientId: typeof source.clientId === 'string' ? source.clientId : '',
     senderId: source.senderId ? String(source.senderId) : '',
+    senderUnitId: source.senderUnitId ? String(source.senderUnitId) : '',
     folderId: typeof source.folderId === 'string' ? source.folderId : '',
     filename: typeof source.filename === 'string' ? source.filename : '',
     labels: Array.isArray(source.labels) ? [...source.labels] : [],
@@ -10245,6 +10315,7 @@ async function saveArchivedReviewAction(action) {
   if (action === 'manual' && draft) {
     body.clientId = draft.clientId || null;
     body.senderId = draft.senderId || null;
+    body.senderUnitId = draft.senderUnitId || null;
     body.folderId = draft.folderId || null;
     body.filename = draft.filename || null;
     body.labels = draft.labels;
@@ -11300,6 +11371,15 @@ function findSenderById(senderId) {
   return (Array.isArray(state.senders) ? state.senders : []).find((sender) => Number(sender && sender.id) === normalizedId) || null;
 }
 
+function findSenderUnitById(senderId, senderUnitId) {
+  const sender = findSenderById(senderId);
+  const normalizedUnitId = Number.parseInt(String(senderUnitId || ''), 10);
+  if (!sender || !Number.isInteger(normalizedUnitId) || normalizedUnitId < 1 || !Array.isArray(sender.units)) {
+    return null;
+  }
+  return sender.units.find((unit) => Number(unit && unit.id) === normalizedUnitId) || null;
+}
+
 function autoArchivingResultForJob(job) {
   const analysis = job && typeof job === 'object' && job.analysis && typeof job.analysis === 'object'
     ? job.analysis
@@ -11321,6 +11401,10 @@ function proposedArchivingResultForJob(job) {
   if (!autoResult) {
     return null;
   }
+  const automaticSenderId = automaticSenderIdForJob(job);
+  const automaticSenderUnitId = senderUnitBelongsToSender(automaticSenderId, autoResult.senderUnitId)
+    ? String(autoResult.senderUnitId)
+    : null;
   const currentLabelIds = normalizeSelectedLabelIds(effectiveSelectedLabelIds(job));
   const proposedFolder = selectArchiveFolderByLabelIds(currentLabelIds);
   const proposedFolderId = proposedFolder && typeof proposedFolder.id === 'string' ? proposedFolder.id.trim() : '';
@@ -11332,7 +11416,8 @@ function proposedArchivingResultForJob(job) {
     : '';
   return {
     ...autoResult,
-    senderId: automaticSenderIdForJob(job) || null,
+    senderId: automaticSenderId || null,
+    senderUnitId: automaticSenderUnitId,
     folderId: proposedFolderId !== '' ? proposedFolderId : null,
     filenameTemplateId: proposedTemplateId !== '' ? proposedTemplateId : null,
     filename: generateFilenameForJob(job, {
@@ -11499,17 +11584,27 @@ function syncUnarchivedJobAutoProposalChange(currentJob, nextJob) {
   }
 
   const currentSenderId = effectiveSenderId(currentJob);
+  const currentSenderUnitId = effectiveSenderUnitId(currentJob);
   const previousSenderId = normalizeAutoArchivingResultScalarValue(previousProposed.senderId);
+  const previousSenderUnitId = normalizeAutoArchivingResultScalarValue(previousProposed.senderUnitId);
   const nextSenderId = normalizeAutoArchivingResultScalarValue(nextProposed.senderId);
-  if (currentSenderId === previousSenderId) {
+  const nextSenderUnitId = normalizeAutoArchivingResultScalarValue(nextProposed.senderUnitId);
+  if (currentSenderId === previousSenderId && currentSenderUnitId === previousSenderUnitId) {
     if (selectedSenderByJobId.has(jobId)) {
       if (nextSenderId !== '') {
         selectedSenderByJobId.set(jobId, nextSenderId);
+        if (nextSenderUnitId !== '') {
+          selectedSenderUnitByJobId.set(jobId, nextSenderUnitId);
+        } else {
+          selectedSenderUnitByJobId.delete(jobId);
+        }
       } else {
         selectedSenderByJobId.delete(jobId);
+        selectedSenderUnitByJobId.delete(jobId);
       }
     } else {
       nextJob.selectedSenderId = nextSenderId !== '' ? Number.parseInt(nextSenderId, 10) || null : null;
+      nextJob.selectedSenderUnitId = nextSenderUnitId !== '' ? Number.parseInt(nextSenderUnitId, 10) || null : null;
     }
   }
 
@@ -11656,6 +11751,36 @@ function effectiveSenderId(job) {
     return String(job.selectedSenderId);
   }
   return automaticSenderIdForJob(job);
+}
+
+function senderUnitBelongsToSender(senderId, senderUnitId) {
+  const sender = findSenderById(senderId);
+  const normalizedUnitId = Number.parseInt(String(senderUnitId || ''), 10);
+  return !!sender
+    && Number.isInteger(normalizedUnitId)
+    && normalizedUnitId > 0
+    && Array.isArray(sender.units)
+    && sender.units.some((unit) => Number(unit && unit.id) === normalizedUnitId);
+}
+
+function effectiveSenderUnitId(job) {
+  if (!job) {
+    return '';
+  }
+  const senderId = effectiveSenderId(job);
+  if (selectedSenderByJobId.has(job.id)) {
+    const localValue = selectedSenderUnitByJobId.get(job.id);
+    return senderUnitBelongsToSender(senderId, localValue) ? String(localValue).trim() : '';
+  }
+  if (Number.isInteger(job.selectedSenderId) && job.selectedSenderId > 0) {
+    return senderUnitBelongsToSender(senderId, job.selectedSenderUnitId)
+      ? String(job.selectedSenderUnitId)
+      : '';
+  }
+  const autoResult = autoArchivingResultForJob(job);
+  return autoResult && senderUnitBelongsToSender(senderId, autoResult.senderUnitId)
+    ? String(autoResult.senderUnitId)
+    : '';
 }
 
 function automaticSenderIdForJob(job) {
@@ -12007,7 +12132,7 @@ function applySelectedClientValue(value) {
   });
 }
 
-function applySelectedSenderValue(value) {
+function applySelectedSenderValue(value, senderUnitId = '') {
   if (!selectedJobId) {
     return;
   }
@@ -12018,12 +12143,19 @@ function applySelectedSenderValue(value) {
   const previousProposed = proposedArchivingResultForJob(selectedJob);
   if (!value) {
     selectedSenderByJobId.delete(selectedJobId);
+    selectedSenderUnitByJobId.delete(selectedJobId);
   } else {
     selectedSenderByJobId.set(selectedJobId, value);
+    if (senderUnitBelongsToSender(value, senderUnitId)) {
+      selectedSenderUnitByJobId.set(selectedJobId, senderUnitId);
+    } else {
+      selectedSenderUnitByJobId.delete(selectedJobId);
+    }
   }
 
-  if (senderSelectEl instanceof HTMLSelectElement && senderSelectEl.value !== value) {
-    senderSelectEl.value = value;
+  const selectValue = senderSelectValue(value, senderUnitId);
+  if (senderSelectEl instanceof HTMLSelectElement && senderSelectEl.value !== selectValue) {
+    senderSelectEl.value = selectValue;
   }
 
   const currentJob = findJobById(selectedJobId);
@@ -12044,7 +12176,10 @@ function applySelectedSenderValue(value) {
   if (archivedReviewModeActiveForJob(selectedJob)) {
     return;
   }
-  saveSelectedJobFields(selectedJobId, { selectedSenderId: value || null }).catch((error) => {
+  saveSelectedJobFields(selectedJobId, {
+    selectedSenderId: value || null,
+    selectedSenderUnitId: senderUnitId || null,
+  }).catch((error) => {
     restoreSelectedJobEditorState();
     renderSelectedJobSenderSection(findJobById(selectedJobId));
     alert(error.message || 'Kunde inte spara avsändare.');
@@ -12123,25 +12258,40 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
   }
   if (fieldKey === 'sender') {
     const nextValue = proposed.senderId ? String(proposed.senderId).trim() : '';
+    const nextUnitValue = proposed.senderUnitId ? String(proposed.senderUnitId).trim() : '';
     if (!archivedReviewMode) {
       const hadLocalValue = selectedSenderByJobId.has(job.id);
       const previousLocalValue = selectedSenderByJobId.get(job.id);
+      const hadLocalUnitValue = selectedSenderUnitByJobId.has(job.id);
+      const previousLocalUnitValue = selectedSenderUnitByJobId.get(job.id);
       const previousSelectedSenderId = job.selectedSenderId;
+      const previousSelectedSenderUnitId = job.selectedSenderUnitId;
       selectedSenderByJobId.delete(job.id);
+      selectedSenderUnitByJobId.delete(job.id);
       delete job.selectedSenderId;
+      delete job.selectedSenderUnitId;
       setSenderForJob(job);
       renderSelectedJobSenderSection(job);
       syncFilenameField(job);
       updateArchiveAction(job);
       updateSelectedJobResetActions(job);
       try {
-        await saveSelectedJobFields(job.id, { selectedSenderId: null });
+        await saveSelectedJobFields(job.id, {
+          selectedSenderId: null,
+          selectedSenderUnitId: null,
+        });
       } catch (error) {
         if (hadLocalValue) {
           selectedSenderByJobId.set(job.id, previousLocalValue);
         }
+        if (hadLocalUnitValue) {
+          selectedSenderUnitByJobId.set(job.id, previousLocalUnitValue);
+        }
         if (previousSelectedSenderId !== undefined) {
           job.selectedSenderId = previousSelectedSenderId;
+        }
+        if (previousSelectedSenderUnitId !== undefined) {
+          job.selectedSenderUnitId = previousSelectedSenderUnitId;
         }
         setSenderForJob(job);
         renderSelectedJobSenderSection(job);
@@ -12154,8 +12304,14 @@ async function resetSelectedJobFieldToProposed(fieldKey) {
     }
     if (!nextValue) {
       selectedSenderByJobId.delete(job.id);
+      selectedSenderUnitByJobId.delete(job.id);
     } else {
       selectedSenderByJobId.set(job.id, nextValue);
+      if (senderUnitBelongsToSender(nextValue, nextUnitValue)) {
+        selectedSenderUnitByJobId.set(job.id, nextUnitValue);
+      } else {
+        selectedSenderUnitByJobId.delete(job.id);
+      }
     }
     setSenderForJob(findJobById(job.id));
     const currentJob = findJobById(job.id);
@@ -12972,15 +13128,6 @@ function renderSelectedJobSenderSection(job) {
       headerName.className = 'selected-job-sender-linked-title';
       headerName.textContent = typeof senderRow.name === 'string' ? senderRow.name : '';
       headerMain.appendChild(headerName);
-      const matchedUnitName = senderRow.matchedUnit && typeof senderRow.matchedUnit.name === 'string'
-        ? senderRow.matchedUnit.name.trim()
-        : '';
-      if (matchedUnitName !== '') {
-        const unitLine = document.createElement('div');
-        unitLine.className = 'selected-job-sender-linked-unit-line';
-        unitLine.textContent = `└─ ${matchedUnitName}`;
-        headerMain.appendChild(unitLine);
-      }
       header.appendChild(headerMain);
 
       const openButton = document.createElement('button');
@@ -13343,6 +13490,7 @@ function buildFilenameFieldValues(job, options = {}) {
     : {};
   const clientDirName = effectiveClientDirName(job);
   const sender = findSenderById(effectiveSenderId(job));
+  const senderUnit = findSenderUnitById(effectiveSenderId(job), effectiveSenderUnitId(job));
   const folder = findArchiveFolderById(overrideFolderId || effectiveFolderId(job));
   const labelIds = overrideLabelIds || effectiveSelectedLabelIds(job);
   const selectedFieldValues = overrideSelection || effectiveSelectedExtractionFieldValues(job);
@@ -13376,7 +13524,12 @@ function buildFilenameFieldValues(job, options = {}) {
   setValue('folder', archiveFolderDisplayName(folder));
   setValue('client', clientDirName);
   setValue('main_client', clientDirName);
-  setValue('sender', senderDisplayName(sender));
+  setValue(
+    'sender',
+    senderUnit && typeof senderUnit.name === 'string' && senderUnit.name.trim() !== ''
+      ? senderUnit.name.trim()
+      : senderDisplayName(sender)
+  );
   setValue('bankgiro_name', senderPaymentNameForFilenameValues(sender, extractionFields, 'bankgiro'));
   setValue('plusgiro_name', senderPaymentNameForFilenameValues(sender, extractionFields, 'plusgiro'));
   setValue('organization_number_name', senderOrganizationNameForFilenameValues(sender, extractionFields));
@@ -13779,6 +13932,7 @@ function currentJobValuesDifferFromProposed(job) {
 
   const proposedClientId = typeof proposed.clientId === 'string' ? proposed.clientId.trim() : '';
   const proposedSenderId = proposed.senderId ? String(proposed.senderId).trim() : '';
+  const proposedSenderUnitId = proposed.senderUnitId ? String(proposed.senderUnitId).trim() : '';
   const proposedFolderId = typeof proposed.folderId === 'string' ? proposed.folderId.trim() : '';
   const proposedFilename = proposedFilenameForJob(job, proposed);
   const proposedLabels = normalizeComparableLabelIds(proposed.labels);
@@ -13787,7 +13941,8 @@ function currentJobValuesDifferFromProposed(job) {
 
   return {
     client: effectiveClientDirName(job) !== proposedClientId,
-    sender: effectiveSenderId(job) !== proposedSenderId,
+    sender: effectiveSenderId(job) !== proposedSenderId
+      || effectiveSenderUnitId(job) !== proposedSenderUnitId,
     folder: effectiveFolderId(job) !== proposedFolderId,
     filename: String(displayedFilenameForJob(job) || '').trim() !== proposedFilename,
     labels: labelsDiffer,
@@ -13807,7 +13962,13 @@ function proposedResetTooltip(fieldKey, job) {
   }
   if (fieldKey === 'sender') {
     const sender = findSenderById(proposed.senderId);
-    const value = sender ? senderDisplayName(sender) : (proposed.senderId ? String(proposed.senderId).trim() : '');
+    const unit = sender && Array.isArray(sender.units)
+      ? sender.units.find((item) => Number(item && item.id) === Number(proposed.senderUnitId))
+      : null;
+    const senderName = sender ? senderDisplayName(sender) : (proposed.senderId ? String(proposed.senderId).trim() : '');
+    const value = unit && typeof unit.name === 'string' && unit.name.trim() !== ''
+      ? `${senderName}\n${unit.name.trim()}`
+      : senderName;
     return value ? `Återställ till föreslagen avsändare:\n${value}` : '';
   }
   if (fieldKey === 'folder') {
@@ -19850,6 +20011,11 @@ function applyState(nextState) {
   Array.from(selectedSenderByJobId.keys()).forEach((jobId) => {
     if (!validJobIds.has(jobId)) {
       selectedSenderByJobId.delete(jobId);
+    }
+  });
+  Array.from(selectedSenderUnitByJobId.keys()).forEach((jobId) => {
+    if (!validJobIds.has(jobId)) {
+      selectedSenderUnitByJobId.delete(jobId);
     }
   });
   Array.from(selectedFolderByJobId.keys()).forEach((jobId) => {
@@ -35704,8 +35870,8 @@ senderSelectEl.addEventListener('change', () => {
     return;
   }
 
-  const value = senderSelectEl.value;
-  applySelectedSenderValue(value);
+  const selection = parseSenderSelectValue(senderSelectEl.value);
+  applySelectedSenderValue(selection.senderId, selection.senderUnitId);
 });
 
 folderSelectEl.addEventListener('change', () => {
@@ -35992,6 +36158,7 @@ archiveActionEl.addEventListener('click', async () => {
         action,
         selectedClientDirName: effectiveClientDirName(selectedJob) || null,
         selectedSenderId: effectiveSenderId(selectedJob) || null,
+        selectedSenderUnitId: effectiveSenderUnitId(selectedJob) || null,
         selectedFolderId: effectiveFolderId(selectedJob) || null,
         selectedLabelIds: effectiveSelectedLabelIds(selectedJob),
         filename: filenameInputEl.value || displayedFilenameForJob(selectedJob),
