@@ -28335,26 +28335,28 @@ function buildSenderEditorNode(row, rowIndex) {
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   senderDetails.appendChild(senderFields);
 
-  senderDetails.appendChild(buildSenderUnitsSection(row.units, {
-    onChange: (unitIndex, value) => {
-      sendersDraft[rowIndex].units[unitIndex].name = value;
-      updateSettingsActionButtons();
-    },
-    onRemove: (unitIndex) => {
-      sendersDraft[rowIndex].units.splice(unitIndex, 1);
-      sendersDraft[rowIndex].units.forEach((unit, index) => {
-        unit.sortOrder = index;
-      });
-      renderSendersEditor();
-      updateSettingsActionButtons();
-    },
-    onMove: (fromIndex, toIndex) => {
-      sendersDraft[rowIndex].units = moveArrayItem(sendersDraft[rowIndex].units, fromIndex, toIndex)
-        .map((unit, index) => ({ ...unit, sortOrder: index }));
-      renderSendersEditor();
-      updateSettingsActionButtons();
-    },
-  }));
+  if (row.units.length > 0) {
+    senderDetails.appendChild(buildSenderUnitsSection(row.units, {
+      onChange: (unitIndex, value) => {
+        sendersDraft[rowIndex].units[unitIndex].name = value;
+        updateSettingsActionButtons();
+      },
+      onRemove: (unitIndex) => {
+        sendersDraft[rowIndex].units.splice(unitIndex, 1);
+        sendersDraft[rowIndex].units.forEach((unit, index) => {
+          unit.sortOrder = index;
+        });
+        renderSendersEditor();
+        updateSettingsActionButtons();
+      },
+      onMove: (fromIndex, toIndex) => {
+        sendersDraft[rowIndex].units = moveArrayItem(sendersDraft[rowIndex].units, fromIndex, toIndex)
+          .map((unit, index) => ({ ...unit, sortOrder: index }));
+        renderSendersEditor();
+        updateSettingsActionButtons();
+      },
+    }));
+  }
 
   const organizationList = createTreeChildren({ markerless: true });
 
@@ -28410,7 +28412,9 @@ function buildSenderEditorNode(row, rowIndex) {
     organizationList.appendChild(organizationNode);
   });
 
-  senderDetails.appendChild(organizationList);
+  if (row.organizationNumbers.length > 0) {
+    senderDetails.appendChild(organizationList);
+  }
 
   const paymentList = createTreeChildren({ markerless: true });
 
@@ -28495,7 +28499,9 @@ function buildSenderEditorNode(row, rowIndex) {
     paymentList.appendChild(paymentNode);
   });
 
-  senderDetails.appendChild(paymentList);
+  if (row.paymentNumbers.length > 0) {
+    senderDetails.appendChild(paymentList);
+  }
 
   const senderActions = document.createElement('div');
   senderActions.className = 'folder-actions';
@@ -28829,23 +28835,25 @@ function renderSenderMergeEditor() {
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   rootBody.appendChild(senderFields);
 
-  rootBody.appendChild(buildSenderUnitsSection(draft.units, {
-    onChange: (unitIndex, value) => {
-      senderMergeState.draft.units[unitIndex].name = value;
-    },
-    onRemove: (unitIndex) => {
-      senderMergeState.draft.units.splice(unitIndex, 1);
-      senderMergeState.draft.units.forEach((unit, index) => {
-        unit.sortOrder = index;
-      });
-      renderSenderMergeEditor();
-    },
-    onMove: (fromIndex, toIndex) => {
-      senderMergeState.draft.units = moveArrayItem(senderMergeState.draft.units, fromIndex, toIndex)
-        .map((unit, index) => ({ ...unit, sortOrder: index }));
-      renderSenderMergeEditor();
-    },
-  }));
+  if (draft.units.length > 0) {
+    rootBody.appendChild(buildSenderUnitsSection(draft.units, {
+      onChange: (unitIndex, value) => {
+        senderMergeState.draft.units[unitIndex].name = value;
+      },
+      onRemove: (unitIndex) => {
+        senderMergeState.draft.units.splice(unitIndex, 1);
+        senderMergeState.draft.units.forEach((unit, index) => {
+          unit.sortOrder = index;
+        });
+        renderSenderMergeEditor();
+      },
+      onMove: (fromIndex, toIndex) => {
+        senderMergeState.draft.units = moveArrayItem(senderMergeState.draft.units, fromIndex, toIndex)
+          .map((unit, index) => ({ ...unit, sortOrder: index }));
+        renderSenderMergeEditor();
+      },
+    }));
+  }
 
   const organizationList = createTreeChildren({ markerless: true });
 
@@ -28899,7 +28907,9 @@ function renderSenderMergeEditor() {
     organizationList.appendChild(organizationNode);
   });
 
-  rootBody.appendChild(organizationList);
+  if (draft.organizationNumbers.length > 0) {
+    rootBody.appendChild(organizationList);
+  }
 
   const paymentList = createTreeChildren({ markerless: true });
 
@@ -28981,7 +28991,9 @@ function renderSenderMergeEditor() {
     paymentList.appendChild(paymentNode);
   });
 
-  rootBody.appendChild(paymentList);
+  if (draft.paymentNumbers.length > 0) {
+    rootBody.appendChild(paymentList);
+  }
 
   const mergeActions = document.createElement('div');
   mergeActions.className = 'folder-actions';
