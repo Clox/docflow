@@ -4982,6 +4982,178 @@ function appendClientMatchesSection(container, title, clientMatches, emptyMessag
   container.appendChild(tableWrap);
 }
 
+function appendSenderMatchesSection(container, title, senderMatches, emptyMessage, job = null) {
+  const heading = document.createElement('h3');
+  heading.className = 'matches-header';
+  heading.textContent = title;
+  container.appendChild(heading);
+
+  const selectedSenderId = Number.parseInt(String(effectiveSenderId(job) || ''), 10);
+  const autoResult = autoArchivingResultForJob(job);
+  const selectedSenderUnitId = Number.parseInt(String(autoResult && autoResult.senderUnitId || ''), 10);
+  const groups = Array.isArray(senderMatches)
+    ? senderMatches
+      .map((sender) => {
+        if (!sender || typeof sender !== 'object') {
+          return null;
+        }
+        const senderId = Number.parseInt(String(sender.senderId || ''), 10);
+        const name = typeof sender.name === 'string' ? sender.name.trim() : '';
+        if (!Number.isInteger(senderId) || senderId < 1 || name === '') {
+          return null;
+        }
+        const signals = [];
+        const appendSignal = (label, value, found) => {
+          const normalizedLabel = typeof label === 'string' && label.trim() !== '' ? label.trim() : 'Signal';
+          const normalizedValue = typeof value === 'string' ? value.trim() : '';
+          signals.push({
+            label: normalizedLabel,
+            value: normalizedValue,
+            found: found === true,
+          });
+        };
+        (Array.isArray(sender.nameComponents) ? sender.nameComponents : []).forEach((component) => {
+          if (!component || typeof component !== 'object') {
+            return;
+          }
+          const label = typeof component.label === 'string' && component.label.trim() !== ''
+            ? component.label.trim()
+            : ((component.type === 'sender_unit') ? 'Underenhet' : 'Namn');
+          appendSignal(label, typeof component.value === 'string' ? component.value : '', component.found === true);
+        });
+        if (sender.organizationNumber && typeof sender.organizationNumber === 'object') {
+          appendSignal('Org.nr', String(sender.organizationNumber.value || ''), sender.organizationNumber.found === true);
+        }
+        const payments = Array.isArray(sender.paymentNumbers) ? sender.paymentNumbers : [];
+        if (payments.length > 0) {
+          payments.forEach((payment) => {
+            if (!payment || typeof payment !== 'object') {
+              return;
+            }
+            appendSignal(String(payment.label || 'BG/PG'), String(payment.value || ''), payment.found === true);
+          });
+        } else {
+          appendSignal('BG/PG', '', false);
+        }
+        const foundCount = signals.filter((signal) => signal.found).length;
+        return {
+          senderId,
+          name,
+          matchedUnit: sender.matchedUnit && typeof sender.matchedUnit === 'object' ? sender.matchedUnit : null,
+          selected: Number.isInteger(selectedSenderId) && selectedSenderId === senderId,
+          selectedUnit: Number.isInteger(selectedSenderUnitId) && selectedSenderUnitId > 0
+            && sender.matchedUnit
+            && Number(sender.matchedUnit.id) === selectedSenderUnitId,
+          score: Number.isFinite(Number(sender.score)) ? Number(sender.score) : foundCount,
+          signals: signals.length > 0 ? signals : [{ label: 'Matchning', value: '', found: false }],
+        };
+      })
+      .filter(Boolean)
+    : [];
+
+  if (groups.length < 1) {
+    const empty = document.createElement('div');
+    empty.className = 'matches-empty';
+    empty.textContent = emptyMessage;
+    container.appendChild(empty);
+    return;
+  }
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'matches-table-wrap';
+  const table = document.createElement('table');
+  table.className = 'matches-table';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  ['Avsändare', 'Poäng', 'Signal', 'Träff', 'Värde'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    if (label === 'Poäng') {
+      th.className = 'is-numeric';
+    }
+    if (label === 'Signal') {
+      th.classList.add('matches-group-detail-start');
+    }
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  groups.forEach((group, groupIndex) => {
+    if (groupIndex > 0) {
+      const separatorRow = document.createElement('tr');
+      separatorRow.className = 'matches-group-separator';
+      const separatorCell = document.createElement('td');
+      separatorCell.colSpan = 5;
+      separatorRow.appendChild(separatorCell);
+      tbody.appendChild(separatorRow);
+    }
+
+    group.signals.forEach((signal, signalIndex) => {
+      const tr = document.createElement('tr');
+      if (signalIndex === 0) {
+        tr.classList.add('matches-group-start');
+      }
+      if (signalIndex === group.signals.length - 1) {
+        tr.classList.add('matches-group-end');
+      }
+      if (signalIndex > 0) {
+        tr.classList.add('matches-group-rowspan-continuation');
+      }
+
+      if (signalIndex === 0) {
+        const nameCell = document.createElement('td');
+        nameCell.className = 'matches-field-name-cell';
+        const nameText = document.createElement('div');
+        nameText.textContent = group.name;
+        nameCell.appendChild(nameText);
+        if (group.matchedUnit && typeof group.matchedUnit.name === 'string' && group.matchedUnit.name.trim() !== '') {
+          const unitText = document.createElement('div');
+          unitText.className = 'matches-sender-unit-line';
+          unitText.textContent = `└─ ${group.matchedUnit.name.trim()}`;
+          nameCell.appendChild(unitText);
+        }
+        if (group.selected) {
+          const selectedBadge = document.createElement('span');
+          selectedBadge.className = 'matches-hit-row-badge';
+          selectedBadge.textContent = group.selectedUnit ? 'vald underenhet' : 'vald kandidat';
+          nameCell.appendChild(document.createTextNode(' '));
+          nameCell.appendChild(selectedBadge);
+        }
+        nameCell.rowSpan = group.signals.length;
+        tr.appendChild(nameCell);
+
+        const scoreCell = document.createElement('td');
+        scoreCell.className = 'is-numeric summary-cell';
+        scoreCell.textContent = String(group.score);
+        scoreCell.rowSpan = group.signals.length;
+        tr.appendChild(scoreCell);
+      }
+
+      const typeCell = document.createElement('td');
+      typeCell.className = 'matches-group-detail-start';
+      typeCell.textContent = signal.label;
+      tr.appendChild(typeCell);
+
+      const foundCell = document.createElement('td');
+      foundCell.textContent = signal.found ? '✓' : '–';
+      tr.appendChild(foundCell);
+
+      const valueCell = document.createElement('td');
+      valueCell.textContent = signal.value || '–';
+      tr.appendChild(valueCell);
+
+      tbody.appendChild(tr);
+    });
+  });
+
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  container.appendChild(tableWrap);
+}
+
 function findMatchesDataFieldRowElement(fieldKey, matchIndex) {
   const normalizedFieldKey = typeof fieldKey === 'string' ? fieldKey.trim() : '';
   if (normalizedFieldKey === '' || !Number.isInteger(matchIndex)) {
@@ -5032,11 +5204,13 @@ function renderMatchesContent(payload) {
   matchesViewEl.innerHTML = '';
 
   const labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
+  const senders = payload && Array.isArray(payload.senders) ? payload.senders : [];
   const fields = payload && typeof payload.fields === 'object' && payload.fields !== null ? payload.fields : {};
   const clients = payload && Array.isArray(payload.clients) ? payload.clients : [];
   const job = findJobById(loadedMatchesJobId || selectedJobId);
 
   appendRuleMatchesSection(matchesViewEl, 'Etiketter', labels, 'Inga etikettmatchningar hittades.', 'Etikett');
+  appendSenderMatchesSection(matchesViewEl, 'Avsändare', senders, 'Inga avsändarmatchningar hittades.', job);
   appendFieldMatchesSection(matchesViewEl, 'Datafält', fields, 'Inga datafältsmatchningar hittades.', { job });
   appendClientMatchesSection(matchesViewEl, 'Huvudman', clients, 'Inga huvudmansmatchningar hittades.');
   syncPendingMatchesFocus();
@@ -12798,6 +12972,15 @@ function renderSelectedJobSenderSection(job) {
       headerName.className = 'selected-job-sender-linked-title';
       headerName.textContent = typeof senderRow.name === 'string' ? senderRow.name : '';
       headerMain.appendChild(headerName);
+      const matchedUnitName = senderRow.matchedUnit && typeof senderRow.matchedUnit.name === 'string'
+        ? senderRow.matchedUnit.name.trim()
+        : '';
+      if (matchedUnitName !== '') {
+        const unitLine = document.createElement('div');
+        unitLine.className = 'selected-job-sender-linked-unit-line';
+        unitLine.textContent = `└─ ${matchedUnitName}`;
+        headerMain.appendChild(unitLine);
+      }
       header.appendChild(headerMain);
 
       const openButton = document.createElement('button');
@@ -21883,6 +22066,7 @@ function defaultRule() {
     type: 'text',
     text: '',
     senderId: null,
+    senderUnitId: null,
     field: '',
     score: 1
   };
@@ -23302,11 +23486,13 @@ function sanitizeRule(rule) {
     ? rawType
     : 'text';
   const senderId = Number.parseInt(String(input.senderId || ''), 10);
+  const senderUnitId = Number.parseInt(String(input.senderUnitId || ''), 10);
   return {
     type,
     text: (type === 'text' || type === 'sender_name_contains') && typeof input.text === 'string' ? input.text : '',
     isRegex: type === 'text' && input.isRegex === true,
     senderId: type === 'sender_is' && Number.isInteger(senderId) && senderId > 0 ? senderId : null,
+    senderUnitId: type === 'sender_is' && Number.isInteger(senderUnitId) && senderUnitId > 0 ? senderUnitId : null,
     field: type === 'field_exists' && typeof input.field === 'string' ? input.field : '',
     score: sanitizeInt(input.score, 1)
   };
@@ -23813,12 +23999,51 @@ function labelRuleSenderOptions() {
     : (Array.isArray(state.senders) ? state.senders.map(sanitizeSenderDraft) : []);
   const seen = new Set();
   return sourceRows
+    .filter((sender) => {
+      const senderId = Number.isInteger(sender && sender.id) && sender.id > 0 ? sender.id : null;
+      if (senderId === null || seen.has(senderId)) {
+        return false;
+      }
+      seen.add(senderId);
+      return senderDisplayName(sender) !== '';
+    })
+    .sort((left, right) => senderDisplayName(left).localeCompare(senderDisplayName(right), 'sv', { sensitivity: 'base', numeric: true }))
     .map((sender) => ({
-      value: Number.isInteger(sender && sender.id) && sender.id > 0 ? sender.id : null,
+      value: sender.id,
       label: senderDisplayName(sender),
-    }))
-    .filter((sender) => sender.value !== null && sender.label !== '' && !seen.has(sender.value) && seen.add(sender.value))
-    .sort((left, right) => left.label.localeCompare(right.label, 'sv', { sensitivity: 'base', numeric: true }));
+    }));
+}
+
+function labelRuleSenderUnits(senderId) {
+  const normalizedSenderId = Number.parseInt(String(senderId || ''), 10);
+  if (!Number.isInteger(normalizedSenderId) || normalizedSenderId < 1) {
+    return [];
+  }
+  const sourceRows = Array.isArray(sendersDraft) && sendersDraft.length > 0
+    ? sendersDraft.map(sanitizeSenderDraft)
+    : (Array.isArray(state.senders) ? state.senders.map(sanitizeSenderDraft) : []);
+  const sender = sourceRows.find((row) => Number(row && row.id) === normalizedSenderId) || null;
+  if (!sender || !Array.isArray(sender.units)) {
+    return [];
+  }
+  const seen = new Set();
+  return sender.units
+    .map(sanitizeSenderUnitDraft)
+    .filter((unit) => {
+      const unitId = Number.isInteger(unit.id) && unit.id > 0 ? unit.id : null;
+      const unitName = typeof unit.name === 'string' ? unit.name.trim() : '';
+      if (unitId === null || unitName === '' || seen.has(unitId)) {
+        return false;
+      }
+      seen.add(unitId);
+      return true;
+    })
+    .sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder) {
+        return left.sortOrder - right.sortOrder;
+      }
+      return left.name.localeCompare(right.name, 'sv', { sensitivity: 'base', numeric: true });
+    });
 }
 
 function labelRuleFieldOptions() {
@@ -31529,11 +31754,15 @@ function sanitizedLabelDraftForEditor(options = {}) {
 function serializeLabelRuleForClipboard(rule) {
   const sanitized = sanitizeLabelRule(rule);
   if (sanitized.type === 'sender_is') {
-    return {
+    const serialized = {
       type: 'sender_is',
       senderId: sanitized.senderId,
       score: sanitized.score
     };
+    if (Number.isInteger(sanitized.senderUnitId) && sanitized.senderUnitId > 0) {
+      serialized.senderUnitId = sanitized.senderUnitId;
+    }
+    return serialized;
   }
   if (sanitized.type === 'sender_name_contains') {
     return {
@@ -31807,6 +32036,10 @@ function renderSingleLabelEditor(container, options = {}) {
         draft.rules[ruleIndex].senderId = senderOptions.some((option) => option.value === draft.rules[ruleIndex].senderId)
           ? draft.rules[ruleIndex].senderId
           : fallbackSenderId;
+        const unitOptions = labelRuleSenderUnits(draft.rules[ruleIndex].senderId);
+        draft.rules[ruleIndex].senderUnitId = unitOptions.some((unit) => unit.id === draft.rules[ruleIndex].senderUnitId)
+          ? draft.rules[ruleIndex].senderUnitId
+          : null;
         draft.rules[ruleIndex].text = '';
         draft.rules[ruleIndex].field = '';
       } else if (nextType === 'field_exists') {
@@ -31819,8 +32052,10 @@ function renderSingleLabelEditor(container, options = {}) {
           : fallbackField;
         draft.rules[ruleIndex].text = '';
         draft.rules[ruleIndex].senderId = null;
+        draft.rules[ruleIndex].senderUnitId = null;
       } else {
         draft.rules[ruleIndex].senderId = null;
+        draft.rules[ruleIndex].senderUnitId = null;
         draft.rules[ruleIndex].field = '';
       }
       renderLabelsEditor();
@@ -31847,6 +32082,7 @@ function renderSingleLabelEditor(container, options = {}) {
 
     const senderSelect = document.createElement('select');
     const senderOptions = labelRuleSenderOptions();
+    let resolvedSenderId = null;
     if (senderOptions.length === 0) {
       const option = document.createElement('option');
       option.value = '';
@@ -31861,7 +32097,7 @@ function renderSingleLabelEditor(container, options = {}) {
         senderSelect.appendChild(option);
       });
       const currentSenderId = Number.isInteger(rule.senderId) ? rule.senderId : null;
-      const resolvedSenderId = senderOptions.some((option) => option.value === currentSenderId)
+      resolvedSenderId = senderOptions.some((option) => option.value === currentSenderId)
         ? currentSenderId
         : senderOptions[0].value;
       senderSelect.value = String(resolvedSenderId);
@@ -31877,6 +32113,41 @@ function renderSingleLabelEditor(container, options = {}) {
       }
       const nextSenderId = Number.parseInt(String(senderSelect.value || ''), 10);
       draft.rules[ruleIndex].senderId = Number.isInteger(nextSenderId) && nextSenderId > 0 ? nextSenderId : null;
+      draft.rules[ruleIndex].senderUnitId = null;
+      renderLabelsEditor();
+      updateSettingsActionButtons();
+    });
+
+    const senderUnitSelect = document.createElement('select');
+    const senderUnitOptions = labelRuleSenderUnits(resolvedSenderId);
+    const allUnitsOption = document.createElement('option');
+    allUnitsOption.value = '';
+    allUnitsOption.textContent = '<Alla>';
+    senderUnitSelect.appendChild(allUnitsOption);
+    senderUnitOptions.forEach((unit) => {
+      const option = document.createElement('option');
+      option.value = String(unit.id);
+      option.textContent = unit.name;
+      senderUnitSelect.appendChild(option);
+    });
+    const currentSenderUnitId = Number.isInteger(rule.senderUnitId) ? rule.senderUnitId : null;
+    const resolvedSenderUnitId = senderUnitOptions.some((unit) => unit.id === currentSenderUnitId)
+      ? currentSenderUnitId
+      : null;
+    senderUnitSelect.value = resolvedSenderUnitId !== null ? String(resolvedSenderUnitId) : '';
+    if (rule.type === 'sender_is') {
+      const draft = currentLabelDraftForEditor(options);
+      if (draft && Array.isArray(draft.rules) && draft.rules[ruleIndex]) {
+        draft.rules[ruleIndex].senderUnitId = resolvedSenderUnitId;
+      }
+    }
+    senderUnitSelect.addEventListener('change', () => {
+      const draft = currentLabelDraftForEditor(options);
+      if (!draft || !Array.isArray(draft.rules) || !draft.rules[ruleIndex]) {
+        return;
+      }
+      const nextSenderUnitId = Number.parseInt(String(senderUnitSelect.value || ''), 10);
+      draft.rules[ruleIndex].senderUnitId = Number.isInteger(nextSenderUnitId) && nextSenderUnitId > 0 ? nextSenderUnitId : null;
       updateSettingsActionButtons();
     });
 
@@ -31969,6 +32240,9 @@ function renderSingleLabelEditor(container, options = {}) {
     ruleFields.appendChild(createFloatingField('Regeltyp', typeSelect));
     if (rule.type === 'sender_is') {
       ruleFields.appendChild(createFloatingField('Avsändare', senderSelect));
+      if (senderUnitOptions.length > 0) {
+        ruleFields.appendChild(createFloatingField('Underenhet', senderUnitSelect));
+      }
     } else if (rule.type === 'field_exists') {
       ruleFields.appendChild(createFloatingField('Fält', fieldSelect));
     } else {

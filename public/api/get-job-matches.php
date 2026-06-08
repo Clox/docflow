@@ -50,6 +50,7 @@ try {
     if (!is_array($clientMatches)) {
         $clientMatches = [];
     }
+    $senderCandidates = [];
     $zoneMatches = $extracted['zoneMatches'] ?? [];
     if (!is_array($zoneMatches)) {
         $zoneMatches = [];
@@ -57,6 +58,20 @@ try {
     try {
         $job = load_json_file($jobDir . DIRECTORY_SEPARATOR . 'job.json');
         if (is_array($job)) {
+            $autoResult = is_array($extracted['autoArchivingResult'] ?? null) ? $extracted['autoArchivingResult'] : [];
+            $matchedSenderId = isset($autoResult['senderId']) && (int) ($autoResult['senderId'] ?? 0) > 0
+                ? (int) $autoResult['senderId']
+                : null;
+            $selectedSenderId = isset($job['selectedSenderId']) && (int) ($job['selectedSenderId'] ?? 0) > 0
+                ? (int) $job['selectedSenderId']
+                : null;
+            $senderSummary = build_job_sender_summary($extracted, $jobDir, $matchedSenderId, $selectedSenderId);
+            if (is_array($senderSummary) && is_array($senderSummary['senders'] ?? null)) {
+                $senderCandidates = array_values(array_filter(
+                    $senderSummary['senders'],
+                    static fn($row): bool => is_array($row)
+                ));
+            }
             $rules = load_active_archiving_rules();
             $matchingPayload = load_matching_settings_payload();
             $ocrText = load_job_analysis_text($jobDir, null);
@@ -610,6 +625,7 @@ try {
 
     json_response([
         'labels' => $labels,
+        'senders' => $senderCandidates,
         'fields' => $fields,
         'clients' => $clients,
         'zones' => $zoneMatches,
@@ -617,6 +633,7 @@ try {
 } catch (Throwable $e) {
     json_response([
         'labels' => [],
+        'senders' => [],
         'fields' => [],
         'clients' => [],
         'zones' => [],

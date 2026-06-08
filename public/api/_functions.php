@@ -2265,6 +2265,19 @@ function normalize_archive_rule(mixed $input): array
             $senderId = (int) $parsedSenderId;
         }
     }
+    $senderUnitId = null;
+    $senderUnitIdRaw = $rule['senderUnitId'] ?? null;
+    if (is_int($senderUnitIdRaw)) {
+        $senderUnitId = $senderUnitIdRaw > 0 ? $senderUnitIdRaw : null;
+    } elseif (is_float($senderUnitIdRaw)) {
+        $senderUnitId = (int) floor($senderUnitIdRaw);
+        $senderUnitId = $senderUnitId > 0 ? $senderUnitId : null;
+    } elseif (is_string($senderUnitIdRaw) && trim($senderUnitIdRaw) !== '') {
+        $parsedSenderUnitId = filter_var(trim($senderUnitIdRaw), FILTER_VALIDATE_INT);
+        if ($parsedSenderUnitId !== false && (int) $parsedSenderUnitId > 0) {
+            $senderUnitId = (int) $parsedSenderUnitId;
+        }
+    }
 
     return [
         'type' => $type,
@@ -2272,6 +2285,7 @@ function normalize_archive_rule(mixed $input): array
         'isRegex' => $type === 'text'
             && (array_key_exists('isRegex', $rule) && ($rule['isRegex'] === true || $rule['isRegex'] === 1 || $rule['isRegex'] === '1')),
         'senderId' => $type === 'sender_is' ? $senderId : null,
+        'senderUnitId' => $type === 'sender_is' ? $senderUnitId : null,
         'field' => $type === 'field_exists' ? $field : '',
         'score' => signed_int($rule['score'] ?? 1, 1),
     ];
@@ -12783,7 +12797,10 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
     $matches = [];
     $matchedSenderId = isset($context['senderId']) ? (int) $context['senderId'] : 0;
     $matchedSenderName = is_string($context['senderName'] ?? null) ? trim((string) $context['senderName']) : '';
+    $matchedSenderUnitId = isset($context['senderUnitId']) ? (int) $context['senderUnitId'] : 0;
+    $matchedSenderUnitName = is_string($context['senderUnitName'] ?? null) ? trim((string) $context['senderUnitName']) : '';
     $senderNamesById = is_array($context['senderNamesById'] ?? null) ? $context['senderNamesById'] : [];
+    $senderUnitsById = is_array($context['senderUnitsById'] ?? null) ? $context['senderUnitsById'] : [];
     $fieldValues = is_array($context['fieldValues'] ?? null) ? $context['fieldValues'] : [];
     $fieldNamesByKey = is_array($context['fieldNamesByKey'] ?? null) ? $context['fieldNamesByKey'] : [];
 
@@ -12822,6 +12839,7 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
             $ruleType = is_string($rule['type'] ?? null) ? trim(strtolower((string) $rule['type'])) : 'text';
             $ruleText = is_string($rule['text'] ?? null) ? trim((string) $rule['text']) : '';
             $ruleSenderId = isset($rule['senderId']) ? (int) $rule['senderId'] : 0;
+            $ruleSenderUnitId = isset($rule['senderUnitId']) ? (int) $rule['senderUnitId'] : 0;
             $ruleField = is_string($rule['field'] ?? null) ? trim((string) $rule['field']) : '';
             $ruleScore = signed_int($rule['score'] ?? 1, 1);
             $sourceText = '';
@@ -12831,11 +12849,25 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
                 if ($ruleSenderId < 1 || $matchedSenderId < 1 || $ruleSenderId !== $matchedSenderId) {
                     continue;
                 }
+                if ($ruleSenderUnitId > 0 && $matchedSenderUnitId !== $ruleSenderUnitId) {
+                    continue;
+                }
                 $senderName = is_string($senderNamesById[$ruleSenderId] ?? null)
                     ? trim((string) $senderNamesById[$ruleSenderId])
                     : '';
-                $sourceText = $matchedSenderName !== '' ? $matchedSenderName : ($senderName !== '' ? $senderName : (string) $ruleSenderId);
+                $senderUnitName = $ruleSenderUnitId > 0 && is_string($senderUnitsById[$ruleSenderUnitId] ?? null)
+                    ? trim((string) $senderUnitsById[$ruleSenderUnitId])
+                    : '';
+                if ($senderUnitName === '' && $ruleSenderUnitId > 0 && $matchedSenderUnitName !== '') {
+                    $senderUnitName = $matchedSenderUnitName;
+                }
+                $sourceText = $ruleSenderUnitId > 0 && $matchedSenderUnitName !== ''
+                    ? $matchedSenderUnitName
+                    : ($matchedSenderName !== '' ? $matchedSenderName : ($senderName !== '' ? $senderName : (string) $ruleSenderId));
                 $displayText = 'Avsändare är: ' . ($senderName !== '' ? $senderName : (string) $ruleSenderId);
+                if ($ruleSenderUnitId > 0) {
+                    $displayText .= ' / Underenhet: ' . ($senderUnitName !== '' ? $senderUnitName : (string) $ruleSenderUnitId);
+                }
             } elseif ($ruleType === 'sender_name_contains') {
                 if ($ruleText === '' || $matchedSenderName === '') {
                     continue;
@@ -12889,6 +12921,7 @@ function find_scored_rule_signal_matches(string $ocrText, array $entities, array
                 'text' => $displayText,
                 'isRegex' => $ruleType === 'text' && ($rule['isRegex'] ?? false) === true,
                 'senderId' => $ruleType === 'sender_is' ? $ruleSenderId : null,
+                'senderUnitId' => $ruleType === 'sender_is' && $ruleSenderUnitId > 0 ? $ruleSenderUnitId : null,
                 'field' => $ruleType === 'field_exists' ? $ruleField : '',
                 'sourceText' => $sourceText,
                 'score' => $ruleScore,
@@ -21049,11 +21082,36 @@ function calculate_auto_archiving_result_from_text(
             ? $senderSelection['preselectedSender']
             : null;
     }
+    $matchedSenderUnitId = is_array($preselectedSender) && isset($preselectedSender['senderUnitId'])
+        ? (int) $preselectedSender['senderUnitId']
+        : null;
+    if ($matchedSenderUnitId !== null && $matchedSenderUnitId < 1) {
+        $matchedSenderUnitId = null;
+    }
+    $senderUnitsById = [];
+    foreach ($senders as $senderRow) {
+        if (!is_array($senderRow)) {
+            continue;
+        }
+        foreach (is_array($senderRow['units'] ?? null) ? $senderRow['units'] : [] as $unitRow) {
+            if (!is_array($unitRow)) {
+                continue;
+            }
+            $unitId = isset($unitRow['id']) ? (int) $unitRow['id'] : 0;
+            $unitName = is_string($unitRow['name'] ?? null) ? trim((string) $unitRow['name']) : '';
+            if ($unitId > 0 && $unitName !== '') {
+                $senderUnitsById[$unitId] = $unitName;
+            }
+        }
+    }
 
     $labelMatchContext = [
         'senderId' => $matchedSenderId,
         'senderName' => is_array($preselectedSender) ? (string) ($preselectedSender['name'] ?? '') : '',
+        'senderUnitId' => $matchedSenderUnitId,
+        'senderUnitName' => is_array($preselectedSender) ? (string) ($preselectedSender['senderUnitName'] ?? '') : '',
         'senderNamesById' => is_array($senderContext['senderNamesById'] ?? null) ? $senderContext['senderNamesById'] : [],
+        'senderUnitsById' => $senderUnitsById,
         'fieldValues' => $configuredFieldValues,
         'fieldNamesByKey' => $fieldNamesByKey,
     ];
@@ -24167,6 +24225,7 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
             'relevantName' => $relevantName,
             'headerFound' => $headerFound,
             'matchedBy' => $matchedBy,
+            'score' => $strongMatchCount,
             'matchedUnit' => is_array($matchedUnit) ? [
                 'id' => isset($matchedUnit['senderUnitId']) ? (int) $matchedUnit['senderUnitId'] : null,
                 'name' => is_string($matchedUnit['name'] ?? null) ? trim((string) $matchedUnit['name']) : '',
