@@ -29,6 +29,8 @@ final class JobRepository
                 auto_sender_id,
                 analysis_client_id,
                 analysis_sender_id,
+                analysis_sender_name,
+                analysis_sender_unit_id,
                 analysis_folder_id,
                 analysis_filename_template_id,
                 analysis_labels_json,
@@ -142,6 +144,8 @@ final class JobRepository
                 id,
                 analysis_client_id,
                 analysis_sender_id,
+                analysis_sender_name,
+                analysis_sender_unit_id,
                 analysis_folder_id,
                 analysis_filename_template_id,
                 analysis_labels_json,
@@ -154,6 +158,8 @@ final class JobRepository
                 :id,
                 :analysis_client_id,
                 :analysis_sender_id,
+                :analysis_sender_name,
+                :analysis_sender_unit_id,
                 :analysis_folder_id,
                 :analysis_filename_template_id,
                 :analysis_labels_json,
@@ -166,6 +172,8 @@ final class JobRepository
             ON CONFLICT(id) DO UPDATE SET
                 analysis_client_id = excluded.analysis_client_id,
                 analysis_sender_id = excluded.analysis_sender_id,
+                analysis_sender_name = excluded.analysis_sender_name,
+                analysis_sender_unit_id = excluded.analysis_sender_unit_id,
                 analysis_folder_id = excluded.analysis_folder_id,
                 analysis_filename_template_id = excluded.analysis_filename_template_id,
                 analysis_labels_json = excluded.analysis_labels_json,
@@ -181,6 +189,12 @@ final class JobRepository
                 : null,
             ':analysis_sender_id' => isset($autoResult['senderId']) && (int) $autoResult['senderId'] > 0
                 ? (int) $autoResult['senderId']
+                : null,
+            ':analysis_sender_name' => is_string($autoResult['senderName'] ?? null) && trim((string) $autoResult['senderName']) !== ''
+                ? trim((string) $autoResult['senderName'])
+                : null,
+            ':analysis_sender_unit_id' => isset($autoResult['senderUnitId']) && (int) $autoResult['senderUnitId'] > 0
+                ? (int) $autoResult['senderUnitId']
                 : null,
             ':analysis_folder_id' => is_string($autoResult['folderId'] ?? null) && trim((string) $autoResult['folderId']) !== ''
                 ? trim((string) $autoResult['folderId'])
@@ -288,6 +302,8 @@ final class JobRepository
             'SELECT
                 analysis_client_id,
                 analysis_sender_id,
+                analysis_sender_name,
+                analysis_sender_unit_id,
                 analysis_folder_id,
                 analysis_filename_template_id,
                 analysis_labels_json,
@@ -311,6 +327,8 @@ final class JobRepository
 
         $hasPayload = (is_string($row['analysis_client_id'] ?? null) && trim((string) $row['analysis_client_id']) !== '')
             || (isset($row['analysis_sender_id']) && (int) $row['analysis_sender_id'] > 0)
+            || (is_string($row['analysis_sender_name'] ?? null) && trim((string) $row['analysis_sender_name']) !== '')
+            || (isset($row['analysis_sender_unit_id']) && (int) $row['analysis_sender_unit_id'] > 0)
             || (is_string($row['analysis_folder_id'] ?? null) && trim((string) $row['analysis_folder_id']) !== '')
             || (is_string($row['analysis_filename_template_id'] ?? null) && trim((string) $row['analysis_filename_template_id']) !== '')
             || $labels !== []
@@ -324,6 +342,8 @@ final class JobRepository
         return [
             'clientId' => is_string($row['analysis_client_id'] ?? null) ? trim((string) $row['analysis_client_id']) : null,
             'senderId' => isset($row['analysis_sender_id']) && (int) $row['analysis_sender_id'] > 0 ? (int) $row['analysis_sender_id'] : null,
+            'senderName' => is_string($row['analysis_sender_name'] ?? null) ? trim((string) $row['analysis_sender_name']) : null,
+            'senderUnitId' => isset($row['analysis_sender_unit_id']) && (int) $row['analysis_sender_unit_id'] > 0 ? (int) $row['analysis_sender_unit_id'] : null,
             'folderId' => is_string($row['analysis_folder_id'] ?? null) ? trim((string) $row['analysis_folder_id']) : null,
             'filenameTemplateId' => is_string($row['analysis_filename_template_id'] ?? null) ? trim((string) $row['analysis_filename_template_id']) : null,
             'labels' => $labels,

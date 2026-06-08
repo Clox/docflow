@@ -22325,7 +22325,7 @@ function defaultSenderDraft() {
     domain: '',
     kind: '',
     notes: '',
-    matchNames: [],
+    units: [],
     organizationNumbers: [],
     paymentNumbers: [],
     mergedSourceSenderIds: []
@@ -22340,10 +22340,11 @@ function defaultSenderOrganizationDraft() {
   };
 }
 
-function defaultSenderMatchNameDraft() {
+function defaultSenderUnitDraft() {
   return {
     id: null,
     name: '',
+    sortOrder: 0,
   };
 }
 
@@ -22404,7 +22405,7 @@ function sanitizeSenderDraft(row) {
     : `tmp-${senderDraftUiKeySeq++}`;
   const rawOrganizationNumbers = Array.isArray(input.organizationNumbers) ? input.organizationNumbers : [];
   const rawPaymentNumbers = Array.isArray(input.paymentNumbers) ? input.paymentNumbers : [];
-  const rawMatchNames = Array.isArray(input.matchNames) ? input.matchNames : [];
+  const rawUnits = Array.isArray(input.units) ? input.units : [];
   const fallbackOrgNumber = typeof input.orgNumber === 'string' ? input.orgNumber : '';
   const organizationNumbers = rawOrganizationNumbers.map(sanitizeSenderOrganizationDraft);
   if (organizationNumbers.length === 0 && fallbackOrgNumber.trim() !== '') {
@@ -22421,7 +22422,7 @@ function sanitizeSenderDraft(row) {
     domain: typeof input.domain === 'string' ? input.domain : '',
     kind: typeof input.kind === 'string' ? input.kind : '',
     notes: typeof input.notes === 'string' ? input.notes : '',
-    matchNames: rawMatchNames.map(sanitizeSenderMatchNameDraft),
+    units: rawUnits.map(sanitizeSenderUnitDraft),
     organizationNumbers,
     paymentNumbers: rawPaymentNumbers.map(sanitizeSenderPaymentDraft),
     mergedSourceSenderIds: Array.isArray(input.mergedSourceSenderIds)
@@ -22432,12 +22433,13 @@ function sanitizeSenderDraft(row) {
   };
 }
 
-function sanitizeSenderMatchNameDraft(row) {
+function sanitizeSenderUnitDraft(row) {
   const input = row && typeof row === 'object' ? row : {};
   const idValue = input.id;
   return {
     id: Number.isInteger(idValue) && idValue > 0 ? idValue : null,
     name: typeof input.name === 'string' ? input.name : '',
+    sortOrder: Number.isInteger(input.sortOrder) ? input.sortOrder : 0,
   };
 }
 
@@ -23007,21 +23009,22 @@ function mergedSenderOrganizationNumbers(rows) {
     .map(([, value]) => value);
 }
 
-function mergedSenderMatchNames(rows) {
-  const namesByKey = new Map();
+function mergedSenderUnits(rows) {
+  const unitsByKey = new Map();
   rows.forEach((row) => {
-    const matchNames = Array.isArray(row && row.matchNames) ? row.matchNames : [];
-    matchNames.forEach((matchName) => {
-      const normalized = sanitizeSenderMatchNameDraft(matchName);
+    const units = Array.isArray(row && row.units) ? row.units : [];
+    units.forEach((unit) => {
+      const normalized = sanitizeSenderUnitDraft(unit);
       const key = normalized.name.trim().toLocaleLowerCase('sv');
-      if (key !== '' && !namesByKey.has(key)) {
-        namesByKey.set(key, normalized);
+      if (key !== '' && !unitsByKey.has(key)) {
+        unitsByKey.set(key, normalized);
       }
     });
   });
-  return Array.from(namesByKey.values()).sort((left, right) => (
-    left.name.localeCompare(right.name, 'sv')
-  ));
+  return Array.from(unitsByKey.values()).map((unit, index) => ({
+    ...unit,
+    sortOrder: index,
+  }));
 }
 
 function mergedSenderPaymentNumbers(rows) {
@@ -23133,7 +23136,7 @@ function buildSenderMergeState() {
       name: nameOptions[0] || '',
       domain: domainOptions[0] || '',
       notes: mergedSenderNotes(rows),
-      matchNames: mergedSenderMatchNames(rows),
+      units: mergedSenderUnits(rows),
       organizationNumbers: mergedSenderOrganizationNumbers(rows),
       paymentNumbers: mergedSenderPaymentNumbers(rows)
     }),
@@ -28175,40 +28178,56 @@ function syncMatchingPositionAdjustmentInputs() {
   }
 }
 
-function buildSenderMatchNamesSection(matchNames, handlers) {
+function buildSenderUnitsSection(units, handlers) {
   const list = createTreeChildren({ markerless: true });
 
   const label = document.createElement('div');
   label.className = 'archive-level-label';
-  label.textContent = 'Matchningsnamn';
+  label.textContent = 'Underenheter';
   list.appendChild(label);
 
   const help = document.createElement('div');
-  help.className = 'archive-level-help sender-match-names-help';
-  help.textContent = 'Matchningsnamn söks alltid i dokument och kan användas för att känna igen avsändare även när org.nr, bankgiro eller plusgiro saknas.';
+  help.className = 'archive-level-help sender-units-help';
+  help.textContent = 'Underenheter söks i dokument, stärker avsändarkandidaten och kan användas som mer specifikt namn i arkivering och filnamn. Överst betyder högst prioritet.';
   list.appendChild(help);
 
-  matchNames.forEach((matchName, matchNameIndex) => {
+  units.forEach((unit, unitIndex) => {
     const node = document.createElement('div');
     node.className = 'tree-node tree-category has-parent';
     const row = createTreeRow({ markerless: true });
     const body = document.createElement('div');
     body.className = 'tree-body category-body';
-    appendTreeBodyIcon(body, 'tree-body-icon sender-match-name-icon');
+    appendTreeBodyIcon(body, 'tree-body-icon sender-unit-icon');
 
     const fields = document.createElement('div');
-    fields.className = 'sender-match-name-fields';
+    fields.className = 'sender-unit-fields';
+    const moveUpButton = document.createElement('button');
+    moveUpButton.type = 'button';
+    moveUpButton.className = 'archive-icon-button';
+    moveUpButton.textContent = '↑';
+    moveUpButton.title = 'Flytta upp';
+    moveUpButton.disabled = unitIndex < 1;
+    moveUpButton.addEventListener('click', () => handlers.onMove(unitIndex, unitIndex - 1));
+
+    const moveDownButton = document.createElement('button');
+    moveDownButton.type = 'button';
+    moveDownButton.className = 'archive-icon-button';
+    moveDownButton.textContent = '↓';
+    moveDownButton.title = 'Flytta ner';
+    moveDownButton.disabled = unitIndex >= units.length - 1;
+    moveDownButton.addEventListener('click', () => handlers.onMove(unitIndex, unitIndex + 1));
+
     const input = document.createElement('input');
     input.type = 'text';
-    input.value = matchName.name;
-    input.addEventListener('input', () => handlers.onChange(matchNameIndex, input.value));
+    input.value = unit.name;
+    input.addEventListener('input', () => handlers.onChange(unitIndex, input.value));
     const removeButton = createTrashButton({
       variant: 'row',
-      title: 'Ta bort matchningsnamn',
-      onClick: () => handlers.onRemove(matchNameIndex),
+      title: 'Ta bort underenhet',
+      onClick: () => handlers.onRemove(unitIndex),
     });
 
-    fields.append(createFloatingField('Matchningsnamn', input), removeButton);
+    fields.append(moveUpButton, moveDownButton, createFloatingField('Underenhet', input), removeButton);
     body.appendChild(fields);
     row.appendChild(body);
     node.appendChild(row);
@@ -28316,13 +28335,22 @@ function buildSenderEditorNode(row, rowIndex) {
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   senderDetails.appendChild(senderFields);
 
-  senderDetails.appendChild(buildSenderMatchNamesSection(row.matchNames, {
-    onChange: (matchNameIndex, value) => {
-      sendersDraft[rowIndex].matchNames[matchNameIndex].name = value;
+  senderDetails.appendChild(buildSenderUnitsSection(row.units, {
+    onChange: (unitIndex, value) => {
+      sendersDraft[rowIndex].units[unitIndex].name = value;
       updateSettingsActionButtons();
     },
-    onRemove: (matchNameIndex) => {
-      sendersDraft[rowIndex].matchNames.splice(matchNameIndex, 1);
+    onRemove: (unitIndex) => {
+      sendersDraft[rowIndex].units.splice(unitIndex, 1);
+      sendersDraft[rowIndex].units.forEach((unit, index) => {
+        unit.sortOrder = index;
+      });
+      renderSendersEditor();
+      updateSettingsActionButtons();
+    },
+    onMove: (fromIndex, toIndex) => {
+      sendersDraft[rowIndex].units = moveArrayItem(sendersDraft[rowIndex].units, fromIndex, toIndex)
+        .map((unit, index) => ({ ...unit, sortOrder: index }));
       renderSendersEditor();
       updateSettingsActionButtons();
     },
@@ -28487,15 +28515,18 @@ function buildSenderEditorNode(row, rowIndex) {
     renderSendersEditor();
     updateSettingsActionButtons();
   });
-  const addMatchNameButton = document.createElement('button');
-  addMatchNameButton.type = 'button';
-  addMatchNameButton.textContent = 'Lägg till matchningsnamn';
-  addMatchNameButton.addEventListener('click', () => {
-    sendersDraft[rowIndex].matchNames.push(defaultSenderMatchNameDraft());
+  const addUnitButton = document.createElement('button');
+  addUnitButton.type = 'button';
+  addUnitButton.textContent = 'Lägg till underenhet';
+  addUnitButton.addEventListener('click', () => {
+    sendersDraft[rowIndex].units.push({
+      ...defaultSenderUnitDraft(),
+      sortOrder: sendersDraft[rowIndex].units.length,
+    });
     renderSendersEditor();
     updateSettingsActionButtons();
   });
-  senderActions.appendChild(addMatchNameButton);
+  senderActions.appendChild(addUnitButton);
   senderActions.appendChild(addOrganizationButton);
   senderActions.appendChild(addPaymentButton);
   senderDetails.appendChild(senderActions);
@@ -28798,12 +28829,20 @@ function renderSenderMergeEditor() {
   senderFields.appendChild(createFloatingField('Anteckningar', notesInput, 'sender-notes-field'));
   rootBody.appendChild(senderFields);
 
-  rootBody.appendChild(buildSenderMatchNamesSection(draft.matchNames, {
-    onChange: (matchNameIndex, value) => {
-      senderMergeState.draft.matchNames[matchNameIndex].name = value;
+  rootBody.appendChild(buildSenderUnitsSection(draft.units, {
+    onChange: (unitIndex, value) => {
+      senderMergeState.draft.units[unitIndex].name = value;
     },
-    onRemove: (matchNameIndex) => {
-      senderMergeState.draft.matchNames.splice(matchNameIndex, 1);
+    onRemove: (unitIndex) => {
+      senderMergeState.draft.units.splice(unitIndex, 1);
+      senderMergeState.draft.units.forEach((unit, index) => {
+        unit.sortOrder = index;
+      });
+      renderSenderMergeEditor();
+    },
+    onMove: (fromIndex, toIndex) => {
+      senderMergeState.draft.units = moveArrayItem(senderMergeState.draft.units, fromIndex, toIndex)
+        .map((unit, index) => ({ ...unit, sortOrder: index }));
       renderSenderMergeEditor();
     },
   }));
@@ -28960,14 +28999,17 @@ function renderSenderMergeEditor() {
     senderMergeState.draft.paymentNumbers.push(defaultSenderPaymentDraft());
     renderSenderMergeEditor();
   });
-  const addMatchNameButton = document.createElement('button');
-  addMatchNameButton.type = 'button';
-  addMatchNameButton.textContent = 'Lägg till matchningsnamn';
-  addMatchNameButton.addEventListener('click', () => {
-    senderMergeState.draft.matchNames.push(defaultSenderMatchNameDraft());
+  const addUnitButton = document.createElement('button');
+  addUnitButton.type = 'button';
+  addUnitButton.textContent = 'Lägg till underenhet';
+  addUnitButton.addEventListener('click', () => {
+    senderMergeState.draft.units.push({
+      ...defaultSenderUnitDraft(),
+      sortOrder: senderMergeState.draft.units.length,
+    });
     renderSenderMergeEditor();
   });
-  mergeActions.appendChild(addMatchNameButton);
+  mergeActions.appendChild(addUnitButton);
   mergeActions.appendChild(addOrganizationButton);
   mergeActions.appendChild(addPaymentButton);
   rootBody.appendChild(mergeActions);

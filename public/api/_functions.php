@@ -369,20 +369,23 @@ function load_sender_export_rows(): array
             ];
         }
 
-        $matchNames = [];
-        foreach (is_array($row['matchNames'] ?? null) ? $row['matchNames'] : [] as $matchName) {
-            if (!is_array($matchName)) {
+        $units = [];
+        foreach (is_array($row['units'] ?? null) ? $row['units'] : [] as $unit) {
+            if (!is_array($unit)) {
                 continue;
             }
-            $matchNameValue = is_string($matchName['name'] ?? null)
-                ? trim((string) $matchName['name'])
+            $unitName = is_string($unit['name'] ?? null)
+                ? trim((string) $unit['name'])
                 : '';
-            if ($matchNameValue === '') {
+            if ($unitName === '') {
                 continue;
             }
-            $matchNames[] = [
-                'id' => isset($matchName['id']) && is_numeric($matchName['id']) ? (int) $matchName['id'] : null,
-                'name' => $matchNameValue,
+            $units[] = [
+                'id' => isset($unit['id']) && is_numeric($unit['id']) ? (int) $unit['id'] : null,
+                'name' => $unitName,
+                'sortOrder' => isset($unit['sortOrder']) && is_numeric($unit['sortOrder'])
+                    ? (int) $unit['sortOrder']
+                    : count($units),
             ];
         }
 
@@ -393,7 +396,7 @@ function load_sender_export_rows(): array
             'domain' => is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '',
             'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
             'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
-            'matchNames' => $matchNames,
+            'units' => $units,
             'organizationNumbers' => $organizationNumbers,
             'paymentNumbers' => $paymentNumbers,
         ];
@@ -910,21 +913,24 @@ function normalize_export_sender_rows(array $rows): array
             ];
         }
 
-        $matchNames = [];
-        foreach (is_array($row['matchNames'] ?? null) ? $row['matchNames'] : [] as $matchName) {
-            $matchNameValue = is_string($matchName)
-                ? trim($matchName)
-                : (is_array($matchName) && is_string($matchName['name'] ?? null)
-                    ? trim((string) $matchName['name'])
+        $units = [];
+        foreach (is_array($row['units'] ?? null) ? $row['units'] : [] as $unit) {
+            $unitName = is_string($unit)
+                ? trim($unit)
+                : (is_array($unit) && is_string($unit['name'] ?? null)
+                    ? trim((string) $unit['name'])
                     : '');
-            if ($matchNameValue === '') {
+            if ($unitName === '') {
                 continue;
             }
-            $matchNames[] = [
-                'id' => is_array($matchName) && isset($matchName['id']) && is_numeric($matchName['id'])
-                    ? (int) $matchName['id']
+            $units[] = [
+                'id' => is_array($unit) && isset($unit['id']) && is_numeric($unit['id'])
+                    ? (int) $unit['id']
                     : null,
-                'name' => $matchNameValue,
+                'name' => $unitName,
+                'sortOrder' => is_array($unit) && isset($unit['sortOrder']) && is_numeric($unit['sortOrder'])
+                    ? (int) $unit['sortOrder']
+                    : count($units),
             ];
         }
 
@@ -934,7 +940,7 @@ function normalize_export_sender_rows(array $rows): array
             'domain' => is_string($row['domain'] ?? null) ? trim((string) $row['domain']) : '',
             'kind' => is_string($row['kind'] ?? null) ? trim((string) $row['kind']) : '',
             'notes' => is_string($row['notes'] ?? null) ? (string) $row['notes'] : '',
-            'matchNames' => $matchNames,
+            'units' => $units,
             'organizationNumbers' => $organizationNumbers,
             'paymentNumbers' => $paymentNumbers,
         ];
@@ -20641,11 +20647,14 @@ function build_auto_archiving_filename_field_values(array $autoResult, array $se
 
     $folder = $folderId !== '' ? ($foldersById[$folderId] ?? null) : null;
     $sender = $senderId > 0 ? find_sender_by_id($senders, $senderId) : null;
+    $relevantSenderName = is_string($autoResult['senderName'] ?? null) && trim((string) $autoResult['senderName']) !== ''
+        ? trim((string) $autoResult['senderName'])
+        : (is_array($sender) ? ($sender['name'] ?? null) : null);
 
     $setValue($values, 'folder', is_array($folder) ? archive_folder_display_text($folder) : null);
     $setValue($values, 'client', $clientId);
     $setValue($values, 'main_client', $clientId);
-    $setValue($values, 'sender', is_array($sender) ? ($sender['name'] ?? null) : null);
+    $setValue($values, 'sender', $relevantSenderName);
     $setValue($values, 'bankgiro_name', auto_archiving_sender_payment_name($sender, $allFields, 'bankgiro'));
     $setValue($values, 'plusgiro_name', auto_archiving_sender_payment_name($sender, $allFields, 'plusgiro'));
     $setValue($values, 'organization_number_name', auto_archiving_sender_organization_name($sender, $allFields));
@@ -20796,6 +20805,10 @@ function normalize_auto_archiving_result(array $result): array
     return [
         'clientId' => $clientId !== '' ? $clientId : null,
         'senderId' => isset($result['senderId']) && (int) $result['senderId'] > 0 ? (int) $result['senderId'] : null,
+        'senderName' => is_string($result['senderName'] ?? null) && trim((string) $result['senderName']) !== ''
+            ? trim((string) $result['senderName'])
+            : null,
+        'senderUnitId' => isset($result['senderUnitId']) && (int) $result['senderUnitId'] > 0 ? (int) $result['senderUnitId'] : null,
         'folderId' => is_string($result['folderId'] ?? null) ? trim((string) $result['folderId']) : null,
         'filenameTemplateId' => is_string($result['filenameTemplateId'] ?? null) ? trim((string) $result['filenameTemplateId']) : null,
         'labels' => array_values(array_unique($labels)),
@@ -21067,6 +21080,12 @@ function calculate_auto_archiving_result_from_text(
             ? trim($matchedClientDirName)
             : null,
         'senderId' => $matchedSenderId,
+        'senderName' => is_array($preselectedSender) && is_string($preselectedSender['name'] ?? null)
+            ? trim((string) $preselectedSender['name'])
+            : null,
+        'senderUnitId' => is_array($preselectedSender) && isset($preselectedSender['senderUnitId'])
+            ? (int) $preselectedSender['senderUnitId']
+            : null,
         'folderId' => $selectedFolderId,
         'filenameTemplateId' => $selectedFilenameTemplateId,
         'labels' => $resolvedLabels,
@@ -21189,7 +21208,12 @@ function current_approved_archiving_for_job(array $job): array
         $normalized['clientId'] = $selectedClientDirName;
     }
     if ($selectedSenderId > 0) {
+        $previousSenderId = normalize_auto_archiving_result_sender_value($normalized['senderId'] ?? null);
         $normalized['senderId'] = $selectedSenderId;
+        if ($previousSenderId !== $selectedSenderId) {
+            $normalized['senderName'] = null;
+            $normalized['senderUnitId'] = null;
+        }
     }
     if ($selectedFolderId !== '') {
         $normalized['folderId'] = $selectedFolderId;
@@ -21248,7 +21272,12 @@ function approved_archiving_from_archive_request(array $job, array $autoResult, 
         $approved['clientId'] = $selectedClientDirName;
     }
     if ($selectedSenderId > 0) {
+        $previousSenderId = normalize_auto_archiving_result_sender_value($approved['senderId'] ?? null);
         $approved['senderId'] = $selectedSenderId;
+        if ($previousSenderId !== $selectedSenderId) {
+            $approved['senderName'] = null;
+            $approved['senderUnitId'] = null;
+        }
     }
     if ($selectedFolderId !== '') {
         $approved['folderId'] = $selectedFolderId;
@@ -23127,6 +23156,14 @@ function process_claimed_job(
         ? $senderSelection['senderMatches']
         : [];
     $analysisPayload['autoArchivingResult']['senderId'] = $analysisPayload['matchedSenderId'];
+    $analysisPayload['autoArchivingResult']['senderName'] = is_array($analysisPayload['preselectedSender'])
+        && is_string($analysisPayload['preselectedSender']['name'] ?? null)
+        ? trim((string) $analysisPayload['preselectedSender']['name'])
+        : null;
+    $analysisPayload['autoArchivingResult']['senderUnitId'] = is_array($analysisPayload['preselectedSender'])
+        && isset($analysisPayload['preselectedSender']['senderUnitId'])
+        ? (int) $analysisPayload['preselectedSender']['senderUnitId']
+        : null;
     $analysisPayload['autoArchivingResult'] = normalize_auto_archiving_result($analysisPayload['autoArchivingResult']);
     $analysisPayload['autoArchivingResult']['filename'] = generate_auto_archiving_filename(
         $jobContext,
@@ -23689,7 +23726,7 @@ function cached_sender_editor_rows_by_id(): array
     return $cache;
 }
 
-function cached_sender_match_names_for_analysis(): array
+function cached_sender_name_entries_for_analysis(): array
 {
     static $cache = null;
     if (is_array($cache)) {
@@ -23703,7 +23740,7 @@ function cached_sender_match_names_for_analysis(): array
     }
 
     try {
-        $cache = $repository->listMatchNamesForAnalysis();
+        $cache = $repository->listNameEntriesForAnalysis();
     } catch (Throwable $e) {
         $cache = [];
     }
@@ -23713,7 +23750,7 @@ function cached_sender_match_names_for_analysis(): array
 
 function normalized_sender_summary_search_text(string $value): string
 {
-    return \Docflow\Senders\MatchNameNormalizer::normalize($value);
+    return \Docflow\Senders\NameNormalizer::normalize($value);
 }
 
 function sender_summary_document_text(string $jobDir): string
@@ -23794,22 +23831,39 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
     $observations = [];
     $observationKeys = [];
     $senderIds = [];
-    $matchedMatchNamesBySenderId = [];
+    $matchedNameEntriesBySenderId = [];
+    $matchedUnitsBySenderId = [];
 
     if ($documentText !== '') {
-        foreach (cached_sender_match_names_for_analysis() as $matchNameRow) {
-            if (!is_array($matchNameRow)) {
+        foreach (cached_sender_name_entries_for_analysis() as $nameEntry) {
+            if (!is_array($nameEntry)) {
                 continue;
             }
-            $senderId = isset($matchNameRow['senderId']) ? (int) $matchNameRow['senderId'] : 0;
-            $normalizedName = is_string($matchNameRow['normalizedName'] ?? null)
-                ? trim((string) $matchNameRow['normalizedName'])
+            $senderId = isset($nameEntry['senderId']) ? (int) $nameEntry['senderId'] : 0;
+            $normalizedName = is_string($nameEntry['normalizedName'] ?? null)
+                ? trim((string) $nameEntry['normalizedName'])
                 : '';
             if ($senderId < 1 || $normalizedName === '' || !str_contains($documentText, $normalizedName)) {
                 continue;
             }
             $senderIds[$senderId] = true;
-            $matchedMatchNamesBySenderId[$senderId][$normalizedName] = true;
+            if (isset($matchedNameEntriesBySenderId[$senderId][$normalizedName])) {
+                continue;
+            }
+            $matchedNameEntriesBySenderId[$senderId][$normalizedName] = [
+                'type' => is_string($nameEntry['type'] ?? null) ? trim((string) $nameEntry['type']) : 'sender_name',
+                'name' => is_string($nameEntry['name'] ?? null) ? trim((string) $nameEntry['name']) : '',
+                'senderUnitId' => isset($nameEntry['senderUnitId']) ? (int) $nameEntry['senderUnitId'] : null,
+                'sortOrder' => isset($nameEntry['sortOrder']) ? (int) $nameEntry['sortOrder'] : 0,
+            ];
+            if (($nameEntry['type'] ?? '') === 'sender_unit') {
+                $matchedUnitsBySenderId[$senderId][] = [
+                    'senderUnitId' => isset($nameEntry['senderUnitId']) ? (int) $nameEntry['senderUnitId'] : null,
+                    'name' => is_string($nameEntry['name'] ?? null) ? trim((string) $nameEntry['name']) : '',
+                    'normalizedName' => $normalizedName,
+                    'sortOrder' => isset($nameEntry['sortOrder']) ? (int) $nameEntry['sortOrder'] : 0,
+                ];
+            }
         }
     }
 
@@ -23956,6 +24010,17 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
 
         $nameComponents = [];
         $nameComponentMap = [];
+        $normalizedSenderName = normalized_sender_summary_search_text($name);
+        if ($normalizedSenderName !== '') {
+            $nameComponentMap[$normalizedSenderName] = true;
+            $nameComponents[] = [
+                'label' => 'Namn',
+                'value' => $name,
+                'found' => isset($matchedNameEntriesBySenderId[$senderId][$normalizedSenderName])
+                    || sender_summary_text_contains($documentText, $name),
+                'type' => 'sender_name',
+            ];
+        }
         foreach ($organizationRows as $organizationRow) {
             if (!is_array($organizationRow)) {
                 continue;
@@ -23977,30 +24042,41 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
             ];
         }
 
-        $matchedAlias = null;
-        $matchNameRows = is_array($senderRow['matchNames'] ?? null) ? $senderRow['matchNames'] : [];
-        foreach ($matchNameRows as $matchNameRow) {
-            if (!is_array($matchNameRow)) {
+        $matchedUnit = null;
+        $matchedUnitRows = $matchedUnitsBySenderId[$senderId] ?? [];
+        usort($matchedUnitRows, static function (array $left, array $right): int {
+            $sortCompare = (int) ($left['sortOrder'] ?? 0) <=> (int) ($right['sortOrder'] ?? 0);
+            if ($sortCompare !== 0) {
+                return $sortCompare;
+            }
+            return (int) ($left['senderUnitId'] ?? 0) <=> (int) ($right['senderUnitId'] ?? 0);
+        });
+
+        $unitRows = is_array($senderRow['units'] ?? null) ? $senderRow['units'] : [];
+        foreach ($unitRows as $unitRow) {
+            if (!is_array($unitRow)) {
                 continue;
             }
-            $matchName = is_string($matchNameRow['name'] ?? null) ? trim((string) $matchNameRow['name']) : '';
-            $normalizedMatchName = is_string($matchNameRow['normalizedName'] ?? null)
-                ? trim((string) $matchNameRow['normalizedName'])
-                : normalized_sender_summary_search_text($matchName);
-            if ($matchName === '' || $normalizedMatchName === '' || isset($nameComponentMap['match:' . $normalizedMatchName])) {
+            $unitName = is_string($unitRow['name'] ?? null) ? trim((string) $unitRow['name']) : '';
+            $normalizedUnitName = is_string($unitRow['normalizedName'] ?? null)
+                ? trim((string) $unitRow['normalizedName'])
+                : normalized_sender_summary_search_text($unitName);
+            if ($unitName === '' || $normalizedUnitName === '' || isset($nameComponentMap[$normalizedUnitName])) {
                 continue;
             }
-            $found = isset($matchedMatchNamesBySenderId[$senderId][$normalizedMatchName]);
-            $nameComponentMap['match:' . $normalizedMatchName] = true;
+            $found = isset($matchedNameEntriesBySenderId[$senderId][$normalizedUnitName]);
+            $nameComponentMap[$normalizedUnitName] = true;
             $nameComponents[] = [
-                'label' => 'Matchningsnamn',
-                'value' => $matchName,
+                'label' => 'Underenhet',
+                'value' => $unitName,
                 'found' => $found,
-                'type' => 'match_name',
+                'type' => 'sender_unit',
+                'senderUnitId' => isset($unitRow['id']) ? (int) $unitRow['id'] : null,
+                'sortOrder' => isset($unitRow['sortOrder']) ? (int) $unitRow['sortOrder'] : 0,
             ];
-            if ($found && $matchedAlias === null) {
-                $matchedAlias = $matchName;
-            }
+        }
+        if (is_array($matchedUnitRows[0] ?? null)) {
+            $matchedUnit = $matchedUnitRows[0];
         }
 
         $paymentEntries = [];
@@ -24044,8 +24120,8 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         $matchKinds = [];
         foreach ($nameComponents as $nameComponent) {
             if (($nameComponent['found'] ?? false) === true) {
-                $matchKinds[] = ($nameComponent['type'] ?? '') === 'match_name'
-                    ? 'match_name'
+                $matchKinds[] = ($nameComponent['type'] ?? '') === 'sender_unit'
+                    ? 'sender_unit'
                     : 'name';
             }
         }
@@ -24071,7 +24147,7 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         foreach ($nameComponents as $nameComponent) {
             if (
                 ($nameComponent['found'] ?? false) === true
-                && ($nameComponent['type'] ?? '') === 'match_name'
+                && in_array(($nameComponent['type'] ?? ''), ['sender_name', 'sender_unit'], true)
             ) {
                 $strongMatchCount++;
             }
@@ -24080,14 +24156,22 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
         $matchedBy = count($matchKinds) > 1
             ? 'kombination'
             : ($matchKinds[0] ?? null);
+        $relevantName = is_array($matchedUnit) && is_string($matchedUnit['name'] ?? null) && trim((string) $matchedUnit['name']) !== ''
+            ? trim((string) $matchedUnit['name'])
+            : $name;
 
         $senders[] = [
             'key' => 'sender:' . $senderId,
             'senderId' => $senderId,
             'name' => $name,
+            'relevantName' => $relevantName,
             'headerFound' => $headerFound,
             'matchedBy' => $matchedBy,
-            'matchedAlias' => $matchedAlias,
+            'matchedUnit' => is_array($matchedUnit) ? [
+                'id' => isset($matchedUnit['senderUnitId']) ? (int) $matchedUnit['senderUnitId'] : null,
+                'name' => is_string($matchedUnit['name'] ?? null) ? trim((string) $matchedUnit['name']) : '',
+                'sortOrder' => isset($matchedUnit['sortOrder']) ? (int) $matchedUnit['sortOrder'] : 0,
+            ] : null,
             'nameComponents' => $nameComponents,
             'organizationNumber' => $organizationEntry,
             'paymentNumbers' => $paymentEntries,
@@ -24111,7 +24195,7 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                     if (
                         is_array($nameComponent)
                         && (($nameComponent['found'] ?? false) === true)
-                        && (($nameComponent['type'] ?? '') === 'match_name')
+                        && in_array(($nameComponent['type'] ?? ''), ['sender_name', 'sender_unit'], true)
                     ) {
                         $count++;
                     }
@@ -24125,7 +24209,7 @@ function build_job_sender_summary(?array $extracted, string $jobDir, ?int $match
                     if (
                         is_array($nameComponent)
                         && (($nameComponent['found'] ?? false) === true)
-                        && (($nameComponent['type'] ?? '') !== 'match_name')
+                        && !in_array(($nameComponent['type'] ?? ''), ['sender_name', 'sender_unit'], true)
                     ) {
                         $count++;
                     }
@@ -24507,8 +24591,14 @@ function sender_analysis_matches_from_summary(?array $senderSummary): array
         $items[] = [
             'senderId' => $senderId,
             'senderName' => is_string($row['name'] ?? null) ? trim((string) $row['name']) : '',
+            'relevantName' => is_string($row['relevantName'] ?? null) ? trim((string) $row['relevantName']) : '',
             'matchedBy' => is_string($row['matchedBy'] ?? null) ? trim((string) $row['matchedBy']) : null,
-            'matchedAlias' => is_string($row['matchedAlias'] ?? null) ? trim((string) $row['matchedAlias']) : null,
+            'senderUnitId' => is_array($row['matchedUnit'] ?? null) && isset($row['matchedUnit']['id'])
+                ? (int) $row['matchedUnit']['id']
+                : null,
+            'senderUnitName' => is_array($row['matchedUnit'] ?? null) && is_string($row['matchedUnit']['name'] ?? null)
+                ? trim((string) $row['matchedUnit']['name'])
+                : null,
         ];
     }
 
@@ -24553,9 +24643,13 @@ function single_preselected_sender_from_summary(?array $senderSummary): array
         'matchedSenderId' => $senderId,
         'preselectedSender' => [
             'id' => $senderId,
-            'name' => is_string($match['senderName'] ?? null) ? trim((string) $match['senderName']) : '',
+            'name' => is_string($match['relevantName'] ?? null) && trim((string) $match['relevantName']) !== ''
+                ? trim((string) $match['relevantName'])
+                : (is_string($match['senderName'] ?? null) ? trim((string) $match['senderName']) : ''),
+            'senderName' => is_string($match['senderName'] ?? null) ? trim((string) $match['senderName']) : '',
             'matchedBy' => is_string($match['matchedBy'] ?? null) ? trim((string) $match['matchedBy']) : null,
-            'matchedAlias' => is_string($match['matchedAlias'] ?? null) ? trim((string) $match['matchedAlias']) : null,
+            'senderUnitId' => isset($match['senderUnitId']) && (int) $match['senderUnitId'] > 0 ? (int) $match['senderUnitId'] : null,
+            'senderUnitName' => is_string($match['senderUnitName'] ?? null) ? trim((string) $match['senderUnitName']) : null,
         ],
         'senderMatches' => $matches,
     ];

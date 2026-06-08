@@ -6894,7 +6894,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .sender-fields input,
 .sender-fields select,
 .sender-fields textarea,
-.sender-match-name-fields input,
+.sender-unit-fields input,
 .sender-organization-fields input,
 .sender-payment-fields select,
 .sender-payment-fields input {
@@ -6929,9 +6929,9 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   align-items: start;
 }
 
-.sender-match-name-fields {
+.sender-unit-fields {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto;
+  grid-template-columns: auto auto minmax(180px, 1fr) auto;
   gap: 8px;
   align-items: start;
 }
@@ -7013,7 +7013,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .extraction-field-normalization-replacement-row:hover > .icon-delete-button--row,
 .tree-row:hover > .tree-body > .rule-fields > .icon-delete-button--row,
 .tree-row:hover > .tree-body > .extraction-field-rule-set-fields > .icon-delete-button--row,
-.tree-row:hover > .tree-body > .sender-match-name-fields > .icon-delete-button--row,
+.tree-row:hover > .tree-body > .sender-unit-fields > .icon-delete-button--row,
 .tree-row:hover > .tree-body > .sender-organization-fields > .icon-delete-button--row,
 .tree-row:hover > .tree-body > .sender-payment-fields > .icon-delete-button--row,
 .tree-row:hover > .tree-remove-button--row,
@@ -7021,7 +7021,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .extraction-field-normalization-replacement-row:hover > .tree-remove-button--row,
 .tree-row:hover > .tree-body > .rule-fields > .tree-remove-button--row,
 .tree-row:hover > .tree-body > .extraction-field-rule-set-fields > .tree-remove-button--row,
-.tree-row:hover > .tree-body > .sender-match-name-fields > .tree-remove-button--row,
+.tree-row:hover > .tree-body > .sender-unit-fields > .tree-remove-button--row,
 .tree-row:hover > .tree-body > .sender-organization-fields > .tree-remove-button--row,
 .tree-row:hover > .tree-body > .sender-payment-fields > .tree-remove-button--row,
 .icon-delete-button--row:hover,
@@ -7134,7 +7134,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   background-image: url('/assets/icons/123.svg');
 }
 
-.sender-match-name-icon {
+.sender-unit-icon {
   width: 22px;
   height: 22px;
   background-image: url('/assets/icons/magnifyingglass.svg');
@@ -7143,7 +7143,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .sender-header,
 .client-fields,
 .sender-fields,
-.sender-match-name-fields,
+.sender-unit-fields,
 .sender-organization-fields,
 .sender-payment-fields {
   margin-left: 30px;

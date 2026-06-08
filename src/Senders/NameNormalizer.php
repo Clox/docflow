@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Docflow\Senders;
 
-final class MatchNameNormalizer
+final class NameNormalizer
 {
     public static function normalize(string $value): string
     {

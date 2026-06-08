@@ -5,7 +5,7 @@ require_once __DIR__ . '/_bootstrap.php';
 
 use Docflow\Database\Connection;
 use Docflow\Senders\IdentifierNormalizer;
-use Docflow\Senders\MatchNameNormalizer;
+use Docflow\Senders\NameNormalizer;
 use Docflow\Senders\SenderRepository;
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -53,9 +53,9 @@ foreach ($payload['senders'] as $row) {
         is_array($row['paymentNumbers'] ?? null) ? $row['paymentNumbers'] : [],
         static fn (mixed $payment): bool => is_array($payment)
     ));
-    $matchNameRows = array_values(array_filter(
-        is_array($row['matchNames'] ?? null) ? $row['matchNames'] : [],
-        static fn (mixed $matchName): bool => is_array($matchName) || is_string($matchName)
+    $unitRows = array_values(array_filter(
+        is_array($row['units'] ?? null) ? $row['units'] : [],
+        static fn (mixed $unit): bool => is_array($unit) || is_string($unit)
     ));
 
     $mergedSourceSenderIds = [];
@@ -76,7 +76,7 @@ foreach ($payload['senders'] as $row) {
         && $domainRaw === ''
         && $kindRaw === ''
         && $notesRaw === ''
-        && count($matchNameRows) === 0
+        && count($unitRows) === 0
         && count($organizationRows) === 0
         && count($paymentRows) === 0;
     if ($isEffectivelyEmpty) {
@@ -158,23 +158,26 @@ foreach ($payload['senders'] as $row) {
         ];
     }
 
-    $matchNames = [];
-    $seenMatchNames = [];
-    foreach ($matchNameRows as $matchNameRow) {
-        $matchName = is_string($matchNameRow)
-            ? trim($matchNameRow)
-            : (is_string($matchNameRow['name'] ?? null) ? trim((string) $matchNameRow['name']) : '');
-        if ($matchName === '') {
+    $units = [];
+    $seenUnits = [];
+    foreach ($unitRows as $unitIndex => $unitRow) {
+        $unitName = is_string($unitRow)
+            ? trim($unitRow)
+            : (is_string($unitRow['name'] ?? null) ? trim((string) $unitRow['name']) : '');
+        if ($unitName === '') {
             continue;
         }
-        $normalizedMatchName = MatchNameNormalizer::normalize($matchName);
-        if ($normalizedMatchName === '' || isset($seenMatchNames[$normalizedMatchName])) {
+        $normalizedUnitName = NameNormalizer::normalize($unitName);
+        if ($normalizedUnitName === '' || isset($seenUnits[$normalizedUnitName])) {
             continue;
         }
-        $seenMatchNames[$normalizedMatchName] = true;
-        $matchNames[] = [
-            'name' => $matchName,
-            'normalizedName' => $normalizedMatchName,
+        $seenUnits[$normalizedUnitName] = true;
+        $units[] = [
+            'name' => $unitName,
+            'normalizedName' => $normalizedUnitName,
+            'sortOrder' => is_array($unitRow) && isset($unitRow['sortOrder']) && is_numeric($unitRow['sortOrder'])
+                ? (int) $unitRow['sortOrder']
+                : $unitIndex,
         ];
     }
 
@@ -188,7 +191,7 @@ foreach ($payload['senders'] as $row) {
         'domain' => $domainRaw !== '' ? strtolower($domainRaw) : null,
         'kind' => $kindRaw !== '' ? $kindRaw : null,
         'notes' => $notesRaw !== '' ? $notesRaw : null,
-        'matchNames' => $matchNames,
+        'units' => $units,
         'organizationNumbers' => $organizationNumbers,
         'paymentNumbers' => $paymentNumbers,
         'mergedSourceSenderIds' => $mergedSourceSenderIds,
@@ -290,22 +293,22 @@ try {
     }
     $originalPaymentRowsById = $existingPaymentRowsById;
     $originalOrganizationRowsById = $existingOrganizationRowsById;
-    $existingMatchNameRows = $pdo->query(
-        'SELECT sender_id, normalized_name
-        FROM sender_match_names
-        ORDER BY sender_id ASC, normalized_name ASC'
+    $existingUnitRows = $pdo->query(
+        'SELECT sender_id, normalized_name, sort_order
+        FROM sender_units
+        ORDER BY sender_id ASC, sort_order ASC, normalized_name ASC'
     )->fetchAll(PDO::FETCH_ASSOC);
-    $existingMatchNamesBySenderId = [];
-    foreach ($existingMatchNameRows as $matchNameRow) {
-        if (!is_array($matchNameRow)) {
+    $existingUnitsBySenderId = [];
+    foreach ($existingUnitRows as $unitRow) {
+        if (!is_array($unitRow)) {
             continue;
         }
-        $senderId = isset($matchNameRow['sender_id']) ? (int) $matchNameRow['sender_id'] : 0;
-        $normalizedName = is_string($matchNameRow['normalized_name'] ?? null)
-            ? trim((string) $matchNameRow['normalized_name'])
+        $senderId = isset($unitRow['sender_id']) ? (int) $unitRow['sender_id'] : 0;
+        $normalizedName = is_string($unitRow['normalized_name'] ?? null)
+            ? trim((string) $unitRow['normalized_name'])
             : '';
         if ($senderId > 0 && $normalizedName !== '') {
-            $existingMatchNamesBySenderId[$senderId][] = $normalizedName;
+            $existingUnitsBySenderId[$senderId][] = $normalizedName . '#' . (int) ($unitRow['sort_order'] ?? 0);
         }
     }
 
@@ -413,21 +416,23 @@ try {
             updated_at = :updated_at
         WHERE id = :id'
     );
-    $deleteSenderMatchNames = $pdo->prepare(
-        'DELETE FROM sender_match_names
+    $deleteSenderUnits = $pdo->prepare(
+        'DELETE FROM sender_units
         WHERE sender_id = :sender_id'
     );
-    $insertSenderMatchName = $pdo->prepare(
-        'INSERT INTO sender_match_names (
+    $insertSenderUnit = $pdo->prepare(
+        'INSERT INTO sender_units (
             sender_id,
             name,
             normalized_name,
+            sort_order,
             created_at,
             updated_at
         ) VALUES (
             :sender_id,
             :name,
             :normalized_name,
+            :sort_order,
             :created_at,
             :updated_at
         )'
@@ -486,24 +491,25 @@ try {
             $senderId = (int) $pdo->lastInsertId();
         }
 
-        $previousMatchNames = $existingMatchNamesBySenderId[$senderId] ?? [];
-        sort($previousMatchNames, SORT_STRING);
-        $nextMatchNames = array_map(
-            static fn (array $matchName): string => (string) $matchName['normalizedName'],
-            $row['matchNames']
+        $previousUnits = $existingUnitsBySenderId[$senderId] ?? [];
+        sort($previousUnits, SORT_STRING);
+        $nextUnits = array_map(
+            static fn (array $unit): string => (string) $unit['normalizedName'] . '#' . (int) ($unit['sortOrder'] ?? 0),
+            $row['units']
         );
-        sort($nextMatchNames, SORT_STRING);
-        $deleteSenderMatchNames->execute([':sender_id' => $senderId]);
-        foreach ($row['matchNames'] as $matchName) {
-            $insertSenderMatchName->execute([
+        sort($nextUnits, SORT_STRING);
+        $deleteSenderUnits->execute([':sender_id' => $senderId]);
+        foreach ($row['units'] as $unit) {
+            $insertSenderUnit->execute([
                 ':sender_id' => $senderId,
-                ':name' => $matchName['name'],
-                ':normalized_name' => $matchName['normalizedName'],
+                ':name' => $unit['name'],
+                ':normalized_name' => $unit['normalizedName'],
+                ':sort_order' => $unit['sortOrder'],
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
             ]);
         }
-        if ($previousMatchNames !== $nextMatchNames) {
+        if ($previousUnits !== $nextUnits) {
             $touchSender($senderId, $timestamp);
         }
 
