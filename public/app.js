@@ -8030,6 +8030,7 @@ function formatPrimaryDateSignalLabel(code) {
     text_size: 'Textstorlek',
     uppercase_ratio: 'Versalgrad',
     brevity: 'Korthet',
+    sender_name: 'Avsändarnamn',
   };
   return labels[code] || code;
 }
@@ -8155,6 +8156,10 @@ function formatPrimaryDateSignalDetail(signal) {
     if (Number.isFinite(ratio)) {
       return `${formatPrimaryDateScoreNumber(ratio * 100)} % versaler`;
     }
+  }
+  if (signal?.code === 'sender_name') {
+    const senderNameMatch = detail.match(/^name:(.+)$/u);
+    return senderNameMatch ? senderNameMatch[1].trim() : detail;
   }
   const textDensityMatch = detail.match(/\bratio:([0-9.]+)/u);
   if (signal?.code === 'text_density' || signal?.code === 'running_text') {
@@ -26123,6 +26128,11 @@ function defaultTitleHeuristics() {
         ],
         description: 'Poängkurva baserad på hur mycket omgivande text som finns runt rubrikkandidaten.',
       },
+      sender_name: {
+        enabled: true,
+        points: -40,
+        description: 'Ger minuspoäng när en Rubrik-kandidat är identisk med ett känt avsändarnamn eller underenhetsnamn.',
+      },
     },
   };
 }
@@ -26141,7 +26151,15 @@ function sanitizeTitleHeuristics(input) {
       ? source.signals[key]
       : {};
     result.signals[key].enabled = true;
-    result.signals[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForSignal.curve);
+    if (Object.prototype.hasOwnProperty.call(defaultsForSignal, 'curve')) {
+      result.signals[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForSignal.curve);
+    }
+    if (Object.prototype.hasOwnProperty.call(defaultsForSignal, 'points')) {
+      result.signals[key].points = Math.min(
+        0,
+        sanitizePrimaryDateNumber(raw.points, defaultsForSignal.points)
+      );
+    }
   });
 
   return result;
@@ -30923,6 +30941,7 @@ const titleHeuristicLabels = {
   uppercase_ratio: 'Versalgrad',
   brevity: 'Korthet',
   text_density: 'Texttäthet',
+  sender_name: 'Avsändarnamn',
 };
 
 const titleHeuristicCurveCharts = {
@@ -31318,12 +31337,35 @@ function createTitleHeuristicRuleEditor({
 
   const fields = document.createElement('div');
   fields.className = 'primary-date-heuristic-fields';
-  fields.appendChild(createTitleHeuristicCurveEditor({
-    heuristics,
-    ruleKey,
-    collection,
-    index,
-  }));
+  if (Array.isArray(rule.curve)) {
+    fields.appendChild(createTitleHeuristicCurveEditor({
+      heuristics,
+      ruleKey,
+      collection,
+      index,
+    }));
+  }
+  if (typeof rule.points === 'number') {
+    const pointsInput = document.createElement('input');
+    pointsInput.type = 'number';
+    pointsInput.step = '1';
+    pointsInput.max = '0';
+    pointsInput.value = String(rule.points);
+    pointsInput.addEventListener('input', () => {
+      const next = sanitizeTitleHeuristics(collection[index].titleHeuristics);
+      const value = Number(pointsInput.value);
+      if (Number.isFinite(value)) {
+        next.signals[ruleKey].points = Math.min(0, value);
+        collection[index].titleHeuristics = sanitizeTitleHeuristics(next);
+        updateSettingsActionButtons();
+      }
+    });
+    fields.appendChild(createFloatingField(
+      'Poäng (negativt värde)',
+      pointsInput,
+      'primary-date-heuristic-number-field'
+    ));
+  }
 
   row.append(header, help, fields);
   return row;

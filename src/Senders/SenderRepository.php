@@ -362,7 +362,7 @@ final class SenderRepository
                 u.sort_order
             FROM sender_units u
             INNER JOIN senders s ON s.id = u.sender_id
-            WHERE trim(u.normalized_name) <> \'\'
+            WHERE trim(u.name) <> \'\'
             ORDER BY u.sender_id ASC, u.sort_order ASC, u.id ASC'
         )->fetchAll();
 
@@ -377,6 +377,9 @@ final class SenderRepository
                 $normalizedName = is_string($row['normalized_name'] ?? null)
                     ? trim((string) $row['normalized_name'])
                     : '';
+                if ($normalizedName === '' && $name !== '') {
+                    $normalizedName = NameNormalizer::normalize($name);
+                }
                 if ($senderId < 1 || $unitId < 1 || $name === '' || $normalizedName === '') {
                     continue;
                 }

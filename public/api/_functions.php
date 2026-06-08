@@ -2819,6 +2819,11 @@ function default_title_heuristics(): array
                 ],
                 'description' => 'Poängkurva baserad på hur mycket omgivande text som finns runt rubrikkandidaten.',
             ],
+            'sender_name' => [
+                'enabled' => true,
+                'points' => -40.0,
+                'description' => 'Ger minuspoäng när en Rubrik-kandidat är identisk med ett känt avsändarnamn eller underenhetsnamn.',
+            ],
         ],
     ];
 }
@@ -3062,10 +3067,18 @@ function normalize_title_heuristics(mixed $input): array
     foreach ($defaults['signals'] as $key => $default) {
         $raw = is_array($source['signals'][$key] ?? null) ? $source['signals'][$key] : [];
         $result['signals'][$key]['enabled'] = true;
-        $result['signals'][$key]['curve'] = normalize_primary_date_score_curve(
-            $raw['curve'] ?? null,
-            $default['curve']
-        );
+        if (array_key_exists('curve', $default)) {
+            $result['signals'][$key]['curve'] = normalize_primary_date_score_curve(
+                $raw['curve'] ?? null,
+                $default['curve']
+            );
+        }
+        if (array_key_exists('points', $default)) {
+            $result['signals'][$key]['points'] = min(0.0, normalize_primary_date_number(
+                $raw['points'] ?? null,
+                (float) $default['points']
+            ));
+        }
         $result['signals'][$key]['description'] = (string) $default['description'];
     }
 
@@ -16761,6 +16774,33 @@ function title_candidate_text_density(array $lines, int $lineIndex, int $wordCou
     ];
 }
 
+function title_sender_name_lookup_from_entries(array $entries): array
+{
+    $lookup = [];
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $name = is_string($entry['name'] ?? null) ? normalize_inline_whitespace((string) $entry['name']) : '';
+        $normalizedName = $name !== '' ? \Docflow\Senders\NameNormalizer::normalize($name) : '';
+        if ($name === '' || $normalizedName === '' || isset($lookup[$normalizedName])) {
+            continue;
+        }
+        $lookup[$normalizedName] = $name;
+    }
+    return $lookup;
+}
+
+function cached_title_sender_name_lookup(): array
+{
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
+    $cache = title_sender_name_lookup_from_entries(cached_sender_name_entries_for_analysis());
+    return $cache;
+}
+
 function title_candidates_from_lines(array $lines, array $lineGeometries = [], array $spanSettings = []): array
 {
     $settings = normalize_matching_bbox_span_building_settings($spanSettings);
@@ -16823,7 +16863,13 @@ function title_candidates_from_lines(array $lines, array $lineGeometries = [], a
     return $candidates;
 }
 
-function score_title_candidate(array $candidate, array $lines, array $lineGeometries = [], array $heuristics = []): array
+function score_title_candidate(
+    array $candidate,
+    array $lines,
+    array $lineGeometries = [],
+    array $heuristics = [],
+    array $senderNameLookup = []
+): array
 {
     $heuristics = normalize_title_heuristics($heuristics);
     $signals = is_array($heuristics['signals'] ?? null) ? $heuristics['signals'] : [];
@@ -16911,6 +16957,23 @@ function score_title_candidate(array $candidate, array $lines, array $lineGeomet
         'words:' . (int) ($density['surroundingWords'] ?? $wordCount) . ',ratio:' . round($densityRatio, 3)
     );
 
+    $normalizedTitle = \Docflow\Senders\NameNormalizer::normalize($text);
+    $matchedSenderName = $normalizedTitle !== '' && is_string($senderNameLookup[$normalizedTitle] ?? null)
+        ? normalize_inline_whitespace((string) $senderNameLookup[$normalizedTitle])
+        : '';
+    $senderNameSignal = is_array($signals['sender_name'] ?? null) ? $signals['sender_name'] : [];
+    $senderNamePoints = min(0.0, (float) ($senderNameSignal['points'] ?? -40.0));
+    if ($matchedSenderName !== '' && ($senderNameSignal['enabled'] ?? true) === true && $senderNamePoints < 0.0) {
+        $score += $senderNamePoints;
+        $result['matchedSenderName'] = $matchedSenderName;
+        $result['signals'][] = [
+            'type' => 'negative',
+            'code' => 'sender_name',
+            'score' => $senderNamePoints,
+            'detail' => 'name:' . $matchedSenderName,
+        ];
+    }
+
     $result['score'] = $score;
     $result['rawScore'] = $score;
     $result['confidence'] = clamp_confidence($score / $fullConfidenceScore);
@@ -16921,8 +16984,15 @@ function extract_title_field_result(array $lines, array $lineGeometries = [], ar
 {
     $heuristics = normalize_title_heuristics($heuristics);
     $spanSettings = matching_bbox_span_building_from_position_settings($positionSettings);
+    $senderNameLookup = cached_title_sender_name_lookup();
     $candidates = array_map(
-        static fn(array $candidate): array => score_title_candidate($candidate, $lines, $lineGeometries, $heuristics),
+        static fn(array $candidate): array => score_title_candidate(
+            $candidate,
+            $lines,
+            $lineGeometries,
+            $heuristics,
+            $senderNameLookup
+        ),
         title_candidates_from_lines($lines, $lineGeometries, $spanSettings)
     );
     $candidates = array_values(array_filter(
