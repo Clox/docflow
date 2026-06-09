@@ -8019,6 +8019,7 @@ function formatSnapshotCompareCandidateBboxIndexes(indexes) {
 
 function formatPrimaryDateSignalLabel(code) {
   const labels = {
+    near_title: 'Nära rubrik',
     place_near_date: 'Ort vid datum',
     document_position: 'Högt på sidan',
     date_word_nearby: 'Ordet datum i närheten',
@@ -8160,6 +8161,18 @@ function formatPrimaryDateSignalDetail(signal) {
   if (signal?.code === 'sender_name') {
     const senderNameMatch = detail.match(/^name:(.+)$/u);
     return senderNameMatch ? senderNameMatch[1].trim() : detail;
+  }
+  if (signal?.code === 'near_title') {
+    const titleMatch = detail.match(/^title:(.*),confidence:([0-9.]+),distance:([0-9.]+)$/u);
+    if (titleMatch) {
+      const title = titleMatch[1].trim();
+      const confidence = Number(titleMatch[2]);
+      const distance = Number(titleMatch[3]);
+      if (title && Number.isFinite(confidence) && Number.isFinite(distance)) {
+        return `${title}, rubriksäkerhet ${formatPrimaryDateScoreNumber(confidence * 100)} %, avstånd ${formatPrimaryDateScoreNumber(distance)} radhöjder`;
+      }
+    }
+    return detail;
   }
   const textDensityMatch = detail.match(/\bratio:([0-9.]+)/u);
   if (signal?.code === 'text_density' || signal?.code === 'running_text') {
@@ -25895,6 +25908,12 @@ function defaultPrimaryDateHeuristics() {
   return {
     full_confidence_score: 130,
     bonuses: {
+      near_title: {
+        enabled: true,
+        max_points: 60,
+        max_distance_line_heights: 6,
+        description: 'Ger stöd när kandidatdatumet ligger nära en accepterad Rubrik-kandidat. Poängen viktas med rubrikens säkerhet.',
+      },
       place_near_date: {
         enabled: true,
         curve: [
@@ -26015,6 +26034,15 @@ function sanitizePrimaryDateHeuristics(input) {
         result.bonuses[key][prop] = sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop]);
       }
     });
+    if (key === 'near_title') {
+      result.bonuses[key].max_points = Math.max(0, result.bonuses[key].max_points);
+    }
+    if (Object.prototype.hasOwnProperty.call(defaultsForRule, 'max_distance_line_heights')) {
+      result.bonuses[key].max_distance_line_heights = Math.max(
+        0.1,
+        sanitizePrimaryDateNumber(raw.max_distance_line_heights, defaultsForRule.max_distance_line_heights)
+      );
+    }
     ['full_until_y_ratio', 'zero_after_y_ratio', 'max_y_ratio'].forEach((prop) => {
       if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
         result.bonuses[key][prop] = sanitizePrimaryDateRatio(raw[prop], defaultsForRule[prop]);
@@ -30836,6 +30864,7 @@ function renderExtractionFieldsEditor() {
 }
 
 const primaryDateHeuristicLabels = {
+  near_title: 'Nära rubrik',
   place_near_date: 'Ort vid datum',
   document_position: 'Högt på sidan',
   date_word_nearby: 'Ordet datum i närheten',
@@ -30848,6 +30877,7 @@ function primaryDateHeuristicPropertyLabel(prop) {
   const labels = {
     points: 'Poäng',
     max_points: 'Maxpoäng',
+    max_distance_line_heights: 'Maxavstånd i radhöjder',
     direct_before_points: 'Direkt före',
     same_line_points: 'Samma rad',
     line_above_points: 'Raden ovanför',

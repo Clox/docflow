@@ -2833,6 +2833,12 @@ function default_primary_date_heuristics(): array
     return [
         'full_confidence_score' => 130.0,
         'bonuses' => [
+            'near_title' => [
+                'enabled' => true,
+                'max_points' => 60.0,
+                'max_distance_line_heights' => 6.0,
+                'description' => 'Ger stöd när kandidatdatumet ligger nära en accepterad Rubrik-kandidat. Poängen viktas med rubrikens säkerhet.',
+            ],
             'place_near_date' => [
                 'enabled' => true,
                 'curve' => [
@@ -2994,6 +3000,18 @@ function normalize_primary_date_heuristics(mixed $input): array
             if (array_key_exists($field, $default)) {
                 $result['bonuses'][$key][$field] = normalize_primary_date_number($raw[$field] ?? null, (float) $default[$field]);
             }
+        }
+        if ($key === 'near_title') {
+            $result['bonuses'][$key]['max_points'] = max(0.0, (float) $result['bonuses'][$key]['max_points']);
+        }
+        if (array_key_exists('max_distance_line_heights', $default)) {
+            $result['bonuses'][$key]['max_distance_line_heights'] = max(
+                0.1,
+                normalize_primary_date_number(
+                    $raw['max_distance_line_heights'] ?? null,
+                    (float) $default['max_distance_line_heights']
+                )
+            );
         }
         foreach (['full_until_y_ratio', 'zero_after_y_ratio', 'max_y_ratio'] as $field) {
             if (array_key_exists($field, $default)) {
@@ -16393,18 +16411,7 @@ function primary_date_place_distance_match(array $candidate, array $lines, array
                 $placeLineGeometry = is_array($lineGeometries[$contextLineIndex] ?? null) ? $lineGeometries[$contextLineIndex] : null;
                 $placeBbox = line_geometry_span_bbox($placeLineGeometry, $placeStart, $placeEnd);
                 if ($candidateBbox !== null && $placeBbox !== null) {
-                    $horizontalGap = max(
-                        0.0,
-                        (float) ($candidateBbox['x0'] ?? 0.0) - (float) ($placeBbox['x1'] ?? 0.0),
-                        (float) ($placeBbox['x0'] ?? 0.0) - (float) ($candidateBbox['x1'] ?? 0.0)
-                    );
-                    $verticalGap = max(
-                        0.0,
-                        (float) ($candidateBbox['y0'] ?? 0.0) - (float) ($placeBbox['y1'] ?? 0.0),
-                        (float) ($placeBbox['y0'] ?? 0.0) - (float) ($candidateBbox['y1'] ?? 0.0)
-                    );
-                    $lineHeight = position_penalty_min_line_height($placeBbox, $candidateBbox);
-                    $distance = sqrt(($horizontalGap * $horizontalGap) + ($verticalGap * $verticalGap)) / max(1.0, $lineHeight);
+                    $distance = primary_date_bbox_edge_distance_line_heights($placeBbox, $candidateBbox);
                 } elseif ($contextLineIndex === $lineIndex) {
                     $between = substr($contextLine, $placeEnd, max(0, $start - $placeEnd));
                     $distance = count(preg_split('/\s+/u', trim(is_string($between) ? $between : ''), -1, PREG_SPLIT_NO_EMPTY) ?: []);
@@ -16428,13 +16435,108 @@ function primary_date_place_distance_match(array $candidate, array $lines, array
     return $best;
 }
 
+function primary_date_bbox_edge_distance_line_heights(array $leftBbox, array $rightBbox): float
+{
+    $horizontalGap = max(
+        0.0,
+        (float) ($leftBbox['x0'] ?? 0.0) - (float) ($rightBbox['x1'] ?? 0.0),
+        (float) ($rightBbox['x0'] ?? 0.0) - (float) ($leftBbox['x1'] ?? 0.0)
+    );
+    $verticalGap = max(
+        0.0,
+        (float) ($leftBbox['y0'] ?? 0.0) - (float) ($rightBbox['y1'] ?? 0.0),
+        (float) ($rightBbox['y0'] ?? 0.0) - (float) ($leftBbox['y1'] ?? 0.0)
+    );
+    $lineHeight = position_penalty_min_line_height($leftBbox, $rightBbox);
+
+    return sqrt(($horizontalGap * $horizontalGap) + ($verticalGap * $verticalGap))
+        / max(1.0, $lineHeight);
+}
+
+function primary_date_near_title_match(
+    ?array $candidateBbox,
+    ?int $candidatePageNumber,
+    array $titleCandidates,
+    float $acceptanceThreshold,
+    float $maxPoints,
+    float $maxDistanceLineHeights
+): ?array {
+    if ($candidateBbox === null || $candidatePageNumber === null || $maxPoints <= 0.0 || $maxDistanceLineHeights <= 0.0) {
+        return null;
+    }
+
+    $threshold = clamp_confidence($acceptanceThreshold);
+    $best = null;
+    foreach ($titleCandidates as $titleCandidate) {
+        if (!is_array($titleCandidate) || ($titleCandidate['excluded'] ?? false) === true) {
+            continue;
+        }
+        if (array_key_exists('accepted', $titleCandidate) && ($titleCandidate['accepted'] ?? false) !== true) {
+            continue;
+        }
+
+        $confidence = is_numeric($titleCandidate['finalConfidence'] ?? null)
+            ? clamp_confidence((float) $titleCandidate['finalConfidence'])
+            : (is_numeric($titleCandidate['confidence'] ?? null)
+                ? clamp_confidence((float) $titleCandidate['confidence'])
+                : 0.0);
+        if ($confidence <= 0.0 || $confidence < $threshold) {
+            continue;
+        }
+
+        $titlePageNumber = is_numeric($titleCandidate['pageNumber'] ?? null)
+            ? (int) $titleCandidate['pageNumber']
+            : null;
+        if ($titlePageNumber === null || $titlePageNumber !== $candidatePageNumber) {
+            continue;
+        }
+
+        $titleBbox = normalize_debug_word_bbox(
+            $titleCandidate['valueBbox']
+                ?? $titleCandidate['labelBbox']
+                ?? $titleCandidate['bbox']
+                ?? null
+        );
+        if ($titleBbox === null) {
+            continue;
+        }
+
+        $distance = primary_date_bbox_edge_distance_line_heights($candidateBbox, $titleBbox);
+        $proximityFactor = max(0.0, min(1.0, 1.0 - ($distance / $maxDistanceLineHeights)));
+        $score = $maxPoints * $proximityFactor * $confidence;
+        if ($score <= 0.0) {
+            continue;
+        }
+
+        $match = [
+            'title' => normalize_inline_whitespace((string) (
+                $titleCandidate['value']
+                    ?? $titleCandidate['matchText']
+                    ?? $titleCandidate['raw']
+                    ?? ''
+            )),
+            'confidence' => $confidence,
+            'distance' => $distance,
+            'proximityFactor' => $proximityFactor,
+            'score' => $score,
+        ];
+        if ($best === null || $score > (float) ($best['score'] ?? 0.0)) {
+            $best = $match;
+        }
+    }
+
+    return $best;
+}
+
 function score_primary_date_candidate(
     array $candidate,
     array $lines,
     array $lineGeometries = [],
     array $heuristics = [],
     array $replacementMap = [],
-    array $positionSettings = []
+    array $positionSettings = [],
+    array $titleCandidates = [],
+    float $acceptanceThreshold = 0.5
 ): array
 {
     $heuristics = normalize_primary_date_heuristics($heuristics);
@@ -16477,6 +16579,33 @@ function score_primary_date_candidate(
     $signals = [];
     $bonuses = is_array($heuristics['bonuses'] ?? null) ? $heuristics['bonuses'] : [];
     $penalties = is_array($heuristics['penalties'] ?? null) ? $heuristics['penalties'] : [];
+
+    $nearTitleSettings = is_array($bonuses['near_title'] ?? null) ? $bonuses['near_title'] : [];
+    if (($nearTitleSettings['enabled'] ?? true) === true) {
+        $nearTitleMatch = primary_date_near_title_match(
+            is_array($position['bbox'] ?? null) ? $position['bbox'] : null,
+            $candidatePageNumber,
+            $titleCandidates,
+            $acceptanceThreshold,
+            max(0.0, (float) ($nearTitleSettings['max_points'] ?? 0.0)),
+            max(0.1, (float) ($nearTitleSettings['max_distance_line_heights'] ?? 6.0))
+        );
+        if (is_array($nearTitleMatch)) {
+            $nearTitleScore = (float) ($nearTitleMatch['score'] ?? 0.0);
+            $score += $nearTitleScore;
+            $signals[] = [
+                'type' => 'positive',
+                'code' => 'near_title',
+                'score' => $nearTitleScore,
+                'detail' => 'title:' . (string) ($nearTitleMatch['title'] ?? '')
+                    . ',confidence:' . round((float) ($nearTitleMatch['confidence'] ?? 0.0), 4)
+                    . ',distance:' . round((float) ($nearTitleMatch['distance'] ?? 0.0), 4),
+            ];
+            $result['matchedTitle'] = (string) ($nearTitleMatch['title'] ?? '');
+            $result['matchedTitleConfidence'] = (float) ($nearTitleMatch['confidence'] ?? 0.0);
+            $result['matchedTitleDistance'] = (float) ($nearTitleMatch['distance'] ?? 0.0);
+        }
+    }
 
     $placeMatch = primary_date_place_distance_match($candidate, $lines, $lineGeometries);
     if (is_array($placeMatch) && ($bonuses['place_near_date']['enabled'] ?? true) === true) {
@@ -16584,7 +16713,9 @@ function extract_primary_date_field_result(
     array $lineGeometries = [],
     array $heuristics = [],
     array $replacementMap = [],
-    array $positionSettings = []
+    array $positionSettings = [],
+    array $titleCandidates = [],
+    float $acceptanceThreshold = 0.5
 ): array
 {
     $heuristics = normalize_primary_date_heuristics($heuristics);
@@ -16607,7 +16738,9 @@ function extract_primary_date_field_result(
                 $lineGeometries,
                 $heuristics,
                 $replacementMap,
-                $positionSettings
+                $positionSettings,
+                $titleCandidates,
+                $acceptanceThreshold
             );
         }
     }
@@ -20038,6 +20171,36 @@ function extract_configured_text_field_results(
 ): array
 {
     $results = [];
+    $precomputedTitleResults = [];
+    $nearTitleCandidates = [];
+
+    foreach ($fields as $field) {
+        if (!is_array($field)) {
+            continue;
+        }
+        $key = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+        $extractor = valid_extraction_field_extractor(
+            is_string($field['extractor'] ?? null) ? (string) $field['extractor'] : 'generic_label'
+        );
+        if ($key === '' || $extractor !== 'title') {
+            continue;
+        }
+
+        $titleResult = extract_title_field_result(
+            $lines,
+            $lineGeometries,
+            is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : [],
+            $positionSettings
+        );
+        $titleMatches = title_result_matches($titleResult, $lineGeometries);
+        $precomputedTitleResults[$key] = [
+            'result' => $titleResult,
+            'matches' => $titleMatches,
+        ];
+        if ($nearTitleCandidates === []) {
+            $nearTitleCandidates = $titleMatches;
+        }
+    }
 
     foreach ($fields as $field) {
         if (!is_array($field)) {
@@ -20068,19 +20231,28 @@ function extract_configured_text_field_results(
                 $lineGeometries,
                 is_array($field['primaryDateHeuristics'] ?? null) ? $field['primaryDateHeuristics'] : [],
                 $replacementMap,
-                $positionSettings
+                $positionSettings,
+                $nearTitleCandidates,
+                $acceptanceThreshold
             );
             $ruleSets = [];
             $matches = primary_date_result_matches($result, $lineGeometries);
         } elseif ($extractor === 'title') {
-            $result = extract_title_field_result(
-                $lines,
-                $lineGeometries,
-                is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : [],
-                $positionSettings
-            );
+            $precomputedTitle = is_array($precomputedTitleResults[$key] ?? null)
+                ? $precomputedTitleResults[$key]
+                : [];
+            $result = is_array($precomputedTitle['result'] ?? null)
+                ? $precomputedTitle['result']
+                : extract_title_field_result(
+                    $lines,
+                    $lineGeometries,
+                    is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : [],
+                    $positionSettings
+                );
             $ruleSets = [];
-            $matches = title_result_matches($result, $lineGeometries);
+            $matches = is_array($precomputedTitle['matches'] ?? null)
+                ? $precomputedTitle['matches']
+                : title_result_matches($result, $lineGeometries);
         } else {
             $result = empty_extraction_field_result();
             foreach ($ruleSets as $ruleSetIndex => $ruleSet) {

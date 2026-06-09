@@ -89,8 +89,34 @@ try {
             );
             $zoneMatches = $liveZoneMatches;
             $matchingLines = split_lines_for_matching($ocrText);
+            $acceptanceThreshold = is_numeric($matchingPayload['dataFieldAcceptanceThreshold'] ?? null)
+                ? clamp_confidence((float) $matchingPayload['dataFieldAcceptanceThreshold'])
+                : 0.5;
+            $systemFields = is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [];
+            $precomputedTitleResult = null;
+            $precomputedTitleMatches = [];
 
-            foreach (is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [] as $systemField) {
+            foreach ($systemFields as $systemField) {
+                if (!is_array($systemField)) {
+                    continue;
+                }
+                $extractor = is_string($systemField['extractor'] ?? null) ? trim((string) $systemField['extractor']) : '';
+                $systemFieldKey = is_string($systemField['systemFieldKey'] ?? null) ? trim((string) $systemField['systemFieldKey']) : '';
+                $key = is_string($systemField['key'] ?? null) ? trim((string) $systemField['key']) : '';
+                if ($extractor !== 'title' && $systemFieldKey !== 'title' && $key !== 'title') {
+                    continue;
+                }
+                $precomputedTitleResult = extract_title_field_result(
+                    $matchingLines,
+                    $lineGeometries,
+                    is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : [],
+                    $positionSettings
+                );
+                $precomputedTitleMatches = title_result_matches($precomputedTitleResult, $lineGeometries);
+                break;
+            }
+
+            foreach ($systemFields as $systemField) {
                 if (!is_array($systemField)) {
                     continue;
                 }
@@ -103,7 +129,9 @@ try {
                         $lineGeometries,
                         is_array($systemField['primaryDateHeuristics'] ?? null) ? $systemField['primaryDateHeuristics'] : [],
                         $replacementMap,
-                        $positionSettings
+                        $positionSettings,
+                        $precomputedTitleMatches,
+                        $acceptanceThreshold
                     );
                     $primaryDateMatches = primary_date_result_matches($primaryDateResult, $lineGeometries);
                     if (is_string($primaryDateResult['value'] ?? null) && (string) $primaryDateResult['value'] !== '') {
@@ -131,13 +159,17 @@ try {
                     continue;
                 }
 
-                $titleResult = extract_title_field_result(
-                    $matchingLines,
-                    $lineGeometries,
-                    is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : [],
-                    $positionSettings
-                );
-                $titleMatches = title_result_matches($titleResult, $lineGeometries);
+                $titleResult = is_array($precomputedTitleResult)
+                    ? $precomputedTitleResult
+                    : extract_title_field_result(
+                        $matchingLines,
+                        $lineGeometries,
+                        is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : [],
+                        $positionSettings
+                    );
+                $titleMatches = $precomputedTitleMatches !== []
+                    ? $precomputedTitleMatches
+                    : title_result_matches($titleResult, $lineGeometries);
                 if (is_string($titleResult['value'] ?? null) && (string) $titleResult['value'] !== '') {
                     $fieldValues['title'] = [(string) $titleResult['value']];
                 }
