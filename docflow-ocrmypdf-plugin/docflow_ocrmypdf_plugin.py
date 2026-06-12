@@ -1585,6 +1585,124 @@ def _write_page_debug_artifacts(
     _write_debug_text(output_dir, 'rapidocr', page_number, str(rapidocr_payload.get('text', '') or ''))
 
 
+def _dictionary_correct_word(module, text: str, *, page_number: int, bbox: Any, title: str, options) -> dict[str, Any]:
+    func = getattr(module, 'correct_dictionary_word_detail', None)
+    if func is None:
+        return {'text': text}
+    result = func(
+        text,
+        page_number=page_number,
+        bbox=bbox,
+        title=title,
+        options=options,
+    )
+    if isinstance(result, dict):
+        next_text = result.get('text')
+        if isinstance(next_text, str):
+            return result
+        return {'text': text}
+    if isinstance(result, str):
+        return {'text': result}
+    return {'text': text}
+
+
+def _apply_dictionary_correction_to_word(word: dict[str, Any], module, *, page_number: int, options) -> bool:
+    text = str(word.get('text') or '').strip()
+    if text == '':
+        return False
+    raw = word.get('raw') if isinstance(word.get('raw'), dict) else {}
+    title = str(raw.get('hocrTitle') or '')
+    result = _dictionary_correct_word(
+        module,
+        text,
+        page_number=page_number,
+        bbox=word.get('bbox'),
+        title=title,
+        options=options,
+    )
+    next_text = result.get('text')
+    if not isinstance(next_text, str) or next_text == text:
+        return False
+
+    word['text'] = next_text
+    correction = result.get('correction')
+    if isinstance(correction, dict):
+        word['dictionaryCorrection'] = correction
+    return True
+
+
+def _line_text_from_words(words: list[dict[str, Any]]) -> str:
+    return ' '.join(
+        str(word.get('text') or '').strip()
+        for word in words
+        if isinstance(word, dict) and str(word.get('text') or '').strip() != ''
+    ).strip()
+
+
+def _apply_dictionary_corrections_to_payload(
+    payload: dict[str, Any],
+    module,
+    *,
+    page_number: int,
+    options,
+) -> dict[str, Any]:
+    changed = False
+    seen_word_ids: set[int] = set()
+
+    def correct_word(word: Any) -> None:
+        nonlocal changed
+        if not isinstance(word, dict):
+            return
+        word_id = id(word)
+        if word_id in seen_word_ids:
+            return
+        seen_word_ids.add(word_id)
+        if _apply_dictionary_correction_to_word(word, module, page_number=page_number, options=options):
+            changed = True
+
+    for word in payload.get('words') or []:
+        correct_word(word)
+
+    for line in payload.get('lines') or []:
+        if not isinstance(line, dict):
+            continue
+        line_words = [word for word in (line.get('words') or []) if isinstance(word, dict)]
+        for word in line_words:
+            correct_word(word)
+        if line_words:
+            next_line_text = _line_text_from_words(line_words)
+            if next_line_text != str(line.get('text') or ''):
+                line['text'] = next_line_text
+                changed = True
+
+    if changed:
+        lines = [
+            str(line.get('text') or '').strip()
+            for line in payload.get('lines') or []
+            if isinstance(line, dict) and str(line.get('text') or '').strip() != ''
+        ]
+        if lines:
+            payload['text'] = '\n'.join(lines)
+        else:
+            payload['text'] = _line_text_from_words([
+                word for word in (payload.get('words') or [])
+                if isinstance(word, dict)
+            ])
+
+        debug_func = getattr(module, 'get_dictionary_correction_debug', None)
+        if debug_func is not None:
+            debug_payload = debug_func()
+            if isinstance(debug_payload, dict):
+                corrections = debug_payload.get('corrections')
+                notes = debug_payload.get('notes')
+                if isinstance(corrections, list):
+                    payload['dictionaryCorrections'] = corrections
+                if isinstance(notes, list):
+                    payload['dictionaryCorrectionNotes'] = notes
+
+    return payload
+
+
 def _call_transform(module, name: str, text: str, **kwargs: Any) -> str:
     func = getattr(module, name, None)
     if func is None:
@@ -1882,6 +2000,8 @@ def _generate_transformed_hocr(
         )
 
         output_dir = _get_debug_output_dir(options)
+        script_path = _get_transform_script_path(options)
+        module = _load_transform_module(str(script_path)) if script_path is not None else None
         tesseract_payload, rapidocr_payload, merged_payload = _build_page_debug_payloads(
             input_file,
             output_hocr,
@@ -1890,6 +2010,13 @@ def _generate_transformed_hocr(
             tesseract_scale_x=tesseract_scale_x,
             tesseract_scale_y=tesseract_scale_y,
         )
+        if module is not None:
+            merged_payload = _apply_dictionary_corrections_to_payload(
+                merged_payload,
+                module,
+                page_number=page_number,
+                options=options,
+            )
 
         merged_sidecar_text = str(merged_payload.get('text') or '').strip()
         synthesized_hocr = _write_hocr_from_merged_payload(
@@ -1912,11 +2039,9 @@ def _generate_transformed_hocr(
             merged_payload=merged_payload,
         )
 
-        script_path = _get_transform_script_path(options)
-        if script_path is None:
+        if module is None:
             return
 
-        module = _load_transform_module(str(script_path))
         _rewrite_hocr_words(output_hocr, module, page_number=page_number, options=options)
 
         sidecar_text = ''

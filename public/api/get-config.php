@@ -8,6 +8,7 @@ try {
     $jbig2 = jbig2_status_payload();
     $python = python_status_payload();
     $rapidocr = rapidocr_status_payload();
+    $spylls = spylls_status_payload();
     json_response([
         'inboxDirectory' => $config['inboxDirectory'],
         'jobsDirectory' => $config['jobsDirectory'],
@@ -30,6 +31,7 @@ try {
         'jbig2' => $jbig2,
         'python' => $python,
         'rapidocr' => $rapidocr,
+        'spylls' => $spylls,
     ]);
 } catch (Throwable $e) {
     json_response([

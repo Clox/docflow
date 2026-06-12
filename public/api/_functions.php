@@ -7091,44 +7091,45 @@ function rapidocr_install_pid_path(): string
     return DATA_DIR . '/rapidocr-install.pid';
 }
 
-function rapidocr_detect_module(?string $python): ?string
+function python_detect_module(?string $python, string $moduleName): bool
 {
     $binary = is_string($python) ? trim($python) : '';
     if ($binary === '' || !is_file($binary)) {
-        return null;
+        return false;
+    }
+    if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $moduleName) !== 1) {
+        return false;
     }
 
-    $checkRapidocr = escapeshellarg($binary)
+    $checkModule = escapeshellarg($binary)
         . ' -c '
-        . escapeshellarg('import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("rapidocr") else 1)')
+        . escapeshellarg('import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("' . $moduleName . '") else 1)')
         . ' 2>/dev/null';
-    exec($checkRapidocr, $output, $exitCode);
-    if ($exitCode === 0) {
+    exec($checkModule, $output, $exitCode);
+    return $exitCode === 0;
+}
+
+function rapidocr_detect_module(?string $python): ?string
+{
+    if (python_detect_module($python, 'rapidocr')) {
         return 'rapidocr';
     }
-
-    $checkLegacy = escapeshellarg($binary)
-        . ' -c '
-        . escapeshellarg('import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("rapidocr_onnxruntime") else 1)')
-        . ' 2>/dev/null';
-    exec($checkLegacy, $legacyOutput, $legacyExitCode);
-    if ($legacyExitCode === 0) {
+    if (python_detect_module($python, 'rapidocr_onnxruntime')) {
         return 'rapidocr_onnxruntime';
     }
-
     return null;
 }
 
-function rapidocr_install_runtime_status(): array
+function install_runtime_status(string $statusPath, string $lockPath, string $logPath): array
 {
-    $status = load_json_file(rapidocr_install_status_path()) ?? [];
+    $status = load_json_file($statusPath) ?? [];
     $state = is_string($status['state'] ?? null) ? trim((string) $status['state']) : '';
     $message = is_string($status['message'] ?? null) ? trim((string) $status['message']) : '';
     $startedAt = is_string($status['startedAt'] ?? null) ? trim((string) $status['startedAt']) : '';
     $updatedAt = is_string($status['updatedAt'] ?? null) ? trim((string) $status['updatedAt']) : '';
     $finishedAt = is_string($status['finishedAt'] ?? null) ? trim((string) $status['finishedAt']) : '';
 
-    $lockHandle = @fopen(rapidocr_install_lock_path(), 'c+');
+    $lockHandle = @fopen($lockPath, 'c+');
     $isInstalling = false;
     if ($lockHandle !== false) {
         $hasLock = @flock($lockHandle, LOCK_EX | LOCK_NB);
@@ -7153,8 +7154,17 @@ function rapidocr_install_runtime_status(): array
         'startedAt' => $startedAt,
         'updatedAt' => $updatedAt,
         'finishedAt' => $finishedAt,
-        'hasLog' => is_file(rapidocr_install_log_path()) && filesize(rapidocr_install_log_path()) > 0,
+        'hasLog' => is_file($logPath) && filesize($logPath) > 0,
     ];
+}
+
+function rapidocr_install_runtime_status(): array
+{
+    return install_runtime_status(
+        rapidocr_install_status_path(),
+        rapidocr_install_lock_path(),
+        rapidocr_install_log_path()
+    );
 }
 
 function rapidocr_status_payload(): array
@@ -7205,6 +7215,97 @@ function rapidocr_runtime_python_path(): ?string
     return is_string($python) && trim($python) !== '' ? trim($python) : null;
 }
 
+function spylls_local_venv_dir(): string
+{
+    return PROJECT_ROOT . '.docflow-tools/spylls-venv';
+}
+
+function spylls_local_python_path(): string
+{
+    return spylls_local_venv_dir() . '/bin/python';
+}
+
+function spylls_install_status_path(): string
+{
+    return DATA_DIR . '/spylls-install-status.json';
+}
+
+function spylls_install_lock_path(): string
+{
+    return DATA_DIR . '/spylls-install.lock';
+}
+
+function spylls_install_log_path(): string
+{
+    return DATA_DIR . '/spylls-install.log';
+}
+
+function spylls_install_pid_path(): string
+{
+    return DATA_DIR . '/spylls-install.pid';
+}
+
+function spylls_install_runtime_status(): array
+{
+    return install_runtime_status(
+        spylls_install_status_path(),
+        spylls_install_lock_path(),
+        spylls_install_log_path()
+    );
+}
+
+function spylls_status_payload(): array
+{
+    $globalPython = python_command_path();
+    $localPython = spylls_local_python_path();
+    $localInstalled = python_detect_module($localPython, 'spylls');
+    $globalInstalled = !$localInstalled && python_detect_module($globalPython, 'spylls');
+    $installStatus = spylls_install_runtime_status();
+    $venvSupported = python_can_create_venv($globalPython);
+
+    $installScope = null;
+    $activePython = null;
+    if ($localInstalled) {
+        $installScope = 'local';
+        $activePython = $localPython;
+    } elseif ($globalInstalled) {
+        $installScope = 'global';
+        $activePython = $globalPython;
+    }
+
+    $systemDictionaryAvailable = is_file(docflow_system_dictionary_dic_path())
+        && is_file(docflow_system_dictionary_aff_path());
+
+    return [
+        'installed' => $installScope !== null,
+        'installScope' => $installScope,
+        'isInstalling' => $installStatus['isInstalling'],
+        'installState' => $installStatus['state'],
+        'installStatusMessage' => $installStatus['message'],
+        'hasInstallLog' => $installStatus['hasLog'],
+        'installCommand' => 'python3 -m pip install --break-system-packages spylls',
+        'python' => $activePython,
+        'module' => $installScope !== null ? 'spylls' : null,
+        'globalPython' => $globalPython,
+        'localPython' => $localInstalled ? $localPython : null,
+        'localInstallSupported' => $globalPython !== null && $venvSupported,
+        'localInstallReason' => $globalPython === null
+            ? 'Kräver Python 3'
+            : (!$venvSupported ? 'Kräver python3-venv' : ''),
+        'systemDictionaryAvailable' => $systemDictionaryAvailable,
+        'systemDictionaryStatus' => $systemDictionaryAvailable
+            ? ($installScope !== null ? 'available' : 'spylls_missing')
+            : 'dictionary_missing',
+    ];
+}
+
+function spylls_runtime_python_path(): ?string
+{
+    $status = spylls_status_payload();
+    $python = $status['python'] ?? null;
+    return is_string($python) && trim($python) !== '' ? trim($python) : null;
+}
+
 function docflow_ocrmypdf_plugin_path(): ?string
 {
     $path = PROJECT_ROOT . '/docflow-ocrmypdf-plugin/docflow_ocrmypdf_plugin.py';
@@ -7231,6 +7332,78 @@ function docflow_generated_transform_config_path(): string
 function docflow_legacy_generated_transform_script_path(): string
 {
     return DATA_DIR . '/docflow_ocr_pdf_transform.py';
+}
+
+function docflow_custom_dictionary_path(): string
+{
+    return DATA_DIR . '/custom_dictionaries/docflow.txt';
+}
+
+function docflow_system_dictionary_dic_path(): string
+{
+    return PROJECT_ROOT . 'public/assets/reference/sv_SE_with_aa_hunspell_flags.dic';
+}
+
+function docflow_system_dictionary_aff_path(): string
+{
+    return PROJECT_ROOT . 'public/assets/reference/sv_SE.aff';
+}
+
+function normalize_docflow_custom_dictionary_text(string $text): string
+{
+    $normalizedText = str_replace(["\r\n", "\r"], "\n", $text);
+    $lines = [];
+    $seen = [];
+    foreach (explode("\n", $normalizedText) as $line) {
+        $word = trim($line);
+        if ($word === '') {
+            continue;
+        }
+        $slashPos = strpos($word, '/');
+        if ($slashPos !== false) {
+            $word = trim(substr($word, 0, $slashPos));
+        }
+        if ($word === '') {
+            continue;
+        }
+        $key = function_exists('mb_strtolower')
+            ? mb_strtolower($word, 'UTF-8')
+            : strtolower($word);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $lines[] = $word;
+    }
+
+    return $lines === [] ? '' : implode("\n", $lines) . "\n";
+}
+
+function ensure_docflow_custom_dictionary_file(): string
+{
+    $path = docflow_custom_dictionary_path();
+    ensure_directory(dirname($path));
+    if (!is_file($path)) {
+        file_put_contents($path, '');
+    }
+    return $path;
+}
+
+function read_docflow_custom_dictionary_text(): string
+{
+    $path = ensure_docflow_custom_dictionary_file();
+    $text = file_get_contents($path);
+    return is_string($text) ? normalize_docflow_custom_dictionary_text($text) : '';
+}
+
+function save_docflow_custom_dictionary_text(string $text): string
+{
+    $normalized = normalize_docflow_custom_dictionary_text($text);
+    $path = ensure_docflow_custom_dictionary_file();
+    if (file_put_contents($path, $normalized) === false) {
+        throw new RuntimeException('Kunde inte spara egen ordlista');
+    }
+    return $normalized;
 }
 
 function active_ocr_pdf_text_substitutions(array $substitutions): array
@@ -7280,6 +7453,19 @@ function apply_ocr_pdf_text_substitutions_to_debug_words(array $words, array $su
     }, $words);
 }
 
+function docflow_dictionary_correction_transform_config(): array
+{
+    return [
+        'enabled' => true,
+        'customDictionaryPath' => ensure_docflow_custom_dictionary_file(),
+        'systemDictionaryDicPath' => docflow_system_dictionary_dic_path(),
+        'systemDictionaryAffPath' => docflow_system_dictionary_aff_path(),
+        'spyllsPython' => spylls_runtime_python_path(),
+        'maxVariantPositions' => 5,
+        'maxCandidates' => 32,
+    ];
+}
+
 function write_docflow_ocr_transform_config(array $substitutions): ?string
 {
     $normalized = active_ocr_pdf_text_substitutions($substitutions);
@@ -7288,17 +7474,12 @@ function write_docflow_ocr_transform_config(array $substitutions): ?string
         @unlink($legacyScriptPath);
     }
 
-    if ($normalized === []) {
-        $path = docflow_generated_transform_config_path();
-        if (is_file($path)) {
-            @unlink($path);
-        }
-        return null;
-    }
-
     $configPath = docflow_generated_transform_config_path();
     $payload = json_encode(
-        ['substitutions' => $normalized],
+        [
+            'substitutions' => $normalized,
+            'dictionaryCorrection' => docflow_dictionary_correction_transform_config(),
+        ],
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
     );
     if (!is_string($payload)) {
@@ -7310,6 +7491,150 @@ function write_docflow_ocr_transform_config(array $substitutions): ?string
     }
 
     return $configPath;
+}
+
+function apply_docflow_dictionary_corrections_to_debug_words(array $words, int $pageNumber): array
+{
+    $runtimeScriptPath = docflow_ocr_transform_runtime_script_path();
+    $python = spylls_runtime_python_path() ?? python_command_path();
+    if ($runtimeScriptPath === null || !is_file($runtimeScriptPath) || !is_string($python) || trim($python) === '') {
+        return $words;
+    }
+
+    $items = [];
+    foreach ($words as $index => $word) {
+        if (!is_array($word)) {
+            continue;
+        }
+        $text = is_string($word['text'] ?? null) ? trim((string) $word['text']) : '';
+        if ($text === '' || strpos($text, 'Ä') === false) {
+            continue;
+        }
+        $items[] = [
+            'index' => $index,
+            'text' => $text,
+            'bbox' => $word['bbox'] ?? null,
+        ];
+    }
+    if ($items === []) {
+        return $words;
+    }
+
+    $inputPath = tempnam(sys_get_temp_dir(), 'docflow-dict-input-');
+    $configPath = tempnam(sys_get_temp_dir(), 'docflow-dict-config-');
+    if (!is_string($inputPath) || !is_string($configPath)) {
+        return $words;
+    }
+
+    $configPayload = json_encode(
+        ['dictionaryCorrection' => docflow_dictionary_correction_transform_config()],
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+    $inputPayload = json_encode(
+        [
+            'runtimeScriptPath' => $runtimeScriptPath,
+            'configPath' => $configPath,
+            'pageNumber' => $pageNumber,
+            'items' => $items,
+        ],
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+    if (
+        !is_string($configPayload)
+        || !is_string($inputPayload)
+        || file_put_contents($configPath, $configPayload) === false
+        || file_put_contents($inputPath, $inputPayload) === false
+    ) {
+        @unlink($inputPath);
+        @unlink($configPath);
+        return $words;
+    }
+
+    $pythonCode = <<<'PY'
+import importlib.util
+import json
+import sys
+from types import SimpleNamespace
+
+with open(sys.argv[1], 'r', encoding='utf-8') as handle:
+    payload = json.load(handle)
+
+spec = importlib.util.spec_from_file_location('docflow_transform_runtime_php', payload['runtimeScriptPath'])
+if spec is None or spec.loader is None:
+    raise SystemExit(1)
+runtime = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runtime)
+
+options = SimpleNamespace(extra_attrs={'docflow_transform_config': payload['configPath']})
+results = []
+for item in payload.get('items') or []:
+    text = item.get('text')
+    if not isinstance(text, str):
+        continue
+    result = runtime.correct_dictionary_word_detail(
+        text,
+        page_number=payload.get('pageNumber'),
+        bbox=item.get('bbox'),
+        title='',
+        options=options,
+    )
+    corrected = result.get('text') if isinstance(result, dict) else None
+    if isinstance(corrected, str) and corrected != text:
+        results.append({
+            'index': item.get('index'),
+            'text': corrected,
+            'correction': result.get('correction') if isinstance(result.get('correction'), dict) else None,
+        })
+
+json.dump({'results': results, 'debug': runtime.get_dictionary_correction_debug()}, sys.stdout, ensure_ascii=False)
+PY;
+
+    $command = escapeshellarg(trim($python))
+        . ' -c '
+        . escapeshellarg($pythonCode)
+        . ' '
+        . escapeshellarg($inputPath)
+        . ' 2>/dev/null';
+    $output = [];
+    $exitCode = 1;
+    exec($command, $output, $exitCode);
+    @unlink($inputPath);
+    @unlink($configPath);
+    if ($exitCode !== 0 || $output === []) {
+        return $words;
+    }
+
+    $decoded = json_decode(implode("\n", $output), true);
+    if (!is_array($decoded) || !is_array($decoded['results'] ?? null)) {
+        return $words;
+    }
+
+    foreach ($decoded['results'] as $result) {
+        if (!is_array($result) || !is_int($result['index'] ?? null) || !is_string($result['text'] ?? null)) {
+            continue;
+        }
+        $index = (int) $result['index'];
+        if (!isset($words[$index]) || !is_array($words[$index])) {
+            continue;
+        }
+        $original = is_string($words[$index]['text'] ?? null) ? (string) $words[$index]['text'] : '';
+        $words[$index]['text'] = (string) $result['text'];
+        if (is_array($result['correction'] ?? null)) {
+            $words[$index]['dictionaryCorrection'] = $result['correction'];
+            error_log(
+                'OCR dictionary correction: '
+                . $original
+                . ' -> '
+                . (string) $result['text']
+                . ' reason: '
+                . (string) ($result['correction']['reason'] ?? '')
+                . ' source: '
+                . (string) ($result['correction']['source'] ?? '')
+            );
+        }
+    }
+
+    return $words;
 }
 
 function run_ocrmypdf(
@@ -7353,27 +7678,24 @@ function run_ocrmypdf(
         }
     }
 
-    $normalizedSubstitutions = active_ocr_pdf_text_substitutions($ocrPdfTextSubstitutions);
-    if ($normalizedSubstitutions !== []) {
-        $runtimeScriptPath = docflow_ocr_transform_runtime_script_path();
-        $transformConfigPath = write_docflow_ocr_transform_config($normalizedSubstitutions);
-        if (
-            $pluginPath === null
-            || $runtimeScriptPath === null
-            || $transformConfigPath === null
-            || !is_file($runtimeScriptPath)
-            || !is_file($transformConfigPath)
-        ) {
-            $GLOBALS['docflow_last_ocrmypdf_error'] = 'Docflow OCR-transform plugin could not be prepared';
-            return false;
-        }
-
-        $pluginSegment .= '--docflow-transform-script '
-            . escapeshellarg($runtimeScriptPath)
-            . ' --docflow-transform-config '
-            . escapeshellarg($transformConfigPath)
-            . ' ';
+    $runtimeScriptPath = docflow_ocr_transform_runtime_script_path();
+    $transformConfigPath = write_docflow_ocr_transform_config($ocrPdfTextSubstitutions);
+    if (
+        $pluginPath === null
+        || $runtimeScriptPath === null
+        || $transformConfigPath === null
+        || !is_file($runtimeScriptPath)
+        || !is_file($transformConfigPath)
+    ) {
+        $GLOBALS['docflow_last_ocrmypdf_error'] = 'Docflow OCR-transform plugin could not be prepared';
+        return false;
     }
+
+    $pluginSegment .= '--docflow-transform-script '
+        . escapeshellarg($runtimeScriptPath)
+        . ' --docflow-transform-config '
+        . escapeshellarg($transformConfigPath)
+        . ' ';
 
     $modeFlag = $skipExistingText ? '--mode skip' : '--mode redo';
     $safeOptimizeLevel = $optimizeLevel < 0 || $optimizeLevel > 3 ? 1 : $optimizeLevel;
@@ -11860,6 +12182,7 @@ function build_merged_objects_payload_from_rapidocr_page(
         }
     }
     $mergedWords = append_tesseract_only_missing_lines($mergedWords, $rapidocrLines, $tesseractWords);
+    $mergedWords = apply_docflow_dictionary_corrections_to_debug_words($mergedWords, $pageNumber);
     $mergedWords = apply_ocr_pdf_text_substitutions_to_debug_words($mergedWords, $ocrPdfTextSubstitutions);
 
     $pageText = render_grid_text_from_debug_payload([
@@ -24544,6 +24867,43 @@ function start_local_rapidocr_install(): void
     $scriptPath = PROJECT_ROOT . 'scripts/install-rapidocr.php';
     if (!is_file($scriptPath)) {
         throw new RuntimeException('RapidOCR-installationsscript saknas');
+    }
+
+    $command = escapeshellarg(PHP_BINARY)
+        . ' '
+        . escapeshellarg($scriptPath)
+        . ' > /dev/null 2>&1 &';
+    exec($command);
+}
+
+function start_local_spylls_install(): void
+{
+    $python = python_command_path();
+    if ($python === null) {
+        throw new RuntimeException('Python 3 måste vara installerat först');
+    }
+    if (!python_can_create_venv($python)) {
+        throw new RuntimeException('Python 3 saknar venv-stöd. Installera python3-venv först.');
+    }
+    if (spylls_install_runtime_status()['isInstalling']) {
+        return;
+    }
+
+    ensure_directory(dirname(spylls_local_venv_dir()));
+    ensure_directory(DATA_DIR);
+
+    $payload = [
+        'state' => 'installing',
+        'message' => 'Startar lokal installation...',
+        'startedAt' => now_iso(),
+        'finishedAt' => '',
+        'updatedAt' => now_iso(),
+    ];
+    write_json_file(spylls_install_status_path(), $payload);
+
+    $scriptPath = PROJECT_ROOT . 'scripts/install-spylls.php';
+    if (!is_file($scriptPath)) {
+        throw new RuntimeException('spylls-installationsscript saknas');
     }
 
     $command = escapeshellarg(PHP_BINARY)

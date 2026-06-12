@@ -331,6 +331,13 @@ let rapidocrInstallCommandEl = null;
 let rapidocrRefreshButtonEl = null;
 let rapidocrInstallLogButtonEl = null;
 let rapidocrLocalInstallButtonEl = null;
+let spyllsStatusBadgeWrapEl = null;
+let spyllsStatusBadgeEl = null;
+let spyllsInstallCommandEl = null;
+let spyllsRefreshButtonEl = null;
+let spyllsInstallLogButtonEl = null;
+let spyllsLocalInstallButtonEl = null;
+let ocrCustomDictionaryOpenEl = null;
 let ocrProcessingCancelEl = null;
 let ocrProcessingApplyEl = null;
 let archiveStructureListEl = null;
@@ -617,6 +624,7 @@ let multiLineTextBlocksBaselineJson = JSON.stringify(defaultMultiLineTextBlockSe
 let ocrPdfSubstitutionsDraft = [];
 let ocrPdfSubstitutionsBaselineJson = JSON.stringify([]);
 let rapidocrInstallPollTimer = null;
+let spyllsInstallPollTimer = null;
 let activeSettingsTabId = 'clients';
 let activeSettingsFooterPanelId = '';
 let activeSettingsSectionFooterPanelId = '';
@@ -21196,6 +21204,13 @@ function bindSettingsPanelRefs(tabId) {
 	    rapidocrRefreshButtonEl = document.getElementById('rapidocr-refresh-button');
       rapidocrInstallLogButtonEl = document.getElementById('rapidocr-install-log-button');
       rapidocrLocalInstallButtonEl = document.getElementById('rapidocr-local-install-button');
+	    spyllsStatusBadgeWrapEl = document.getElementById('spylls-status-badge-wrap');
+	    spyllsStatusBadgeEl = document.getElementById('spylls-status-badge');
+	    spyllsInstallCommandEl = document.getElementById('spylls-install-command');
+	    spyllsRefreshButtonEl = document.getElementById('spylls-refresh-button');
+      spyllsInstallLogButtonEl = document.getElementById('spylls-install-log-button');
+      spyllsLocalInstallButtonEl = document.getElementById('spylls-local-install-button');
+      ocrCustomDictionaryOpenEl = document.getElementById('ocr-custom-dictionary-open');
       bindSettingsCommandCopyButtons(settingsPanelEl(tabId));
 	    ocrProcessingCancelEl = document.getElementById('ocr-processing-cancel');
     ocrProcessingApplyEl = document.getElementById('ocr-processing-apply');
@@ -21292,9 +21307,38 @@ function bindSettingsPanelRefs(tabId) {
         alert(error.message || 'Kunde inte läsa installationsloggen.');
       }
     });
+    spyllsRefreshButtonEl.addEventListener('click', async () => {
+      startStatusRefreshSpin(spyllsRefreshButtonEl);
+      spyllsStatusBadgeWrapEl.classList.add('is-collapsed');
+      try {
+        await loadOcrProcessingSettings({ deferRefreshVisibility: true, statusTarget: 'spylls' });
+      } catch (error) {
+        renderSpyllsStatus(null, { deferRefreshVisibility: true });
+        alert('Kunde inte kontrollera spylls-status.');
+      }
+    });
+    spyllsLocalInstallButtonEl.addEventListener('click', async () => {
+      try {
+        await installLocalTool('spylls');
+      } catch (error) {
+        alert(error.message || 'Kunde inte installera spylls lokalt.');
+      }
+    });
+    spyllsInstallLogButtonEl.addEventListener('click', async () => {
+      try {
+        const log = await fetchLocalToolInstallLog('spylls');
+        alert(log || 'Ingen installationslogg finns ännu.');
+      } catch (error) {
+        alert(error.message || 'Kunde inte läsa installationsloggen.');
+      }
+    });
+    ocrCustomDictionaryOpenEl.addEventListener('click', () => {
+      openCustomDictionaryDialog();
+    });
     renderJbig2Status(null);
     renderPythonStatus(null);
     renderRapidocrStatus(null);
+    renderSpyllsStatus(null);
     renderOcrProcessingCommand();
   } else if (tabId === 'archive-structure') {
     archiveStructureListEl = document.getElementById('archive-structure-list');
@@ -21982,6 +22026,7 @@ function closeSettingsModal(force = false) {
   activeSettingsSectionFooterPanelId = '';
   closeSenderMergeOverlay();
   stopRapidocrInstallPolling();
+  stopSpyllsInstallPolling();
   pendingUnlinkedSenderIdentifierKey = '';
   settingsModalEl.classList.add('hidden');
   return true;
@@ -21990,6 +22035,7 @@ function closeSettingsModal(force = false) {
 function setSettingsTab(tabId) {
   if (activeSettingsTabId === 'ocr-processing' && tabId !== 'ocr-processing') {
     stopRapidocrInstallPolling();
+    stopSpyllsInstallPolling();
   }
   if (tabId !== 'senders') {
     closeSenderMergeOverlay();
@@ -35061,6 +35107,23 @@ function renderRapidocrStatus(rapidocr, options = {}) {
   syncRapidocrInstallPolling(rapidocr);
 }
 
+function renderSpyllsStatus(spylls, options = {}) {
+  renderInstallableOcrToolStatus(spylls, {
+    badgeEl: spyllsStatusBadgeEl,
+    badgeWrapEl: spyllsStatusBadgeWrapEl,
+    refreshButtonEl: spyllsRefreshButtonEl,
+    installCommandEl: spyllsInstallCommandEl,
+    logButtonEl: spyllsInstallLogButtonEl,
+    localInstallButtonEl: spyllsLocalInstallButtonEl,
+  }, 'python3 -m pip install --break-system-packages spylls', options);
+  if (spyllsStatusBadgeEl && spylls && spylls.systemDictionaryStatus === 'spylls_missing') {
+    spyllsStatusBadgeEl.title = 'Systemordlistans Hunspell-kontroll är inte tillgänglig eftersom spylls saknas.';
+  } else if (spyllsStatusBadgeEl && spylls && spylls.systemDictionaryStatus === 'dictionary_missing') {
+    spyllsStatusBadgeEl.title = 'Systemordlistans .dic/.aff-filer saknas.';
+  }
+  syncSpyllsInstallPolling(spylls);
+}
+
 function stopRapidocrInstallPolling() {
   if (rapidocrInstallPollTimer === null) {
     return;
@@ -35090,6 +35153,37 @@ function syncRapidocrInstallPolling(rapidocr) {
     return;
   }
   stopRapidocrInstallPolling();
+}
+
+function stopSpyllsInstallPolling() {
+  if (spyllsInstallPollTimer === null) {
+    return;
+  }
+  window.clearTimeout(spyllsInstallPollTimer);
+  spyllsInstallPollTimer = null;
+}
+
+function scheduleSpyllsInstallPolling(delay = 2000) {
+  stopSpyllsInstallPolling();
+  spyllsInstallPollTimer = window.setTimeout(async () => {
+    spyllsInstallPollTimer = null;
+    if (settingsModalEl.classList.contains('hidden') || activeSettingsTabId !== 'ocr-processing') {
+      return;
+    }
+    try {
+      await loadOcrProcessingSettings({ statusTarget: 'spylls', animate: false });
+    } catch (error) {
+      scheduleSpyllsInstallPolling(2500);
+    }
+  }, delay);
+}
+
+function syncSpyllsInstallPolling(spylls) {
+  if (spylls && spylls.isInstalling === true) {
+    scheduleSpyllsInstallPolling();
+    return;
+  }
+  stopSpyllsInstallPolling();
 }
 
 async function installLocalTool(tool) {
@@ -35134,6 +35228,112 @@ async function fetchLocalToolInstallLog(tool) {
   return payload.log;
 }
 
+async function fetchCustomDictionary() {
+  const response = await fetch('/api/get-custom-dictionary.php', { cache: 'no-store' });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || typeof payload.text !== 'string') {
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte ladda ordlistan.');
+  }
+  return payload.text;
+}
+
+async function saveCustomDictionary(text) {
+  const response = await fetch('/api/save-custom-dictionary.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ text })
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || payload.ok !== true || typeof payload.text !== 'string') {
+    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte spara ordlistan.');
+  }
+  return payload.text;
+}
+
+function openCustomDictionaryDialog() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'settings-dialog label-import-dialog custom-dictionary-dialog';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-labelledby', 'custom-dictionary-dialog-title');
+
+  const title = document.createElement('h3');
+  title.id = 'custom-dictionary-dialog-title';
+  title.textContent = 'Egen ordlista';
+
+  const body = document.createElement('div');
+  body.className = 'label-import-dialog-body custom-dictionary-dialog-body';
+
+  const help = document.createElement('p');
+  help.textContent = 'Ord i den egna ordlistan används vid försiktig OCR-korrigering, t.ex. när Ä kan vara felläst Å.';
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'custom-dictionary-textarea';
+  textarea.spellcheck = false;
+  textarea.placeholder = 'uttagstillstånd\növerförmyndarnämnd\nårsräkning\nförvaltarskap\ngodmanskap';
+  textarea.disabled = true;
+
+  const status = document.createElement('p');
+  status.className = 'settings-help custom-dictionary-status';
+  status.textContent = 'Laddar ordlista...';
+
+  body.append(help, textarea, status);
+
+  const actions = document.createElement('div');
+  actions.className = 'panel-actions';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'button-danger';
+  closeButton.textContent = 'Avbryt';
+  const saveButton = document.createElement('button');
+  saveButton.type = 'button';
+  saveButton.className = 'button-success';
+  saveButton.textContent = 'Spara';
+  saveButton.disabled = true;
+  actions.append(closeButton, saveButton);
+
+  dialog.append(title, body, actions);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    overlay.remove();
+  };
+
+  overlay.addEventListener('click', close);
+  dialog.addEventListener('click', (event) => event.stopPropagation());
+  closeButton.addEventListener('click', close);
+  saveButton.addEventListener('click', async () => {
+    saveButton.disabled = true;
+    status.textContent = 'Sparar...';
+    try {
+      textarea.value = await saveCustomDictionary(textarea.value);
+      status.textContent = 'Ordlistan sparades.';
+      close();
+    } catch (error) {
+      status.textContent = error.message || 'Kunde inte spara ordlistan.';
+      saveButton.disabled = false;
+    }
+  });
+
+  fetchCustomDictionary()
+    .then((text) => {
+      textarea.value = text;
+      textarea.disabled = false;
+      saveButton.disabled = false;
+      status.textContent = 'Ett ord per rad. Tomma rader tas bort vid sparning.';
+      textarea.focus();
+    })
+    .catch((error) => {
+      status.textContent = error.message || 'Kunde inte ladda ordlistan.';
+    });
+}
+
 function renderOcrToolStatuses(payload, options = {}) {
   const target = typeof options.statusTarget === 'string' ? options.statusTarget : '';
   const silentOptions = { ...options, animate: false, deferRefreshVisibility: false };
@@ -35145,17 +35345,26 @@ function renderOcrToolStatuses(payload, options = {}) {
   if (target === 'python') {
     renderPythonStatus(payload.python, options);
     renderRapidocrStatus(payload.rapidocr, silentOptions);
+    renderSpyllsStatus(payload.spylls, silentOptions);
     return;
   }
   if (target === 'rapidocr') {
     renderPythonStatus(payload.python, silentOptions);
     renderRapidocrStatus(payload.rapidocr, options);
+    renderSpyllsStatus(payload.spylls, silentOptions);
+    return;
+  }
+  if (target === 'spylls') {
+    renderPythonStatus(payload.python, silentOptions);
+    renderRapidocrStatus(payload.rapidocr, silentOptions);
+    renderSpyllsStatus(payload.spylls, options);
     return;
   }
 
   renderJbig2Status(payload.jbig2, options);
   renderPythonStatus(payload.python, options);
   renderRapidocrStatus(payload.rapidocr, options);
+  renderSpyllsStatus(payload.spylls, options);
 }
 
 function renderPythonDependentStatuses(python) {
@@ -35324,6 +35533,8 @@ async function loadOcrProcessingSettings(options = {}) {
     || typeof payload.python !== 'object'
     || !payload.rapidocr
     || typeof payload.rapidocr !== 'object'
+    || !payload.spylls
+    || typeof payload.spylls !== 'object'
   ) {
     throw new Error('Ogiltigt svar för OCR-inställningar');
   }

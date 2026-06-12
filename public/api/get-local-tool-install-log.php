@@ -4,15 +4,15 @@ declare(strict_types=1);
 require_once __DIR__ . '/_bootstrap.php';
 
 $tool = is_string($_GET['tool'] ?? null) ? trim((string) $_GET['tool']) : '';
-if ($tool !== 'rapidocr') {
+if ($tool !== 'rapidocr' && $tool !== 'spylls') {
     json_response(['error' => 'Unknown tool'], 400);
     exit;
 }
 
-$path = rapidocr_install_log_path();
+$path = $tool === 'rapidocr' ? rapidocr_install_log_path() : spylls_install_log_path();
 if (!is_file($path)) {
     json_response([
-        'tool' => 'rapidocr',
+        'tool' => $tool,
         'log' => '',
     ]);
     exit;
@@ -25,6 +25,6 @@ if ($log === false) {
 }
 
 json_response([
-    'tool' => 'rapidocr',
+    'tool' => $tool,
     'log' => $log,
 ]);

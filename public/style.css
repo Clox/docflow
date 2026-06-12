@@ -4632,6 +4632,10 @@ body.is-resizing-sidebar {
   color: #111827;
 }
 
+.custom-dictionary-dialog .custom-dictionary-textarea {
+  min-height: 320px;
+}
+
 .label-import-error {
   color: #b91c1c;
   font-size: 13px;

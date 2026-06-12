@@ -15,26 +15,17 @@ if ($raw === false) {
 }
 
 $payload = json_decode($raw, true);
-if (!is_array($payload)) {
-    json_response(['error' => 'Invalid JSON payload'], 400);
-    exit;
-}
-
-$tool = is_string($payload['tool'] ?? null) ? trim((string) $payload['tool']) : '';
-if ($tool !== 'rapidocr' && $tool !== 'spylls') {
-    json_response(['error' => 'Local installation is not supported for this tool'], 400);
+if (!is_array($payload) || !is_string($payload['text'] ?? null)) {
+    json_response(['error' => 'Invalid dictionary payload'], 400);
     exit;
 }
 
 try {
-    if ($tool === 'rapidocr') {
-        start_local_rapidocr_install();
-    } else {
-        start_local_spylls_install();
-    }
+    $text = save_docflow_custom_dictionary_text((string) $payload['text']);
     json_response([
         'ok' => true,
-        'tool' => $tool,
+        'text' => $text,
+        'path' => docflow_custom_dictionary_path(),
     ]);
 } catch (Throwable $e) {
     json_response([

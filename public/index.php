@@ -769,6 +769,25 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <pre id="rapidocr-install-command" class="settings-command"></pre>
         </div>
       </div>
+      <div id="ocr-spylls-section" class="ocr-status-card ocr-status-card-child">
+        <div class="ocr-status-row">
+          <span class="ocr-status-label">spylls</span>
+          <div class="ocr-status-actions">
+            <span id="spylls-status-badge-wrap" class="ocr-status-badge-wrap">
+              <span id="spylls-status-badge" class="ocr-status-badge">Kontrollerar...</span>
+            </span>
+            <button id="spylls-install-log-button" class="ocr-status-action-button hidden" type="button">Visa logg</button>
+            <button id="spylls-local-install-button" class="ocr-status-action-button" type="button" disabled>Installera lokalt</button>
+            <button id="spylls-refresh-button" class="ocr-status-refresh hidden" type="button" aria-label="Kontrollera igen" title="Kontrollera igen">↻</button>
+          </div>
+        </div>
+        <p>spylls används för Hunspell-kontroll mot systemordlistan vid försiktig OCR-korrigering. Om spylls saknas används bara den egna Docflow-ordlistan.</p>
+        <p>Kommando för att installera globalt:</p>
+        <div class="settings-command-wrap">
+          <button class="settings-command-copy" type="button" data-copy-target="spylls-install-command">Kopiera</button>
+          <pre id="spylls-install-command" class="settings-command"></pre>
+        </div>
+      </div>
     </div>
     <p>OCRmyPDF-kommandot som körs är i praktiken:</p>
     <div id="ocr-processing-command-section" class="settings-command-wrap">
@@ -803,6 +822,11 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </select>
     </div>
     <p class="settings-help"><code>pdftotext -layout</code> är den äldre direkta textutläsningen. <code>bbox-grid</code> läser ord och koordinater via <code>pdftotext -bbox-layout</code> och bygger sedan en rutnätstext från samma data.</p>
+    <div id="ocr-dictionary-section" class="settings-group">
+      <h3>OCR-korrigering</h3>
+      <p>Ordlistor används för mycket försiktig OCR-korrigering innan texten bäddas in i PDF:en.</p>
+      <button id="ocr-custom-dictionary-open" type="button">Öppna ordlista</button>
+    </div>
     <div id="ocr-pdf-substitutions-section" class="settings-group">
       <h3>Textersättningar</h3>
       <p>Textersättningar ändrar OCR-texten innan PDF-filens textlager byggs.</p>
