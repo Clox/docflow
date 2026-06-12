@@ -5476,8 +5476,19 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   display: grid;
   align-items: start;
   justify-content: stretch;
+  gap: 8px;
   border-color: #bfdbfe;
   background: #f8fbff;
+}
+
+.ocr-debug-compare-file-children {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+}
+
+.ocr-debug-compare-file-children .ocr-debug-compare-file-row {
+  margin: 0;
 }
 
 .ocr-debug-compare-file-main {

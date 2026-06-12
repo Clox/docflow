@@ -8546,6 +8546,81 @@ function createOcrDebugMetadataDiffRow(diff, sides) {
   return row;
 }
 
+function ocrDebugCompareJobIdFromRelativePath(relativePath) {
+  if (typeof relativePath !== 'string') {
+    return '';
+  }
+  const match = relativePath.match(/^(?:text|merged_objects|document_metadata)\/([A-Za-z0-9_-]+)\.(?:txt|json)$/u);
+  return match ? match[1] : '';
+}
+
+function createOcrDebugCompareDocumentShell(jobId) {
+  const row = document.createElement('div');
+  row.className = 'ocr-debug-compare-file-row ocr-debug-compare-file-row--metadata ocr-debug-compare-file-row--document';
+
+  const header = document.createElement('div');
+  header.className = 'ocr-debug-metadata-document-header';
+  const title = document.createElement('div');
+  title.className = 'ocr-debug-metadata-document-title';
+  title.textContent = 'Dokument';
+  const job = document.createElement('div');
+  job.className = 'ocr-debug-metadata-document-job';
+  job.textContent = jobId !== '' ? `Jobb: ${jobId}` : '';
+  header.append(title, job);
+  row.appendChild(header);
+  return row;
+}
+
+function createOcrDebugCompareFileRow(file, sides) {
+  const row = document.createElement('div');
+  row.className = `ocr-debug-compare-file-row ocr-debug-compare-file-row--${file.status || 'unknown'}`;
+
+  const main = document.createElement('div');
+  main.className = 'ocr-debug-compare-file-main';
+  const status = document.createElement('span');
+  status.className = 'ocr-debug-compare-file-status';
+  const mappedStatus = file.status === 'onlyInA' && sides.oldKey === 'right'
+    ? 'onlyInB'
+    : (file.status === 'onlyInB' && sides.oldKey === 'right' ? 'onlyInA' : file.status);
+  status.textContent = ocrDebugExportStatusLabel(mappedStatus);
+  const path = document.createElement('span');
+  path.className = 'ocr-debug-compare-file-path';
+  path.textContent = ocrDebugExportFileDisplayLabel(file.relativePath);
+  path.title = file.relativePath;
+  main.append(status, path);
+  row.appendChild(main);
+
+  const fileMeldCommand = typeof file.meldCommand === 'string' ? file.meldCommand.trim() : '';
+  const canCompareFile = file.status === 'changed'
+    && (fileMeldCommand !== '' || /^(?:text|merged_objects|document_metadata)\/[A-Za-z0-9_-]+\.(?:txt|json)$/u.test(file.relativePath));
+  if (canCompareFile) {
+    row.appendChild(createOcrDebugMeldSplitButton({
+      label: 'Jämför',
+      toggleLabel: 'Fler Meld-åtgärder för fil',
+      command: fileMeldCommand,
+      relativePath: file.relativePath,
+    }));
+  }
+
+  return row;
+}
+
+function appendOcrDebugCompareFileRows(documentRow, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return;
+  }
+  const container = document.createElement('div');
+  container.className = 'ocr-debug-compare-file-children';
+  rows.forEach((row) => {
+    if (row instanceof HTMLElement) {
+      container.appendChild(row);
+    }
+  });
+  if (container.childNodes.length > 0) {
+    documentRow.appendChild(container);
+  }
+}
+
 function renderOcrDebugExportCompareResult() {
   if (!(ocrDebugExportCompareResultEl instanceof HTMLElement)) {
     return;
@@ -8708,43 +8783,46 @@ function renderOcrDebugExportCompareResult() {
     empty.textContent = showIdentical ? 'Inga filer att visa.' : 'Inga ändrade eller saknade filer.';
     fileList.appendChild(empty);
   } else {
+    const metadataByJobId = new Map();
+    const documentOrder = [];
     metadataDiffs.forEach((diff) => {
-      fileList.appendChild(createOcrDebugMetadataDiffRow(diff, sides));
+      const jobId = diff && typeof diff.jobId === 'string' ? diff.jobId : '';
+      if (jobId === '') {
+        fileList.appendChild(createOcrDebugMetadataDiffRow(diff, sides));
+        return;
+      }
+      metadataByJobId.set(jobId, diff);
+      documentOrder.push(jobId);
     });
+    const filesByJobId = new Map();
+    const ungroupedFileRows = [];
     visibleFiles.forEach((file) => {
       if (!file || typeof file.relativePath !== 'string') {
         return;
       }
-      const row = document.createElement('div');
-      row.className = `ocr-debug-compare-file-row ocr-debug-compare-file-row--${file.status || 'unknown'}`;
-
-      const main = document.createElement('div');
-      main.className = 'ocr-debug-compare-file-main';
-      const status = document.createElement('span');
-      status.className = 'ocr-debug-compare-file-status';
-      const mappedStatus = file.status === 'onlyInA' && sides.oldKey === 'right'
-        ? 'onlyInB'
-        : (file.status === 'onlyInB' && sides.oldKey === 'right' ? 'onlyInA' : file.status);
-      status.textContent = ocrDebugExportStatusLabel(mappedStatus);
-      const path = document.createElement('span');
-      path.className = 'ocr-debug-compare-file-path';
-      path.textContent = ocrDebugExportFileDisplayLabel(file.relativePath);
-      path.title = file.relativePath;
-      main.append(status, path);
-      row.appendChild(main);
-
-      const fileMeldCommand = typeof file.meldCommand === 'string' ? file.meldCommand.trim() : '';
-      const canCompareFile = file.status === 'changed'
-        && (fileMeldCommand !== '' || /^(?:text|merged_objects|document_metadata)\/[A-Za-z0-9_-]+\.(?:txt|json)$/u.test(file.relativePath));
-      if (canCompareFile) {
-        row.appendChild(createOcrDebugMeldSplitButton({
-          label: 'Jämför',
-          toggleLabel: 'Fler Meld-åtgärder för fil',
-          command: fileMeldCommand,
-          relativePath: file.relativePath,
-        }));
+      const row = createOcrDebugCompareFileRow(file, sides);
+      const jobId = ocrDebugCompareJobIdFromRelativePath(file.relativePath);
+      if (jobId === '') {
+        ungroupedFileRows.push(row);
+        return;
       }
-
+      if (!filesByJobId.has(jobId)) {
+        filesByJobId.set(jobId, []);
+      }
+      filesByJobId.get(jobId).push(row);
+      if (!documentOrder.includes(jobId)) {
+        documentOrder.push(jobId);
+      }
+    });
+    documentOrder.forEach((jobId) => {
+      const diff = metadataByJobId.get(jobId);
+      const row = diff
+        ? createOcrDebugMetadataDiffRow(diff, sides)
+        : createOcrDebugCompareDocumentShell(jobId);
+      appendOcrDebugCompareFileRows(row, filesByJobId.get(jobId) || []);
+      fileList.appendChild(row);
+    });
+    ungroupedFileRows.forEach((row) => {
       fileList.appendChild(row);
     });
   }
