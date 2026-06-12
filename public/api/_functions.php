@@ -93,6 +93,9 @@ function load_config(): array
     $ocrPdfTextSubstitutions = sanitize_ocr_pdf_text_substitutions(
         $config['ocrPdfTextSubstitutions'] ?? []
     );
+    $multiLineTextBlocks = normalize_multiline_text_block_settings(
+        $config['multiLineTextBlocks'] ?? []
+    );
 
     if (!is_string($inboxDirectory) || $inboxDirectory === '') {
         throw new RuntimeException('config.json: inboxDirectory is required');
@@ -154,7 +157,49 @@ function load_config(): array
         'stateUpdateTransport' => $stateUpdateTransport,
         'ocrTextExtractionMethod' => $ocrTextExtractionMethod,
         'ocrPdfTextSubstitutions' => $ocrPdfTextSubstitutions,
+        'multiLineTextBlocks' => $multiLineTextBlocks,
         'chromeExtensionSuppressMissingNotice' => $chromeExtensionSuppressMissingNotice,
+    ];
+}
+
+function default_multiline_text_block_settings(): array
+{
+    return [
+        'maxLines' => 3,
+        'maxLineDistanceLineHeights' => 2.0,
+        'maxTextSizeRatio' => 1.5,
+        'minXOverlapRatio' => 0.3,
+        'maxHorizontalOffsetLineHeights' => 3.0,
+    ];
+}
+
+function normalize_multiline_text_block_settings(mixed $input): array
+{
+    $defaults = default_multiline_text_block_settings();
+    $source = is_array($input) ? $input : [];
+
+    $maxLines = is_numeric($source['maxLines'] ?? null)
+        ? (int) round((float) $source['maxLines'])
+        : $defaults['maxLines'];
+    $maxLineDistance = is_numeric($source['maxLineDistanceLineHeights'] ?? null)
+        ? (float) $source['maxLineDistanceLineHeights']
+        : $defaults['maxLineDistanceLineHeights'];
+    $maxTextSizeRatio = is_numeric($source['maxTextSizeRatio'] ?? null)
+        ? (float) $source['maxTextSizeRatio']
+        : $defaults['maxTextSizeRatio'];
+    $minXOverlapRatio = is_numeric($source['minXOverlapRatio'] ?? null)
+        ? (float) $source['minXOverlapRatio']
+        : $defaults['minXOverlapRatio'];
+    $maxHorizontalOffset = is_numeric($source['maxHorizontalOffsetLineHeights'] ?? null)
+        ? (float) $source['maxHorizontalOffsetLineHeights']
+        : $defaults['maxHorizontalOffsetLineHeights'];
+
+    return [
+        'maxLines' => max(1, min(8, $maxLines)),
+        'maxLineDistanceLineHeights' => max(0.0, min(10.0, $maxLineDistance)),
+        'maxTextSizeRatio' => max(1.0, min(5.0, $maxTextSizeRatio)),
+        'minXOverlapRatio' => max(0.0, min(1.0, $minXOverlapRatio)),
+        'maxHorizontalOffsetLineHeights' => max(0.0, min(20.0, $maxHorizontalOffset)),
     ];
 }
 
@@ -670,6 +715,9 @@ function build_configuration_export_payload(): array
             'ocrPdfTextSubstitutions' => is_array($config['ocrPdfTextSubstitutions'] ?? null)
                 ? sanitize_ocr_pdf_text_substitutions($config['ocrPdfTextSubstitutions'])
                 : [],
+            'multiLineTextBlocks' => normalize_multiline_text_block_settings(
+                $config['multiLineTextBlocks'] ?? []
+            ),
         ],
         'system' => [
             'stateUpdateTransport' => (string) ($config['stateUpdateTransport'] ?? 'polling'),
@@ -1045,6 +1093,9 @@ function apply_configuration_import_payload(array $payload): array
     if (array_key_exists('ocrPdfTextSubstitutions', $payload['ocr'])) {
         $nextConfig['ocrPdfTextSubstitutions'] = sanitize_ocr_pdf_text_substitutions($payload['ocr']['ocrPdfTextSubstitutions']);
     }
+    if (array_key_exists('multiLineTextBlocks', $payload['ocr'])) {
+        $nextConfig['multiLineTextBlocks'] = normalize_multiline_text_block_settings($payload['ocr']['multiLineTextBlocks']);
+    }
     if (array_key_exists('stateUpdateTransport', $payload['system'])) {
         $nextConfig['stateUpdateTransport'] = sanitize_state_update_transport_value($payload['system']['stateUpdateTransport'], 'polling');
     }
@@ -1131,6 +1182,8 @@ function apply_configuration_import_payload(array $payload): array
             sanitize_ocr_pdf_text_substitutions($savedConfig['ocrPdfTextSubstitutions'] ?? []),
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
         )
+        || normalize_multiline_text_block_settings($currentConfig['multiLineTextBlocks'] ?? [])
+            !== normalize_multiline_text_block_settings($savedConfig['multiLineTextBlocks'] ?? [])
     );
     $clientConfigChanged = json_encode($currentClients, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
         !== json_encode($importedClients, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -1176,6 +1229,9 @@ function apply_configuration_import_payload(array $payload): array
             'ocrPdfTextSubstitutions' => is_array($savedConfig['ocrPdfTextSubstitutions'] ?? null)
                 ? sanitize_ocr_pdf_text_substitutions($savedConfig['ocrPdfTextSubstitutions'])
                 : [],
+            'multiLineTextBlocks' => normalize_multiline_text_block_settings(
+                $savedConfig['multiLineTextBlocks'] ?? []
+            ),
         ],
         'system' => [
             'stateUpdateTransport' => (string) ($savedConfig['stateUpdateTransport'] ?? 'polling'),
@@ -2585,6 +2641,7 @@ function valid_extraction_field_extractor(string $extractor, string $fallback = 
         'due_date',
         'primary_date',
         'title',
+        'sender_name_in_document',
         'bankgiro',
         'plusgiro',
         'supplier',
@@ -2750,6 +2807,16 @@ function system_extraction_field_definitions(): array
             'valueType' => 'text',
             'extractor' => 'title',
             'titleHeuristics' => default_title_heuristics(),
+        ],
+        'sender_name_in_document' => [
+            'name' => 'Avsändarnamn i dokument',
+            'aliases' => [],
+            'searchString' => '',
+            'isRegex' => false,
+            'normalizationType' => 'none',
+            'normalizationChars' => '',
+            'valueType' => 'text',
+            'extractor' => 'sender_name_in_document',
         ],
     ];
 }
@@ -17879,6 +17946,324 @@ function extraction_field_layout_value_spans_for_line(
     return array_values($spans);
 }
 
+function multiline_text_block_bbox_union(?array $left, ?array $right): ?array
+{
+    $normalizedLeft = normalize_debug_word_bbox($left);
+    $normalizedRight = normalize_debug_word_bbox($right);
+    if ($normalizedLeft === null) {
+        return $normalizedRight;
+    }
+    if ($normalizedRight === null) {
+        return $normalizedLeft;
+    }
+
+    return [
+        'x0' => min($normalizedLeft['x0'], $normalizedRight['x0']),
+        'y0' => min($normalizedLeft['y0'], $normalizedRight['y0']),
+        'x1' => max($normalizedLeft['x1'], $normalizedRight['x1']),
+        'y1' => max($normalizedLeft['y1'], $normalizedRight['y1']),
+    ];
+}
+
+function multiline_text_block_fragments_for_lines(array $lines, array $lineGeometries): array
+{
+    $fragments = [];
+    foreach ($lines as $lineIndex => $line) {
+        if (!is_string($line) || trim($line) === '') {
+            continue;
+        }
+        $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+        foreach (extraction_field_layout_value_spans_for_line($line, $lineGeometry) as $span) {
+            if (!is_array($span)) {
+                continue;
+            }
+            $start = is_int($span['start'] ?? null) ? (int) $span['start'] : -1;
+            $end = is_int($span['end'] ?? null) ? (int) $span['end'] : -1;
+            $text = is_string($span['text'] ?? null) ? normalize_inline_whitespace((string) $span['text']) : '';
+            $bbox = $lineGeometry !== null ? line_geometry_span_bbox($lineGeometry, $start, $end) : null;
+            if ($start < 0 || $end <= $start || $text === '' || $bbox === null) {
+                continue;
+            }
+
+            $fragments[] = [
+                'text' => $text,
+                'lineIndex' => (int) $lineIndex,
+                'start' => $start,
+                'end' => $end,
+                'bbox' => $bbox,
+                'bboxIndexes' => line_geometry_span_word_bbox_indexes($lineGeometry, $start, $end),
+                'pageNumber' => matching_line_page_number($lineGeometries, (int) $lineIndex),
+            ];
+        }
+    }
+
+    usort($fragments, static function (array $left, array $right): int {
+        $lineCompare = ((int) ($left['lineIndex'] ?? PHP_INT_MAX)) <=> ((int) ($right['lineIndex'] ?? PHP_INT_MAX));
+        if ($lineCompare !== 0) {
+            return $lineCompare;
+        }
+        return ((int) ($left['start'] ?? PHP_INT_MAX)) <=> ((int) ($right['start'] ?? PHP_INT_MAX));
+    });
+    return array_values($fragments);
+}
+
+function multiline_text_block_fragments_can_join(array $upper, array $lower, array $settings): bool
+{
+    $upperBbox = normalize_debug_word_bbox($upper['bbox'] ?? null);
+    $lowerBbox = normalize_debug_word_bbox($lower['bbox'] ?? null);
+    if ($upperBbox === null || $lowerBbox === null) {
+        return false;
+    }
+    if (($upper['pageNumber'] ?? null) !== ($lower['pageNumber'] ?? null)) {
+        return false;
+    }
+    if ((int) ($lower['lineIndex'] ?? -1) <= (int) ($upper['lineIndex'] ?? -1)) {
+        return false;
+    }
+
+    $upperHeight = max(1.0, (float) $upperBbox['y1'] - (float) $upperBbox['y0']);
+    $lowerHeight = max(1.0, (float) $lowerBbox['y1'] - (float) $lowerBbox['y0']);
+    $sizeRatio = max($upperHeight, $lowerHeight) / min($upperHeight, $lowerHeight);
+    if ($sizeRatio > (float) $settings['maxTextSizeRatio']) {
+        return false;
+    }
+
+    $averageHeight = max(1.0, ($upperHeight + $lowerHeight) / 2.0);
+    $verticalGap = max(0.0, (float) $lowerBbox['y0'] - (float) $upperBbox['y1']);
+    if ($verticalGap / $averageHeight > (float) $settings['maxLineDistanceLineHeights']) {
+        return false;
+    }
+
+    $upperWidth = max(1.0, (float) $upperBbox['x1'] - (float) $upperBbox['x0']);
+    $lowerWidth = max(1.0, (float) $lowerBbox['x1'] - (float) $lowerBbox['x0']);
+    $xOverlap = max(
+        0.0,
+        min((float) $upperBbox['x1'], (float) $lowerBbox['x1'])
+            - max((float) $upperBbox['x0'], (float) $lowerBbox['x0'])
+    );
+    if ($xOverlap / min($upperWidth, $lowerWidth) < (float) $settings['minXOverlapRatio']) {
+        return false;
+    }
+
+    $horizontalOffset = abs((float) $upperBbox['x0'] - (float) $lowerBbox['x0']);
+    return $horizontalOffset / $averageHeight <= (float) $settings['maxHorizontalOffsetLineHeights'];
+}
+
+function build_multiline_text_blocks(
+    array $lines,
+    array $lineGeometries,
+    array $settings = []
+): array {
+    $settings = normalize_multiline_text_block_settings($settings);
+    $fragments = multiline_text_block_fragments_for_lines($lines, $lineGeometries);
+    if ($fragments === []) {
+        return [];
+    }
+
+    $blocksByKey = [];
+    $appendBlock = static function (array $parts) use (&$blocksByKey): void {
+        if ($parts === []) {
+            return;
+        }
+        $texts = [];
+        $lineIndexes = [];
+        $bboxIndexes = [];
+        $bbox = null;
+        foreach ($parts as $part) {
+            $text = is_string($part['text'] ?? null) ? trim((string) $part['text']) : '';
+            if ($text !== '') {
+                $texts[] = $text;
+            }
+            $lineIndexes[] = (int) ($part['lineIndex'] ?? -1);
+            foreach (is_array($part['bboxIndexes'] ?? null) ? $part['bboxIndexes'] : [] as $index) {
+                if (is_int($index) && $index > 0) {
+                    $bboxIndexes[$index] = true;
+                }
+            }
+            $bbox = multiline_text_block_bbox_union($bbox, is_array($part['bbox'] ?? null) ? $part['bbox'] : null);
+        }
+        $text = normalize_inline_whitespace(implode(' ', $texts));
+        if ($text === '' || $bbox === null) {
+            return;
+        }
+        $first = $parts[0];
+        $last = $parts[count($parts) - 1];
+        $resolvedBboxIndexes = array_keys($bboxIndexes);
+        sort($resolvedBboxIndexes, SORT_NUMERIC);
+        $blockType = count($parts) > 1 ? 'multiline' : 'single_line';
+        $key = implode('|', [
+            $blockType,
+            implode(',', $lineIndexes),
+            (string) ($first['start'] ?? 0),
+            (string) ($last['end'] ?? 0),
+            $text,
+        ]);
+        $blocksByKey[$key] = [
+            'text' => $text,
+            'blockType' => $blockType,
+            'lineCount' => count($parts),
+            'lineIndexes' => array_values($lineIndexes),
+            'lineIndex' => (int) ($first['lineIndex'] ?? -1),
+            'start' => (int) ($first['start'] ?? 0),
+            'end' => (int) ($last['end'] ?? 0),
+            'bbox' => $bbox,
+            'bboxIndexes' => array_values($resolvedBboxIndexes),
+            'pageNumber' => is_int($first['pageNumber'] ?? null) ? (int) $first['pageNumber'] : null,
+            'parts' => array_values($parts),
+        ];
+    };
+
+    $fragmentCount = count($fragments);
+    $extend = static function (array $parts, int $startIndex) use (
+        &$extend,
+        $fragments,
+        $fragmentCount,
+        $settings,
+        $appendBlock
+    ): void {
+        $appendBlock($parts);
+        if (count($parts) >= (int) $settings['maxLines']) {
+            return;
+        }
+
+        $last = $parts[count($parts) - 1];
+        for ($index = $startIndex; $index < $fragmentCount; $index++) {
+            $candidate = $fragments[$index];
+            if ((int) ($candidate['lineIndex'] ?? -1) <= (int) ($last['lineIndex'] ?? -1)) {
+                continue;
+            }
+            if (!multiline_text_block_fragments_can_join($last, $candidate, $settings)) {
+                continue;
+            }
+            $extend([...$parts, $candidate], $index + 1);
+        }
+    };
+
+    foreach ($fragments as $index => $fragment) {
+        $extend([$fragment], $index + 1);
+    }
+
+    return array_values($blocksByKey);
+}
+
+function sender_name_in_document_lookup_from_entries(array $entries): array
+{
+    $lookup = [];
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $name = is_string($entry['name'] ?? null) ? trim((string) $entry['name']) : '';
+        $normalizedName = is_string($entry['normalizedName'] ?? null)
+            ? trim((string) $entry['normalizedName'])
+            : '';
+        if ($normalizedName === '' && $name !== '') {
+            $normalizedName = \Docflow\Senders\NameNormalizer::normalize($name);
+        }
+        $senderId = isset($entry['senderId']) ? (int) $entry['senderId'] : 0;
+        $senderUnitId = isset($entry['senderUnitId']) && $entry['senderUnitId'] !== null
+            ? (int) $entry['senderUnitId']
+            : null;
+        $matchType = ($entry['type'] ?? null) === 'sender_unit' || $senderUnitId !== null
+            ? 'sender_unit'
+            : 'sender_name';
+        if ($name === '' || $normalizedName === '' || $senderId < 1) {
+            continue;
+        }
+        $lookup[$normalizedName][] = [
+            'senderId' => $senderId,
+            'senderUnitId' => $senderUnitId,
+            'matchedName' => $name,
+            'matchType' => $matchType,
+        ];
+    }
+    return $lookup;
+}
+
+function extract_sender_name_in_document_field_result(
+    array $lines,
+    array $lineGeometries,
+    array $settings = [],
+    ?array $nameEntries = null
+): array {
+    $lookup = sender_name_in_document_lookup_from_entries(
+        is_array($nameEntries) ? $nameEntries : cached_sender_name_entries_for_analysis()
+    );
+    $matches = [];
+    foreach (build_multiline_text_blocks($lines, $lineGeometries, $settings) as $block) {
+        if (!is_array($block)) {
+            continue;
+        }
+        $text = is_string($block['text'] ?? null) ? trim((string) $block['text']) : '';
+        $normalizedText = $text !== '' ? \Docflow\Senders\NameNormalizer::normalize($text) : '';
+        if ($normalizedText === '' || !is_array($lookup[$normalizedText] ?? null)) {
+            continue;
+        }
+
+        foreach ($lookup[$normalizedText] as $matchedEntry) {
+            if (!is_array($matchedEntry)) {
+                continue;
+            }
+            $match = [
+                'value' => $text,
+                'raw' => $text,
+                'matchText' => $text,
+                'source' => 'sender_name_in_document',
+                'matchType' => is_string($matchedEntry['matchType'] ?? null) ? (string) $matchedEntry['matchType'] : 'sender_name',
+                'matchingMode' => 'exact_normalized',
+                'confidence' => 1.0,
+                'baseConfidence' => 1.0,
+                'finalConfidence' => 1.0,
+                'score' => 100.0,
+                'fullConfidenceScore' => 100.0,
+                'lineIndex' => (int) ($block['lineIndex'] ?? -1),
+                'start' => (int) ($block['start'] ?? 0),
+                'valueBbox' => is_array($block['bbox'] ?? null) ? $block['bbox'] : null,
+                'valueBBoxIndexes' => is_array($block['bboxIndexes'] ?? null) ? $block['bboxIndexes'] : [],
+                'pageNumber' => is_int($block['pageNumber'] ?? null) ? (int) $block['pageNumber'] : null,
+                'senderId' => (int) ($matchedEntry['senderId'] ?? 0),
+                'senderUnitId' => isset($matchedEntry['senderUnitId']) ? (int) $matchedEntry['senderUnitId'] : null,
+                'matchedName' => is_string($matchedEntry['matchedName'] ?? null) ? (string) $matchedEntry['matchedName'] : $text,
+                'senderMatchType' => is_string($matchedEntry['matchType'] ?? null) ? (string) $matchedEntry['matchType'] : 'sender_name',
+                'blockType' => is_string($block['blockType'] ?? null) ? (string) $block['blockType'] : 'single_line',
+                'lineCount' => is_int($block['lineCount'] ?? null) ? (int) $block['lineCount'] : 1,
+                'lineIndexes' => is_array($block['lineIndexes'] ?? null) ? $block['lineIndexes'] : [],
+            ];
+            $bboxIndexesText = implode(',', array_map('strval', $match['valueBBoxIndexes']));
+            $match['signals'] = [
+                [
+                    'type' => 'positive',
+                    'code' => 'exact_sender_name',
+                    'score' => 100.0,
+                    'detail' => 'matched_name:' . $match['matchedName']
+                        . ',match_type:' . $match['senderMatchType'],
+                ],
+                [
+                    'type' => 'positive',
+                    'code' => 'text_block',
+                    'score' => 0.0,
+                    'detail' => 'block_type:' . $match['blockType']
+                        . ',lines:' . $match['lineCount']
+                        . ',bbox_indexes:' . $bboxIndexesText,
+                ],
+            ];
+            $matches[] = $match;
+        }
+    }
+
+    $matches = sort_extraction_field_matches_by_confidence($matches);
+    $primary = is_array($matches[0] ?? null) ? $matches[0] : null;
+    return [
+        'value' => $primary['value'] ?? null,
+        'confidence' => $primary !== null ? 1.0 : 0.0,
+        'lineIndex' => is_array($primary) ? ($primary['lineIndex'] ?? null) : null,
+        'source' => $primary !== null ? 'sender_name_in_document' : 'none',
+        'raw' => is_array($primary) ? ($primary['raw'] ?? null) : null,
+        'matchText' => is_array($primary) ? ($primary['matchText'] ?? null) : null,
+        'matches' => $matches,
+    ];
+}
+
 function extraction_field_candidates_from_layout_spans(
     string $line,
     ?array $lineGeometry,
@@ -20385,6 +20770,15 @@ function extract_configured_text_field_results(
             $matches = is_array($precomputedTitle['matches'] ?? null)
                 ? $precomputedTitle['matches']
                 : title_result_matches($result, $lineGeometries);
+        } elseif ($extractor === 'sender_name_in_document') {
+            $config = load_config();
+            $result = extract_sender_name_in_document_field_result(
+                $lines,
+                $lineGeometries,
+                is_array($config['multiLineTextBlocks'] ?? null) ? $config['multiLineTextBlocks'] : []
+            );
+            $ruleSets = [];
+            $matches = is_array($result['matches'] ?? null) ? $result['matches'] : [];
         } else {
             $result = empty_extraction_field_result();
             foreach ($ruleSets as $ruleSetIndex => $ruleSet) {
@@ -20663,6 +21057,17 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                             is_array($match['noiseSegments'] ?? null) ? $match['noiseSegments'] : []
                         ), static fn ($segment): bool => is_array($segment))),
                         'captureRanges' => is_array($match['captureRanges'] ?? null) ? $match['captureRanges'] : [],
+                        'senderId' => isset($match['senderId']) && (int) $match['senderId'] > 0 ? (int) $match['senderId'] : null,
+                        'senderUnitId' => isset($match['senderUnitId']) && (int) $match['senderUnitId'] > 0 ? (int) $match['senderUnitId'] : null,
+                        'matchedName' => is_string($match['matchedName'] ?? null) ? trim((string) $match['matchedName']) : null,
+                        'senderMatchType' => is_string($match['senderMatchType'] ?? null) ? trim((string) $match['senderMatchType']) : null,
+                        'matchingMode' => is_string($match['matchingMode'] ?? null) ? trim((string) $match['matchingMode']) : null,
+                        'blockType' => is_string($match['blockType'] ?? null) ? trim((string) $match['blockType']) : null,
+                        'lineCount' => is_int($match['lineCount'] ?? null) ? (int) $match['lineCount'] : null,
+                        'lineIndexes' => is_array($match['lineIndexes'] ?? null) ? array_values(array_filter(
+                            $match['lineIndexes'],
+                            static fn($index): bool => is_int($index) && $index >= 0
+                        )) : [],
                     ];
                 },
                 array_values(array_filter($matchesForMeta, static fn ($match): bool => is_array($match)))

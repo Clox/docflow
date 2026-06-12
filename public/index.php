@@ -776,6 +776,33 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </select>
     </div>
     <p class="settings-help"><code>pdftotext -layout</code> är den äldre direkta textutläsningen. <code>bbox-grid</code> läser ord och koordinater via <code>pdftotext -bbox-layout</code> och bygger sedan en rutnätstext från samma data.</p>
+    <div id="ocr-multiline-text-blocks-section" class="settings-group">
+      <h3>Flerradiga textblock</h3>
+      <p>Generella layoutregler för att kombinera OCR-segment till en- och flerradiga textblock.</p>
+      <div class="multiline-text-block-settings">
+        <label class="floating-input-group">
+          <span class="floating-input-label">Max antal rader</span>
+          <input id="ocr-multiline-max-lines" type="number" min="1" max="8" step="1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Max radavstånd (radhöjder)</span>
+          <input id="ocr-multiline-max-line-distance" type="number" min="0" max="10" step="0.1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Max textstorleksskillnad (ratio)</span>
+          <input id="ocr-multiline-max-text-size-ratio" type="number" min="1" max="5" step="0.1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Minsta x-överlappning</span>
+          <input id="ocr-multiline-min-x-overlap" type="number" min="0" max="1" step="0.05">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Max horisontell förskjutning (radhöjder)</span>
+          <input id="ocr-multiline-max-horizontal-offset" type="number" min="0" max="20" step="0.1">
+        </label>
+      </div>
+      <p class="settings-help">Radavstånd mäts mellan bboxarnas ytterkanter. X-överlappning anges som ratio, exempelvis <code>0.30</code>.</p>
+    </div>
     <div id="ocr-pdf-substitutions-section" class="settings-group">
       <h3>Textersättningar</h3>
       <p>Textersättningar ändrar OCR-texten innan PDF-filens textlager byggs.</p>

@@ -24,6 +24,9 @@ try {
         'ocrPdfTextSubstitutions' => is_array($config['ocrPdfTextSubstitutions'] ?? null)
             ? $config['ocrPdfTextSubstitutions']
             : [],
+        'multiLineTextBlocks' => normalize_multiline_text_block_settings(
+            $config['multiLineTextBlocks'] ?? []
+        ),
         'jbig2' => $jbig2,
         'python' => $python,
         'rapidocr' => $rapidocr,

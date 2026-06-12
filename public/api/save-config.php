@@ -28,6 +28,7 @@ if (
     && !array_key_exists('ocrOptimizeLevel', $payload)
     && !array_key_exists('ocrTextExtractionMethod', $payload)
     && !array_key_exists('ocrPdfTextSubstitutions', $payload)
+    && !array_key_exists('multiLineTextBlocks', $payload)
     && !array_key_exists('stateUpdateTransport', $payload)
     && !array_key_exists('chromeExtensionSuppressMissingNotice', $payload)
 ) {
@@ -160,6 +161,15 @@ if (array_key_exists('ocrPdfTextSubstitutions', $payload)) {
     $nextOcrPdfTextSubstitutions = sanitize_ocr_pdf_text_substitutions($payload['ocrPdfTextSubstitutions']);
 }
 
+$nextMultiLineTextBlocks = null;
+if (array_key_exists('multiLineTextBlocks', $payload)) {
+    if (!is_array($payload['multiLineTextBlocks'])) {
+        json_response(['error' => 'Multiline text block settings must be an object'], 400);
+        exit;
+    }
+    $nextMultiLineTextBlocks = normalize_multiline_text_block_settings($payload['multiLineTextBlocks']);
+}
+
 $nextStateUpdateTransport = null;
 if (array_key_exists('stateUpdateTransport', $payload)) {
     if (!is_string($payload['stateUpdateTransport'])) {
@@ -207,6 +217,9 @@ try {
     if ($nextOcrPdfTextSubstitutions !== null) {
         $config['ocrPdfTextSubstitutions'] = $nextOcrPdfTextSubstitutions;
     }
+    if ($nextMultiLineTextBlocks !== null) {
+        $config['multiLineTextBlocks'] = $nextMultiLineTextBlocks;
+    }
     if ($nextStateUpdateTransport !== null) {
         $config['stateUpdateTransport'] = $nextStateUpdateTransport;
     }
@@ -226,6 +239,8 @@ try {
             sanitize_ocr_pdf_text_substitutions($effectiveNextConfig['ocrPdfTextSubstitutions'] ?? []),
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
         )
+        || normalize_multiline_text_block_settings($effectiveCurrentConfig['multiLineTextBlocks'] ?? [])
+            !== normalize_multiline_text_block_settings($effectiveNextConfig['multiLineTextBlocks'] ?? [])
     );
     $reprocessedJobs = [
         'reprocessedJobIds' => [],
@@ -245,6 +260,7 @@ try {
         'ocrOptimizeLevel' => (int) ($config['ocrOptimizeLevel'] ?? 1),
         'ocrTextExtractionMethod' => is_string($config['ocrTextExtractionMethod'] ?? null) ? (string) $config['ocrTextExtractionMethod'] : 'layout',
         'ocrPdfTextSubstitutions' => sanitize_ocr_pdf_text_substitutions($config['ocrPdfTextSubstitutions'] ?? []),
+        'multiLineTextBlocks' => normalize_multiline_text_block_settings($config['multiLineTextBlocks'] ?? []),
         'stateUpdateTransport' => is_string($config['stateUpdateTransport'] ?? null) ? (string) $config['stateUpdateTransport'] : 'polling',
         'chromeExtensionId' => docflow_chrome_extension_id(),
         'chromeExtensionVersion' => docflow_chrome_extension_version(),

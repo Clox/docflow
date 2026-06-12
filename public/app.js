@@ -250,6 +250,11 @@ let matchingDataFieldAcceptanceThresholdEl = null;
 let ocrSkipExistingTextEl = null;
 let ocrOptimizeLevelEl = null;
 let ocrTextExtractionMethodEl = null;
+let ocrMultilineMaxLinesEl = null;
+let ocrMultilineMaxLineDistanceEl = null;
+let ocrMultilineMaxTextSizeRatioEl = null;
+let ocrMultilineMinXOverlapEl = null;
+let ocrMultilineMaxHorizontalOffsetEl = null;
 let ocrPdfSubstitutionsListEl = null;
 let ocrPdfSubstitutionsAddRowEl = null;
 let ocrProcessingCommandEl = null;
@@ -607,6 +612,8 @@ let matchingDataFieldAcceptanceThresholdDraft = 0.5;
 let ocrSkipExistingTextBaseline = true;
 let ocrOptimizeLevelBaseline = 1;
 let ocrTextExtractionMethodBaseline = 'layout';
+let multiLineTextBlocksDraft = defaultMultiLineTextBlockSettings();
+let multiLineTextBlocksBaselineJson = JSON.stringify(defaultMultiLineTextBlockSettings());
 let ocrPdfSubstitutionsDraft = [];
 let ocrPdfSubstitutionsBaselineJson = JSON.stringify([]);
 let rapidocrInstallPollTimer = null;
@@ -4146,6 +4153,21 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 fullConfidenceScore: Number.isFinite(Number(match.fullConfidenceScore)) ? Number(match.fullConfidenceScore) : null,
                 yRatio: Number.isFinite(Number(match.yRatio)) ? Number(match.yRatio) : null,
                 signals: normalizePrimaryDateSignals(match.signals),
+                valueBbox: match.valueBbox && typeof match.valueBbox === 'object' ? match.valueBbox : null,
+                valueBBoxIndexes: Array.isArray(match.valueBBoxIndexes)
+                  ? match.valueBBoxIndexes.filter((index) => Number.isInteger(index) && index > 0)
+                  : [],
+                pageNumber: Number.isInteger(match.pageNumber) ? match.pageNumber : null,
+                senderId: Number.isInteger(match.senderId) ? match.senderId : null,
+                senderUnitId: Number.isInteger(match.senderUnitId) ? match.senderUnitId : null,
+                matchedName: typeof match.matchedName === 'string' ? match.matchedName : '',
+                senderMatchType: typeof match.senderMatchType === 'string' ? match.senderMatchType : '',
+                matchingMode: typeof match.matchingMode === 'string' ? match.matchingMode : '',
+                blockType: typeof match.blockType === 'string' ? match.blockType : '',
+                lineCount: Number.isInteger(match.lineCount) ? match.lineCount : null,
+                lineIndexes: Array.isArray(match.lineIndexes)
+                  ? match.lineIndexes.filter((index) => Number.isInteger(index) && index >= 0)
+                  : [],
                 matchType: typeof match.matchType === 'string' ? match.matchType : '',
                 lineIndex: Number.isInteger(match.lineIndex) ? match.lineIndex : Number.MAX_SAFE_INTEGER,
                 labelLineIndex: Number.isInteger(match.labelLineIndex) ? match.labelLineIndex : null,
@@ -4399,7 +4421,7 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
     container.appendChild(span);
   };
   const matchHasPrimaryDateScoreDetails = (row, fieldKey = '') => (
-    (fieldKey === 'primary_date' || fieldKey === 'title')
+    (fieldKey === 'primary_date' || fieldKey === 'title' || fieldKey === 'sender_name_in_document')
     && (primaryDateSignalRows(row?.signals).length > 0
     || Number.isFinite(Number(row?.score))
     || Number.isFinite(Number(row?.fullConfidenceScore)))
@@ -8032,6 +8054,8 @@ function formatPrimaryDateSignalLabel(code) {
     uppercase_ratio: 'Versalgrad',
     brevity: 'Korthet',
     sender_name: 'Avsändarnamn',
+    exact_sender_name: 'Exakt namnmatchning',
+    text_block: 'Textblock',
   };
   return labels[code] || code;
 }
@@ -8161,6 +8185,21 @@ function formatPrimaryDateSignalDetail(signal) {
   if (signal?.code === 'sender_name') {
     const senderNameMatch = detail.match(/^name:(.+)$/u);
     return senderNameMatch ? senderNameMatch[1].trim() : detail;
+  }
+  if (signal?.code === 'exact_sender_name') {
+    const matchedName = detail.match(/\bmatched_name:([^,]+)/u)?.[1]?.trim() || '';
+    const matchType = detail.match(/\bmatch_type:([^,]+)/u)?.[1]?.trim() || '';
+    const typeLabel = matchType === 'sender_unit' ? 'underenhet' : 'avsändare';
+    return matchedName ? `${matchedName} (${typeLabel})` : detail;
+  }
+  if (signal?.code === 'text_block') {
+    const blockType = detail.match(/\bblock_type:([^,]+)/u)?.[1]?.trim() || '';
+    const lineCount = Number(detail.match(/\blines:([0-9]+)/u)?.[1]);
+    const bboxIndexes = detail.match(/\bbbox_indexes:([0-9,]*)/u)?.[1]?.trim() || '';
+    const typeLabel = blockType === 'multiline' ? 'flerradigt' : 'enradigt';
+    const lineText = Number.isFinite(lineCount) ? `${lineCount} ${lineCount === 1 ? 'rad' : 'rader'}` : '';
+    const bboxText = bboxIndexes ? `bboxar ${bboxIndexes}` : '';
+    return [typeLabel, lineText, bboxText].filter((part) => part !== '').join(', ');
   }
   if (signal?.code === 'near_title') {
     const titleMatch = detail.match(/^title:(.*),confidence:([0-9.]+),distance:([0-9.]+)$/u);
@@ -16666,7 +16705,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   const confidenceValue = ocrDataFieldConfidenceValue(row);
   const matchIndex = Number.isInteger(row?.matchIndex) ? row.matchIndex + 1 : 1;
   const hasSystemScoreDetails = typeof group?.fieldKey === 'string'
-    && (group.fieldKey === 'primary_date' || group.fieldKey === 'title');
+    && (group.fieldKey === 'primary_date' || group.fieldKey === 'title' || group.fieldKey === 'sender_name_in_document');
   const keyWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'key', pageMatches);
   const valueWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'value', pageMatches);
   const showKeySection = ocrDataFieldMatchHasKey(row, keyWordIndexes);
@@ -16748,6 +16787,20 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   if (Number.isInteger(row?.pageNumber)) {
     copyPayload.pageNumber = row.pageNumber;
   }
+  [
+    'senderId',
+    'senderUnitId',
+    'matchedName',
+    'senderMatchType',
+    'matchingMode',
+    'blockType',
+    'lineCount',
+    'lineIndexes',
+  ].forEach((key) => {
+    if (row?.[key] !== null && row?.[key] !== undefined && row?.[key] !== '') {
+      copyPayload[key] = row[key];
+    }
+  });
   if (Array.isArray(row?.signals) && row.signals.length > 0) {
     copyPayload.signals = normalizePrimaryDateSignals(row.signals);
   }
@@ -18907,7 +18960,7 @@ function syncOcrDataFieldConfidenceUi(row = null) {
   const currentGroup = ocrDataFieldCurrentGroup();
   const title = ocrDataFieldConfidenceTooltip(activeRow, {
     includeScoreDetails: typeof currentGroup?.fieldKey === 'string'
-      && (currentGroup.fieldKey === 'primary_date' || currentGroup.fieldKey === 'title'),
+      && (currentGroup.fieldKey === 'primary_date' || currentGroup.fieldKey === 'title' || currentGroup.fieldKey === 'sender_name_in_document'),
   });
   ocrSearchConfidenceEl.replaceChildren();
   const confidenceValueEl = document.createElement('span');
@@ -21099,6 +21152,11 @@ function bindSettingsPanelRefs(tabId) {
 	    ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
 	    ocrOptimizeLevelEl = document.getElementById('ocr-optimize-level');
 	    ocrTextExtractionMethodEl = document.getElementById('ocr-text-extraction-method');
+	    ocrMultilineMaxLinesEl = document.getElementById('ocr-multiline-max-lines');
+	    ocrMultilineMaxLineDistanceEl = document.getElementById('ocr-multiline-max-line-distance');
+	    ocrMultilineMaxTextSizeRatioEl = document.getElementById('ocr-multiline-max-text-size-ratio');
+	    ocrMultilineMinXOverlapEl = document.getElementById('ocr-multiline-min-x-overlap');
+	    ocrMultilineMaxHorizontalOffsetEl = document.getElementById('ocr-multiline-max-horizontal-offset');
 	    ocrPdfSubstitutionsListEl = document.getElementById('ocr-pdf-substitutions-list');
 	    ocrPdfSubstitutionsAddRowEl = document.getElementById('ocr-pdf-substitutions-add-row');
 	    ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
@@ -21126,6 +21184,7 @@ function bindSettingsPanelRefs(tabId) {
     ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
     ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
     ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+    writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
     ocrSkipExistingTextEl.addEventListener('change', () => {
       renderOcrProcessingCommand();
       updateSettingsActionButtons();
@@ -21140,6 +21199,22 @@ function bindSettingsPanelRefs(tabId) {
       renderOcrProcessingCommand();
       updateSettingsActionButtons();
     });
+    [
+      ocrMultilineMaxLinesEl,
+      ocrMultilineMaxLineDistanceEl,
+      ocrMultilineMaxTextSizeRatioEl,
+      ocrMultilineMinXOverlapEl,
+      ocrMultilineMaxHorizontalOffsetEl,
+    ].forEach((input) => {
+      input.addEventListener('input', () => {
+        multiLineTextBlocksDraft = readMultiLineTextBlockSettingsInputs();
+        updateSettingsActionButtons();
+      });
+      input.addEventListener('change', () => {
+        writeMultiLineTextBlockSettingsInputs(readMultiLineTextBlockSettingsInputs());
+        updateSettingsActionButtons();
+      });
+    });
     ocrPdfSubstitutionsAddRowEl.addEventListener('click', () => {
       ocrPdfSubstitutionsDraft.push(defaultReplacement());
       renderOcrPdfSubstitutionsEditor();
@@ -21150,6 +21225,13 @@ function bindSettingsPanelRefs(tabId) {
       ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
       ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
       ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+      let multiLineSettings = defaultMultiLineTextBlockSettings();
+      try {
+        multiLineSettings = JSON.parse(multiLineTextBlocksBaselineJson);
+      } catch (error) {
+        multiLineSettings = defaultMultiLineTextBlockSettings();
+      }
+      writeMultiLineTextBlockSettingsInputs(multiLineSettings);
       let parsed = [];
       try {
         parsed = JSON.parse(ocrPdfSubstitutionsBaselineJson);
@@ -21985,6 +22067,66 @@ function sanitizeOcrTextExtractionMethod(value, fallback = 'layout') {
   return fallback;
 }
 
+function defaultMultiLineTextBlockSettings() {
+  return {
+    maxLines: 3,
+    maxLineDistanceLineHeights: 2,
+    maxTextSizeRatio: 1.5,
+    minXOverlapRatio: 0.3,
+    maxHorizontalOffsetLineHeights: 3,
+  };
+}
+
+function sanitizeMultiLineTextBlockSettings(input) {
+  const defaults = defaultMultiLineTextBlockSettings();
+  const source = input && typeof input === 'object' ? input : {};
+  const clamp = (value, fallback, min, max) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(min, Math.min(max, numeric)) : fallback;
+  };
+  return {
+    maxLines: Math.round(clamp(source.maxLines, defaults.maxLines, 1, 8)),
+    maxLineDistanceLineHeights: clamp(source.maxLineDistanceLineHeights, defaults.maxLineDistanceLineHeights, 0, 10),
+    maxTextSizeRatio: clamp(source.maxTextSizeRatio, defaults.maxTextSizeRatio, 1, 5),
+    minXOverlapRatio: clamp(source.minXOverlapRatio, defaults.minXOverlapRatio, 0, 1),
+    maxHorizontalOffsetLineHeights: clamp(source.maxHorizontalOffsetLineHeights, defaults.maxHorizontalOffsetLineHeights, 0, 20),
+  };
+}
+
+function normalizedMultiLineTextBlockSettingsJson(settings) {
+  return JSON.stringify(sanitizeMultiLineTextBlockSettings(settings));
+}
+
+function readMultiLineTextBlockSettingsInputs() {
+  return sanitizeMultiLineTextBlockSettings({
+    maxLines: ocrMultilineMaxLinesEl?.value,
+    maxLineDistanceLineHeights: ocrMultilineMaxLineDistanceEl?.value,
+    maxTextSizeRatio: ocrMultilineMaxTextSizeRatioEl?.value,
+    minXOverlapRatio: ocrMultilineMinXOverlapEl?.value,
+    maxHorizontalOffsetLineHeights: ocrMultilineMaxHorizontalOffsetEl?.value,
+  });
+}
+
+function writeMultiLineTextBlockSettingsInputs(settings) {
+  const normalized = sanitizeMultiLineTextBlockSettings(settings);
+  if (ocrMultilineMaxLinesEl) {
+    ocrMultilineMaxLinesEl.value = String(normalized.maxLines);
+  }
+  if (ocrMultilineMaxLineDistanceEl) {
+    ocrMultilineMaxLineDistanceEl.value = String(normalized.maxLineDistanceLineHeights);
+  }
+  if (ocrMultilineMaxTextSizeRatioEl) {
+    ocrMultilineMaxTextSizeRatioEl.value = String(normalized.maxTextSizeRatio);
+  }
+  if (ocrMultilineMinXOverlapEl) {
+    ocrMultilineMinXOverlapEl.value = String(normalized.minXOverlapRatio);
+  }
+  if (ocrMultilineMaxHorizontalOffsetEl) {
+    ocrMultilineMaxHorizontalOffsetEl.value = String(normalized.maxHorizontalOffsetLineHeights);
+  }
+  multiLineTextBlocksDraft = normalized;
+}
+
 function normalizedMatchingJson(
   replacements,
   positionAdjustment = matchingPositionAdjustmentDraft,
@@ -22070,12 +22212,22 @@ function isExtractionFieldsDirty() {
 }
 
 function isOcrProcessingDirty() {
-  if (!ocrSkipExistingTextEl || !ocrOptimizeLevelEl || !ocrTextExtractionMethodEl) {
+  if (
+    !ocrSkipExistingTextEl
+    || !ocrOptimizeLevelEl
+    || !ocrTextExtractionMethodEl
+    || !ocrMultilineMaxLinesEl
+    || !ocrMultilineMaxLineDistanceEl
+    || !ocrMultilineMaxTextSizeRatioEl
+    || !ocrMultilineMinXOverlapEl
+    || !ocrMultilineMaxHorizontalOffsetEl
+  ) {
     return false;
   }
   return ocrSkipExistingTextEl.checked !== ocrSkipExistingTextBaseline
     || sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1) !== ocrOptimizeLevelBaseline
     || sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout') !== ocrTextExtractionMethodBaseline
+    || normalizedMultiLineTextBlockSettingsJson(readMultiLineTextBlockSettingsInputs()) !== multiLineTextBlocksBaselineJson
     || normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft) !== ocrPdfSubstitutionsBaselineJson;
 }
 
@@ -27829,6 +27981,9 @@ function systemExtractionFieldHelpText(field) {
   }
   if (key === 'title' || extractor === 'title') {
     return 'Rubrik är dokumentets huvudsakliga rubrik eller titel. Den väljs genom poängsatta kandidater från OCR-rader med signaler för position, centrering, textstorlek, versalgrad, korthet och texttäthet.';
+  }
+  if (key === 'sender_name_in_document' || extractor === 'sender_name_in_document') {
+    return 'Avsändarnamn i dokument identifierar en- och flerradig OCR-text som exakt matchar ett registrerat avsändarnamn eller underenhetsnamn efter normalisering. Fältet påverkar inte avsändarvalet.';
   }
   return '';
 }
@@ -35161,6 +35316,8 @@ async function loadOcrProcessingSettings(options = {}) {
     || !Number.isInteger(payload.ocrOptimizeLevel)
     || typeof payload.ocrTextExtractionMethod !== 'string'
     || !Array.isArray(payload.ocrPdfTextSubstitutions)
+    || !payload.multiLineTextBlocks
+    || typeof payload.multiLineTextBlocks !== 'object'
     || !payload.jbig2
     || typeof payload.jbig2 !== 'object'
     || !payload.python
@@ -35177,6 +35334,9 @@ async function loadOcrProcessingSettings(options = {}) {
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   ocrTextExtractionMethodBaseline = sanitizeOcrTextExtractionMethod(payload.ocrTextExtractionMethod, 'layout');
   ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+  multiLineTextBlocksDraft = sanitizeMultiLineTextBlockSettings(payload.multiLineTextBlocks);
+  multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
+  writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
   ocrPdfSubstitutionsDraft = Array.isArray(payload.ocrPdfTextSubstitutions)
     ? payload.ocrPdfTextSubstitutions.map(sanitizeReplacement)
     : [];
@@ -35625,6 +35785,7 @@ async function saveOcrProcessingSettings() {
       ocrSkipExistingText: ocrSkipExistingTextEl.checked,
       ocrOptimizeLevel: sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1),
       ocrTextExtractionMethod: sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout'),
+      multiLineTextBlocks: readMultiLineTextBlockSettingsInputs(),
       ocrPdfTextSubstitutions: normalizedSubstitutions
     })
   });
@@ -35637,6 +35798,8 @@ async function saveOcrProcessingSettings() {
     || typeof payload.ocrSkipExistingText !== 'boolean'
     || !Number.isInteger(payload.ocrOptimizeLevel)
     || typeof payload.ocrTextExtractionMethod !== 'string'
+    || !payload.multiLineTextBlocks
+    || typeof payload.multiLineTextBlocks !== 'object'
     || !Array.isArray(payload.ocrPdfTextSubstitutions)
   ) {
     const message = payload && typeof payload.error === 'string'
@@ -35651,6 +35814,9 @@ async function saveOcrProcessingSettings() {
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   ocrTextExtractionMethodBaseline = sanitizeOcrTextExtractionMethod(payload.ocrTextExtractionMethod, 'layout');
   ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
+  multiLineTextBlocksDraft = sanitizeMultiLineTextBlockSettings(payload.multiLineTextBlocks);
+  multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
+  writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
   ocrPdfSubstitutionsDraft = payload.ocrPdfTextSubstitutions.map(sanitizeReplacement);
   if (ocrPdfSubstitutionsDraft.length === 0) {
     ocrPdfSubstitutionsDraft = [defaultReplacement()];
@@ -36367,6 +36533,8 @@ settingsTabEls.forEach((tabButton) => {
         ocrSkipExistingTextBaseline = true;
         ocrOptimizeLevelBaseline = 1;
         ocrTextExtractionMethodBaseline = 'layout';
+        multiLineTextBlocksDraft = defaultMultiLineTextBlockSettings();
+        multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
         if (ocrSkipExistingTextEl) {
           ocrSkipExistingTextEl.checked = true;
         }
@@ -36376,6 +36544,7 @@ settingsTabEls.forEach((tabButton) => {
         if (ocrTextExtractionMethodEl) {
           ocrTextExtractionMethodEl.value = 'layout';
         }
+        writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
         ocrPdfSubstitutionsDraft = [defaultReplacement()];
         ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
         renderOcrPdfSubstitutionsEditor();

@@ -93,6 +93,9 @@ try {
                 ? clamp_confidence((float) $matchingPayload['dataFieldAcceptanceThreshold'])
                 : 0.5;
             $systemFields = is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [];
+            $multiLineTextBlockSettings = is_array($config['multiLineTextBlocks'] ?? null)
+                ? $config['multiLineTextBlocks']
+                : [];
             $precomputedTitleResult = null;
             $precomputedTitleMatches = [];
 
@@ -151,6 +154,44 @@ try {
                         'score' => is_numeric($primaryDateResult['selectedCandidate']['score'] ?? null) ? (float) $primaryDateResult['selectedCandidate']['score'] : null,
                         'fullConfidenceScore' => is_numeric($primaryDateResult['fullConfidenceScore'] ?? null) ? (float) $primaryDateResult['fullConfidenceScore'] : null,
                         'matches' => $primaryDateMatches,
+                    ];
+                    continue;
+                }
+
+                if (
+                    $extractor === 'sender_name_in_document'
+                    || $systemFieldKey === 'sender_name_in_document'
+                    || $key === 'sender_name_in_document'
+                ) {
+                    $senderNameResult = extract_sender_name_in_document_field_result(
+                        $matchingLines,
+                        $lineGeometries,
+                        $multiLineTextBlockSettings
+                    );
+                    $senderNameMatches = is_array($senderNameResult['matches'] ?? null)
+                        ? $senderNameResult['matches']
+                        : [];
+                    $senderNameValues = normalize_auto_archiving_field_value_list(array_map(
+                        static fn(array $match): mixed => $match['value'] ?? null,
+                        $senderNameMatches
+                    ));
+                    if ($senderNameValues !== []) {
+                        $fieldValues['sender_name_in_document'] = $senderNameValues;
+                    }
+                    $fieldMeta['sender_name_in_document'] = [
+                        'key' => 'sender_name_in_document',
+                        'name' => is_string($systemField['name'] ?? null) && trim((string) $systemField['name']) !== ''
+                            ? trim((string) $systemField['name'])
+                            : 'Avsändarnamn i dokument',
+                        'extractor' => 'sender_name_in_document',
+                        'value' => $senderNameResult['value'] ?? null,
+                        'raw' => is_string($senderNameResult['raw'] ?? null) ? (string) $senderNameResult['raw'] : null,
+                        'confidence' => isset($senderNameResult['confidence']) && is_numeric($senderNameResult['confidence']) ? (float) $senderNameResult['confidence'] : 0.0,
+                        'baseConfidence' => isset($senderNameResult['confidence']) && is_numeric($senderNameResult['confidence']) ? (float) $senderNameResult['confidence'] : 0.0,
+                        'finalConfidence' => isset($senderNameResult['confidence']) && is_numeric($senderNameResult['confidence']) ? (float) $senderNameResult['confidence'] : 0.0,
+                        'score' => 100.0,
+                        'fullConfidenceScore' => 100.0,
+                        'matches' => $senderNameMatches,
                     ];
                     continue;
                 }
@@ -416,6 +457,17 @@ try {
                     'start' => is_int($match['start'] ?? null) ? (int) $match['start'] : PHP_INT_MAX,
                     'ruleSetIndex' => is_int($match['ruleSetIndex'] ?? null) ? (int) $match['ruleSetIndex'] : null,
                     'matchType' => $matchType !== '' ? $matchType : null,
+                    'senderId' => isset($match['senderId']) && (int) $match['senderId'] > 0 ? (int) $match['senderId'] : null,
+                    'senderUnitId' => isset($match['senderUnitId']) && (int) $match['senderUnitId'] > 0 ? (int) $match['senderUnitId'] : null,
+                    'matchedName' => is_string($match['matchedName'] ?? null) ? trim((string) $match['matchedName']) : '',
+                    'senderMatchType' => is_string($match['senderMatchType'] ?? null) ? trim((string) $match['senderMatchType']) : '',
+                    'matchingMode' => is_string($match['matchingMode'] ?? null) ? trim((string) $match['matchingMode']) : '',
+                    'blockType' => is_string($match['blockType'] ?? null) ? trim((string) $match['blockType']) : '',
+                    'lineCount' => is_int($match['lineCount'] ?? null) ? (int) $match['lineCount'] : null,
+                    'lineIndexes' => is_array($match['lineIndexes'] ?? null) ? array_values(array_filter(
+                        $match['lineIndexes'],
+                        static fn($lineIndex): bool => is_int($lineIndex) && $lineIndex >= 0
+                    )) : [],
                 ];
             }
         }

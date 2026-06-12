@@ -5980,6 +5980,22 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   margin-top: 20px;
 }
 
+.multiline-text-block-settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.multiline-text-block-settings input {
+  width: 100%;
+  font: inherit;
+  padding: 7px 9px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+}
+
 .ocr-status-card {
   margin: 0 0 14px;
   padding: 12px;
