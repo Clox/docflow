@@ -6268,20 +6268,22 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid #e5e7eb;
   margin-bottom: 12px;
 }
 
-.matching-threshold-section,
-.matching-bbox-span-section,
-.matching-acceptance-threshold-section {
+.matching-settings-section {
   margin: 0 0 10px;
+}
+
+.matching-settings-section + .matching-settings-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e7eb;
 }
 
 .matching-threshold-section h4,
 .matching-bbox-span-section h4,
+.matching-multiline-section h4,
 .matching-acceptance-threshold-section h4,
 .matching-replacements-section h4 {
   margin: 0 0 8px;
@@ -6291,15 +6293,10 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 
 .matching-threshold-section p,
 .matching-bbox-span-section p,
+.matching-multiline-section p,
 .matching-acceptance-threshold-section p,
 .matching-replacements-section p {
   margin: 0 0 6px;
-}
-
-.matching-bbox-span-section {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid #e5e7eb;
 }
 
 .matching-bbox-span-section input {

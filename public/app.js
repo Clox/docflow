@@ -21071,6 +21071,12 @@ function bindSettingsPanelRefs(tabId) {
     matchingMaxVerticalOffsetMultiplierEl = document.getElementById('matching-max-vertical-offset-multiplier');
     matchingMaxLineHeightDifferenceMultiplierEl = document.getElementById('matching-max-line-height-difference-multiplier');
     matchingDataFieldAcceptanceThresholdEl = document.getElementById('matching-data-field-acceptance-threshold');
+    ocrMultilineMaxLinesEl = document.getElementById('ocr-multiline-max-lines');
+    ocrMultilineMaxLineDistanceEl = document.getElementById('ocr-multiline-max-line-distance');
+    ocrMultilineMaxTextSizeRatioEl = document.getElementById('ocr-multiline-max-text-size-ratio');
+    ocrMultilineMinXOverlapEl = document.getElementById('ocr-multiline-min-x-overlap');
+    ocrMultilineMaxHorizontalOffsetEl = document.getElementById('ocr-multiline-max-horizontal-offset');
+    writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
     const bindMatchingPenaltyInput = (inputEl, key) => {
       if (!(inputEl instanceof HTMLInputElement)) {
         return;
@@ -21117,6 +21123,22 @@ function bindSettingsPanelRefs(tabId) {
         updateSettingsActionButtons();
       });
     }
+    [
+      ocrMultilineMaxLinesEl,
+      ocrMultilineMaxLineDistanceEl,
+      ocrMultilineMaxTextSizeRatioEl,
+      ocrMultilineMinXOverlapEl,
+      ocrMultilineMaxHorizontalOffsetEl,
+    ].forEach((input) => {
+      input.addEventListener('input', () => {
+        multiLineTextBlocksDraft = readMultiLineTextBlockSettingsInputs();
+        updateSettingsActionButtons();
+      });
+      input.addEventListener('change', () => {
+        writeMultiLineTextBlockSettingsInputs(readMultiLineTextBlockSettingsInputs());
+        updateSettingsActionButtons();
+      });
+    });
     matchingAddRowEl.addEventListener('click', () => {
       matchingDraft.push(defaultReplacement());
       renderMatchingEditor();
@@ -21134,6 +21156,7 @@ function bindSettingsPanelRefs(tabId) {
       matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(parsed.positionAdjustment);
       matchingBboxSpanBuildingDraft = sanitizeMatchingBboxSpanBuildingSettings(parsed.bboxSpanBuilding);
       matchingDataFieldAcceptanceThresholdDraft = parsed.dataFieldAcceptanceThreshold ?? 0.5;
+      writeMultiLineTextBlockSettingsInputs(parsed.multiLineTextBlocks);
       if (matchingDraft.length === 0) {
         matchingDraft = [defaultReplacement()];
       }
@@ -21152,11 +21175,6 @@ function bindSettingsPanelRefs(tabId) {
 	    ocrSkipExistingTextEl = document.getElementById('ocr-skip-existing-text');
 	    ocrOptimizeLevelEl = document.getElementById('ocr-optimize-level');
 	    ocrTextExtractionMethodEl = document.getElementById('ocr-text-extraction-method');
-	    ocrMultilineMaxLinesEl = document.getElementById('ocr-multiline-max-lines');
-	    ocrMultilineMaxLineDistanceEl = document.getElementById('ocr-multiline-max-line-distance');
-	    ocrMultilineMaxTextSizeRatioEl = document.getElementById('ocr-multiline-max-text-size-ratio');
-	    ocrMultilineMinXOverlapEl = document.getElementById('ocr-multiline-min-x-overlap');
-	    ocrMultilineMaxHorizontalOffsetEl = document.getElementById('ocr-multiline-max-horizontal-offset');
 	    ocrPdfSubstitutionsListEl = document.getElementById('ocr-pdf-substitutions-list');
 	    ocrPdfSubstitutionsAddRowEl = document.getElementById('ocr-pdf-substitutions-add-row');
 	    ocrProcessingCommandEl = document.getElementById('ocr-processing-command');
@@ -21184,7 +21202,6 @@ function bindSettingsPanelRefs(tabId) {
     ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
     ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
     ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
-    writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
     ocrSkipExistingTextEl.addEventListener('change', () => {
       renderOcrProcessingCommand();
       updateSettingsActionButtons();
@@ -21199,22 +21216,6 @@ function bindSettingsPanelRefs(tabId) {
       renderOcrProcessingCommand();
       updateSettingsActionButtons();
     });
-    [
-      ocrMultilineMaxLinesEl,
-      ocrMultilineMaxLineDistanceEl,
-      ocrMultilineMaxTextSizeRatioEl,
-      ocrMultilineMinXOverlapEl,
-      ocrMultilineMaxHorizontalOffsetEl,
-    ].forEach((input) => {
-      input.addEventListener('input', () => {
-        multiLineTextBlocksDraft = readMultiLineTextBlockSettingsInputs();
-        updateSettingsActionButtons();
-      });
-      input.addEventListener('change', () => {
-        writeMultiLineTextBlockSettingsInputs(readMultiLineTextBlockSettingsInputs());
-        updateSettingsActionButtons();
-      });
-    });
     ocrPdfSubstitutionsAddRowEl.addEventListener('click', () => {
       ocrPdfSubstitutionsDraft.push(defaultReplacement());
       renderOcrPdfSubstitutionsEditor();
@@ -21225,13 +21226,6 @@ function bindSettingsPanelRefs(tabId) {
       ocrSkipExistingTextEl.checked = ocrSkipExistingTextBaseline;
       ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
       ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
-      let multiLineSettings = defaultMultiLineTextBlockSettings();
-      try {
-        multiLineSettings = JSON.parse(multiLineTextBlocksBaselineJson);
-      } catch (error) {
-        multiLineSettings = defaultMultiLineTextBlockSettings();
-      }
-      writeMultiLineTextBlockSettingsInputs(multiLineSettings);
       let parsed = [];
       try {
         parsed = JSON.parse(ocrPdfSubstitutionsBaselineJson);
@@ -22131,13 +22125,15 @@ function normalizedMatchingJson(
   replacements,
   positionAdjustment = matchingPositionAdjustmentDraft,
   dataFieldAcceptanceThreshold = matchingDataFieldAcceptanceThresholdDraft,
-  bboxSpanBuilding = matchingBboxSpanBuildingDraft
+  bboxSpanBuilding = matchingBboxSpanBuildingDraft,
+  multiLineTextBlocks = multiLineTextBlocksDraft
 ) {
   return JSON.stringify({
     replacements: replacements.map(sanitizeReplacement),
     positionAdjustment: sanitizeMatchingPositionAdjustmentSettings(positionAdjustment),
     bboxSpanBuilding: sanitizeMatchingBboxSpanBuildingSettings(bboxSpanBuilding),
-    dataFieldAcceptanceThreshold
+    dataFieldAcceptanceThreshold,
+    multiLineTextBlocks: sanitizeMultiLineTextBlockSettings(multiLineTextBlocks)
   });
 }
 
@@ -22188,7 +22184,7 @@ function isClientsDirty() {
 }
 
 function isMatchingDirty() {
-  return normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft) !== matchingBaselineJson;
+  return normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft, multiLineTextBlocksDraft) !== matchingBaselineJson;
 }
 
 function isSendersDirty() {
@@ -22216,18 +22212,12 @@ function isOcrProcessingDirty() {
     !ocrSkipExistingTextEl
     || !ocrOptimizeLevelEl
     || !ocrTextExtractionMethodEl
-    || !ocrMultilineMaxLinesEl
-    || !ocrMultilineMaxLineDistanceEl
-    || !ocrMultilineMaxTextSizeRatioEl
-    || !ocrMultilineMinXOverlapEl
-    || !ocrMultilineMaxHorizontalOffsetEl
   ) {
     return false;
   }
   return ocrSkipExistingTextEl.checked !== ocrSkipExistingTextBaseline
     || sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1) !== ocrOptimizeLevelBaseline
     || sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout') !== ocrTextExtractionMethodBaseline
-    || normalizedMultiLineTextBlockSettingsJson(readMultiLineTextBlockSettingsInputs()) !== multiLineTextBlocksBaselineJson
     || normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft) !== ocrPdfSubstitutionsBaselineJson;
 }
 
@@ -35229,7 +35219,14 @@ async function loadMatchingSettings() {
   }
 
   const payload = await response.json();
-  if (!payload || !Array.isArray(payload.replacements) || !payload.positionAdjustment || typeof payload.positionAdjustment !== 'object') {
+  if (
+    !payload
+    || !Array.isArray(payload.replacements)
+    || !payload.positionAdjustment
+    || typeof payload.positionAdjustment !== 'object'
+    || !payload.multiLineTextBlocks
+    || typeof payload.multiLineTextBlocks !== 'object'
+  ) {
     throw new Error('Ogiltigt svar för matchningsinställningar');
   }
 
@@ -35237,10 +35234,13 @@ async function loadMatchingSettings() {
   matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(payload.positionAdjustment);
   matchingBboxSpanBuildingDraft = sanitizeMatchingBboxSpanBuildingSettings(payload.bboxSpanBuilding);
   matchingDataFieldAcceptanceThresholdDraft = payload.dataFieldAcceptanceThreshold ?? 0.5;
+  multiLineTextBlocksDraft = sanitizeMultiLineTextBlockSettings(payload.multiLineTextBlocks);
+  multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
+  writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft, multiLineTextBlocksDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -35334,9 +35334,6 @@ async function loadOcrProcessingSettings(options = {}) {
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   ocrTextExtractionMethodBaseline = sanitizeOcrTextExtractionMethod(payload.ocrTextExtractionMethod, 'layout');
   ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
-  multiLineTextBlocksDraft = sanitizeMultiLineTextBlockSettings(payload.multiLineTextBlocks);
-  multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
-  writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
   ocrPdfSubstitutionsDraft = Array.isArray(payload.ocrPdfTextSubstitutions)
     ? payload.ocrPdfTextSubstitutions.map(sanitizeReplacement)
     : [];
@@ -35546,12 +35543,22 @@ async function saveMatchingSettings() {
       replacements: normalized,
       positionAdjustment,
       bboxSpanBuilding,
-      dataFieldAcceptanceThreshold: matchingDataFieldAcceptanceThresholdDraft
+      dataFieldAcceptanceThreshold: matchingDataFieldAcceptanceThresholdDraft,
+      multiLineTextBlocks: readMultiLineTextBlockSettingsInputs()
     })
   });
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload || payload.ok !== true || !Array.isArray(payload.replacements) || !payload.positionAdjustment || typeof payload.positionAdjustment !== 'object') {
+  if (
+    !response.ok
+    || !payload
+    || payload.ok !== true
+    || !Array.isArray(payload.replacements)
+    || !payload.positionAdjustment
+    || typeof payload.positionAdjustment !== 'object'
+    || !payload.multiLineTextBlocks
+    || typeof payload.multiLineTextBlocks !== 'object'
+  ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
       : 'Kunde inte spara matchningsinställningar';
@@ -35562,10 +35569,13 @@ async function saveMatchingSettings() {
   matchingPositionAdjustmentDraft = sanitizeMatchingPositionAdjustmentSettings(payload.positionAdjustment);
   matchingBboxSpanBuildingDraft = sanitizeMatchingBboxSpanBuildingSettings(payload.bboxSpanBuilding);
   matchingDataFieldAcceptanceThresholdDraft = payload.dataFieldAcceptanceThreshold ?? 0.5;
+  multiLineTextBlocksDraft = sanitizeMultiLineTextBlockSettings(payload.multiLineTextBlocks);
+  multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
+  writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft, multiLineTextBlocksDraft);
   renderMatchingEditor();
   watchReprocessedJobIdsFromPayload(payload);
   await invalidateAnalysisViews();
@@ -35785,7 +35795,6 @@ async function saveOcrProcessingSettings() {
       ocrSkipExistingText: ocrSkipExistingTextEl.checked,
       ocrOptimizeLevel: sanitizeOcrOptimizeLevel(ocrOptimizeLevelEl.value, 1),
       ocrTextExtractionMethod: sanitizeOcrTextExtractionMethod(ocrTextExtractionMethodEl.value, 'layout'),
-      multiLineTextBlocks: readMultiLineTextBlockSettingsInputs(),
       ocrPdfTextSubstitutions: normalizedSubstitutions
     })
   });
@@ -35798,8 +35807,6 @@ async function saveOcrProcessingSettings() {
     || typeof payload.ocrSkipExistingText !== 'boolean'
     || !Number.isInteger(payload.ocrOptimizeLevel)
     || typeof payload.ocrTextExtractionMethod !== 'string'
-    || !payload.multiLineTextBlocks
-    || typeof payload.multiLineTextBlocks !== 'object'
     || !Array.isArray(payload.ocrPdfTextSubstitutions)
   ) {
     const message = payload && typeof payload.error === 'string'
@@ -35814,9 +35821,6 @@ async function saveOcrProcessingSettings() {
   ocrOptimizeLevelEl.value = String(ocrOptimizeLevelBaseline);
   ocrTextExtractionMethodBaseline = sanitizeOcrTextExtractionMethod(payload.ocrTextExtractionMethod, 'layout');
   ocrTextExtractionMethodEl.value = ocrTextExtractionMethodBaseline;
-  multiLineTextBlocksDraft = sanitizeMultiLineTextBlockSettings(payload.multiLineTextBlocks);
-  multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
-  writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
   ocrPdfSubstitutionsDraft = payload.ocrPdfTextSubstitutions.map(sanitizeReplacement);
   if (ocrPdfSubstitutionsDraft.length === 0) {
     ocrPdfSubstitutionsDraft = [defaultReplacement()];
@@ -36526,15 +36530,22 @@ settingsTabEls.forEach((tabButton) => {
         matchingPositionAdjustmentDraft = defaultMatchingPositionAdjustmentSettings();
         matchingBboxSpanBuildingDraft = defaultMatchingBboxSpanBuildingSettings();
         matchingDataFieldAcceptanceThresholdDraft = 0.5;
-        matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft);
+        multiLineTextBlocksDraft = defaultMultiLineTextBlockSettings();
+        multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
+        writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
+        matchingBaselineJson = normalizedMatchingJson(
+          matchingDraft,
+          matchingPositionAdjustmentDraft,
+          matchingDataFieldAcceptanceThresholdDraft,
+          matchingBboxSpanBuildingDraft,
+          multiLineTextBlocksDraft
+        );
         renderMatchingEditor();
       } else if (tabId === 'ocr-processing') {
         alert('Kunde inte ladda OCR-inställningar.');
         ocrSkipExistingTextBaseline = true;
         ocrOptimizeLevelBaseline = 1;
         ocrTextExtractionMethodBaseline = 'layout';
-        multiLineTextBlocksDraft = defaultMultiLineTextBlockSettings();
-        multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
         if (ocrSkipExistingTextEl) {
           ocrSkipExistingTextEl.checked = true;
         }
@@ -36544,7 +36555,6 @@ settingsTabEls.forEach((tabButton) => {
         if (ocrTextExtractionMethodEl) {
           ocrTextExtractionMethodEl.value = 'layout';
         }
-        writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
         ocrPdfSubstitutionsDraft = [defaultReplacement()];
         ocrPdfSubstitutionsBaselineJson = normalizedOcrPdfSubstitutionsJson(ocrPdfSubstitutionsDraft);
         renderOcrPdfSubstitutionsEditor();

@@ -46,6 +46,10 @@ if (array_key_exists('bboxSpanBuilding', $payload) && !is_array($payload['bboxSp
     json_response(['error' => 'Invalid bbox span payload'], 400);
     exit;
 }
+if (array_key_exists('multiLineTextBlocks', $payload) && !is_array($payload['multiLineTextBlocks'])) {
+    json_response(['error' => 'Invalid multiline text block payload'], 400);
+    exit;
+}
 
 $positionAdjustment = normalize_matching_position_adjustment_settings(
     is_array($payload['positionAdjustment'] ?? null) ? $payload['positionAdjustment'] : []
@@ -57,18 +61,26 @@ $bboxSpanBuilding = normalize_matching_bbox_span_building_settings(
 $dataFieldAcceptanceThreshold = is_numeric($payload['dataFieldAcceptanceThreshold'] ?? null)
     ? clamp_confidence((float) $payload['dataFieldAcceptanceThreshold'])
     : 0.5;
+$multiLineTextBlocks = normalize_multiline_text_block_settings(
+    is_array($payload['multiLineTextBlocks'] ?? null) ? $payload['multiLineTextBlocks'] : []
+);
 
 try {
     $config = load_config();
     ensure_job_dispatcher_running($config);
     $previousPayload = load_matching_settings_payload();
+    $previousMultiLineTextBlocks = normalize_multiline_text_block_settings($config['multiLineTextBlocks'] ?? []);
     write_json_file(DATA_DIR . '/matching.json', [
         'replacements' => $normalized,
         'positionAdjustment' => $positionAdjustment,
         'bboxSpanBuilding' => $bboxSpanBuilding,
         'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
     ]);
+    $rawConfig = load_raw_config();
+    $rawConfig['multiLineTextBlocks'] = $multiLineTextBlocks;
+    save_raw_config($rawConfig);
 
+    $multiLineTextBlocksChanged = $previousMultiLineTextBlocks !== $multiLineTextBlocks;
     $reprocessedJobs = [
         'reprocessedJobIds' => [],
         'reprocessedCount' => 0,
@@ -83,7 +95,13 @@ try {
             'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
     ) {
-        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($config, 'post-ocr', false);
+        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change(
+            load_config(),
+            $multiLineTextBlocksChanged ? 'full' : 'post-ocr',
+            false
+        );
+    } elseif ($multiLineTextBlocksChanged) {
+        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change(load_config(), 'full', false);
     }
 
     json_response([
@@ -92,6 +110,7 @@ try {
         'positionAdjustment' => $positionAdjustment,
         'bboxSpanBuilding' => $bboxSpanBuilding,
         'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
+        'multiLineTextBlocks' => $multiLineTextBlocks,
         'reprocessedJobs' => $reprocessedJobs,
     ]);
 } catch (Throwable $e) {

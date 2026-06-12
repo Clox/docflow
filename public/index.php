@@ -552,7 +552,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-matching">
     <h3>Textmatchning</h3>
-    <div id="matching-penalties-section" class="matching-threshold-section">
+    <div id="matching-penalties-section" class="matching-settings-section matching-threshold-section">
       <h4>Straff</h4>
       <p>Straffen gäller matchning av datafältsvärden och sänker säkerheten när OCR-texten innehåller brus, avslutstecken, nyckelkrockar eller positionsavvikelser. Kandidater till vänster eller ovanför fältets nyckel förkastas; kandidater till höger bedöms på y-avvikelse och kandidater under på x-avvikelse samt vertikalt avstånd.</p>
       <div class="matching-threshold-row">
@@ -636,7 +636,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         </div>
       </div>
     </div>
-    <div id="matching-accepted-values-section" class="matching-acceptance-threshold-section">
+    <div id="matching-accepted-values-section" class="matching-settings-section matching-acceptance-threshold-section">
       <h4>Accepterade datafältsvärden</h4>
       <p>Minsta säkerhet som krävs för att en datafältsmatchning ska accepteras som ett giltigt värde.</p>
       <div class="matching-threshold-field">
@@ -648,7 +648,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </div>
       <p>Matchningar under denna tröskel visas fortfarande i matchningsvyer men används inte som accepterade värden i fakturadetaljer, filnamnsmallar eller arkiveringslogik.</p>
     </div>
-    <div id="matching-bbox-span-section" class="matching-bbox-span-section">
+    <div id="matching-bbox-span-section" class="matching-settings-section matching-bbox-span-section">
       <h4>Bbox-sammanslagning</h4>
       <p>Styr hur närliggande OCR-bboxar får byggas ihop till söktext och värden.</p>
       <div class="matching-threshold-row">
@@ -669,7 +669,34 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         </div>
       </div>
     </div>
-    <div id="matching-replacements-section" class="matching-replacements-section">
+    <div id="ocr-multiline-text-blocks-section" class="matching-settings-section matching-multiline-section">
+      <h4>Flerradiga textblock</h4>
+      <p>Generella layoutregler för att kombinera OCR-segment till en- och flerradiga textblock.</p>
+      <div class="multiline-text-block-settings">
+        <label class="floating-input-group">
+          <span class="floating-input-label">Max antal rader</span>
+          <input id="ocr-multiline-max-lines" type="number" min="1" max="8" step="1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Max radavstånd (radhöjder)</span>
+          <input id="ocr-multiline-max-line-distance" type="number" min="0" max="10" step="0.1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Max textstorleksskillnad (ratio)</span>
+          <input id="ocr-multiline-max-text-size-ratio" type="number" min="1" max="5" step="0.1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Minsta x-överlappning</span>
+          <input id="ocr-multiline-min-x-overlap" type="number" min="0" max="1" step="0.05">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Max horisontell förskjutning (radhöjder)</span>
+          <input id="ocr-multiline-max-horizontal-offset" type="number" min="0" max="20" step="0.1">
+        </label>
+      </div>
+      <p class="settings-help">Radavstånd mäts mellan bboxarnas ytterkanter. X-överlappning anges som ratio, exempelvis <code>0.30</code>.</p>
+    </div>
+    <div id="matching-replacements-section" class="matching-settings-section matching-replacements-section">
       <h4>Teckenersättningar före matchning</h4>
       <p>Definiera teckenersättningar för OCR-text före matchning.</p>
       <p>Exempel: mappa <code>é</code> till <code>ö</code> så att <code>Férfallodatum</code> kan matcha <code>Förfallodatum</code>.</p>
@@ -776,33 +803,6 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
       </select>
     </div>
     <p class="settings-help"><code>pdftotext -layout</code> är den äldre direkta textutläsningen. <code>bbox-grid</code> läser ord och koordinater via <code>pdftotext -bbox-layout</code> och bygger sedan en rutnätstext från samma data.</p>
-    <div id="ocr-multiline-text-blocks-section" class="settings-group">
-      <h3>Flerradiga textblock</h3>
-      <p>Generella layoutregler för att kombinera OCR-segment till en- och flerradiga textblock.</p>
-      <div class="multiline-text-block-settings">
-        <label class="floating-input-group">
-          <span class="floating-input-label">Max antal rader</span>
-          <input id="ocr-multiline-max-lines" type="number" min="1" max="8" step="1">
-        </label>
-        <label class="floating-input-group">
-          <span class="floating-input-label">Max radavstånd (radhöjder)</span>
-          <input id="ocr-multiline-max-line-distance" type="number" min="0" max="10" step="0.1">
-        </label>
-        <label class="floating-input-group">
-          <span class="floating-input-label">Max textstorleksskillnad (ratio)</span>
-          <input id="ocr-multiline-max-text-size-ratio" type="number" min="1" max="5" step="0.1">
-        </label>
-        <label class="floating-input-group">
-          <span class="floating-input-label">Minsta x-överlappning</span>
-          <input id="ocr-multiline-min-x-overlap" type="number" min="0" max="1" step="0.05">
-        </label>
-        <label class="floating-input-group">
-          <span class="floating-input-label">Max horisontell förskjutning (radhöjder)</span>
-          <input id="ocr-multiline-max-horizontal-offset" type="number" min="0" max="20" step="0.1">
-        </label>
-      </div>
-      <p class="settings-help">Radavstånd mäts mellan bboxarnas ytterkanter. X-överlappning anges som ratio, exempelvis <code>0.30</code>.</p>
-    </div>
     <div id="ocr-pdf-substitutions-section" class="settings-group">
       <h3>Textersättningar</h3>
       <p>Textersättningar ändrar OCR-texten innan PDF-filens textlager byggs.</p>
