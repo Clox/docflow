@@ -2811,13 +2811,14 @@ function default_title_heuristics(): array
             ],
             'text_density' => [
                 'enabled' => true,
+                'max_distance_line_heights' => 3.0,
                 'curve' => [
                     ['x' => 0.0, 'y' => 25.0],
                     ['x' => 0.35, 'y' => 15.0],
                     ['x' => 0.70, 'y' => 0.0],
                     ['x' => 1.0, 'y' => -35.0],
                 ],
-                'description' => 'Poängkurva baserad på hur mycket omgivande text som finns runt rubrikkandidaten.',
+                'description' => 'Poängkurva baserad på viktad visuell textyta nära rubrikkandidaten.',
             ],
             'sender_name' => [
                 'enabled' => true,
@@ -3096,6 +3097,15 @@ function normalize_title_heuristics(mixed $input): array
                 $raw['points'] ?? null,
                 (float) $default['points']
             ));
+        }
+        if (array_key_exists('max_distance_line_heights', $default)) {
+            $result['signals'][$key]['max_distance_line_heights'] = max(
+                0.1,
+                normalize_primary_date_number(
+                    $raw['max_distance_line_heights'] ?? null,
+                    (float) $default['max_distance_line_heights']
+                )
+            );
         }
         $result['signals'][$key]['description'] = (string) $default['description'];
     }
@@ -14701,6 +14711,22 @@ function position_penalty_min_line_height(array $labelBbox, array $candidateBbox
     return position_penalty_line_height($labelBbox, $candidateBbox);
 }
 
+function bbox_edge_distance(array $leftBbox, array $rightBbox): float
+{
+    $horizontalGap = max(
+        0.0,
+        (float) ($leftBbox['x0'] ?? 0.0) - (float) ($rightBbox['x1'] ?? 0.0),
+        (float) ($rightBbox['x0'] ?? 0.0) - (float) ($leftBbox['x1'] ?? 0.0)
+    );
+    $verticalGap = max(
+        0.0,
+        (float) ($leftBbox['y0'] ?? 0.0) - (float) ($rightBbox['y1'] ?? 0.0),
+        (float) ($rightBbox['y0'] ?? 0.0) - (float) ($leftBbox['y1'] ?? 0.0)
+    );
+
+    return sqrt(($horizontalGap * $horizontalGap) + ($verticalGap * $verticalGap));
+}
+
 function bbox_horizontal_overlap(array $labelBbox, array $candidateBbox): float
 {
     return bbox_overlap_length(
@@ -16437,20 +16463,9 @@ function primary_date_place_distance_match(array $candidate, array $lines, array
 
 function primary_date_bbox_edge_distance_line_heights(array $leftBbox, array $rightBbox): float
 {
-    $horizontalGap = max(
-        0.0,
-        (float) ($leftBbox['x0'] ?? 0.0) - (float) ($rightBbox['x1'] ?? 0.0),
-        (float) ($rightBbox['x0'] ?? 0.0) - (float) ($leftBbox['x1'] ?? 0.0)
-    );
-    $verticalGap = max(
-        0.0,
-        (float) ($leftBbox['y0'] ?? 0.0) - (float) ($rightBbox['y1'] ?? 0.0),
-        (float) ($rightBbox['y0'] ?? 0.0) - (float) ($leftBbox['y1'] ?? 0.0)
-    );
     $lineHeight = position_penalty_min_line_height($leftBbox, $rightBbox);
 
-    return sqrt(($horizontalGap * $horizontalGap) + ($verticalGap * $verticalGap))
-        / max(1.0, $lineHeight);
+    return bbox_edge_distance($leftBbox, $rightBbox) / max(1.0, $lineHeight);
 }
 
 function primary_date_near_title_match(
@@ -16882,28 +16897,136 @@ function title_candidate_uppercase_ratio(string $text): float
     return max(0.0, min(1.0, count_pattern_matches('/\p{Lu}/u', $text) / $letterCount));
 }
 
-function title_candidate_text_density(array $lines, int $lineIndex, int $wordCount): array
+function title_candidate_text_density(
+    array $candidate,
+    array $lineGeometries,
+    float $maxDistanceLineHeights
+): array
 {
-    $surroundingWords = 0;
-    $lineCount = 0;
-    foreach ([$lineIndex - 1, $lineIndex, $lineIndex + 1] as $index) {
-        if (!is_string($lines[$index] ?? null)) {
-            continue;
-        }
-        $line = normalize_inline_whitespace((string) $lines[$index]);
-        if ($line === '' || preg_match('/^===\s*PAGE\s+\d+\s*===$/iu', $line) === 1) {
-            continue;
-        }
-        $surroundingWords += title_candidate_word_count($line);
-        $lineCount++;
+    $candidateBbox = normalize_debug_word_bbox($candidate['bbox'] ?? null);
+    $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
+    $candidateStart = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+    $candidateEnd = is_int($candidate['end'] ?? null) ? (int) $candidate['end'] : -1;
+    $candidatePageNumber = is_numeric($candidate['pageNumber'] ?? null)
+        ? (int) $candidate['pageNumber']
+        : ($lineIndex >= 0 ? matching_line_page_number($lineGeometries, $lineIndex) : null);
+    $maxDistanceLineHeights = max(0.1, $maxDistanceLineHeights);
+    if ($candidateBbox === null) {
+        return [
+            'available' => false,
+            'ratio' => 0.0,
+            'weightedArea' => 0.0,
+            'referenceArea' => 0.0,
+            'maxDistanceLineHeights' => $maxDistanceLineHeights,
+            'contributingBboxes' => 0,
+        ];
     }
-    $contextWords = max(0, $surroundingWords - $wordCount);
-    $ratio = ($contextWords / 12.0) + (max(0, $wordCount - 4) / 8.0);
+
+    $candidateHeight = bbox_height($candidateBbox);
+    if ($candidateHeight <= 0.0) {
+        return [
+            'available' => false,
+            'ratio' => 0.0,
+            'weightedArea' => 0.0,
+            'referenceArea' => 0.0,
+            'maxDistanceLineHeights' => $maxDistanceLineHeights,
+            'contributingBboxes' => 0,
+        ];
+    }
+
+    $maxDistance = max(1.0, $candidateHeight * $maxDistanceLineHeights);
+    $expandedBbox = [
+        'x0' => (float) $candidateBbox['x0'] - $maxDistance,
+        'y0' => (float) $candidateBbox['y0'] - $maxDistance,
+        'x1' => (float) $candidateBbox['x1'] + $maxDistance,
+        'y1' => (float) $candidateBbox['y1'] + $maxDistance,
+    ];
+    $referenceZoneArea = max(1.0, bbox_area($expandedBbox));
+    $referenceArea = max(1.0, $referenceZoneArea * 0.15);
+    $maxContribution = $referenceArea * 0.12;
+    $candidateBboxIndexes = [];
+    foreach (is_array($candidate['valueBBoxIndexes'] ?? null) ? $candidate['valueBBoxIndexes'] : [] as $bboxIndex) {
+        if (is_numeric($bboxIndex)) {
+            $candidateBboxIndexes[(int) $bboxIndex] = true;
+        }
+    }
+
+    $weightedArea = 0.0;
+    $contributingBboxes = 0;
+    foreach ($lineGeometries as $geometryIndex => $geometry) {
+        if (!is_array($geometry)) {
+            continue;
+        }
+        $geometryPageNumber = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
+        if ($candidatePageNumber !== null && $geometryPageNumber !== $candidatePageNumber) {
+            continue;
+        }
+        foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+            if (!is_array($segment)) {
+                continue;
+            }
+            $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+            $segmentEnd = is_int($segment['end'] ?? null) ? (int) $segment['end'] : -1;
+            $segmentWordIndex = is_numeric($segment['wordIndex'] ?? null)
+                ? ((int) $segment['wordIndex']) + 1
+                : null;
+            $isCandidateRange = is_int($geometryIndex)
+                && $geometryIndex === $lineIndex
+                && $candidateStart >= 0
+                && $candidateEnd > $candidateStart
+                && $segmentStart >= 0
+                && $segmentEnd > $segmentStart
+                && $segmentEnd > $candidateStart
+                && $segmentStart < $candidateEnd;
+            $isCandidateWord = $segmentWordIndex !== null && isset($candidateBboxIndexes[$segmentWordIndex]);
+            if ($isCandidateRange || $isCandidateWord) {
+                continue;
+            }
+
+            $bbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+            if ($bbox === null) {
+                continue;
+            }
+            $width = max(0.0, (float) $bbox['x1'] - (float) $bbox['x0']);
+            $height = bbox_height($bbox);
+            $area = bbox_area($bbox);
+            if ($width <= 0.0 || $height <= 0.0 || $area <= 0.0) {
+                continue;
+            }
+
+            $distance = bbox_edge_distance($candidateBbox, $bbox);
+            if ($distance >= $maxDistance) {
+                continue;
+            }
+            $distanceWeight = max(0.0, 1.0 - ($distance / $maxDistance));
+            $sizeSimilarityWeight = min($candidateHeight, $height) / max($candidateHeight, $height);
+            $aspectRatio = max($width / $height, $height / $width);
+            if ($aspectRatio >= 50.0) {
+                continue;
+            }
+            $aspectWeight = $aspectRatio > 20.0
+                ? 0.35
+                : ($aspectRatio > 10.0 ? 0.70 : 1.0);
+            $contribution = min(
+                $maxContribution,
+                $area * $distanceWeight * $sizeSimilarityWeight * $aspectWeight
+            );
+            if ($contribution <= 0.0) {
+                continue;
+            }
+            $weightedArea += $contribution;
+            $contributingBboxes++;
+        }
+    }
+
     return [
-        'ratio' => max(0.0, min(1.0, $ratio)),
-        'wordCount' => $wordCount,
-        'surroundingWords' => $surroundingWords,
-        'lineCount' => $lineCount,
+        'available' => true,
+        'ratio' => max(0.0, min(1.0, $weightedArea / $referenceArea)),
+        'weightedArea' => $weightedArea,
+        'referenceArea' => $referenceArea,
+        'referenceZoneArea' => $referenceZoneArea,
+        'maxDistanceLineHeights' => $maxDistanceLineHeights,
+        'contributingBboxes' => $contributingBboxes,
     ];
 }
 
@@ -17081,14 +17204,23 @@ function score_title_candidate(
     $result['wordCount'] = $wordCount;
     $addSignal('brevity', (float) $wordCount, 'words:' . $wordCount);
 
-    $density = title_candidate_text_density($lines, $lineIndex, $wordCount);
+    $textDensitySettings = is_array($signals['text_density'] ?? null) ? $signals['text_density'] : [];
+    $density = title_candidate_text_density(
+        $candidate,
+        $lineGeometries,
+        (float) ($textDensitySettings['max_distance_line_heights'] ?? 3.0)
+    );
     $densityRatio = (float) ($density['ratio'] ?? 0.0);
     $result['textDensityRatio'] = $densityRatio;
-    $addSignal(
-        'text_density',
-        $densityRatio,
-        'words:' . (int) ($density['surroundingWords'] ?? $wordCount) . ',ratio:' . round($densityRatio, 3)
-    );
+    if (($density['available'] ?? false) === true) {
+        $addSignal(
+            'text_density',
+            $densityRatio,
+            'density:' . round($densityRatio, 4)
+                . ',max_distance:' . round((float) ($density['maxDistanceLineHeights'] ?? 3.0), 2)
+                . ' line_heights,boxes:' . (int) ($density['contributingBboxes'] ?? 0)
+        );
+    }
 
     $normalizedTitle = \Docflow\Senders\NameNormalizer::normalize($text);
     $matchedSenderName = $normalizedTitle !== '' && is_string($senderNameLookup[$normalizedTitle] ?? null)

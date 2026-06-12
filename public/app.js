@@ -8174,23 +8174,28 @@ function formatPrimaryDateSignalDetail(signal) {
     }
     return detail;
   }
-  const textDensityMatch = detail.match(/\bratio:([0-9.]+)/u);
+  const textDensityMatch = detail.match(/\b(?:density|ratio):([0-9.]+)/u);
   if (signal?.code === 'text_density' || signal?.code === 'running_text') {
     const ratio = textDensityMatch ? Number(textDensityMatch[1]) : null;
     if (Number.isFinite(ratio)) {
+      const maxDistanceMatch = detail.match(/\bmax_distance:([0-9.]+)\s+line_heights/u);
+      const maxDistance = maxDistanceMatch ? Number(maxDistanceMatch[1]) : null;
+      let level = '';
       if (ratio <= 0.2) {
-        return 'mycket låg';
+        level = 'mycket låg';
+      } else if (ratio <= 0.4) {
+        level = 'låg';
+      } else if (ratio <= 0.65) {
+        level = 'medel';
+      } else if (ratio <= 0.85) {
+        level = 'hög';
+      } else {
+        level = 'mycket hög';
       }
-      if (ratio <= 0.4) {
-        return 'låg';
+      if (signal?.code === 'text_density' && Number.isFinite(maxDistance)) {
+        return `${level}, ${formatPrimaryDateScoreNumber(ratio * 100)} %, maxavstånd ${formatPrimaryDateScoreNumber(maxDistance)} radhöjder`;
       }
-      if (ratio <= 0.65) {
-        return 'medel';
-      }
-      if (ratio <= 0.85) {
-        return 'hög';
-      }
-      return 'mycket hög';
+      return level;
     }
   }
   const confidenceMatch = detail.match(/\bconfidence:([0-9.]+)/u);
@@ -26148,13 +26153,14 @@ function defaultTitleHeuristics() {
       },
       text_density: {
         enabled: true,
+        max_distance_line_heights: 3,
         curve: [
           { x: 0, y: 25 },
           { x: 0.35, y: 15 },
           { x: 0.70, y: 0 },
           { x: 1, y: -35 },
         ],
-        description: 'Poängkurva baserad på hur mycket omgivande text som finns runt rubrikkandidaten.',
+        description: 'Poängkurva baserad på viktad visuell textyta nära rubrikkandidaten.',
       },
       sender_name: {
         enabled: true,
@@ -26186,6 +26192,15 @@ function sanitizeTitleHeuristics(input) {
       result.signals[key].points = Math.min(
         0,
         sanitizePrimaryDateNumber(raw.points, defaultsForSignal.points)
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(defaultsForSignal, 'max_distance_line_heights')) {
+      result.signals[key].max_distance_line_heights = Math.max(
+        0.1,
+        sanitizePrimaryDateNumber(
+          raw.max_distance_line_heights,
+          defaultsForSignal.max_distance_line_heights
+        )
       );
     }
   });
@@ -31034,14 +31049,15 @@ const titleHeuristicCurveCharts = {
     yStep: 1,
   },
   text_density: {
-    xAxisTitle: 'Texttäthet 0-1',
+    xAxisTitle: 'Visuell texttäthet (%)',
     yAxisTitle: 'Poäng',
-    xPointLabel: 'Texttäthet 0-1',
+    xPointLabel: 'Visuell texttäthet',
     yPointLabel: 'Poäng',
     yMin: -80,
     yMax: 80,
+    xAsPercent: true,
     yAsPercent: false,
-    xStep: 0.05,
+    xStep: 0.01,
     yStep: 1,
   },
 };
@@ -31393,6 +31409,27 @@ function createTitleHeuristicRuleEditor({
     fields.appendChild(createFloatingField(
       'Poäng (negativt värde)',
       pointsInput,
+      'primary-date-heuristic-number-field'
+    ));
+  }
+  if (typeof rule.max_distance_line_heights === 'number') {
+    const distanceInput = document.createElement('input');
+    distanceInput.type = 'number';
+    distanceInput.step = '0.1';
+    distanceInput.min = '0.1';
+    distanceInput.value = String(rule.max_distance_line_heights);
+    distanceInput.addEventListener('input', () => {
+      const next = sanitizeTitleHeuristics(collection[index].titleHeuristics);
+      const value = Number(distanceInput.value);
+      if (Number.isFinite(value)) {
+        next.signals[ruleKey].max_distance_line_heights = Math.max(0.1, value);
+        collection[index].titleHeuristics = sanitizeTitleHeuristics(next);
+        updateSettingsActionButtons();
+      }
+    });
+    fields.appendChild(createFloatingField(
+      'Texttäthet - maxavstånd (radhöjder)',
+      distanceInput,
       'primary-date-heuristic-number-field'
     ));
   }
