@@ -2836,7 +2836,7 @@ function default_title_heuristics(): array
                 ],
                 'description' => 'Poängkurva baserad på rubrikkandidatens vertikala position på sidan.',
             ],
-            'horizontal_position' => [
+            'horizontal_position_centered' => [
                 'enabled' => true,
                 'curve' => [
                     ['x' => 0.0, 'y' => 30.0],
@@ -2844,7 +2844,17 @@ function default_title_heuristics(): array
                     ['x' => 0.55, 'y' => 0.0],
                     ['x' => 1.0, 'y' => -20.0],
                 ],
-                'description' => 'Poängkurva baserad på hur nära rubrikkandidaten ligger sidans mitt.',
+                'description' => 'Poängkurva baserad på hur nära rubrikkandidaten ligger sidans mitt. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
+            ],
+            'horizontal_position_left_aligned' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.0, 'y' => 30.0],
+                    ['x' => 0.08, 'y' => 25.0],
+                    ['x' => 0.20, 'y' => 10.0],
+                    ['x' => 0.45, 'y' => -20.0],
+                ],
+                'description' => 'Poängkurva baserad på rubrikkandidatens vänsterkant relativt sidans vänsterkant. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
             ],
             'text_size' => [
                 'enabled' => true,
@@ -3152,6 +3162,9 @@ function normalize_title_heuristics(mixed $input): array
 
     foreach ($defaults['signals'] as $key => $default) {
         $raw = is_array($source['signals'][$key] ?? null) ? $source['signals'][$key] : [];
+        if ($key === 'horizontal_position_centered' && $raw === [] && is_array($source['signals']['horizontal_position'] ?? null)) {
+            $raw = $source['signals']['horizontal_position'];
+        }
         $result['signals'][$key]['enabled'] = true;
         if (array_key_exists('curve', $default)) {
             $result['signals'][$key]['curve'] = normalize_primary_date_score_curve(
@@ -9292,6 +9305,8 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
         'fullConfidenceScore',
         'yRatio',
         'centerDistance',
+        'leftAlignmentRatio',
+        'horizontalPositionScore',
         'relativeTextSize',
         'uppercaseRatio',
         'textDensityRatio',
@@ -9307,7 +9322,7 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     ] as $key) {
         $number = debug_export_float_or_null($match[$key] ?? null);
         if ($number !== null) {
-            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                 ? $number
                 : clamp_confidence($number);
         }
@@ -9318,7 +9333,7 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
             $candidate[$key] = $number;
         }
     }
-    foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason'] as $key) {
+    foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner'] as $key) {
         $text = debug_export_scalar_text($match[$key] ?? '');
         if ($text !== '') {
             $candidate[$key] = $text;
@@ -9722,6 +9737,8 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'fullConfidenceScore',
             'yRatio',
             'centerDistance',
+            'leftAlignmentRatio',
+            'horizontalPositionScore',
             'relativeTextSize',
             'uppercaseRatio',
             'textDensityRatio',
@@ -9737,7 +9754,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         ] as $key) {
             $number = debug_export_float_or_null($candidate[$key] ?? null);
             if ($number !== null) {
-                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                     ? $number
                     : clamp_confidence($number);
             }
@@ -9748,7 +9765,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
                 $normalized[$key] = $number;
             }
         }
-        foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason'] as $key) {
+        foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner'] as $key) {
             $text = debug_export_scalar_text($candidate[$key] ?? '');
             if ($text !== '') {
                 $normalized[$key] = $text;
@@ -17692,6 +17709,15 @@ function score_title_candidate(
             'detail' => $detail,
         ];
     };
+    $signalScore = static function (string $code, float $x) use ($signals): ?float {
+        if (($signals[$code]['enabled'] ?? true) !== true) {
+            return null;
+        }
+        return interpolate_primary_date_score_curve(
+            is_array($signals[$code]['curve'] ?? null) ? $signals[$code]['curve'] : [],
+            $x
+        );
+    };
     $addSignal = static function (string $code, float $x, string $detail) use (&$score, &$result, $signals): void {
         if (($signals[$code]['enabled'] ?? true) !== true) {
             return;
@@ -17737,7 +17763,66 @@ function score_title_candidate(
         if ($pageWidth !== null && $pageWidth > 0.0) {
             $centerDistance = max(0.0, min(1.0, abs(((float) $center['x']) - ($pageWidth / 2.0)) / max(1.0, $pageWidth / 2.0)));
             $result['centerDistance'] = $centerDistance;
-            $addSignal('horizontal_position', $centerDistance, 'center_distance:' . round($centerDistance, 3));
+            $leftAlignmentRatio = max(0.0, min(1.0, ((float) ($bbox['x0'] ?? 0.0)) / $pageWidth));
+            $result['leftAlignmentRatio'] = $leftAlignmentRatio;
+
+            $centeredScore = $signalScore('horizontal_position_centered', $centerDistance);
+            $leftAlignedScore = $signalScore('horizontal_position_left_aligned', $leftAlignmentRatio);
+            $horizontalSignals = array_values(array_filter([
+                $centeredScore !== null ? [
+                    'code' => 'horizontal_position_centered',
+                    'score' => $centeredScore,
+                    'detail' => 'winner:centered,center_distance:' . round($centerDistance, 3)
+                        . ',left_ratio:' . round($leftAlignmentRatio, 3),
+                    'ignoredDetail' => 'ignored:centered,center_distance:' . round($centerDistance, 3)
+                        . ',left_ratio:' . round($leftAlignmentRatio, 3),
+                    'winner' => 'centered',
+                ] : null,
+                $leftAlignedScore !== null ? [
+                    'code' => 'horizontal_position_left_aligned',
+                    'score' => $leftAlignedScore,
+                    'detail' => 'winner:left_aligned,left_ratio:' . round($leftAlignmentRatio, 3)
+                        . ',center_distance:' . round($centerDistance, 3),
+                    'ignoredDetail' => 'ignored:left_aligned,left_ratio:' . round($leftAlignmentRatio, 3)
+                        . ',center_distance:' . round($centerDistance, 3),
+                    'winner' => 'left_aligned',
+                ] : null,
+            ], static fn($entry): bool => is_array($entry)));
+            if ($horizontalSignals !== []) {
+                usort($horizontalSignals, static function (array $left, array $right): int {
+                    $scoreCompare = ((float) ($right['score'] ?? 0.0)) <=> ((float) ($left['score'] ?? 0.0));
+                    if ($scoreCompare !== 0) {
+                        return $scoreCompare;
+                    }
+                    $priority = [
+                        'horizontal_position_centered' => 0,
+                        'horizontal_position_left_aligned' => 1,
+                    ];
+                    return ($priority[(string) ($left['code'] ?? '')] ?? 99) <=> ($priority[(string) ($right['code'] ?? '')] ?? 99);
+                });
+                $winningHorizontalSignal = $horizontalSignals[0];
+                $winningHorizontalScore = (float) ($winningHorizontalSignal['score'] ?? 0.0);
+                $result['horizontalPositionWinner'] = (string) ($winningHorizontalSignal['winner'] ?? '');
+                $result['horizontalPositionScore'] = $winningHorizontalScore;
+                if (abs($winningHorizontalScore) >= 0.0001) {
+                    $score += $winningHorizontalScore;
+                    $appendSignal(
+                        $winningHorizontalScore >= 0.0 ? 'positive' : 'negative',
+                        (string) $winningHorizontalSignal['code'],
+                        $winningHorizontalScore,
+                        (string) $winningHorizontalSignal['detail']
+                    );
+                }
+                foreach (array_slice($horizontalSignals, 1) as $ignoredHorizontalSignal) {
+                    $ignoredScore = (float) ($ignoredHorizontalSignal['score'] ?? 0.0);
+                    $appendSignal(
+                        'ignored',
+                        (string) $ignoredHorizontalSignal['code'],
+                        $ignoredScore,
+                        (string) $ignoredHorizontalSignal['ignoredDetail']
+                    );
+                }
+            }
         }
 
         $height = (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0);
@@ -20539,10 +20624,13 @@ function title_result_matches(array $result, array $lineGeometries = []): array
                 $candidate['blockParts']
             ), static fn($part): bool => is_array($part)));
         }
-        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio'] as $numericKey) {
+        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio'] as $numericKey) {
             if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$numericKey] ?? null)) {
                 $matchesByKey[$matchKey][$numericKey] = (float) $candidate[$numericKey];
             }
+        }
+        if (isset($matchesByKey[$matchKey]) && is_string($candidate['horizontalPositionWinner'] ?? null)) {
+            $matchesByKey[$matchKey]['horizontalPositionWinner'] = (string) $candidate['horizontalPositionWinner'];
         }
         if (isset($matchesByKey[$matchKey]) && is_array($candidate['valueBBoxIndexes'] ?? null)) {
             $matchesByKey[$matchKey]['valueBBoxIndexes'] = array_values(array_filter(
@@ -21583,6 +21671,9 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'fullConfidenceScore' => is_numeric($match['fullConfidenceScore'] ?? null) ? (float) $match['fullConfidenceScore'] : null,
                         'yRatio' => is_numeric($match['yRatio'] ?? null) ? (float) $match['yRatio'] : null,
                         'centerDistance' => is_numeric($match['centerDistance'] ?? null) ? (float) $match['centerDistance'] : null,
+                        'leftAlignmentRatio' => is_numeric($match['leftAlignmentRatio'] ?? null) ? (float) $match['leftAlignmentRatio'] : null,
+                        'horizontalPositionScore' => is_numeric($match['horizontalPositionScore'] ?? null) ? (float) $match['horizontalPositionScore'] : null,
+                        'horizontalPositionWinner' => is_string($match['horizontalPositionWinner'] ?? null) ? trim((string) $match['horizontalPositionWinner']) : null,
                         'relativeTextSize' => is_numeric($match['relativeTextSize'] ?? null) ? (float) $match['relativeTextSize'] : null,
                         'uppercaseRatio' => is_numeric($match['uppercaseRatio'] ?? null) ? (float) $match['uppercaseRatio'] : null,
                         'textDensityRatio' => is_numeric($match['textDensityRatio'] ?? null) ? (float) $match['textDensityRatio'] : null,

@@ -4161,6 +4161,10 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 score: Number.isFinite(Number(match.score)) ? Number(match.score) : null,
                 fullConfidenceScore: Number.isFinite(Number(match.fullConfidenceScore)) ? Number(match.fullConfidenceScore) : null,
                 yRatio: Number.isFinite(Number(match.yRatio)) ? Number(match.yRatio) : null,
+                centerDistance: Number.isFinite(Number(match.centerDistance)) ? Number(match.centerDistance) : null,
+                leftAlignmentRatio: Number.isFinite(Number(match.leftAlignmentRatio)) ? Number(match.leftAlignmentRatio) : null,
+                horizontalPositionScore: Number.isFinite(Number(match.horizontalPositionScore)) ? Number(match.horizontalPositionScore) : null,
+                horizontalPositionWinner: typeof match.horizontalPositionWinner === 'string' ? match.horizontalPositionWinner : '',
                 signals: normalizePrimaryDateSignals(match.signals),
                 valueBbox: match.valueBbox && typeof match.valueBbox === 'object' ? match.valueBbox : null,
                 valueBBoxIndexes: Array.isArray(match.valueBBoxIndexes)
@@ -4489,6 +4493,15 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
 
     primaryDateSignalRows(row?.signals, 'negative').forEach((signal, index) => {
       const scoreRow = createPrimaryDateScoreRow(signal);
+      if (index === 0 && wrapper.childElementCount > 0) {
+        scoreRow.classList.add('matches-primary-date-score-row--penalty-start');
+      }
+      wrapper.appendChild(scoreRow);
+    });
+
+    primaryDateSignalRows(row?.signals, 'ignored').forEach((signal, index) => {
+      const scoreRow = createPrimaryDateScoreRow(signal);
+      scoreRow.classList.add('matches-primary-date-score-row--penalty-start');
       if (index === 0 && wrapper.childElementCount > 0) {
         scoreRow.classList.add('matches-primary-date-score-row--penalty-start');
       }
@@ -8107,6 +8120,8 @@ function formatPrimaryDateSignalLabel(code) {
     running_text: 'Texttäthet',
     vertical_position: 'Högt på sidan',
     horizontal_position: 'Centrerad',
+    horizontal_position_centered: 'Horisontell position: centrerad',
+    horizontal_position_left_aligned: 'Horisontell position: vänsterställd',
     text_size: 'Textstorlek',
     uppercase_ratio: 'Versalgrad',
     brevity: 'Korthet',
@@ -8167,7 +8182,7 @@ function normalizePrimaryDateSignals(signals) {
 
 function formatPrimaryDateSignalsText(signals, type = null) {
   const rows = normalizePrimaryDateSignals(signals)
-    .filter((signal) => type === null || signal.type === type || (type === 'positive' && signal.score > 0) || (type === 'negative' && signal.score < 0));
+    .filter((signal) => type === null || signal.type === type);
   if (rows.length === 0) {
     return '';
   }
@@ -8183,9 +8198,7 @@ function formatPrimaryDateSignalsText(signals, type = null) {
 function primaryDateSignalRows(signals, type = null) {
   return normalizePrimaryDateSignals(signals)
     .filter((signal) => type === null
-      || signal.type === type
-      || (type === 'positive' && signal.score > 0)
-      || (type === 'negative' && signal.score < 0));
+      || signal.type === type);
 }
 
 function appendPrimaryDateSignalTextLines(lines, title, signals, type = null) {
@@ -8219,10 +8232,21 @@ function formatPrimaryDateSignalDetail(signal) {
     }
   }
   const centerDistanceMatch = detail.match(/\bcenter_distance:([0-9.]+)/u);
-  if (centerDistanceMatch) {
+  if (centerDistanceMatch && signal?.code !== 'horizontal_position_left_aligned') {
     const ratio = Number(centerDistanceMatch[1]);
     if (Number.isFinite(ratio)) {
-      return `${formatPrimaryDateScoreNumber(ratio * 100)} % från mitten`;
+      const ignored = /\bignored:/u.test(detail) ? ', ej använd' : '';
+      const winner = /\bwinner:/u.test(detail) ? ', vinnande horisontell signal' : '';
+      return `${formatPrimaryDateScoreNumber(ratio * 100)} % från mitten${winner}${ignored}`;
+    }
+  }
+  const leftRatioMatch = detail.match(/\bleft_ratio:([0-9.]+)/u);
+  if (leftRatioMatch) {
+    const ratio = Number(leftRatioMatch[1]);
+    if (Number.isFinite(ratio)) {
+      const ignored = /\bignored:/u.test(detail) ? ', ej använd' : '';
+      const winner = /\bwinner:/u.test(detail) ? ', vinnande horisontell signal' : '';
+      return `${formatPrimaryDateScoreNumber(ratio * 100)} % från vänsterkanten${winner}${ignored}`;
     }
   }
   const relativeSizeMatch = detail.match(/\brelative_size:([0-9.]+)/u);
@@ -17099,6 +17123,8 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     'fullConfidenceScore',
     'yRatio',
     'centerDistance',
+    'leftAlignmentRatio',
+    'horizontalPositionScore',
     'relativeTextSize',
     'uppercaseRatio',
     'textDensityRatio',
@@ -17124,6 +17150,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     'matchedName',
     'senderMatchType',
     'matchingMode',
+    'horizontalPositionWinner',
     'blockType',
     'lineCount',
     'lineIndexes',
@@ -26685,7 +26712,7 @@ function defaultTitleHeuristics() {
         ],
         description: 'Poängkurva baserad på rubrikkandidatens vertikala position på sidan.',
       },
-      horizontal_position: {
+      horizontal_position_centered: {
         enabled: true,
         curve: [
           { x: 0, y: 30 },
@@ -26693,7 +26720,17 @@ function defaultTitleHeuristics() {
           { x: 0.55, y: 0 },
           { x: 1, y: -20 },
         ],
-        description: 'Poängkurva baserad på hur nära rubrikkandidaten ligger sidans mitt.',
+        description: 'Poängkurva baserad på hur nära rubrikkandidaten ligger sidans mitt. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
+      },
+      horizontal_position_left_aligned: {
+        enabled: true,
+        curve: [
+          { x: 0, y: 30 },
+          { x: 0.08, y: 25 },
+          { x: 0.20, y: 10 },
+          { x: 0.45, y: -20 },
+        ],
+        description: 'Poängkurva baserad på rubrikkandidatens vänsterkant relativt sidans vänsterkant. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
       },
       text_size: {
         enabled: true,
@@ -26739,7 +26776,7 @@ function defaultTitleHeuristics() {
       sender_name: {
         enabled: true,
         points: -40,
-        description: 'Ger minuspoäng när en Rubrik-kandidat är identisk med ett känt avsändarnamn eller underenhetsnamn.',
+        description: 'Ger minuspoäng när en Rubrik-kandidat är identisk med en träff från systemfältet Avsändarnamn i dokument.',
       },
     },
   };
@@ -26755,9 +26792,16 @@ function sanitizeTitleHeuristics(input) {
   ));
 
   Object.entries(defaults.signals).forEach(([key, defaultsForSignal]) => {
-    const raw = source.signals && source.signals[key] && typeof source.signals[key] === 'object'
+    let raw = source.signals && source.signals[key] && typeof source.signals[key] === 'object'
       ? source.signals[key]
       : {};
+    if (key === 'horizontal_position_centered'
+      && Object.keys(raw).length === 0
+      && source.signals
+      && source.signals.horizontal_position
+      && typeof source.signals.horizontal_position === 'object') {
+      raw = source.signals.horizontal_position;
+    }
     result.signals[key].enabled = true;
     if (Object.prototype.hasOwnProperty.call(defaultsForSignal, 'curve')) {
       result.signals[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForSignal.curve);
@@ -31569,7 +31613,8 @@ const primaryDateHeuristicCurveCharts = {
 
 const titleHeuristicLabels = {
   vertical_position: 'Högt på sidan',
-  horizontal_position: 'Centrerad',
+  horizontal_position_centered: 'Horisontell position - centrerad',
+  horizontal_position_left_aligned: 'Horisontell position - vänsterställd',
   text_size: 'Textstorlek',
   uppercase_ratio: 'Versalgrad',
   brevity: 'Korthet',
@@ -31590,10 +31635,22 @@ const titleHeuristicCurveCharts = {
     xStep: 0.01,
     yStep: 1,
   },
-  horizontal_position: {
+  horizontal_position_centered: {
     xAxisTitle: 'Avstånd från mitten (%)',
     yAxisTitle: 'Poäng',
     xPointLabel: 'Avstånd från mitten',
+    yPointLabel: 'Poäng',
+    yMin: -80,
+    yMax: 80,
+    xAsPercent: true,
+    yAsPercent: false,
+    xStep: 0.01,
+    yStep: 1,
+  },
+  horizontal_position_left_aligned: {
+    xAxisTitle: 'Vänsterkant från sidans vänsterkant (%)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Vänsterkant från sidans vänsterkant',
     yPointLabel: 'Poäng',
     yMin: -80,
     yMax: 80,
@@ -31963,11 +32020,13 @@ function createTitleHeuristicRuleEditor({
   header.className = 'primary-date-heuristic-rule-header';
   const title = document.createElement('span');
   title.textContent = titleHeuristicLabels[ruleKey] || ruleKey;
+  title.title = rule.description || '';
   header.append(title);
 
   const help = document.createElement('p');
   help.className = 'primary-date-heuristic-help';
   help.textContent = rule.description || '';
+  help.title = rule.description || '';
 
   const fields = document.createElement('div');
   fields.className = 'primary-date-heuristic-fields';
