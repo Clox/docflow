@@ -2890,7 +2890,7 @@ function default_title_heuristics(): array
             'sender_name' => [
                 'enabled' => true,
                 'points' => -40.0,
-                'description' => 'Ger minuspoäng när en Rubrik-kandidat är identisk med ett känt avsändarnamn eller underenhetsnamn.',
+                'description' => 'Ger minuspoäng när en Rubrik-kandidat är identisk med en träff från systemfältet Avsändarnamn i dokument.',
             ],
         ],
     ];
@@ -17411,14 +17411,16 @@ function title_candidate_text_density(
     ];
 }
 
-function title_sender_name_lookup_from_entries(array $entries): array
+function title_sender_name_lookup_from_document_matches(array $matches): array
 {
     $lookup = [];
-    foreach ($entries as $entry) {
-        if (!is_array($entry)) {
+    foreach ($matches as $match) {
+        if (!is_array($match)) {
             continue;
         }
-        $name = is_string($entry['name'] ?? null) ? normalize_inline_whitespace((string) $entry['name']) : '';
+        $name = is_string($match['matchedName'] ?? null) && trim((string) $match['matchedName']) !== ''
+            ? normalize_inline_whitespace((string) $match['matchedName'])
+            : normalize_inline_whitespace((string) ($match['value'] ?? $match['matchText'] ?? ''));
         $normalizedName = $name !== '' ? \Docflow\Senders\NameNormalizer::normalize($name) : '';
         if ($name === '' || $normalizedName === '' || isset($lookup[$normalizedName])) {
             continue;
@@ -17428,19 +17430,27 @@ function title_sender_name_lookup_from_entries(array $entries): array
     return $lookup;
 }
 
-function cached_title_sender_name_lookup(): array
-{
-    static $cache = null;
-    if (is_array($cache)) {
-        return $cache;
-    }
-    $cache = title_sender_name_lookup_from_entries(cached_sender_name_entries_for_analysis());
-    return $cache;
-}
-
-function title_candidates_from_lines(array $lines, array $lineGeometries = [], array $spanSettings = []): array
+function title_candidates_from_lines(
+    array $lines,
+    array $lineGeometries = [],
+    array $spanSettings = [],
+    array $consumedBBoxIndexes = [],
+    array $consumedLineIndexes = []
+): array
 {
     $settings = normalize_matching_bbox_span_building_settings($spanSettings);
+    $consumedBboxes = [];
+    foreach ($consumedBBoxIndexes as $index) {
+        if (is_int($index) && $index > 0) {
+            $consumedBboxes[$index] = true;
+        }
+    }
+    $consumedLines = [];
+    foreach ($consumedLineIndexes as $index) {
+        if (is_int($index) && $index >= 0) {
+            $consumedLines[$index] = true;
+        }
+    }
     $candidates = [];
     foreach ($lines as $lineIndex => $line) {
         if (!is_string($line)) {
@@ -17484,9 +17494,23 @@ function title_candidates_from_lines(array $lines, array $lineGeometries = [], a
             $valueBBoxIndexes = $lineGeometry !== null
                 ? line_geometry_span_word_bbox_indexes($lineGeometry, $start, $end)
                 : [];
+            $overlapsConsumedBbox = false;
+            foreach ($valueBBoxIndexes as $bboxIndex) {
+                if (isset($consumedBboxes[$bboxIndex])) {
+                    $overlapsConsumedBbox = true;
+                    break;
+                }
+            }
+            if (
+                $overlapsConsumedBbox
+                || ($valueBBoxIndexes === [] && is_int($lineIndex) && isset($consumedLines[$lineIndex]))
+            ) {
+                continue;
+            }
             $candidates[] = [
                 'value' => $text,
                 'raw' => $raw,
+                'matchText' => $raw,
                 'line' => $line,
                 'lineIndex' => is_int($lineIndex) ? $lineIndex : 0,
                 'start' => $start,
@@ -17494,9 +17518,137 @@ function title_candidates_from_lines(array $lines, array $lineGeometries = [], a
                 'bbox' => $bbox,
                 'valueBBoxIndexes' => $valueBBoxIndexes,
                 'pageNumber' => is_int($lineIndex) ? matching_line_page_number($lineGeometries, $lineIndex) : null,
+                'blockType' => 'single_line',
+                'lineCount' => 1,
+                'lineIndexes' => [is_int($lineIndex) ? $lineIndex : 0],
             ];
         }
     }
+    return $candidates;
+}
+
+function title_multiline_candidate_consumed_refs(array $candidates): array
+{
+    $bboxIndexes = [];
+    $lineIndexes = [];
+    foreach ($candidates as $candidate) {
+        if (!is_array($candidate) || ($candidate['blockType'] ?? null) !== 'multiline') {
+            continue;
+        }
+        foreach (is_array($candidate['valueBBoxIndexes'] ?? null) ? $candidate['valueBBoxIndexes'] : [] as $index) {
+            if (is_int($index) && $index > 0) {
+                $bboxIndexes[$index] = true;
+            }
+        }
+        foreach (is_array($candidate['lineIndexes'] ?? null) ? $candidate['lineIndexes'] : [] as $index) {
+            if (is_int($index) && $index >= 0) {
+                $lineIndexes[$index] = true;
+            }
+        }
+    }
+
+    $resolvedBboxIndexes = array_keys($bboxIndexes);
+    $resolvedLineIndexes = array_keys($lineIndexes);
+    sort($resolvedBboxIndexes, SORT_NUMERIC);
+    sort($resolvedLineIndexes, SORT_NUMERIC);
+    return [
+        'bboxIndexes' => $resolvedBboxIndexes,
+        'lineIndexes' => $resolvedLineIndexes,
+    ];
+}
+
+function title_candidates_have_overlapping_bbox_indexes(array $left, array $right): bool
+{
+    $indexes = [];
+    foreach (is_array($left['valueBBoxIndexes'] ?? null) ? $left['valueBBoxIndexes'] : [] as $index) {
+        if (is_int($index) && $index > 0) {
+            $indexes[$index] = true;
+        }
+    }
+    if ($indexes === []) {
+        return false;
+    }
+    foreach (is_array($right['valueBBoxIndexes'] ?? null) ? $right['valueBBoxIndexes'] : [] as $index) {
+        if (is_int($index) && isset($indexes[$index])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function title_select_non_overlapping_multiline_candidates(array $candidates): array
+{
+    usort($candidates, static function (array $left, array $right): int {
+        $scoreCompare = ((float) ($right['score'] ?? 0.0)) <=> ((float) ($left['score'] ?? 0.0));
+        if ($scoreCompare !== 0) {
+            return $scoreCompare;
+        }
+        $lineCountCompare = ((int) ($right['lineCount'] ?? 1)) <=> ((int) ($left['lineCount'] ?? 1));
+        if ($lineCountCompare !== 0) {
+            return $lineCountCompare;
+        }
+        return ((int) ($left['lineIndex'] ?? 0)) <=> ((int) ($right['lineIndex'] ?? 0));
+    });
+
+    $selected = [];
+    foreach ($candidates as $candidate) {
+        if (!is_array($candidate) || ($candidate['blockType'] ?? null) !== 'multiline') {
+            continue;
+        }
+        foreach ($selected as $selectedCandidate) {
+            if (title_candidates_have_overlapping_bbox_indexes($candidate, $selectedCandidate)) {
+                continue 2;
+            }
+        }
+        $selected[] = $candidate;
+    }
+
+    return $selected;
+}
+
+function title_candidates_from_multiline_text_blocks(array $lines, array $lineGeometries = [], array $settings = []): array
+{
+    $candidates = [];
+    foreach (build_multiline_text_blocks($lines, $lineGeometries, $settings) as $block) {
+        if (!is_array($block)) {
+            continue;
+        }
+        $blockType = is_string($block['blockType'] ?? null) ? (string) $block['blockType'] : 'single_line';
+        if ($blockType !== 'multiline') {
+            continue;
+        }
+        $text = is_string($block['text'] ?? null) ? normalize_inline_whitespace((string) $block['text']) : '';
+        if ($text === '') {
+            continue;
+        }
+        if (count_pattern_matches('/\p{L}/u', $text) < 2 || title_candidate_word_count($text) > 16) {
+            continue;
+        }
+        if (preg_match('/^\W*[\d\s:.,;\/-]+\W*$/u', $text) === 1) {
+            continue;
+        }
+        $lineIndex = is_int($block['lineIndex'] ?? null) ? (int) $block['lineIndex'] : -1;
+        if ($lineIndex < 0) {
+            continue;
+        }
+        $candidates[] = [
+            'value' => $text,
+            'raw' => $text,
+            'matchText' => $text,
+            'line' => $text,
+            'lineIndex' => $lineIndex,
+            'start' => is_int($block['start'] ?? null) ? (int) $block['start'] : 0,
+            'end' => is_int($block['end'] ?? null) ? (int) $block['end'] : 0,
+            'bbox' => is_array($block['bbox'] ?? null) ? $block['bbox'] : null,
+            'valueBBoxIndexes' => is_array($block['bboxIndexes'] ?? null) ? $block['bboxIndexes'] : [],
+            'pageNumber' => is_int($block['pageNumber'] ?? null) ? (int) $block['pageNumber'] : matching_line_page_number($lineGeometries, $lineIndex),
+            'blockType' => 'multiline',
+            'lineCount' => is_int($block['lineCount'] ?? null) ? (int) $block['lineCount'] : 2,
+            'lineIndexes' => is_array($block['lineIndexes'] ?? null) ? $block['lineIndexes'] : [$lineIndex],
+            'blockParts' => is_array($block['parts'] ?? null) ? $block['parts'] : [],
+        ];
+    }
+
     return $candidates;
 }
 
@@ -17532,6 +17684,14 @@ function score_title_candidate(
     }
 
     $score = 0.0;
+    $appendSignal = static function (string $type, string $code, float $points, string $detail) use (&$result): void {
+        $result['signals'][] = [
+            'type' => $type,
+            'code' => $code,
+            'score' => $points,
+            'detail' => $detail,
+        ];
+    };
     $addSignal = static function (string $code, float $x, string $detail) use (&$score, &$result, $signals): void {
         if (($signals[$code]['enabled'] ?? true) !== true) {
             return;
@@ -17551,6 +17711,18 @@ function score_title_candidate(
             'detail' => $detail,
         ];
     };
+
+    $blockType = is_string($candidate['blockType'] ?? null) ? (string) $candidate['blockType'] : 'single_line';
+    $lineCount = is_int($candidate['lineCount'] ?? null) ? (int) $candidate['lineCount'] : 1;
+    $bboxIndexesText = implode(',', array_map('strval', is_array($candidate['valueBBoxIndexes'] ?? null) ? $candidate['valueBBoxIndexes'] : []));
+    $appendSignal(
+        'positive',
+        'text_block',
+        0.0,
+        'block_type:' . $blockType
+            . ',lines:' . $lineCount
+            . ',bbox_indexes:' . $bboxIndexesText
+    );
 
     if ($bbox !== null) {
         $center = bbox_center_point($bbox);
@@ -17603,7 +17775,8 @@ function score_title_candidate(
         );
     }
 
-    $normalizedTitle = \Docflow\Senders\NameNormalizer::normalize($text);
+    $normalizedTitleText = normalize_inline_whitespace($text);
+    $normalizedTitle = \Docflow\Senders\NameNormalizer::normalize($normalizedTitleText);
     $matchedSenderName = $normalizedTitle !== '' && is_string($senderNameLookup[$normalizedTitle] ?? null)
         ? normalize_inline_whitespace((string) $senderNameLookup[$normalizedTitle])
         : '';
@@ -17612,12 +17785,7 @@ function score_title_candidate(
     if ($matchedSenderName !== '' && ($senderNameSignal['enabled'] ?? true) === true && $senderNamePoints < 0.0) {
         $score += $senderNamePoints;
         $result['matchedSenderName'] = $matchedSenderName;
-        $result['signals'][] = [
-            'type' => 'negative',
-            'code' => 'sender_name',
-            'score' => $senderNamePoints,
-            'detail' => 'name:' . $matchedSenderName,
-        ];
+        $appendSignal('negative', 'sender_name', $senderNamePoints, 'name:' . $matchedSenderName);
     }
 
     $result['score'] = $score;
@@ -17626,12 +17794,35 @@ function score_title_candidate(
     return $result;
 }
 
-function extract_title_field_result(array $lines, array $lineGeometries = [], array $heuristics = [], array $positionSettings = []): array
+function extract_title_field_result(
+    array $lines,
+    array $lineGeometries = [],
+    array $heuristics = [],
+    array $positionSettings = [],
+    ?array $senderNameInDocumentMatches = null,
+    array $multiLineTextBlockSettings = []
+): array
 {
     $heuristics = normalize_title_heuristics($heuristics);
     $spanSettings = matching_bbox_span_building_from_position_settings($positionSettings);
-    $senderNameLookup = cached_title_sender_name_lookup();
-    $candidates = array_map(
+    $resolvedBlockSettings = $multiLineTextBlockSettings;
+    if ($resolvedBlockSettings === []) {
+        $config = load_config();
+        $resolvedBlockSettings = is_array($config['multiLineTextBlocks'] ?? null)
+            ? $config['multiLineTextBlocks']
+            : [];
+    }
+    if ($senderNameInDocumentMatches === null) {
+        $senderNameInDocumentResult = extract_sender_name_in_document_field_result($lines, $lineGeometries, $resolvedBlockSettings);
+    } else {
+        $senderNameInDocumentResult = ['matches' => $senderNameInDocumentMatches];
+    }
+    $senderNameLookup = title_sender_name_lookup_from_document_matches(
+        is_array($senderNameInDocumentResult['matches'] ?? null) ? $senderNameInDocumentResult['matches'] : []
+    );
+    $multilineCandidates = title_candidates_from_multiline_text_blocks($lines, $lineGeometries, $resolvedBlockSettings);
+    $consumedRefs = title_multiline_candidate_consumed_refs($multilineCandidates);
+    $scoredMultilineCandidates = array_map(
         static fn(array $candidate): array => score_title_candidate(
             $candidate,
             $lines,
@@ -17639,8 +17830,32 @@ function extract_title_field_result(array $lines, array $lineGeometries = [], ar
             $heuristics,
             $senderNameLookup
         ),
-        title_candidates_from_lines($lines, $lineGeometries, $spanSettings)
+        $multilineCandidates
     );
+    $scoredSingleLineCandidates = array_map(
+        static fn(array $candidate): array => score_title_candidate(
+            $candidate,
+            $lines,
+            $lineGeometries,
+            $heuristics,
+            $senderNameLookup
+        ),
+        title_candidates_from_lines(
+            $lines,
+            $lineGeometries,
+            $spanSettings,
+            is_array($consumedRefs['bboxIndexes'] ?? null) ? $consumedRefs['bboxIndexes'] : [],
+            is_array($consumedRefs['lineIndexes'] ?? null) ? $consumedRefs['lineIndexes'] : []
+        )
+    );
+    $candidates = [
+        ...$scoredSingleLineCandidates,
+        ...title_select_non_overlapping_multiline_candidates($scoredMultilineCandidates),
+    ];
+    $candidates = array_values(array_filter(
+        $candidates,
+        static fn($candidate): bool => is_array($candidate)
+    ));
     $candidates = array_values(array_filter(
         $candidates,
         static fn(array $candidate): bool => (float) ($candidate['score'] ?? 0.0) > 0.0
@@ -20262,7 +20477,9 @@ function title_result_matches(array $result, array $lineGeometries = []): array
                 ? line_geometry_span_bbox($lineGeometries[$lineIndex], $start, $end)
                 : line_geometry_span_bbox($lineGeometries[$lineIndex], 0, strlen(is_string($candidate['line'] ?? null) ? (string) $candidate['line'] : $value));
         }
-        $candidatePageNumber = matching_line_page_number($lineGeometries, $lineIndex);
+        $candidatePageNumber = is_int($candidate['pageNumber'] ?? null)
+            ? (int) $candidate['pageNumber']
+            : matching_line_page_number($lineGeometries, $lineIndex);
 
         add_extraction_field_match(
             matchesByKey: $matchesByKey,
@@ -20286,6 +20503,41 @@ function title_result_matches(array $result, array $lineGeometries = []): array
         $matchKey = extraction_field_match_storage_key($lineIndex, $start, $value, $raw);
         if (isset($matchesByKey[$matchKey]) && is_array($candidate['signals'] ?? null)) {
             $matchesByKey[$matchKey]['signals'] = $candidate['signals'];
+        }
+        if (isset($matchesByKey[$matchKey]) && is_string($candidate['blockType'] ?? null)) {
+            $matchesByKey[$matchKey]['blockType'] = (string) $candidate['blockType'];
+        }
+        if (isset($matchesByKey[$matchKey]) && is_int($candidate['lineCount'] ?? null)) {
+            $matchesByKey[$matchKey]['lineCount'] = (int) $candidate['lineCount'];
+        }
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['lineIndexes'] ?? null)) {
+            $matchesByKey[$matchKey]['lineIndexes'] = array_values(array_filter(
+                $candidate['lineIndexes'],
+                static fn($index): bool => is_int($index) && $index >= 0
+            ));
+        }
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['blockParts'] ?? null)) {
+            $matchesByKey[$matchKey]['blockParts'] = array_values(array_filter(array_map(
+                static function ($part): ?array {
+                    if (!is_array($part)) {
+                        return null;
+                    }
+                    $text = is_string($part['text'] ?? null) ? normalize_inline_whitespace((string) $part['text']) : '';
+                    $lineIndex = is_int($part['lineIndex'] ?? null) ? (int) $part['lineIndex'] : null;
+                    if ($text === '' || $lineIndex === null) {
+                        return null;
+                    }
+                    return [
+                        'text' => $text,
+                        'lineIndex' => $lineIndex,
+                        'bboxIndexes' => is_array($part['bboxIndexes'] ?? null) ? array_values(array_filter(
+                            $part['bboxIndexes'],
+                            static fn($index): bool => is_int($index) && $index > 0
+                        )) : [],
+                    ];
+                },
+                $candidate['blockParts']
+            ), static fn($part): bool => is_array($part)));
         }
         foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio'] as $numericKey) {
             if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$numericKey] ?? null)) {
@@ -21004,6 +21256,18 @@ function extract_configured_text_field_results(
     $results = [];
     $precomputedTitleResults = [];
     $nearTitleCandidates = [];
+    $config = load_config();
+    $multiLineTextBlockSettings = is_array($config['multiLineTextBlocks'] ?? null)
+        ? $config['multiLineTextBlocks']
+        : [];
+    $senderNameInDocumentResult = extract_sender_name_in_document_field_result(
+        $lines,
+        $lineGeometries,
+        $multiLineTextBlockSettings
+    );
+    $senderNameInDocumentMatches = is_array($senderNameInDocumentResult['matches'] ?? null)
+        ? $senderNameInDocumentResult['matches']
+        : [];
 
     foreach ($fields as $field) {
         if (!is_array($field)) {
@@ -21021,7 +21285,9 @@ function extract_configured_text_field_results(
             $lines,
             $lineGeometries,
             is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : [],
-            $positionSettings
+            $positionSettings,
+            $senderNameInDocumentMatches,
+            $multiLineTextBlockSettings
         );
         $titleMatches = title_result_matches($titleResult, $lineGeometries);
         $precomputedTitleResults[$key] = [
@@ -21078,19 +21344,16 @@ function extract_configured_text_field_results(
                     $lines,
                     $lineGeometries,
                     is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : [],
-                    $positionSettings
+                    $positionSettings,
+                    $senderNameInDocumentMatches,
+                    $multiLineTextBlockSettings
                 );
             $ruleSets = [];
             $matches = is_array($precomputedTitle['matches'] ?? null)
                 ? $precomputedTitle['matches']
                 : title_result_matches($result, $lineGeometries);
         } elseif ($extractor === 'sender_name_in_document') {
-            $config = load_config();
-            $result = extract_sender_name_in_document_field_result(
-                $lines,
-                $lineGeometries,
-                is_array($config['multiLineTextBlocks'] ?? null) ? $config['multiLineTextBlocks'] : []
-            );
+            $result = $senderNameInDocumentResult;
             $ruleSets = [];
             $matches = is_array($result['matches'] ?? null) ? $result['matches'] : [];
         } else {
@@ -21382,6 +21645,27 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                             $match['lineIndexes'],
                             static fn($index): bool => is_int($index) && $index >= 0
                         )) : [],
+                        'blockParts' => is_array($match['blockParts'] ?? null) ? array_values(array_filter(array_map(
+                            static function ($part): ?array {
+                                if (!is_array($part)) {
+                                    return null;
+                                }
+                                $text = is_string($part['text'] ?? null) ? normalize_inline_whitespace((string) $part['text']) : '';
+                                $lineIndex = is_int($part['lineIndex'] ?? null) ? (int) $part['lineIndex'] : null;
+                                if ($text === '' || $lineIndex === null) {
+                                    return null;
+                                }
+                                return [
+                                    'text' => $text,
+                                    'lineIndex' => $lineIndex,
+                                    'bboxIndexes' => is_array($part['bboxIndexes'] ?? null) ? array_values(array_filter(
+                                        $part['bboxIndexes'],
+                                        static fn($index): bool => is_int($index) && $index > 0
+                                    )) : [],
+                                ];
+                            },
+                            $match['blockParts']
+                        ), static fn($part): bool => is_array($part))) : [],
                     ];
                 },
                 array_values(array_filter($matchesForMeta, static fn ($match): bool => is_array($match)))

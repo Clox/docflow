@@ -4177,6 +4177,27 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 lineIndexes: Array.isArray(match.lineIndexes)
                   ? match.lineIndexes.filter((index) => Number.isInteger(index) && index >= 0)
                   : [],
+                blockParts: Array.isArray(match.blockParts)
+                  ? match.blockParts
+                    .map((part) => {
+                      if (!part || typeof part !== 'object') {
+                        return null;
+                      }
+                      const text = typeof part.text === 'string' ? part.text.trim() : '';
+                      const lineIndex = Number.isInteger(part.lineIndex) ? part.lineIndex : null;
+                      if (text === '' || lineIndex === null) {
+                        return null;
+                      }
+                      return {
+                        text,
+                        lineIndex,
+                        bboxIndexes: Array.isArray(part.bboxIndexes)
+                          ? part.bboxIndexes.filter((index) => Number.isInteger(index) && index > 0)
+                          : [],
+                      };
+                    })
+                    .filter(Boolean)
+                  : [],
                 matchType: typeof match.matchType === 'string' ? match.matchType : '',
                 lineIndex: Number.isInteger(match.lineIndex) ? match.lineIndex : Number.MAX_SAFE_INTEGER,
                 labelLineIndex: Number.isInteger(match.labelLineIndex) ? match.labelLineIndex : null,
@@ -4822,6 +4843,33 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       badge.textContent = 'olika rader';
       cell.appendChild(document.createTextNode(' '));
       cell.appendChild(badge);
+    }
+    if (typeof row?.blockType === 'string' && row.blockType.trim() !== '') {
+      const blockBadge = document.createElement('span');
+      blockBadge.className = 'matches-hit-row-badge';
+      blockBadge.textContent = formatTextBlockTypeLabel(row.blockType, row.lineCount).toLocaleLowerCase('sv-SE');
+      const bboxIndexes = Array.isArray(row.valueBBoxIndexes)
+        ? row.valueBBoxIndexes.filter((index) => Number.isInteger(index) && index > 0)
+        : [];
+      const lineIndexes = Array.isArray(row.lineIndexes)
+        ? row.lineIndexes.filter((index) => Number.isInteger(index) && index >= 0)
+        : [];
+      const blockParts = Array.isArray(row.blockParts)
+        ? row.blockParts
+          .map((part) => {
+            const text = typeof part?.text === 'string' ? part.text.trim() : '';
+            const lineIndex = Number.isInteger(part?.lineIndex) ? `#${part.lineIndex + 1}` : '';
+            return [lineIndex, text].filter((partText) => partText !== '').join(' ');
+          })
+          .filter((partText) => partText !== '')
+        : [];
+      blockBadge.title = [
+        lineIndexes.length > 0 ? `Rader: ${lineIndexes.map((lineIndex) => `#${lineIndex + 1}`).join(', ')}` : '',
+        bboxIndexes.length > 0 ? `BBoxar: ${bboxIndexes.map((index) => `#${index}`).join(', ')}` : '',
+        blockParts.length > 0 ? `Byggd av: ${blockParts.join(' + ')}` : '',
+      ].filter((part) => part !== '').join('\n');
+      cell.appendChild(document.createTextNode(' '));
+      cell.appendChild(blockBadge);
     }
     if (row?.scopeType === 'after_text' && typeof row.scopeText === 'string' && row.scopeText.trim() !== '') {
       const scopeBadge = document.createElement('span');
@@ -16860,6 +16908,16 @@ function formatOcrWordIndexList(wordIndexes) {
     .join(',');
 }
 
+function formatTextBlockTypeLabel(blockType, lineCount = null) {
+  const normalized = typeof blockType === 'string' ? blockType.trim() : '';
+  const typeLabel = normalized === 'multiline' ? 'Flerradig' : 'Enkelradig';
+  const count = Number(lineCount);
+  if (Number.isInteger(count) && count > 0) {
+    return `${typeLabel}, ${count} ${count === 1 ? 'rad' : 'rader'}`;
+  }
+  return typeLabel;
+}
+
 function ocrWordTooltipWordElementForPage(page, wordIndex) {
   if (!page || !(page.wordElements instanceof Map) || !Number.isInteger(wordIndex)) {
     return null;
@@ -17069,6 +17127,7 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     'blockType',
     'lineCount',
     'lineIndexes',
+    'blockParts',
   ].forEach((key) => {
     if (row?.[key] !== null && row?.[key] !== undefined && row?.[key] !== '') {
       copyPayload[key] = row[key];
@@ -17144,6 +17203,39 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   const scoreGroups = [
     ...(scoreRows.length > 0 ? [{ title: 'Poängsignaler', rows: scoreRows }] : []),
   ];
+
+  if (hasSystemScoreDetails && typeof row?.blockType === 'string' && row.blockType.trim() !== '') {
+    const blockMetaRows = [{
+      label: 'Kandidattyp',
+      value: formatTextBlockTypeLabel(row.blockType, row.lineCount),
+    }];
+    if (Array.isArray(row.lineIndexes) && row.lineIndexes.length > 0) {
+      blockMetaRows.push({
+        label: 'Rader',
+        value: row.lineIndexes.map((lineIndex) => `#${lineIndex + 1}`).join(', '),
+      });
+    }
+    if (Array.isArray(row.valueBBoxIndexes) && row.valueBBoxIndexes.length > 0) {
+      blockMetaRows.push({
+        label: 'BBoxar',
+        value: row.valueBBoxIndexes.map((index) => `#${index}`).join(', '),
+      });
+    }
+    if (Array.isArray(row.blockParts) && row.blockParts.length > 0) {
+      blockMetaRows.push({
+        label: 'Byggd av',
+        value: row.blockParts
+          .map((part) => {
+            const text = typeof part?.text === 'string' ? part.text.trim() : '';
+            const lineIndex = Number.isInteger(part?.lineIndex) ? `#${part.lineIndex + 1}` : '';
+            return [lineIndex, text].filter((partText) => partText !== '').join(' ');
+          })
+          .filter((partText) => partText !== '')
+          .join(' + '),
+      });
+    }
+    metaRows.unshift(...blockMetaRows);
+  }
 
   const securityRowIndex = metaRows.findIndex((row) => row && row.raw !== true && typeof row.label === 'string' && row.label.trim() === 'Säkerhet');
   if (securityRowIndex >= 0) {

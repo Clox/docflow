@@ -10,18 +10,53 @@ function assert_title_sender_name_signal(bool $condition, string $message): void
     }
 }
 
-$lookup = title_sender_name_lookup_from_entries([
+$senderNameResult = extract_sender_name_in_document_field_result(
     [
-        'name' => 'Karlstads kommun',
-        'normalizedName' => 'karlstads kommun',
-        'type' => 'sender_name',
+        'Karlstads kommun',
+        'Karlstads-Hammarö överförmyndarnämnd',
     ],
     [
-        'name' => 'Karlstads-Hammarö överförmyndarnämnd',
-        'normalizedName' => '',
-        'type' => 'sender_unit',
+        [
+            'text' => 'Karlstads kommun',
+            'segments' => [[
+                'text' => 'Karlstads kommun',
+                'start' => 0,
+                'end' => strlen('Karlstads kommun'),
+                'wordIndex' => 0,
+                'bbox' => ['x0' => 10.0, 'y0' => 10.0, 'x1' => 120.0, 'y1' => 24.0],
+            ]],
+            'pageNumber' => 1,
+        ],
+        [
+            'text' => 'Karlstads-Hammarö överförmyndarnämnd',
+            'segments' => [[
+                'text' => 'Karlstads-Hammarö överförmyndarnämnd',
+                'start' => 0,
+                'end' => strlen('Karlstads-Hammarö överförmyndarnämnd'),
+                'wordIndex' => 1,
+                'bbox' => ['x0' => 10.0, 'y0' => 34.0, 'x1' => 250.0, 'y1' => 48.0],
+            ]],
+            'pageNumber' => 1,
+        ],
     ],
-]);
+    [],
+    [
+        [
+            'senderId' => 1,
+            'senderUnitId' => null,
+            'name' => 'Karlstads kommun',
+            'type' => 'sender_name',
+        ],
+        [
+            'senderId' => 1,
+            'senderUnitId' => 2,
+            'name' => 'Karlstads-Hammarö överförmyndarnämnd',
+            'type' => 'sender_unit',
+        ],
+    ],
+);
+$senderNameMatches = is_array($senderNameResult['matches'] ?? null) ? $senderNameResult['matches'] : [];
+$lookup = title_sender_name_lookup_from_document_matches($senderNameMatches);
 
 $score = static function (string $value) use ($lookup): array {
     return score_title_candidate(
@@ -102,5 +137,21 @@ foreach (['Beslut från Karlstads kommun', 'Information från Karlstads kommun']
         'Substring matches must not trigger.'
     );
 }
+
+$titleWithoutSenderFieldMatch = extract_title_field_result(
+    ['Karlstads kommun'],
+    [],
+    [],
+    [],
+    []
+);
+$titleWithoutSenderSignals = array_values(array_filter(
+    $titleWithoutSenderFieldMatch['selectedCandidate']['signals'] ?? [],
+    static fn (mixed $signal): bool => is_array($signal) && ($signal['code'] ?? null) === 'sender_name'
+));
+assert_title_sender_name_signal(
+    $titleWithoutSenderSignals === [],
+    'Title sender-name penalty must depend on the sender_name_in_document matches, not the sender registry directly.'
+);
 
 fwrite(STDOUT, "title sender name signal tests passed\n");

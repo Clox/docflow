@@ -96,6 +96,14 @@ try {
             $multiLineTextBlockSettings = is_array($config['multiLineTextBlocks'] ?? null)
                 ? $config['multiLineTextBlocks']
                 : [];
+            $precomputedSenderNameResult = extract_sender_name_in_document_field_result(
+                $matchingLines,
+                $lineGeometries,
+                $multiLineTextBlockSettings
+            );
+            $precomputedSenderNameMatches = is_array($precomputedSenderNameResult['matches'] ?? null)
+                ? $precomputedSenderNameResult['matches']
+                : [];
             $precomputedTitleResult = null;
             $precomputedTitleMatches = [];
 
@@ -113,7 +121,9 @@ try {
                     $matchingLines,
                     $lineGeometries,
                     is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : [],
-                    $positionSettings
+                    $positionSettings,
+                    $precomputedSenderNameMatches,
+                    $multiLineTextBlockSettings
                 );
                 $precomputedTitleMatches = title_result_matches($precomputedTitleResult, $lineGeometries);
                 break;
@@ -163,11 +173,7 @@ try {
                     || $systemFieldKey === 'sender_name_in_document'
                     || $key === 'sender_name_in_document'
                 ) {
-                    $senderNameResult = extract_sender_name_in_document_field_result(
-                        $matchingLines,
-                        $lineGeometries,
-                        $multiLineTextBlockSettings
-                    );
+                    $senderNameResult = $precomputedSenderNameResult;
                     $senderNameMatches = is_array($senderNameResult['matches'] ?? null)
                         ? $senderNameResult['matches']
                         : [];
@@ -206,7 +212,9 @@ try {
                         $matchingLines,
                         $lineGeometries,
                         is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : [],
-                        $positionSettings
+                        $positionSettings,
+                        $precomputedSenderNameMatches,
+                        $multiLineTextBlockSettings
                     );
                 $titleMatches = $precomputedTitleMatches !== []
                     ? $precomputedTitleMatches
