@@ -68,6 +68,9 @@ try {
         'reprocessedJobs' => is_array($result['reprocessedJobs'] ?? null)
             ? $result['reprocessedJobs']
             : ['reprocessedJobIds' => [], 'reprocessedCount' => 0, 'mode' => 'full'],
+        'markedOutdatedJobs' => is_array($result['markedOutdatedJobs'] ?? null)
+            ? $result['markedOutdatedJobs']
+            : ['markedJobIds' => [], 'markedCount' => 0],
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 400);

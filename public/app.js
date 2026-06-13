@@ -11137,6 +11137,17 @@ function watchReprocessedJobIdsFromPayload(payload) {
   requestStateRefresh(0);
 }
 
+function refreshMarkedOutdatedJobsFromPayload(payload) {
+  const markedJobIds = Array.isArray(payload?.markedOutdatedJobs?.markedJobIds)
+    ? payload.markedOutdatedJobs.markedJobIds.filter((jobId) => typeof jobId === 'string' && jobId !== '')
+    : [];
+  if (markedJobIds.length < 1) {
+    return;
+  }
+
+  requestStateRefresh(0);
+}
+
 async function bumpArchivingRulesVersionDev() {
   const response = await fetch('/api/bump-archiving-rules-version.php', {
     method: 'POST',
@@ -11153,6 +11164,7 @@ async function bumpArchivingRulesVersionDev() {
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   await Promise.all([loadArchiveStructure(), loadLabels({ reload: true }), loadExtractionFields(), fetchState({ force: true, refreshArchiveStructure: true })]);
   watchReprocessedJobIdsFromPayload(payload);
+  refreshMarkedOutdatedJobsFromPayload(payload);
 }
 
 async function restartArchivingUpdateReview(ignoreDismissed = false) {
@@ -11231,6 +11243,7 @@ async function reanalyzeDisplayedDocuments(mode = 'post-ocr', options = {}) {
 
   applyArchivingRulesPayloadFromResponse(payload, { forceRender: true });
   watchReprocessedJobIdsFromPayload(payload);
+  refreshMarkedOutdatedJobsFromPayload(payload);
   if (!Array.isArray(payload?.reprocessedJobs?.reprocessedJobIds) || payload.reprocessedJobs.reprocessedJobIds.length < 1) {
     await fetchState({ force: true, refreshArchiveStructure: true });
   }
@@ -14457,7 +14470,7 @@ function syncSelectedJobActionsWarning(job) {
     reprocessButtonEl.disabled = reprocessDisabled;
     reprocessButtonEl.title = reprocessDisabled
       ? 'Jobbet kan inte analyseras om just nu.'
-      : 'Kör analysen igen med nuvarande regler utan att köra textigenkänning på nytt.';
+      : 'Analysera om dokumentet';
   }
   requestAnimationFrame(() => {
     if (!(selectedJobActionsWarningEl instanceof HTMLElement) || !(textEl instanceof HTMLElement)) {
@@ -35705,6 +35718,7 @@ async function saveCustomDictionary(text) {
   if (!response.ok || !payload || payload.ok !== true || typeof payload.text !== 'string') {
     throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'Kunde inte spara ordlistan.');
   }
+  refreshMarkedOutdatedJobsFromPayload(payload);
   return payload.text;
 }
 
@@ -36160,6 +36174,7 @@ async function saveClientsSettings() {
   clientsDraft = payload.clients.map(sanitizeClientDraft);
   clientsBaselineJson = normalizedClientsJson(clientsDraft);
   renderClientsEditor();
+  refreshMarkedOutdatedJobsFromPayload(payload);
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
   await fetchState({ refreshClients: true });
@@ -36191,6 +36206,7 @@ async function saveSendersSettings() {
   closeSenderMergeOverlay();
   renderSendersEditor();
   setSendersPanelTab();
+  refreshMarkedOutdatedJobsFromPayload(payload);
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
   await fetchState({ refreshSenders: true });
@@ -36245,6 +36261,7 @@ async function saveMatchingSettings() {
   matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft, multiLineTextBlocksDraft);
   renderMatchingEditor();
   watchReprocessedJobIdsFromPayload(payload);
+  refreshMarkedOutdatedJobsFromPayload(payload);
   await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
@@ -36288,6 +36305,7 @@ async function saveArchiveStructure() {
   refreshSelectedJobProposalUi(previousProposalContext, { syncFolder: true });
   renderArchiveStructureEditor();
   watchReprocessedJobIdsFromPayload(payload);
+  refreshMarkedOutdatedJobsFromPayload(payload);
   await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
@@ -36331,6 +36349,7 @@ async function saveLabels() {
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   refreshSelectedJobProposalUi(previousProposalContext, { syncLabels: true });
   watchReprocessedJobIdsFromPayload(payload);
+  refreshMarkedOutdatedJobsFromPayload(payload);
   await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
@@ -36363,6 +36382,7 @@ async function saveValuePatterns() {
   }
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   watchReprocessedJobIdsFromPayload(payload);
+  refreshMarkedOutdatedJobsFromPayload(payload);
   await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
@@ -36413,6 +36433,7 @@ async function saveExtractionFields() {
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   refreshSelectedJobProposalUi(previousProposalContext);
   watchReprocessedJobIdsFromPayload(payload);
+  refreshMarkedOutdatedJobsFromPayload(payload);
   await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
@@ -36496,6 +36517,7 @@ async function saveOcrProcessingSettings() {
   renderOcrPdfSubstitutionsEditor();
   renderOcrProcessingCommand();
   watchReprocessedJobIdsFromPayload(payload);
+  refreshMarkedOutdatedJobsFromPayload(payload);
   await invalidateAnalysisViews({ clearOcrCache: true });
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();

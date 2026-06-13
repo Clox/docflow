@@ -22,10 +22,13 @@ if (!is_array($payload) || !is_string($payload['text'] ?? null)) {
 
 try {
     $text = save_docflow_custom_dictionary_text((string) $payload['text']);
+    $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change(load_config());
     json_response([
         'ok' => true,
         'text' => $text,
         'path' => docflow_custom_dictionary_path(),
+        'reprocessedJobs' => empty_reprocessed_jobs_payload('full'),
+        'markedOutdatedJobs' => $markedOutdatedJobs,
     ]);
 } catch (Throwable $e) {
     json_response([

@@ -34,6 +34,7 @@ try {
     }
 
     $stored = $repository->replaceAll($decoded);
+    $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change(load_config());
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);
     exit;
@@ -60,4 +61,6 @@ foreach ($stored as $row) {
 json_response([
     'ok' => true,
     'clients' => $clients,
+    'reprocessedJobs' => empty_reprocessed_jobs_payload('post-ocr'),
+    'markedOutdatedJobs' => is_array($markedOutdatedJobs ?? null) ? $markedOutdatedJobs : ['markedJobIds' => [], 'markedCount' => 0],
 ]);

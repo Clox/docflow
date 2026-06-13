@@ -67,7 +67,6 @@ $multiLineTextBlocks = normalize_multiline_text_block_settings(
 
 try {
     $config = load_config();
-    ensure_job_dispatcher_running($config);
     $previousPayload = load_matching_settings_payload();
     $previousMultiLineTextBlocks = normalize_multiline_text_block_settings($config['multiLineTextBlocks'] ?? []);
     write_json_file(DATA_DIR . '/matching.json', [
@@ -81,10 +80,10 @@ try {
     save_raw_config($rawConfig);
 
     $multiLineTextBlocksChanged = $previousMultiLineTextBlocks !== $multiLineTextBlocks;
-    $reprocessedJobs = [
-        'reprocessedJobIds' => [],
-        'reprocessedCount' => 0,
-        'mode' => 'post-ocr',
+    $reprocessedJobs = empty_reprocessed_jobs_payload($multiLineTextBlocksChanged ? 'full' : 'post-ocr');
+    $markedOutdatedJobs = [
+        'markedJobIds' => [],
+        'markedCount' => 0,
     ];
     if (
         json_encode($previousPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
@@ -95,13 +94,9 @@ try {
             'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
     ) {
-        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change(
-            load_config(),
-            $multiLineTextBlocksChanged ? 'full' : 'post-ocr',
-            false
-        );
+        $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change(load_config());
     } elseif ($multiLineTextBlocksChanged) {
-        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change(load_config(), 'full', false);
+        $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change(load_config());
     }
 
     json_response([
@@ -112,6 +107,7 @@ try {
         'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
         'multiLineTextBlocks' => $multiLineTextBlocks,
         'reprocessedJobs' => $reprocessedJobs,
+        'markedOutdatedJobs' => $markedOutdatedJobs,
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

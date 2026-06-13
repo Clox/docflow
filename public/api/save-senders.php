@@ -775,11 +775,14 @@ try {
     }
 
     $pdo->commit();
+    $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change(load_config());
 
     json_response([
         'ok' => true,
         'senders' => $repository->listEditorRows(),
         'unlinkedIdentifiers' => $repository->listUnlinkedIdentifierRows(),
+        'reprocessedJobs' => empty_reprocessed_jobs_payload('post-ocr'),
+        'markedOutdatedJobs' => $markedOutdatedJobs,
     ]);
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {

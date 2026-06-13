@@ -242,14 +242,13 @@ try {
         || normalize_multiline_text_block_settings($effectiveCurrentConfig['multiLineTextBlocks'] ?? [])
             !== normalize_multiline_text_block_settings($effectiveNextConfig['multiLineTextBlocks'] ?? [])
     );
-    $reprocessedJobs = [
-        'reprocessedJobIds' => [],
-        'reprocessedCount' => 0,
-        'mode' => 'full',
+    $reprocessedJobs = empty_reprocessed_jobs_payload('full');
+    $markedOutdatedJobs = [
+        'markedJobIds' => [],
+        'markedCount' => 0,
     ];
     if ($analysisRelevantConfigChanged) {
-        ensure_job_dispatcher_running($effectiveNextConfig);
-        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($effectiveNextConfig, 'full', false);
+        $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change($effectiveNextConfig);
     }
     json_response([
         'ok' => true,
@@ -267,6 +266,7 @@ try {
         'chromeExtensionDirectory' => docflow_chrome_extension_directory(),
         'chromeExtensionSuppressMissingNotice' => (bool) ($config['chromeExtensionSuppressMissingNotice'] ?? false),
         'reprocessedJobs' => $reprocessedJobs,
+        'markedOutdatedJobs' => $markedOutdatedJobs,
     ]);
 } catch (Throwable $e) {
     json_response(['error' => $e->getMessage()], 500);

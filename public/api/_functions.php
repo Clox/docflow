@@ -1133,20 +1133,10 @@ function apply_configuration_import_payload(array $payload): array
     $state['draftArchivingRules'] = $nextActiveRules;
     $storedRulesState = save_archiving_rules_state($state);
 
-    if ($reviewRelevantChanged) {
-        restart_archiving_update_session(
-            $currentConfig,
-            $previousActiveRules,
-            $nextActiveRules,
-            (int) ($storedRulesState['activeArchivingRulesVersion'] ?? $state['activeArchivingRulesVersion']),
-            [
-                'reason' => 'import',
-                'changedSections' => $changedSections,
-                'templateChanges' => $templateChanges,
-            ]
-        );
-        maybe_queue_archiving_rules_update_event($currentConfig);
-    }
+    $markedOutdatedJobs = [
+        'markedJobIds' => [],
+        'markedCount' => 0,
+    ];
 
     save_raw_config($nextConfig);
     $savedConfig = load_config();
@@ -1196,14 +1186,9 @@ function apply_configuration_import_payload(array $payload): array
         || $matchingChanged
         || $reviewRelevantChanged;
 
-    $reprocessedJobs = [
-        'reprocessedJobIds' => [],
-        'reprocessedCount' => 0,
-        'mode' => 'full',
-    ];
+    $reprocessedJobs = empty_reprocessed_jobs_payload('full');
     if ($shouldReprocess) {
-        ensure_job_dispatcher_running($savedConfig);
-        $reprocessedJobs = reprocess_unarchived_jobs_for_analysis_change($savedConfig, 'full', false);
+        $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change($savedConfig);
     }
 
     return [
@@ -1238,6 +1223,7 @@ function apply_configuration_import_payload(array $payload): array
             'chromeExtensionSuppressMissingNotice' => (bool) ($savedConfig['chromeExtensionSuppressMissingNotice'] ?? false),
         ],
         'reprocessedJobs' => $reprocessedJobs,
+        'markedOutdatedJobs' => $markedOutdatedJobs,
     ];
 }
 
@@ -5335,23 +5321,15 @@ function persist_active_archiving_rules_change(
         'reprocessedJobIds' => [],
         'reprocessedCount' => 0,
     ];
+    $markedOutdatedJobs = [
+        'markedJobIds' => [],
+        'markedCount' => 0,
+    ];
     if ($reviewRelevantChanged) {
-        restart_archiving_update_session(
-            $config,
-            $previousActiveRules,
-            $normalizedNextRules,
-            (int) ($stored['activeArchivingRulesVersion'] ?? $nextVersion),
-            [
-                'reason' => is_string($options['reason'] ?? null) ? trim((string) $options['reason']) : 'rules',
-                'changedSections' => $changedSections,
-                'templateChanges' => $templateChanges,
-            ]
-        );
         if (($options['reprocessImmediately'] ?? false) === true) {
             $reprocessedJobs = reprocess_unarchived_jobs_for_active_archiving_rules($config, $previousActiveRules, $normalizedNextRules);
-            advance_archiving_update_session($config, 20);
         } else {
-            trigger_reanalyze_all_documents_worker();
+            $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change($config);
         }
     }
 
@@ -5363,6 +5341,7 @@ function persist_active_archiving_rules_change(
         'changedSections' => $changedSections,
         'templateChanges' => $templateChanges,
         'reprocessedJobs' => $reprocessedJobs,
+        'markedOutdatedJobs' => $markedOutdatedJobs,
     ];
 }
 
@@ -24144,6 +24123,56 @@ function sync_unarchived_job_document_metadata_for_rule_change(
     }
 }
 
+function empty_reprocessed_jobs_payload(string $mode = 'post-ocr'): array
+{
+    $normalizedMode = trim($mode);
+    if ($normalizedMode !== 'full' && $normalizedMode !== 'post-ocr') {
+        $normalizedMode = 'post-ocr';
+    }
+    return [
+        'reprocessedJobIds' => [],
+        'reprocessedCount' => 0,
+        'mode' => $normalizedMode,
+    ];
+}
+
+function mark_ready_jobs_analysis_outdated_for_analysis_change(
+    array $config
+): array {
+    $jobsDir = rtrim((string) ($config['jobsDirectory'] ?? ''), DIRECTORY_SEPARATOR);
+    $entries = $jobsDir !== '' && is_dir($jobsDir) ? scandir($jobsDir) : false;
+    if ($entries === false) {
+        return [
+            'markedJobIds' => [],
+            'markedCount' => 0,
+        ];
+    }
+
+    $markedJobIds = [];
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..' || !is_valid_job_id($entry)) {
+            continue;
+        }
+        $jobDir = $jobsDir . DIRECTORY_SEPARATOR . $entry;
+        if (!is_dir($jobDir)) {
+            continue;
+        }
+        $job = load_json_file($jobDir . '/job.json');
+        if (!is_array($job) || ($job['status'] ?? '') !== 'ready' || ($job['archived'] ?? false) === true) {
+            continue;
+        }
+        if (set_job_analysis_outdated_flag($config, $entry, true)) {
+            $markedJobIds[] = $entry;
+        }
+    }
+
+    sort($markedJobIds, SORT_STRING);
+    return [
+        'markedJobIds' => $markedJobIds,
+        'markedCount' => count($markedJobIds),
+    ];
+}
+
 function reprocess_unarchived_jobs_for_analysis_change(
     array $config,
     string $mode = 'post-ocr',
@@ -26528,15 +26557,8 @@ function handle_resolved_sender_identifier_followups(
     foreach ($affectedJobIds as $affectedJobId) {
         sync_job_sender_document_links($config, $affectedJobId);
 
-        if ($selectedJobId !== null && $affectedJobId === $selectedJobId) {
-            if (set_job_analysis_outdated_flag($config, $affectedJobId, true)) {
-                $markedOutdatedJobIds[] = $affectedJobId;
-            }
-            continue;
-        }
-
-        if (maybe_queue_sender_auto_reprocess($config, $affectedJobId)) {
-            $autoReprocessedJobIds[] = $affectedJobId;
+        if (set_job_analysis_outdated_flag($config, $affectedJobId, true)) {
+            $markedOutdatedJobIds[] = $affectedJobId;
         }
     }
 
