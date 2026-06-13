@@ -91,9 +91,8 @@ assert_title_horizontal_position(
         $leftWins['signals'] ?? [],
         static fn(mixed $signal): bool => is_array($signal)
             && ($signal['code'] ?? null) === 'horizontal_position_centered'
-            && ($signal['type'] ?? null) === 'ignored'
-    )) === 1,
-    'The losing centered signal should be present only as ignored debug information.'
+    )) === 0,
+    'The losing centered signal should not be shown in the candidate signal list.'
 );
 
 $centerWins = title_horizontal_signal_result(29.0, 12.0);
@@ -110,9 +109,8 @@ assert_title_horizontal_position(
         $centerWins['signals'] ?? [],
         static fn(mixed $signal): bool => is_array($signal)
             && ($signal['code'] ?? null) === 'horizontal_position_left_aligned'
-            && ($signal['type'] ?? null) === 'ignored'
-    )) === 1,
-    'The losing left-aligned signal should be present only as ignored debug information.'
+    )) === 0,
+    'The losing left-aligned signal should not be shown in the candidate signal list.'
 );
 
 echo "title_horizontal_position_signal_test: ok\n";

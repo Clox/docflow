@@ -111,8 +111,14 @@ assert_title_multiline_candidates(
     count(array_filter(
         $joinedCandidate['signals'] ?? [],
         static fn(mixed $signal): bool => is_array($signal) && ($signal['code'] ?? null) === 'text_block'
-    )) === 1,
-    'The multiline title candidate must expose text block debug details as a signal.'
+    )) === 0,
+    'The multiline title candidate must not show text block metadata as a score signal.'
+);
+assert_title_multiline_candidates(
+    is_array($joinedCandidate['blockJoinMetrics'] ?? null)
+        && count($joinedCandidate['blockJoinMetrics']) === 1
+        && abs((float) ($joinedCandidate['blockJoinMetrics'][0]['textSizeRatio'] ?? 0.0) - 1.0) < 0.0001,
+    'The multiline title candidate must expose symmetric join metrics.'
 );
 
 $matches = title_result_matches($result, $geometries);
@@ -145,6 +151,87 @@ assert_title_multiline_candidates(
         static fn(array $candidate): bool => ($candidate['blockType'] ?? null) === 'multiline'
     )) === 0,
     'Title multiline candidates must use the shared multiline block settings.'
+);
+
+$sizeRatioSettings = normalize_multiline_text_block_settings([
+    ...$blockSettings,
+    'maxTextSizeRatio' => 1.2,
+]);
+$largeFirst = title_multiline_test_geometry('Stor rubrik', 0, ['x0' => 80.0, 'y0' => 80.0, 'x1' => 260.0, 'y1' => 150.0]);
+$smallSecond = title_multiline_test_geometry('mindre rad', 1, ['x0' => 82.0, 'y0' => 154.0, 'x1' => 230.0, 'y1' => 215.0]);
+$smallFirst = title_multiline_test_geometry('mindre rad', 0, ['x0' => 82.0, 'y0' => 80.0, 'x1' => 230.0, 'y1' => 141.0]);
+$largeSecond = title_multiline_test_geometry('Stor rubrik', 1, ['x0' => 80.0, 'y0' => 145.0, 'x1' => 260.0, 'y1' => 215.0]);
+assert_title_multiline_candidates(
+    count(array_filter(
+        build_multiline_text_blocks(['Stor rubrik', 'mindre rad'], [$largeFirst, $smallSecond], $sizeRatioSettings),
+        static fn(array $block): bool => ($block['blockType'] ?? null) === 'multiline'
+    )) === 1,
+    'Text size ratio 70/61 should be accepted when maxTextSizeRatio is high enough.'
+);
+assert_title_multiline_candidates(
+    count(array_filter(
+        build_multiline_text_blocks(['mindre rad', 'Stor rubrik'], [$smallFirst, $largeSecond], $sizeRatioSettings),
+        static fn(array $block): bool => ($block['blockType'] ?? null) === 'multiline'
+    )) === 1,
+    'Text size ratio comparison must be symmetric when the smaller line comes first.'
+);
+assert_title_multiline_candidates(
+    count(array_filter(
+        build_multiline_text_blocks(['Stor rubrik', 'mindre rad'], [$largeFirst, $smallSecond], [
+            ...$sizeRatioSettings,
+            'maxTextSizeRatio' => 1.1,
+        ]),
+        static fn(array $block): bool => ($block['blockType'] ?? null) === 'multiline'
+    )) === 0,
+    'Text size ratio 70/61 should be rejected when maxTextSizeRatio is below the symmetric ratio.'
+);
+
+$multilineTextSizeCandidate = [
+    'value' => 'Tomas Lars-Åke Bäck Kyrkogatan 8 Lgh 1001',
+    'raw' => 'Tomas Lars-Åke Bäck Kyrkogatan 8 Lgh 1001',
+    'line' => 'Tomas Lars-Åke Bäck Kyrkogatan 8 Lgh 1001',
+    'lineIndex' => 0,
+    'start' => 0,
+    'end' => 42,
+    'bbox' => ['x0' => 1851.0, 'y0' => 565.0, 'x1' => 2482.0, 'y1' => 710.0],
+    'pageNumber' => 1,
+    'blockType' => 'multiline',
+    'lineCount' => 2,
+    'lineIndexes' => [0, 1],
+    'blockParts' => [
+        [
+            'text' => 'Tomas Lars-Åke Bäck',
+            'lineIndex' => 0,
+            'bbox' => ['x0' => 1851.0, 'y0' => 565.0, 'x1' => 2480.0, 'y1' => 628.0],
+        ],
+        [
+            'text' => 'Kyrkogatan 8 Lgh 1001',
+            'lineIndex' => 1,
+            'bbox' => ['x0' => 1853.0, 'y0' => 647.0, 'x1' => 2482.0, 'y1' => 710.0],
+        ],
+    ],
+];
+$normalHeightGeometries = [
+    title_multiline_test_geometry('Tomas Lars-Åke Bäck', 0, ['x0' => 1851.0, 'y0' => 565.0, 'x1' => 2480.0, 'y1' => 628.0]),
+    title_multiline_test_geometry('Kyrkogatan 8 Lgh 1001', 1, ['x0' => 1853.0, 'y0' => 647.0, 'x1' => 2482.0, 'y1' => 710.0]),
+    title_multiline_test_geometry('Normal text', 2, ['x0' => 100.0, 'y0' => 800.0, 'x1' => 500.0, 'y1' => 869.0]),
+    title_multiline_test_geometry('Normal text igen', 3, ['x0' => 100.0, 'y0' => 900.0, 'x1' => 500.0, 'y1' => 969.0]),
+    title_multiline_test_geometry('Normal text tre', 4, ['x0' => 100.0, 'y0' => 1000.0, 'x1' => 500.0, 'y1' => 1069.0]),
+];
+$textSizeScored = score_title_candidate($multilineTextSizeCandidate, [], $normalHeightGeometries, [
+    'signals' => [
+        'vertical_position' => ['enabled' => false],
+        'horizontal_position_centered' => ['enabled' => false],
+        'horizontal_position_left_aligned' => ['enabled' => false],
+        'uppercase_ratio' => ['enabled' => false],
+        'brevity' => ['enabled' => false],
+        'text_density' => ['enabled' => false],
+        'sender_name' => ['enabled' => false],
+    ],
+]);
+assert_title_multiline_candidates(
+    abs((float) ($textSizeScored['relativeTextSize'] ?? 0.0) - (63.0 / 69.0)) < 0.0001,
+    'Title text size must use representative line height for multiline candidates, not the full block bbox height.'
 );
 
 $senderLines = ['Munkfors', 'kommun'];
@@ -205,6 +292,46 @@ foreach ($overlappingMultilineCandidates as $leftIndex => $leftCandidate) {
 assert_title_multiline_candidates(
     count($overlappingMultilineCandidates) === 1,
     'A chain of overlapping multiline title blocks should keep only one non-overlapping candidate.'
+);
+
+$verticalSideText = 'S:25431(1/1)A:19284K:15123';
+$verticalBbox = ['x0' => 40.0, 'y0' => 60.0, 'x1' => 90.0, 'y1' => 548.0];
+$verticalCandidate = [
+    'value' => $verticalSideText,
+    'raw' => $verticalSideText,
+    'line' => $verticalSideText,
+    'lineIndex' => 0,
+    'start' => 0,
+    'end' => strlen($verticalSideText),
+    'bbox' => $verticalBbox,
+    'pageNumber' => 1,
+    'blockType' => 'single_line',
+    'lineCount' => 1,
+    'lineIndexes' => [0],
+];
+$verticalScored = score_title_candidate(
+    $verticalCandidate,
+    [$verticalSideText],
+    [title_multiline_test_geometry($verticalSideText, 0, $verticalBbox)]
+);
+assert_title_multiline_candidates(
+    ($verticalScored['excluded'] ?? false) === true
+        && ($verticalScored['invalidReason'] ?? null) === 'Vertikal text'
+        && abs((float) ($verticalScored['orientationRatio'] ?? 0.0) - (488.0 / 50.0)) < 0.0001,
+    'Title candidates with a final bbox that is taller than wide must be rejected as vertical text with debug ratio.'
+);
+
+$verticalOnlyResult = extract_title_field_result(
+    [$verticalSideText],
+    [title_multiline_test_geometry($verticalSideText, 0, $verticalBbox)],
+    [],
+    [],
+    [],
+    $blockSettings
+);
+assert_title_multiline_candidates(
+    ($verticalOnlyResult['value'] ?? null) === null,
+    'Vertical side text must not be selected as the title result.'
 );
 
 echo "title_multiline_candidates_test: ok\n";

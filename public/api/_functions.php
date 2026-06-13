@@ -9286,6 +9286,9 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
         'centerDistance',
         'leftAlignmentRatio',
         'horizontalPositionScore',
+        'orientationWidth',
+        'orientationHeight',
+        'orientationRatio',
         'relativeTextSize',
         'uppercaseRatio',
         'textDensityRatio',
@@ -9301,7 +9304,7 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     ] as $key) {
         $number = debug_export_float_or_null($match[$key] ?? null);
         if ($number !== null) {
-            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                 ? $number
                 : clamp_confidence($number);
         }
@@ -9718,6 +9721,9 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'centerDistance',
             'leftAlignmentRatio',
             'horizontalPositionScore',
+            'orientationWidth',
+            'orientationHeight',
+            'orientationRatio',
             'relativeTextSize',
             'uppercaseRatio',
             'textDensityRatio',
@@ -9733,7 +9739,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         ] as $key) {
             $number = debug_export_float_or_null($candidate[$key] ?? null);
             if ($number !== null) {
-                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                     ? $number
                     : clamp_confidence($number);
             }
@@ -17260,6 +17266,42 @@ function title_page_median_line_height(array $lineGeometries, ?int $pageNumber):
     return ((float) $heights[$middle - 1] + (float) $heights[$middle]) / 2.0;
 }
 
+function title_candidate_text_size_height(array $candidate, ?array $candidateBbox = null): ?float
+{
+    $partHeights = [];
+    foreach (is_array($candidate['blockParts'] ?? null) ? $candidate['blockParts'] : [] as $part) {
+        if (!is_array($part)) {
+            continue;
+        }
+        $partBbox = normalize_debug_word_bbox($part['bbox'] ?? null);
+        if ($partBbox === null) {
+            continue;
+        }
+        $height = (float) ($partBbox['y1'] ?? 0.0) - (float) ($partBbox['y0'] ?? 0.0);
+        if ($height > 0.0) {
+            $partHeights[] = $height;
+        }
+    }
+    if ($partHeights !== []) {
+        sort($partHeights, SORT_NUMERIC);
+        $middle = intdiv(count($partHeights), 2);
+        if (count($partHeights) % 2 === 1) {
+            return (float) $partHeights[$middle];
+        }
+        return ((float) $partHeights[$middle - 1] + (float) $partHeights[$middle]) / 2.0;
+    }
+
+    $bbox = normalize_debug_word_bbox($candidateBbox);
+    if ($bbox === null) {
+        $bbox = normalize_debug_word_bbox($candidate['bbox'] ?? null);
+    }
+    if ($bbox === null) {
+        return null;
+    }
+    $height = (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0);
+    return $height > 0.0 ? $height : null;
+}
+
 function title_candidate_word_count(string $text): int
 {
     return count(preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY) ?: []);
@@ -17642,6 +17684,7 @@ function title_candidates_from_multiline_text_blocks(array $lines, array $lineGe
             'lineCount' => is_int($block['lineCount'] ?? null) ? (int) $block['lineCount'] : 2,
             'lineIndexes' => is_array($block['lineIndexes'] ?? null) ? $block['lineIndexes'] : [$lineIndex],
             'blockParts' => is_array($block['parts'] ?? null) ? $block['parts'] : [],
+            'blockJoinMetrics' => is_array($block['joinMetrics'] ?? null) ? $block['joinMetrics'] : [],
         ];
     }
 
@@ -17677,6 +17720,20 @@ function score_title_candidate(
 
     if ($lineIndex < 0 || $text === '') {
         return $result;
+    }
+
+    if ($bbox !== null) {
+        $bboxWidth = max(0.0, (float) ($bbox['x1'] ?? 0.0) - (float) ($bbox['x0'] ?? 0.0));
+        $bboxHeight = max(0.0, (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0));
+        if ($bboxWidth > 0.0 && $bboxHeight > $bboxWidth) {
+            $result['excluded'] = true;
+            $result['excludedReason'] = 'Vertikal text';
+            $result['invalidReason'] = 'Vertikal text';
+            $result['orientationWidth'] = $bboxWidth;
+            $result['orientationHeight'] = $bboxHeight;
+            $result['orientationRatio'] = $bboxHeight / $bboxWidth;
+            return $result;
+        }
     }
 
     $score = 0.0;
@@ -17716,18 +17773,6 @@ function score_title_candidate(
             'detail' => $detail,
         ];
     };
-
-    $blockType = is_string($candidate['blockType'] ?? null) ? (string) $candidate['blockType'] : 'single_line';
-    $lineCount = is_int($candidate['lineCount'] ?? null) ? (int) $candidate['lineCount'] : 1;
-    $bboxIndexesText = implode(',', array_map('strval', is_array($candidate['valueBBoxIndexes'] ?? null) ? $candidate['valueBBoxIndexes'] : []));
-    $appendSignal(
-        'positive',
-        'text_block',
-        0.0,
-        'block_type:' . $blockType
-            . ',lines:' . $lineCount
-            . ',bbox_indexes:' . $bboxIndexesText
-    );
 
     if ($bbox !== null) {
         $center = bbox_center_point($bbox);
@@ -17792,24 +17837,21 @@ function score_title_candidate(
                         (string) $winningHorizontalSignal['detail']
                     );
                 }
-                foreach (array_slice($horizontalSignals, 1) as $ignoredHorizontalSignal) {
-                    $ignoredScore = (float) ($ignoredHorizontalSignal['score'] ?? 0.0);
-                    $appendSignal(
-                        'ignored',
-                        (string) $ignoredHorizontalSignal['code'],
-                        $ignoredScore,
-                        (string) $ignoredHorizontalSignal['ignoredDetail']
-                    );
-                }
             }
         }
 
-        $height = (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0);
+        $height = title_candidate_text_size_height($candidate, $bbox);
         $medianHeight = title_page_median_line_height($lineGeometries, $pageNumber);
         if ($height > 0.0 && $medianHeight !== null && $medianHeight > 0.0) {
             $relativeSize = $height / $medianHeight;
             $result['relativeTextSize'] = $relativeSize;
-            $addSignal('text_size', $relativeSize, 'relative_size:' . round($relativeSize, 3));
+            $addSignal(
+                'text_size',
+                $relativeSize,
+                'relative_size:' . round($relativeSize, 3)
+                    . ',height:' . round($height, 3)
+                    . ',normal_height:' . round($medianHeight, 3)
+            );
         }
     }
 
@@ -18602,30 +18644,33 @@ function multiline_text_block_fragments_for_lines(array $lines, array $lineGeome
 
 function multiline_text_block_fragments_can_join(array $upper, array $lower, array $settings): bool
 {
+    $metrics = multiline_text_block_fragment_join_metrics($upper, $lower, $settings);
+    return is_array($metrics) && ($metrics['accepted'] ?? false) === true;
+}
+
+function multiline_text_block_fragment_join_metrics(array $upper, array $lower, array $settings): ?array
+{
     $upperBbox = normalize_debug_word_bbox($upper['bbox'] ?? null);
     $lowerBbox = normalize_debug_word_bbox($lower['bbox'] ?? null);
     if ($upperBbox === null || $lowerBbox === null) {
-        return false;
+        return null;
     }
     if (($upper['pageNumber'] ?? null) !== ($lower['pageNumber'] ?? null)) {
-        return false;
+        return null;
     }
     if ((int) ($lower['lineIndex'] ?? -1) <= (int) ($upper['lineIndex'] ?? -1)) {
-        return false;
+        return null;
     }
 
     $upperHeight = max(1.0, (float) $upperBbox['y1'] - (float) $upperBbox['y0']);
     $lowerHeight = max(1.0, (float) $lowerBbox['y1'] - (float) $lowerBbox['y0']);
     $sizeRatio = max($upperHeight, $lowerHeight) / min($upperHeight, $lowerHeight);
-    if ($sizeRatio > (float) $settings['maxTextSizeRatio']) {
-        return false;
-    }
+    $maxTextSizeRatio = (float) $settings['maxTextSizeRatio'];
 
     $averageHeight = max(1.0, ($upperHeight + $lowerHeight) / 2.0);
     $verticalGap = max(0.0, (float) $lowerBbox['y0'] - (float) $upperBbox['y1']);
-    if ($verticalGap / $averageHeight > (float) $settings['maxLineDistanceLineHeights']) {
-        return false;
-    }
+    $verticalGapRatio = $verticalGap / $averageHeight;
+    $maxLineDistance = (float) $settings['maxLineDistanceLineHeights'];
 
     $upperWidth = max(1.0, (float) $upperBbox['x1'] - (float) $upperBbox['x0']);
     $lowerWidth = max(1.0, (float) $lowerBbox['x1'] - (float) $lowerBbox['x0']);
@@ -18634,12 +18679,39 @@ function multiline_text_block_fragments_can_join(array $upper, array $lower, arr
         min((float) $upperBbox['x1'], (float) $lowerBbox['x1'])
             - max((float) $upperBbox['x0'], (float) $lowerBbox['x0'])
     );
-    if ($xOverlap / min($upperWidth, $lowerWidth) < (float) $settings['minXOverlapRatio']) {
-        return false;
-    }
+    $xOverlapRatio = $xOverlap / min($upperWidth, $lowerWidth);
+    $minXOverlapRatio = (float) $settings['minXOverlapRatio'];
 
     $horizontalOffset = abs((float) $upperBbox['x0'] - (float) $lowerBbox['x0']);
-    return $horizontalOffset / $averageHeight <= (float) $settings['maxHorizontalOffsetLineHeights'];
+    $horizontalOffsetRatio = $horizontalOffset / $averageHeight;
+    $maxHorizontalOffset = (float) $settings['maxHorizontalOffsetLineHeights'];
+    $rejectionReason = '';
+    if ($sizeRatio > $maxTextSizeRatio) {
+        $rejectionReason = 'text_size_ratio';
+    } elseif ($verticalGapRatio > $maxLineDistance) {
+        $rejectionReason = 'line_distance';
+    } elseif ($xOverlapRatio < $minXOverlapRatio) {
+        $rejectionReason = 'x_overlap';
+    } elseif ($horizontalOffsetRatio > $maxHorizontalOffset) {
+        $rejectionReason = 'horizontal_offset';
+    }
+
+    return [
+        'accepted' => $rejectionReason === '',
+        'rejectionReason' => $rejectionReason,
+        'upperLineIndex' => (int) ($upper['lineIndex'] ?? -1),
+        'lowerLineIndex' => (int) ($lower['lineIndex'] ?? -1),
+        'upperHeight' => $upperHeight,
+        'lowerHeight' => $lowerHeight,
+        'textSizeRatio' => $sizeRatio,
+        'maxAllowedTextSizeRatio' => $maxTextSizeRatio,
+        'verticalGapRatio' => $verticalGapRatio,
+        'maxAllowedVerticalGapRatio' => $maxLineDistance,
+        'xOverlapRatio' => $xOverlapRatio,
+        'minAllowedXOverlapRatio' => $minXOverlapRatio,
+        'horizontalOffsetRatio' => $horizontalOffsetRatio,
+        'maxAllowedHorizontalOffsetRatio' => $maxHorizontalOffset,
+    ];
 }
 
 function build_multiline_text_blocks(
@@ -18661,6 +18733,7 @@ function build_multiline_text_blocks(
         $texts = [];
         $lineIndexes = [];
         $bboxIndexes = [];
+        $joinMetrics = [];
         $bbox = null;
         foreach ($parts as $part) {
             $text = is_string($part['text'] ?? null) ? trim((string) $part['text']) : '';
@@ -18672,6 +18745,9 @@ function build_multiline_text_blocks(
                 if (is_int($index) && $index > 0) {
                     $bboxIndexes[$index] = true;
                 }
+            }
+            if (is_array($part['joinDebug'] ?? null)) {
+                $joinMetrics[] = $part['joinDebug'];
             }
             $bbox = multiline_text_block_bbox_union($bbox, is_array($part['bbox'] ?? null) ? $part['bbox'] : null);
         }
@@ -18703,6 +18779,7 @@ function build_multiline_text_blocks(
             'bboxIndexes' => array_values($resolvedBboxIndexes),
             'pageNumber' => is_int($first['pageNumber'] ?? null) ? (int) $first['pageNumber'] : null,
             'parts' => array_values($parts),
+            'joinMetrics' => array_values($joinMetrics),
         ];
     };
 
@@ -18725,9 +18802,11 @@ function build_multiline_text_blocks(
             if ((int) ($candidate['lineIndex'] ?? -1) <= (int) ($last['lineIndex'] ?? -1)) {
                 continue;
             }
-            if (!multiline_text_block_fragments_can_join($last, $candidate, $settings)) {
+            $joinMetrics = multiline_text_block_fragment_join_metrics($last, $candidate, $settings);
+            if (!is_array($joinMetrics) || ($joinMetrics['accepted'] ?? false) !== true) {
                 continue;
             }
+            $candidate['joinDebug'] = $joinMetrics;
             $extend([...$parts, $candidate], $index + 1);
         }
     };
@@ -18821,8 +18900,9 @@ function extract_sender_name_in_document_field_result(
                 'blockType' => is_string($block['blockType'] ?? null) ? (string) $block['blockType'] : 'single_line',
                 'lineCount' => is_int($block['lineCount'] ?? null) ? (int) $block['lineCount'] : 1,
                 'lineIndexes' => is_array($block['lineIndexes'] ?? null) ? $block['lineIndexes'] : [],
+                'blockParts' => is_array($block['parts'] ?? null) ? $block['parts'] : [],
+                'blockJoinMetrics' => is_array($block['joinMetrics'] ?? null) ? $block['joinMetrics'] : [],
             ];
-            $bboxIndexesText = implode(',', array_map('strval', $match['valueBBoxIndexes']));
             $match['signals'] = [
                 [
                     'type' => 'positive',
@@ -18830,14 +18910,6 @@ function extract_sender_name_in_document_field_result(
                     'score' => 100.0,
                     'detail' => 'matched_name:' . $match['matchedName']
                         . ',match_type:' . $match['senderMatchType'],
-                ],
-                [
-                    'type' => 'positive',
-                    'code' => 'text_block',
-                    'score' => 0.0,
-                    'detail' => 'block_type:' . $match['blockType']
-                        . ',lines:' . $match['lineCount']
-                        . ',bbox_indexes:' . $bboxIndexesText,
                 ],
             ];
             $matches[] = $match;
@@ -20598,10 +20670,14 @@ function title_result_matches(array $result, array $lineGeometries = []): array
                             $part['bboxIndexes'],
                             static fn($index): bool => is_int($index) && $index > 0
                         )) : [],
+                        'joinDebug' => is_array($part['joinDebug'] ?? null) ? $part['joinDebug'] : null,
                     ];
                 },
                 $candidate['blockParts']
             ), static fn($part): bool => is_array($part)));
+        }
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['blockJoinMetrics'] ?? null)) {
+            $matchesByKey[$matchKey]['blockJoinMetrics'] = $candidate['blockJoinMetrics'];
         }
         foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio'] as $numericKey) {
             if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$numericKey] ?? null)) {
@@ -21653,6 +21729,9 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'leftAlignmentRatio' => is_numeric($match['leftAlignmentRatio'] ?? null) ? (float) $match['leftAlignmentRatio'] : null,
                         'horizontalPositionScore' => is_numeric($match['horizontalPositionScore'] ?? null) ? (float) $match['horizontalPositionScore'] : null,
                         'horizontalPositionWinner' => is_string($match['horizontalPositionWinner'] ?? null) ? trim((string) $match['horizontalPositionWinner']) : null,
+                        'orientationWidth' => is_numeric($match['orientationWidth'] ?? null) ? (float) $match['orientationWidth'] : null,
+                        'orientationHeight' => is_numeric($match['orientationHeight'] ?? null) ? (float) $match['orientationHeight'] : null,
+                        'orientationRatio' => is_numeric($match['orientationRatio'] ?? null) ? (float) $match['orientationRatio'] : null,
                         'relativeTextSize' => is_numeric($match['relativeTextSize'] ?? null) ? (float) $match['relativeTextSize'] : null,
                         'uppercaseRatio' => is_numeric($match['uppercaseRatio'] ?? null) ? (float) $match['uppercaseRatio'] : null,
                         'textDensityRatio' => is_numeric($match['textDensityRatio'] ?? null) ? (float) $match['textDensityRatio'] : null,
@@ -21732,10 +21811,12 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                                         $part['bboxIndexes'],
                                         static fn($index): bool => is_int($index) && $index > 0
                                     )) : [],
+                                    'joinDebug' => is_array($part['joinDebug'] ?? null) ? $part['joinDebug'] : null,
                                 ];
                             },
                             $match['blockParts']
                         ), static fn($part): bool => is_array($part))) : [],
+                        'blockJoinMetrics' => is_array($match['blockJoinMetrics'] ?? null) ? $match['blockJoinMetrics'] : [],
                     ];
                 },
                 array_values(array_filter($matchesForMeta, static fn ($match): bool => is_array($match)))

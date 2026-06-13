@@ -4499,15 +4499,6 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
       wrapper.appendChild(scoreRow);
     });
 
-    primaryDateSignalRows(row?.signals, 'ignored').forEach((signal, index) => {
-      const scoreRow = createPrimaryDateScoreRow(signal);
-      scoreRow.classList.add('matches-primary-date-score-row--penalty-start');
-      if (index === 0 && wrapper.childElementCount > 0) {
-        scoreRow.classList.add('matches-primary-date-score-row--penalty-start');
-      }
-      wrapper.appendChild(scoreRow);
-    });
-
     const score = Number(row?.score);
     const fullConfidenceScore = Number(row?.fullConfidenceScore);
     if (Number.isFinite(score)) {
@@ -8127,7 +8118,6 @@ function formatPrimaryDateSignalLabel(code) {
     brevity: 'Korthet',
     sender_name: 'Avsändarnamn',
     exact_sender_name: 'Exakt namnmatchning',
-    text_block: 'Textblock',
   };
   return labels[code] || code;
 }
@@ -8235,18 +8225,14 @@ function formatPrimaryDateSignalDetail(signal) {
   if (centerDistanceMatch && signal?.code !== 'horizontal_position_left_aligned') {
     const ratio = Number(centerDistanceMatch[1]);
     if (Number.isFinite(ratio)) {
-      const ignored = /\bignored:/u.test(detail) ? ', ej använd' : '';
-      const winner = /\bwinner:/u.test(detail) ? ', vinnande horisontell signal' : '';
-      return `${formatPrimaryDateScoreNumber(ratio * 100)} % från mitten${winner}${ignored}`;
+      return `${formatPrimaryDateScoreNumber(ratio * 100)} % från mitten`;
     }
   }
   const leftRatioMatch = detail.match(/\bleft_ratio:([0-9.]+)/u);
   if (leftRatioMatch) {
     const ratio = Number(leftRatioMatch[1]);
     if (Number.isFinite(ratio)) {
-      const ignored = /\bignored:/u.test(detail) ? ', ej använd' : '';
-      const winner = /\bwinner:/u.test(detail) ? ', vinnande horisontell signal' : '';
-      return `${formatPrimaryDateScoreNumber(ratio * 100)} % från vänsterkanten${winner}${ignored}`;
+      return `${formatPrimaryDateScoreNumber(ratio * 100)} % från vänsterkanten`;
     }
   }
   const relativeSizeMatch = detail.match(/\brelative_size:([0-9.]+)/u);
@@ -8272,15 +8258,6 @@ function formatPrimaryDateSignalDetail(signal) {
     const matchType = detail.match(/\bmatch_type:([^,]+)/u)?.[1]?.trim() || '';
     const typeLabel = matchType === 'sender_unit' ? 'underenhet' : 'avsändare';
     return matchedName ? `${matchedName} (${typeLabel})` : detail;
-  }
-  if (signal?.code === 'text_block') {
-    const blockType = detail.match(/\bblock_type:([^,]+)/u)?.[1]?.trim() || '';
-    const lineCount = Number(detail.match(/\blines:([0-9]+)/u)?.[1]);
-    const bboxIndexes = detail.match(/\bbbox_indexes:([0-9,]*)/u)?.[1]?.trim() || '';
-    const typeLabel = blockType === 'multiline' ? 'flerradigt' : 'enradigt';
-    const lineText = Number.isFinite(lineCount) ? `${lineCount} ${lineCount === 1 ? 'rad' : 'rader'}` : '';
-    const bboxText = bboxIndexes ? `bboxar ${bboxIndexes}` : '';
-    return [typeLabel, lineText, bboxText].filter((part) => part !== '').join(', ');
   }
   if (signal?.code === 'near_title') {
     const titleMatch = detail.match(/^title:(.*),confidence:([0-9.]+),distance:([0-9.]+)$/u);
