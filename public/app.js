@@ -465,6 +465,7 @@ let ocrDebugExportStatusTone = 'info';
 let ocrDebugExportCurrentFilter = 'ready';
 let ocrDebugExportHasOpened = false;
 let ocrDebugExportShowIdentical = false;
+let ocrDebugExportCompareViewMode = 'result';
 let ocrDebugExportActiveCommentDraft = null;
 
 let state = {
@@ -8466,6 +8467,167 @@ function appendSnapshotCompareCandidateListRow(table, fieldLabel, oldCandidates,
   table.appendChild(row);
 }
 
+const SNAPSHOT_COMPARE_RESULT_METADATA_EXCLUDED_KEYS = new Set([
+  'originalFilename',
+  'createdAt'
+]);
+
+function snapshotCompareTextValue(value) {
+  return typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+}
+
+function snapshotCompareCanonicalValue(value) {
+  const text = snapshotCompareTextValue(value).replace(/\s+/gu, ' ');
+  return typeof text.toLocaleLowerCase === 'function' ? text.toLocaleLowerCase('sv-SE') : text.toLowerCase();
+}
+
+function snapshotCompareSelectedCandidateValue(candidates) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  const selected = list.find((candidate) => candidate && typeof candidate === 'object' && candidate.selected === true)
+    || list.find((candidate) => candidate && typeof candidate === 'object')
+    || null;
+  return selected && typeof selected === 'object' ? snapshotCompareTextValue(selected.value) : '';
+}
+
+function snapshotCompareResultMetadataDiffs(diff) {
+  const items = Array.isArray(diff && diff.metadata) ? diff.metadata : [];
+  return items.filter((item) => {
+    if (!item || typeof item !== 'object' || item.unchanged === true) {
+      return false;
+    }
+    const key = typeof item.key === 'string' ? item.key.trim() : '';
+    if (SNAPSHOT_COMPARE_RESULT_METADATA_EXCLUDED_KEYS.has(key)) {
+      return false;
+    }
+    return snapshotCompareTextValue(item.from) !== snapshotCompareTextValue(item.to);
+  });
+}
+
+function snapshotCompareResultDataFieldDiffs(diff) {
+  const fields = Array.isArray(diff && diff.dataFields) ? diff.dataFields : [];
+  return fields.map((field) => {
+    const from = snapshotCompareSelectedCandidateValue(field && field.leftCandidates);
+    const to = snapshotCompareSelectedCandidateValue(field && field.rightCandidates);
+    return {
+      key: typeof field?.key === 'string' ? field.key : '',
+      name: typeof field?.name === 'string' && field.name.trim() !== '' ? field.name.trim() : String(field?.key || 'Datafält'),
+      from,
+      to,
+    };
+  }).filter((field) => snapshotCompareCanonicalValue(field.from) !== snapshotCompareCanonicalValue(field.to));
+}
+
+function snapshotCompareResultLabelDiff(diff) {
+  const labelDiff = diff && typeof diff.labels === 'object' ? diff.labels : {};
+  return {
+    added: Array.isArray(labelDiff.added) ? labelDiff.added : [],
+    removed: Array.isArray(labelDiff.removed) ? labelDiff.removed : [],
+  };
+}
+
+function snapshotCompareHasResultDiff(diff) {
+  const labels = snapshotCompareResultLabelDiff(diff);
+  return snapshotCompareResultMetadataDiffs(diff).length > 0
+    || snapshotCompareResultDataFieldDiffs(diff).length > 0
+    || labels.added.length > 0
+    || labels.removed.length > 0;
+}
+
+function snapshotCompareResultDiffs(metadataDiffs) {
+  return (Array.isArray(metadataDiffs) ? metadataDiffs : []).filter((diff) => snapshotCompareHasResultDiff(diff));
+}
+
+function createOcrDebugResultMetadataDiffRow(diff, sides) {
+  const oldSide = sides && sides.oldKey === 'right' ? 'right' : 'left';
+  const row = document.createElement('div');
+  row.className = 'ocr-debug-compare-file-row ocr-debug-compare-file-row--metadata';
+
+  const header = document.createElement('div');
+  header.className = 'ocr-debug-metadata-document-header';
+  const title = document.createElement('div');
+  title.className = 'ocr-debug-metadata-document-title';
+  title.textContent = snapshotCompareDocumentTitle(diff, oldSide) || snapshotCompareDocumentTitle(diff, oldSide === 'left' ? 'right' : 'left') || 'Dokument';
+  const job = document.createElement('div');
+  job.className = 'ocr-debug-metadata-document-job';
+  const jobId = diff && typeof diff.jobId === 'string' ? diff.jobId : '';
+  job.textContent = jobId !== '' ? `Jobb: ${jobId}` : '';
+  header.append(title, job);
+  row.appendChild(header);
+
+  const table = document.createElement('div');
+  table.className = 'snapshot-compare-table';
+  const tableHead = document.createElement('div');
+  tableHead.className = 'snapshot-compare-table-row snapshot-compare-table-row--head';
+  ['Uppgift', 'Gammal', 'Ny'].forEach((label) => {
+    const cell = document.createElement('div');
+    cell.textContent = label;
+    tableHead.appendChild(cell);
+  });
+  table.appendChild(tableHead);
+
+  snapshotCompareResultMetadataDiffs(diff).forEach((item) => {
+    const label = typeof item.label === 'string' && item.label.trim() !== '' ? item.label.trim() : String(item.key || 'Uppgift');
+    appendSnapshotCompareTableRow(table, label, oldSide === 'left' ? item.from : item.to, oldSide === 'left' ? item.to : item.from);
+  });
+
+  snapshotCompareResultDataFieldDiffs(diff).forEach((field) => {
+    appendSnapshotCompareTableRow(table, field.name, oldSide === 'left' ? field.from : field.to, oldSide === 'left' ? field.to : field.from, {
+      type: 'dataField',
+      taskType: 'dataField',
+      label: field.name,
+    });
+  });
+
+  const labelDiff = snapshotCompareResultLabelDiff(diff);
+  labelDiff.added.forEach((name) => {
+    appendSnapshotCompareTableRow(
+      table,
+      name,
+      oldSide === 'left' ? '' : String(name || ''),
+      oldSide === 'left' ? String(name || '') : '',
+      { type: 'label', taskType: 'label', label: name }
+    );
+  });
+  labelDiff.removed.forEach((name) => {
+    appendSnapshotCompareTableRow(
+      table,
+      name,
+      oldSide === 'left' ? String(name || '') : '',
+      oldSide === 'left' ? '' : String(name || ''),
+      { type: 'label', taskType: 'label', label: name }
+    );
+  });
+
+  row.appendChild(table);
+  return row;
+}
+
+function createSnapshotCompareViewModeToggle(activeMode) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'snapshot-compare-view-toggle';
+  wrapper.setAttribute('role', 'tablist');
+  wrapper.setAttribute('aria-label', 'Visningsläge för snapshotdiff');
+  [
+    ['result', 'Resultat'],
+    ['analysis', 'Analys'],
+  ].forEach(([mode, label]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'snapshot-compare-view-toggle-button';
+    const active = activeMode === mode;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+    button.textContent = label;
+    button.addEventListener('click', () => {
+      ocrDebugExportCompareViewMode = mode;
+      renderOcrDebugExportCompareResult();
+    });
+    wrapper.appendChild(button);
+  });
+  return wrapper;
+}
+
 function createOcrDebugMetadataDiffRow(diff, sides) {
   const oldSide = sides && sides.oldKey === 'right' ? 'right' : 'left';
   const newSide = oldSide === 'left' ? 'right' : 'left';
@@ -8714,81 +8876,102 @@ function renderOcrDebugExportCompareResult() {
   );
   ocrDebugExportCompareResultEl.appendChild(snapshots);
 
+  const compareViewMode = ocrDebugExportCompareViewMode === 'analysis' ? 'analysis' : 'result';
+  ocrDebugExportCompareResultEl.appendChild(createSnapshotCompareViewModeToggle(compareViewMode));
+
   const counts = result.counts && typeof result.counts === 'object' ? result.counts : {};
+  const metadataDiffs = Array.isArray(result.metadataDiffs) ? result.metadataDiffs : [];
+  const resultDiffs = snapshotCompareResultDiffs(metadataDiffs);
   const countSections = document.createElement('div');
   countSections.className = 'ocr-debug-compare-count-sections';
-  const fileCounts = document.createElement('div');
-  fileCounts.className = 'ocr-debug-compare-count-section';
-  const fileCountsTitle = document.createElement('div');
-  fileCountsTitle.className = 'ocr-debug-compare-count-section-title';
-  fileCountsTitle.textContent = 'Filer';
-  const fileCountList = document.createElement('div');
-  fileCountList.className = 'ocr-debug-compare-counts';
-  const onlyInOld = sides.oldKey === 'left' ? counts.onlyInA : counts.onlyInB;
-  const onlyInNew = sides.oldKey === 'left' ? counts.onlyInB : counts.onlyInA;
-  [
-    ['Oförändrade', counts.identical],
-    ['Ändrade', counts.changed],
-    ['Endast i gammal', onlyInOld],
-    ['Endast i ny', onlyInNew],
-  ].forEach(([label, value]) => {
-    const item = document.createElement('span');
-    item.className = 'ocr-debug-compare-count';
-    item.textContent = `${label}: ${Number.isFinite(Number(value)) ? Number(value) : 0}`;
-    fileCountList.appendChild(item);
-  });
-  fileCounts.append(fileCountsTitle, fileCountList);
+  if (compareViewMode === 'analysis') {
+    const fileCounts = document.createElement('div');
+    fileCounts.className = 'ocr-debug-compare-count-section';
+    const fileCountsTitle = document.createElement('div');
+    fileCountsTitle.className = 'ocr-debug-compare-count-section-title';
+    fileCountsTitle.textContent = 'Filer';
+    const fileCountList = document.createElement('div');
+    fileCountList.className = 'ocr-debug-compare-counts';
+    const onlyInOld = sides.oldKey === 'left' ? counts.onlyInA : counts.onlyInB;
+    const onlyInNew = sides.oldKey === 'left' ? counts.onlyInB : counts.onlyInA;
+    [
+      ['Oförändrade', counts.identical],
+      ['Ändrade', counts.changed],
+      ['Endast i gammal', onlyInOld],
+      ['Endast i ny', onlyInNew],
+    ].forEach(([label, value]) => {
+      const item = document.createElement('span');
+      item.className = 'ocr-debug-compare-count';
+      item.textContent = `${label}: ${Number.isFinite(Number(value)) ? Number(value) : 0}`;
+      fileCountList.appendChild(item);
+    });
+    fileCounts.append(fileCountsTitle, fileCountList);
+    countSections.appendChild(fileCounts);
+  }
   const metadataCounts = document.createElement('div');
   metadataCounts.className = 'ocr-debug-compare-count-section';
   const metadataCountsTitle = document.createElement('div');
   metadataCountsTitle.className = 'ocr-debug-compare-count-section-title';
-  metadataCountsTitle.textContent = 'Dokumenttolkning';
+  metadataCountsTitle.textContent = compareViewMode === 'analysis' ? 'Dokumenttolkning' : 'Resultat';
   const metadataCountList = document.createElement('div');
   metadataCountList.className = 'ocr-debug-compare-counts';
   const metadataCount = document.createElement('span');
   metadataCount.className = 'ocr-debug-compare-count';
-  metadataCount.textContent = `Dokument med ändrad tolkning: ${Number.isFinite(Number(result.metadataChanged)) ? Number(result.metadataChanged) : 0}`;
+  metadataCount.textContent = compareViewMode === 'analysis'
+    ? `Dokument med ändrad tolkning: ${Number.isFinite(Number(result.metadataChanged)) ? Number(result.metadataChanged) : 0}`
+    : `Dokument med resultatförändring: ${resultDiffs.length}`;
   metadataCountList.appendChild(metadataCount);
   metadataCounts.append(metadataCountsTitle, metadataCountList);
-  countSections.append(fileCounts, metadataCounts);
+  countSections.appendChild(metadataCounts);
   ocrDebugExportCompareResultEl.appendChild(countSections);
 
-  const showIdenticalRow = document.createElement('label');
-  showIdenticalRow.className = 'ocr-debug-compare-show-identical';
-  const showIdenticalCheckbox = document.createElement('input');
-  showIdenticalCheckbox.type = 'checkbox';
-  showIdenticalCheckbox.checked = ocrDebugExportShowIdenticalEl instanceof HTMLInputElement
-    ? ocrDebugExportShowIdenticalEl.checked
-    : ocrDebugExportShowIdentical;
-  const showIdenticalText = document.createElement('span');
-  showIdenticalText.textContent = 'Visa identiska filer';
-  showIdenticalRow.append(showIdenticalCheckbox, showIdenticalText);
-  ocrDebugExportShowIdenticalEl = showIdenticalCheckbox;
-  showIdenticalCheckbox.addEventListener('change', () => {
-    ocrDebugExportShowIdentical = showIdenticalCheckbox.checked;
-    renderOcrDebugExportCompareResult();
-  });
-  ocrDebugExportCompareResultEl.appendChild(showIdenticalRow);
+  let showIdentical = false;
+  if (compareViewMode === 'analysis') {
+    const showIdenticalRow = document.createElement('label');
+    showIdenticalRow.className = 'ocr-debug-compare-show-identical';
+    const showIdenticalCheckbox = document.createElement('input');
+    showIdenticalCheckbox.type = 'checkbox';
+    showIdenticalCheckbox.checked = ocrDebugExportShowIdenticalEl instanceof HTMLInputElement
+      ? ocrDebugExportShowIdenticalEl.checked
+      : ocrDebugExportShowIdentical;
+    const showIdenticalText = document.createElement('span');
+    showIdenticalText.textContent = 'Visa identiska filer';
+    showIdenticalRow.append(showIdenticalCheckbox, showIdenticalText);
+    ocrDebugExportShowIdenticalEl = showIdenticalCheckbox;
+    showIdenticalCheckbox.addEventListener('change', () => {
+      ocrDebugExportShowIdentical = showIdenticalCheckbox.checked;
+      renderOcrDebugExportCompareResult();
+    });
+    ocrDebugExportCompareResultEl.appendChild(showIdenticalRow);
+    showIdentical = showIdenticalCheckbox.checked;
+  } else {
+    ocrDebugExportShowIdenticalEl = null;
+  }
 
-  const showIdentical = showIdenticalCheckbox.checked;
   const files = Array.isArray(result.files) ? result.files : [];
-  const visibleFiles = files.filter((file) => showIdentical || (file && file.status !== 'identical'));
-  const metadataDiffs = Array.isArray(result.metadataDiffs) ? result.metadataDiffs : [];
+  const visibleFiles = compareViewMode === 'analysis'
+    ? files.filter((file) => showIdentical || (file && file.status !== 'identical'))
+    : [];
+  const visibleMetadataDiffs = compareViewMode === 'analysis' ? metadataDiffs : resultDiffs;
 
   const fileList = document.createElement('div');
   fileList.className = 'ocr-debug-compare-file-list';
-  if (visibleFiles.length === 0 && metadataDiffs.length === 0) {
+  if (visibleFiles.length === 0 && visibleMetadataDiffs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'settings-backup-empty';
-    empty.textContent = showIdentical ? 'Inga filer att visa.' : 'Inga ändrade eller saknade filer.';
+    empty.textContent = compareViewMode === 'analysis'
+      ? (showIdentical ? 'Inga filer att visa.' : 'Inga ändrade eller saknade filer.')
+      : 'Inga resultatförändringar.';
     fileList.appendChild(empty);
   } else {
     const metadataByJobId = new Map();
     const documentOrder = [];
-    metadataDiffs.forEach((diff) => {
+    visibleMetadataDiffs.forEach((diff) => {
       const jobId = diff && typeof diff.jobId === 'string' ? diff.jobId : '';
       if (jobId === '') {
-        fileList.appendChild(createOcrDebugMetadataDiffRow(diff, sides));
+        fileList.appendChild(compareViewMode === 'analysis'
+          ? createOcrDebugMetadataDiffRow(diff, sides)
+          : createOcrDebugResultMetadataDiffRow(diff, sides));
         return;
       }
       metadataByJobId.set(jobId, diff);
@@ -8817,7 +9000,9 @@ function renderOcrDebugExportCompareResult() {
     documentOrder.forEach((jobId) => {
       const diff = metadataByJobId.get(jobId);
       const row = diff
-        ? createOcrDebugMetadataDiffRow(diff, sides)
+        ? (compareViewMode === 'analysis'
+          ? createOcrDebugMetadataDiffRow(diff, sides)
+          : createOcrDebugResultMetadataDiffRow(diff, sides))
         : createOcrDebugCompareDocumentShell(jobId);
       appendOcrDebugCompareFileRows(row, filesByJobId.get(jobId) || []);
       fileList.appendChild(row);
@@ -9388,6 +9573,8 @@ async function compareSelectedOcrDebugExports() {
   const requestToken = ++ocrDebugExportCompareRequestToken;
   ocrDebugExportCompareLoading = true;
   ocrDebugExportCompareResult = null;
+  ocrDebugExportShowIdenticalEl = null;
+  ocrDebugExportCompareViewMode = 'result';
   renderOcrDebugExportCompareState();
   renderOcrDebugExportList();
   renderOcrDebugExportCompareResult();
