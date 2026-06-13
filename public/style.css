@@ -8469,6 +8469,11 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   overflow: hidden;
 }
 
+.extraction-field-capture-highlight-wrap .inline-input-control {
+  line-height: normal;
+  letter-spacing: 0;
+}
+
 .extraction-field-capture-highlight-layer {
   position: absolute;
   inset: 0 var(--inline-input-accessories-width) 0 0;
@@ -8488,6 +8493,14 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   line-height: normal;
   letter-spacing: 0;
   white-space: pre;
+}
+
+.inline-input-wrap.is-match-pattern-preview .extraction-field-capture-highlight-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.extraction-field-capture-highlight-wrap .inline-input-control.is-match-pattern-preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .extraction-field-capture-highlight-group {

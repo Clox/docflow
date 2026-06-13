@@ -27923,6 +27923,15 @@ function createMatchPatternInspector(options = {}) {
       : originalValue;
     const nextValue = open ? patternValue : originalValue;
     const shouldSyncValue = open || binding._wasMatchPatternPreview === true;
+    const hideForEmptyPreview = open
+      && binding.hideWhenPreviewEmpty === true
+      && originalValue.trim() === ''
+      && patternValue.trim() === '';
+    const hideEl = binding.hideEl instanceof HTMLElement ? binding.hideEl : null;
+    if (hideEl instanceof HTMLElement) {
+      hideEl.hidden = hideForEmptyPreview;
+      hideEl.style.display = hideForEmptyPreview ? 'none' : '';
+    }
 
     if (shouldSyncValue && binding.inputEl.value !== nextValue) {
       binding.inputEl.value = nextValue;
@@ -30563,6 +30572,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
           matchPatternInspector.registerInput({
             groupKey: 'searchTerms',
             inputEl: searchTermInput,
+            hideEl: searchTermRow,
+            hideWhenPreviewEmpty: true,
             copyButtonEl: searchTermCopyButton,
             regexButtonEl: regexButton,
             removeButtonEl: removeSearchTermButton,
