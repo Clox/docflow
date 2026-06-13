@@ -13047,9 +13047,30 @@ function build_rule_match_pattern(string $ruleText, array $inverseMap): ?string
         return null;
     }
 
+    $body = literal_ocr_text_pattern_body($ruleText, '/', $inverseMap);
+    if ($body === '') {
+        return null;
+    }
+
+    return delimit_ocr_text_regex($body, '/', 'iu', false);
+}
+
+function literal_ocr_text_pattern_body(string $text, string $delimiter, array $inverseMap = []): string
+{
+    $chars = utf8_chars($text);
     $parts = [];
-    foreach ($chars as $char) {
+    $count = count($chars);
+    for ($index = 0; $index < $count; $index++) {
+        $char = $chars[$index];
         if (preg_match('/\s/u', $char) === 1) {
+            while ($index + 1 < $count && preg_match('/\s/u', $chars[$index + 1]) === 1) {
+                $index++;
+            }
+            if ($index + 1 < $count && ($chars[$index + 1] === '?' || $chars[$index + 1] === '*')) {
+                $index++;
+                $parts[] = '\s*';
+                continue;
+            }
             $parts[] = '\s+';
             continue;
         }
@@ -13066,18 +13087,18 @@ function build_rule_match_pattern(string $ruleText, array $inverseMap): ?string
 
         $choices = array_values(array_unique($choices));
         if (count($choices) === 1) {
-            $parts[] = preg_quote($choices[0], '/');
+            $parts[] = preg_quote($choices[0], $delimiter);
             continue;
         }
 
         $charClass = '';
         foreach ($choices as $choice) {
-            $charClass .= preg_quote($choice, '/');
+            $charClass .= preg_quote($choice, $delimiter);
         }
         $parts[] = '[' . $charClass . ']';
     }
 
-    return delimit_ocr_text_regex(implode('', $parts), '/', 'iu', false);
+    return implode('', $parts);
 }
 
 function ocr_text_regex_flags(string $flags = 'iu'): string
@@ -13795,6 +13816,11 @@ function regex_pattern_with_whitespace_wildcards(string $pattern): string
             while ($index + 1 < $count && preg_match('/\s/u', $chars[$index + 1]) === 1) {
                 $index++;
             }
+            if ($index + 1 < $count && ($chars[$index + 1] === '?' || $chars[$index + 1] === '*')) {
+                $index++;
+                $result .= '\s*';
+                continue;
+            }
             $result .= '\s+';
             continue;
         }
@@ -13807,15 +13833,7 @@ function regex_pattern_with_whitespace_wildcards(string $pattern): string
 
 function literal_pattern_with_whitespace_wildcards(string $text, string $delimiter): string
 {
-    $segments = preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY);
-    if (!is_array($segments) || $segments === []) {
-        return preg_quote($text, $delimiter);
-    }
-
-    return implode('\s+', array_map(
-        static fn (string $segment): string => preg_quote($segment, $delimiter),
-        $segments
-    ));
+    return literal_ocr_text_pattern_body($text, $delimiter);
 }
 
 function build_literal_space_flexible_regex(string $text, array $replacementMap, bool $useWordBoundaries): ?string
@@ -13826,38 +13844,11 @@ function build_literal_space_flexible_regex(string $text, array $replacementMap,
     }
 
     $inverseMap = build_inverse_single_char_map($replacementMap);
-    $segments = preg_split('/\s+/u', $trimmed, -1, PREG_SPLIT_NO_EMPTY);
-    if (!is_array($segments) || $segments === []) {
+    $joined = literal_ocr_text_pattern_body($trimmed, '/', $inverseMap);
+    if ($joined === '') {
         return null;
     }
 
-    $patternParts = [];
-    foreach ($segments as $segment) {
-        if (!is_string($segment) || $segment === '') {
-            continue;
-        }
-
-        $segmentPattern = build_rule_match_pattern($segment, $inverseMap);
-        if (!is_string($segmentPattern) || strlen($segmentPattern) < 4) {
-            return null;
-        }
-
-        $delimiterPosition = strrpos($segmentPattern, '/');
-        $body = $delimiterPosition !== false && $delimiterPosition > 0
-            ? substr($segmentPattern, 1, $delimiterPosition - 1)
-            : '';
-        if (!is_string($body) || $body === '') {
-            return null;
-        }
-
-        $patternParts[] = $body;
-    }
-
-    if ($patternParts === []) {
-        return null;
-    }
-
-    $joined = implode('\s+', $patternParts);
     if ($useWordBoundaries) {
         return delimit_ocr_text_regex('\b' . $joined . '\b', '/', 'iu', false);
     }

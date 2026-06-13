@@ -903,8 +903,8 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         id="labels-match-pattern-inspector-toggle"
         type="button"
         class="match-pattern-inspector-toggle"
-        title="Visa matchningsmönster"
-        aria-label="Visa matchningsmönster"
+        title="Visa genererat matchningsmönster"
+        aria-label="Visa genererat matchningsmönster"
         aria-expanded="false"
         aria-pressed="false"
       >
@@ -963,8 +963,8 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         id="extraction-fields-match-pattern-inspector-toggle"
         type="button"
         class="match-pattern-inspector-toggle"
-        title="Visa matchningsmönster"
-        aria-label="Visa matchningsmönster"
+        title="Visa genererat matchningsmönster"
+        aria-label="Visa genererat matchningsmönster"
         aria-expanded="false"
         aria-pressed="false"
       >
@@ -1009,8 +1009,8 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         id="value-patterns-match-pattern-inspector-toggle"
         type="button"
         class="match-pattern-inspector-toggle"
-        title="Visa matchningsmönster"
-        aria-label="Visa matchningsmönster"
+        title="Visa genererat matchningsmönster"
+        aria-label="Visa genererat matchningsmönster"
         aria-expanded="false"
         aria-pressed="false"
       >

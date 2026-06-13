@@ -19599,7 +19599,7 @@ function buildInspectionMatchPattern(value, isRegex) {
     if (segment === '{ÖREN}' || segment === '{OREN}') {
       return '(?<docflow_oren>\\d{2})';
     }
-    return whitespaceFlexibleRegexPattern(escapeRegexPattern(segment));
+    return literalWhitespaceFlexibleRegexPattern(segment);
   }).join('');
 }
 
@@ -19738,6 +19738,11 @@ function whitespaceFlexibleRegexPattern(value) {
       while (index + 1 < chars.length && /\s/u.test(chars[index + 1])) {
         index += 1;
       }
+      if (index + 1 < chars.length && (chars[index + 1] === '?' || chars[index + 1] === '*')) {
+        index += 1;
+        output += '\\s*';
+        continue;
+      }
       output += '\\s+';
       continue;
     }
@@ -19746,9 +19751,33 @@ function whitespaceFlexibleRegexPattern(value) {
   return output;
 }
 
+function literalWhitespaceFlexibleRegexPattern(value) {
+  const chars = Array.from(String(value || ''));
+  let output = '';
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index];
+    if (/\s/u.test(char)) {
+      while (index + 1 < chars.length && /\s/u.test(chars[index + 1])) {
+        index += 1;
+      }
+      if (index + 1 < chars.length && (chars[index + 1] === '?' || chars[index + 1] === '*')) {
+        index += 1;
+        output += '\\s*';
+        continue;
+      }
+      output += '\\s+';
+      continue;
+    }
+    output += escapeRegexPattern(char);
+  }
+  return output;
+}
+
 function buildOcrSearchRegex(query, useRegex) {
-  const source = useRegex ? String(query || '') : escapeRegexPattern(query);
-  return new RegExp(whitespaceFlexibleRegexPattern(source), 'gimu');
+  const source = useRegex
+    ? whitespaceFlexibleRegexPattern(query)
+    : literalWhitespaceFlexibleRegexPattern(query);
+  return new RegExp(source, 'gimu');
 }
 
 function buildOcrSearchMatches(text, query, useRegex) {
@@ -27674,7 +27703,7 @@ function syncMatchPatternInspectorToggleButton(button, open) {
   if (!(button instanceof HTMLButtonElement)) {
     return;
   }
-  const label = open ? 'Visa redigering' : 'Visa matchningsmönster';
+  const label = open ? 'Visa redigering' : 'Visa genererat matchningsmönster';
   button.title = label;
   button.setAttribute('aria-label', label);
   button.setAttribute('aria-expanded', open ? 'true' : 'false');
