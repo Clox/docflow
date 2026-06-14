@@ -4454,8 +4454,14 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
     span.textContent = text;
     container.appendChild(span);
   };
+  const systemFieldShowsScoreDetails = (fieldKey = '') => (
+    fieldKey === 'primary_date'
+    || fieldKey === 'title'
+    || fieldKey === 'sender_name_in_document'
+    || fieldKey === 'sender_mark_in_document'
+  );
   const matchHasPrimaryDateScoreDetails = (row, fieldKey = '') => (
-    (fieldKey === 'primary_date' || fieldKey === 'title' || fieldKey === 'sender_name_in_document')
+    systemFieldShowsScoreDetails(fieldKey)
     && (primaryDateSignalRows(row?.signals).length > 0
     || Number.isFinite(Number(row?.score))
     || Number.isFinite(Number(row?.fullConfidenceScore)))
@@ -8118,6 +8124,9 @@ function formatPrimaryDateSignalLabel(code) {
     brevity: 'Korthet',
     sender_name: 'Avsändarnamn',
     exact_sender_name: 'Exakt namnmatchning',
+    distance_to_sender_name: 'Avstånd till avsändarnamn',
+    relative_text_size: 'Textstorlek',
+    letter_ratio: 'Bokstavsandel',
   };
   return labels[code] || code;
 }
@@ -8258,6 +8267,33 @@ function formatPrimaryDateSignalDetail(signal) {
     const matchType = detail.match(/\bmatch_type:([^,]+)/u)?.[1]?.trim() || '';
     const typeLabel = matchType === 'sender_unit' ? 'underenhet' : 'avsändare';
     return matchedName ? `${matchedName} (${typeLabel})` : detail;
+  }
+  if (signal?.code === 'distance_to_sender_name') {
+    const distanceMatch = detail.match(/\bdistance_line_heights:([0-9.]+)/u);
+    if (distanceMatch) {
+      const distance = Number(distanceMatch[1]);
+      if (Number.isFinite(distance)) {
+        return `${formatPrimaryDateScoreNumber(distance)} radhöjder`;
+      }
+    }
+  }
+  if (signal?.code === 'relative_text_size') {
+    const relativeSizeMatch = detail.match(/\brelative_size:([0-9.]+)/u);
+    if (relativeSizeMatch) {
+      const ratio = Number(relativeSizeMatch[1]);
+      if (Number.isFinite(ratio)) {
+        return `${formatPrimaryDateScoreNumber(ratio)} x avsändarnamnets textstorlek`;
+      }
+    }
+  }
+  if (signal?.code === 'letter_ratio') {
+    const letterRatioMatch = detail.match(/\bletter_ratio:([0-9.]+)/u);
+    if (letterRatioMatch) {
+      const ratio = Number(letterRatioMatch[1]);
+      if (Number.isFinite(ratio)) {
+        return `${formatPrimaryDateScoreNumber(ratio * 100)} % bokstäver`;
+      }
+    }
   }
   if (signal?.code === 'near_title') {
     const titleMatch = detail.match(/^title:(.*),confidence:([0-9.]+),distance:([0-9.]+)$/u);
@@ -17050,7 +17086,10 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   const confidenceValue = ocrDataFieldConfidenceValue(row);
   const matchIndex = Number.isInteger(row?.matchIndex) ? row.matchIndex + 1 : 1;
   const hasSystemScoreDetails = typeof group?.fieldKey === 'string'
-    && (group.fieldKey === 'primary_date' || group.fieldKey === 'title' || group.fieldKey === 'sender_name_in_document');
+    && (group.fieldKey === 'primary_date'
+      || group.fieldKey === 'title'
+      || group.fieldKey === 'sender_name_in_document'
+      || group.fieldKey === 'sender_mark_in_document');
   const keyWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'key', pageMatches);
   const valueWordIndexes = ocrDataFieldWordIndexListForPage(page, row, 'value', pageMatches);
   const showKeySection = ocrDataFieldMatchHasKey(row, keyWordIndexes);
@@ -19342,7 +19381,10 @@ function syncOcrDataFieldConfidenceUi(row = null) {
   const currentGroup = ocrDataFieldCurrentGroup();
   const title = ocrDataFieldConfidenceTooltip(activeRow, {
     includeScoreDetails: typeof currentGroup?.fieldKey === 'string'
-      && (currentGroup.fieldKey === 'primary_date' || currentGroup.fieldKey === 'title' || currentGroup.fieldKey === 'sender_name_in_document'),
+      && (currentGroup.fieldKey === 'primary_date'
+        || currentGroup.fieldKey === 'title'
+        || currentGroup.fieldKey === 'sender_name_in_document'
+        || currentGroup.fieldKey === 'sender_mark_in_document'),
   });
   ocrSearchConfidenceEl.replaceChildren();
   const confidenceValueEl = document.createElement('span');
@@ -26765,8 +26807,45 @@ function defaultTitleHeuristics() {
       },
       sender_name: {
         enabled: true,
-        points: -40,
-        description: 'Ger minuspoäng när en Rubrik-kandidat är identisk med en träff från systemfältet Avsändarnamn i dokument.',
+        points: -60,
+        description: 'Ger minuspoäng när en Rubrik-kandidat är identisk med en träff från systemfälten Avsändarnamn i dokument eller Avsändarmärke i dokument.',
+      },
+    },
+  };
+}
+
+function defaultSenderMarkHeuristics() {
+  return {
+    full_confidence_score: 100,
+    signals: {
+      distance_to_sender_name: {
+        enabled: true,
+        curve: [
+          { x: 0, y: 50 },
+          { x: 3, y: 45 },
+          { x: 8, y: 15 },
+          { x: 16, y: -40 },
+        ],
+        description: 'Poängkurva baserad på kandidatens avstånd till träffen för Avsändarnamn i dokument, mätt i radhöjder.',
+      },
+      relative_text_size: {
+        enabled: true,
+        curve: [
+          { x: 0.70, y: -30 },
+          { x: 1, y: 0 },
+          { x: 1.50, y: 35 },
+          { x: 2.50, y: 50 },
+        ],
+        description: 'Poängkurva baserad på textstorlek relativt Avsändarnamn i dokument.',
+      },
+      letter_ratio: {
+        enabled: true,
+        curve: [
+          { x: 0.50, y: -30 },
+          { x: 0.75, y: 0 },
+          { x: 1, y: 10 },
+        ],
+        description: 'Poängkurva baserad på hur stor del av kandidaten som består av bokstäver.',
       },
     },
   };
@@ -26811,6 +26890,26 @@ function sanitizeTitleHeuristics(input) {
         )
       );
     }
+  });
+
+  return result;
+}
+
+function sanitizeSenderMarkHeuristics(input) {
+  const defaults = defaultSenderMarkHeuristics();
+  const source = input && typeof input === 'object' ? input : {};
+  const result = defaultSenderMarkHeuristics();
+  result.full_confidence_score = Math.max(1, sanitizePrimaryDateNumber(
+    source.full_confidence_score,
+    defaults.full_confidence_score
+  ));
+
+  Object.entries(defaults.signals).forEach(([key, defaultsForSignal]) => {
+    const raw = source.signals && source.signals[key] && typeof source.signals[key] === 'object'
+      ? source.signals[key]
+      : {};
+    result.signals[key].enabled = true;
+    result.signals[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForSignal.curve);
   });
 
   return result;
@@ -26871,6 +26970,9 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
         : {}),
       ...(normalizedKey === 'title' || input.systemFieldKey === 'title' || extractor === 'title'
         ? { titleHeuristics: sanitizeTitleHeuristics(input.titleHeuristics) }
+        : {}),
+      ...(normalizedKey === 'sender_mark_in_document' || input.systemFieldKey === 'sender_mark_in_document' || extractor === 'sender_mark_in_document'
+        ? { senderMarkHeuristics: sanitizeSenderMarkHeuristics(input.senderMarkHeuristics) }
         : {}),
     };
   }
@@ -28449,6 +28551,9 @@ function systemExtractionFieldHelpText(field) {
   }
   if (key === 'sender_name_in_document' || extractor === 'sender_name_in_document') {
     return 'Avsändarnamn i dokument identifierar en- och flerradig OCR-text som exakt matchar ett registrerat avsändarnamn eller underenhetsnamn efter normalisering. Fältet påverkar inte avsändarvalet.';
+  }
+  if (key === 'sender_mark_in_document' || extractor === 'sender_mark_in_document') {
+    return 'Avsändarmärke i dokument identifierar närliggande, mer framträdande kortnamn utifrån träffar i Avsändarnamn i dokument. Fältet är separat och ändrar inte avsändarnamnsträffen.';
   }
   return '';
 }
@@ -30315,6 +30420,8 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
     || field.systemFieldKey === 'primary_date';
   const isTitleField = field.extractor === 'title'
     || field.systemFieldKey === 'title';
+  const isSenderMarkField = field.extractor === 'sender_mark_in_document'
+    || field.systemFieldKey === 'sender_mark_in_document';
   const lockedFieldNormalization = bankgiroFieldNormalizationOverride(field);
   if (lockedFieldNormalization) {
     collection[index] = {
@@ -30500,6 +30607,9 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
   }
   if (isTitleField) {
     fieldBody.appendChild(createTitleHeuristicsEditor(collection, index));
+  }
+  if (isSenderMarkField) {
+    fieldBody.appendChild(createSenderMarkHeuristicsEditor(collection, index));
   }
 
   if (!readOnly) {
@@ -31612,6 +31722,12 @@ const titleHeuristicLabels = {
   sender_name: 'Avsändarnamn',
 };
 
+const senderMarkHeuristicLabels = {
+  distance_to_sender_name: 'Avstånd till avsändarnamn',
+  relative_text_size: 'Relativ textstorlek',
+  letter_ratio: 'Bokstavsandel',
+};
+
 const titleHeuristicCurveCharts = {
   vertical_position: {
     xAxisTitle: 'Andel ned på sidan (%)',
@@ -31693,6 +31809,43 @@ const titleHeuristicCurveCharts = {
     xAsPercent: true,
     yAsPercent: false,
     xStep: 0.01,
+    yStep: 1,
+  },
+};
+
+const senderMarkHeuristicCurveCharts = {
+  distance_to_sender_name: {
+    xAxisTitle: 'Avstånd i radhöjder',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Avstånd i radhöjder',
+    yPointLabel: 'Poäng',
+    yMin: -80,
+    yMax: 100,
+    yAsPercent: false,
+    xStep: 0.5,
+    yStep: 1,
+  },
+  relative_text_size: {
+    xAxisTitle: 'Textstorlek relativt avsändarnamn',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Relativ textstorlek',
+    yPointLabel: 'Poäng',
+    yMin: -80,
+    yMax: 100,
+    yAsPercent: false,
+    xStep: 0.1,
+    yStep: 1,
+  },
+  letter_ratio: {
+    xAxisTitle: 'Bokstavsandel (%)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Bokstavsandel',
+    yPointLabel: 'Poäng',
+    yMin: -80,
+    yMax: 60,
+    xAsPercent: true,
+    yAsPercent: false,
+    xStep: 0.05,
     yStep: 1,
   },
 };
@@ -32116,6 +32269,115 @@ function createTitleHeuristicsEditor(collection, index) {
   sectionEl.className = 'primary-date-heuristic-section';
   Object.keys(heuristics.signals).forEach((ruleKey) => {
     sectionEl.appendChild(createTitleHeuristicRuleEditor({
+      heuristics,
+      ruleKey,
+      collection,
+      index,
+    }));
+  });
+  wrapper.appendChild(sectionEl);
+
+  return wrapper;
+}
+
+function createSenderMarkHeuristicCurveEditor({
+  heuristics,
+  ruleKey,
+  collection,
+  index,
+}) {
+  return createPrimaryDateHeuristicCurveEditor({
+    heuristics,
+    section: 'signals',
+    ruleKey,
+    collection,
+    index,
+    heuristicsName: 'senderMarkHeuristics',
+    sanitizeHeuristics: sanitizeSenderMarkHeuristics,
+    curveCharts: senderMarkHeuristicCurveCharts,
+    editorClass: 'sender-mark-curve-editor',
+    closeEventFlag: 'senderMarkCurveClosedOther',
+  });
+}
+
+function createSenderMarkHeuristicRuleEditor({
+  heuristics,
+  ruleKey,
+  collection,
+  index,
+}) {
+  const rule = heuristics.signals[ruleKey];
+  const row = document.createElement('div');
+  row.className = 'primary-date-heuristic-rule';
+
+  const header = document.createElement('div');
+  header.className = 'primary-date-heuristic-rule-header';
+  const title = document.createElement('span');
+  title.textContent = senderMarkHeuristicLabels[ruleKey] || ruleKey;
+  title.title = rule.description || '';
+  header.append(title);
+
+  const help = document.createElement('p');
+  help.className = 'primary-date-heuristic-help';
+  help.textContent = rule.description || '';
+  help.title = rule.description || '';
+
+  const fields = document.createElement('div');
+  fields.className = 'primary-date-heuristic-fields';
+  if (Array.isArray(rule.curve)) {
+    fields.appendChild(createSenderMarkHeuristicCurveEditor({
+      heuristics,
+      ruleKey,
+      collection,
+      index,
+    }));
+  }
+
+  row.append(header, help, fields);
+  return row;
+}
+
+function createSenderMarkHeuristicsEditor(collection, index) {
+  const field = sanitizeExtractionField(collection[index], index);
+  const heuristics = sanitizeSenderMarkHeuristics(field.senderMarkHeuristics);
+  collection[index].senderMarkHeuristics = heuristics;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'primary-date-heuristics-editor sender-mark-heuristics-editor';
+
+  const confidenceCard = document.createElement('section');
+  confidenceCard.className = 'primary-date-confidence-card';
+  const confidenceTitle = document.createElement('div');
+  confidenceTitle.className = 'primary-date-confidence-card-title';
+  confidenceTitle.textContent = 'Säkerhetsnivå';
+  const confidenceHelp = document.createElement('p');
+  confidenceHelp.className = 'primary-date-heuristic-help';
+  confidenceHelp.textContent = 'Hur många viktade poäng ett avsändarmärke behöver för att räknas som 100 % säkert. Poängen multipliceras med säkerheten för Avsändarnamn i dokument.';
+  const confidenceInput = document.createElement('input');
+  confidenceInput.type = 'number';
+  confidenceInput.step = '1';
+  confidenceInput.min = '1';
+  confidenceInput.value = String(heuristics.full_confidence_score);
+  confidenceInput.addEventListener('input', () => {
+    const next = sanitizeSenderMarkHeuristics(collection[index].senderMarkHeuristics);
+    const value = Number(confidenceInput.value);
+    if (Number.isFinite(value)) {
+      next.full_confidence_score = Math.max(1, value);
+      collection[index].senderMarkHeuristics = sanitizeSenderMarkHeuristics(next);
+      updateSettingsActionButtons();
+    }
+  });
+  confidenceCard.append(
+    confidenceTitle,
+    confidenceHelp,
+    createFloatingField('Poäng för full säkerhet', confidenceInput, 'primary-date-full-confidence-field')
+  );
+  wrapper.appendChild(confidenceCard);
+
+  const sectionEl = document.createElement('section');
+  sectionEl.className = 'primary-date-heuristic-section';
+  Object.keys(heuristics.signals).forEach((ruleKey) => {
+    sectionEl.appendChild(createSenderMarkHeuristicRuleEditor({
       heuristics,
       ruleKey,
       collection,

@@ -74,7 +74,7 @@ $geometries = [
     ),
 ];
 
-$result = extract_title_field_result($lines, $geometries, [], [], [], $blockSettings);
+$result = extract_title_field_result($lines, $geometries, [], [], [], null, $blockSettings);
 $candidates = is_array($result['candidates'] ?? null) ? $result['candidates'] : [];
 $singleLineCandidates = array_values(array_filter(
     $candidates,
@@ -143,7 +143,7 @@ $strictSettings = normalize_multiline_text_block_settings([
     ...$blockSettings,
     'maxLineDistanceLineHeights' => 0.05,
 ]);
-$strictResult = extract_title_field_result($lines, $geometries, [], [], [], $strictSettings);
+$strictResult = extract_title_field_result($lines, $geometries, [], [], [], null, $strictSettings);
 $strictCandidates = is_array($strictResult['candidates'] ?? null) ? $strictResult['candidates'] : [];
 assert_title_multiline_candidates(
     count(array_filter(
@@ -244,7 +244,7 @@ $senderMatches = [[
     'matchText' => 'Munkfors kommun',
     'matchedName' => 'Munkfors kommun',
 ]];
-$senderResult = extract_title_field_result($senderLines, $senderGeometries, [], [], $senderMatches, $blockSettings);
+$senderResult = extract_title_field_result($senderLines, $senderGeometries, [], [], $senderMatches, null, $blockSettings);
 $senderCandidates = is_array($senderResult['candidates'] ?? null) ? $senderResult['candidates'] : [];
 $senderMultilineCandidate = array_values(array_filter(
     $senderCandidates,
@@ -261,7 +261,7 @@ assert_title_multiline_candidates(
         $senderMultilineCandidate['signals'] ?? [],
         static fn(mixed $signal): bool => is_array($signal)
             && ($signal['code'] ?? null) === 'sender_name'
-            && (float) ($signal['score'] ?? 0.0) === -40.0
+            && (float) ($signal['score'] ?? 0.0) === -60.0
     )) === 1,
     'The title sender-name penalty must work for multiline candidates.'
 );
@@ -272,7 +272,7 @@ $overlappingGeometries = [
     title_multiline_test_geometry('Kyrkogatan 8 Lgh 1001', 1, ['x0' => 42.0, 'y0' => 84.0, 'x1' => 236.0, 'y1' => 104.0]),
     title_multiline_test_geometry('684 30 MUNKFORS', 2, ['x0' => 44.0, 'y0' => 108.0, 'x1' => 198.0, 'y1' => 128.0]),
 ];
-$overlappingResult = extract_title_field_result($overlappingLines, $overlappingGeometries, [], [], [], $blockSettings);
+$overlappingResult = extract_title_field_result($overlappingLines, $overlappingGeometries, [], [], [], null, $blockSettings);
 $overlappingCandidates = is_array($overlappingResult['candidates'] ?? null) ? $overlappingResult['candidates'] : [];
 $overlappingMultilineCandidates = array_values(array_filter(
     $overlappingCandidates,
@@ -327,6 +327,7 @@ $verticalOnlyResult = extract_title_field_result(
     [],
     [],
     [],
+    null,
     $blockSettings
 );
 assert_title_multiline_candidates(

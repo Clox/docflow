@@ -2628,6 +2628,7 @@ function valid_extraction_field_extractor(string $extractor, string $fallback = 
         'primary_date',
         'title',
         'sender_name_in_document',
+        'sender_mark_in_document',
         'bankgiro',
         'plusgiro',
         'supplier',
@@ -2804,6 +2805,55 @@ function system_extraction_field_definitions(): array
             'valueType' => 'text',
             'extractor' => 'sender_name_in_document',
         ],
+        'sender_mark_in_document' => [
+            'name' => 'Avsändarmärke i dokument',
+            'aliases' => [],
+            'searchString' => '',
+            'isRegex' => false,
+            'normalizationType' => 'none',
+            'normalizationChars' => '',
+            'valueType' => 'text',
+            'extractor' => 'sender_mark_in_document',
+            'senderMarkHeuristics' => default_sender_mark_heuristics(),
+        ],
+    ];
+}
+
+function default_sender_mark_heuristics(): array
+{
+    return [
+        'full_confidence_score' => 100.0,
+        'signals' => [
+            'distance_to_sender_name' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.0, 'y' => 50.0],
+                    ['x' => 3.0, 'y' => 45.0],
+                    ['x' => 8.0, 'y' => 15.0],
+                    ['x' => 16.0, 'y' => -40.0],
+                ],
+                'description' => 'Poängkurva baserad på kandidatens avstånd till träffen för Avsändarnamn i dokument, mätt i radhöjder.',
+            ],
+            'relative_text_size' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.70, 'y' => -30.0],
+                    ['x' => 1.00, 'y' => 0.0],
+                    ['x' => 1.50, 'y' => 35.0],
+                    ['x' => 2.50, 'y' => 50.0],
+                ],
+                'description' => 'Poängkurva baserad på textstorlek relativt Avsändarnamn i dokument.',
+            ],
+            'letter_ratio' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.50, 'y' => -30.0],
+                    ['x' => 0.75, 'y' => 0.0],
+                    ['x' => 1.00, 'y' => 10.0],
+                ],
+                'description' => 'Poängkurva baserad på hur stor del av kandidaten som består av bokstäver.',
+            ],
+        ],
     ];
 }
 
@@ -2885,8 +2935,8 @@ function default_title_heuristics(): array
             ],
             'sender_name' => [
                 'enabled' => true,
-                'points' => -40.0,
-                'description' => 'Ger minuspoäng när en Rubrik-kandidat är identisk med en träff från systemfältet Avsändarnamn i dokument.',
+                'points' => -60.0,
+                'description' => 'Ger minuspoäng när en Rubrik-kandidat är identisk med en träff från systemfälten Avsändarnamn i dokument eller Avsändarmärke i dokument.',
             ],
         ],
     ];
@@ -3171,6 +3221,31 @@ function normalize_title_heuristics(mixed $input): array
                     $raw['max_distance_line_heights'] ?? null,
                     (float) $default['max_distance_line_heights']
                 )
+            );
+        }
+        $result['signals'][$key]['description'] = (string) $default['description'];
+    }
+
+    return $result;
+}
+
+function normalize_sender_mark_heuristics(mixed $input): array
+{
+    $defaults = default_sender_mark_heuristics();
+    $source = is_array($input) ? $input : [];
+    $result = $defaults;
+    $result['full_confidence_score'] = max(1.0, normalize_primary_date_number(
+        $source['full_confidence_score'] ?? null,
+        (float) $defaults['full_confidence_score']
+    ));
+
+    foreach ($defaults['signals'] as $key => $default) {
+        $raw = is_array($source['signals'][$key] ?? null) ? $source['signals'][$key] : [];
+        $result['signals'][$key]['enabled'] = true;
+        if (array_key_exists('curve', $default)) {
+            $result['signals'][$key]['curve'] = normalize_primary_date_score_curve(
+                $raw['curve'] ?? null,
+                $default['curve']
             );
         }
         $result['signals'][$key]['description'] = (string) $default['description'];
@@ -4237,6 +4312,13 @@ function normalize_system_extraction_field_with_defaults(string $key, mixed $inp
             array_key_exists('titleHeuristics', $field)
                 ? $field['titleHeuristics']
                 : ($defaults['titleHeuristics'] ?? null)
+        );
+    }
+    if ($key === 'sender_mark_in_document') {
+        $normalized['senderMarkHeuristics'] = normalize_sender_mark_heuristics(
+            array_key_exists('senderMarkHeuristics', $field)
+                ? $field['senderMarkHeuristics']
+                : ($defaults['senderMarkHeuristics'] ?? null)
         );
     }
     return $normalized;
@@ -9289,6 +9371,10 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
         'orientationWidth',
         'orientationHeight',
         'orientationRatio',
+        'senderNameConfidence',
+        'distanceToSenderNameLineHeights',
+        'relativeTextSizeToSenderName',
+        'letterRatio',
         'relativeTextSize',
         'uppercaseRatio',
         'textDensityRatio',
@@ -9304,18 +9390,18 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     ] as $key) {
         $number = debug_export_float_or_null($match[$key] ?? null);
         if ($number !== null) {
-            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                 ? $number
                 : clamp_confidence($number);
         }
     }
-    foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount'] as $key) {
+    foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount', 'sourceSenderNameMatchIndex', 'sourceSenderId', 'sourceSenderUnitId'] as $key) {
         $number = debug_export_int_or_null($match[$key] ?? null);
         if ($number !== null) {
             $candidate[$key] = $number;
         }
     }
-    foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner'] as $key) {
+    foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner', 'sourceSenderName', 'sourceSenderNameValue'] as $key) {
         $text = debug_export_scalar_text($match[$key] ?? '');
         if ($text !== '') {
             $candidate[$key] = $text;
@@ -9724,6 +9810,10 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'orientationWidth',
             'orientationHeight',
             'orientationRatio',
+            'senderNameConfidence',
+            'distanceToSenderNameLineHeights',
+            'relativeTextSizeToSenderName',
+            'letterRatio',
             'relativeTextSize',
             'uppercaseRatio',
             'textDensityRatio',
@@ -9739,18 +9829,18 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         ] as $key) {
             $number = debug_export_float_or_null($candidate[$key] ?? null);
             if ($number !== null) {
-                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                     ? $number
                     : clamp_confidence($number);
             }
         }
-        foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount'] as $key) {
+        foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount', 'sourceSenderNameMatchIndex', 'sourceSenderId', 'sourceSenderUnitId'] as $key) {
             $number = debug_export_int_or_null($candidate[$key] ?? null);
             if ($number !== null) {
                 $normalized[$key] = $number;
             }
         }
-        foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner'] as $key) {
+        foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner', 'sourceSenderName', 'sourceSenderNameValue'] as $key) {
             $text = debug_export_scalar_text($candidate[$key] ?? '');
             if ($text !== '') {
                 $normalized[$key] = $text;
@@ -17456,7 +17546,10 @@ function title_sender_name_lookup_from_document_matches(array $matches): array
         if (!is_array($match)) {
             continue;
         }
-        $name = is_string($match['matchedName'] ?? null) && trim((string) $match['matchedName']) !== ''
+        $isSenderMark = ($match['senderMatchType'] ?? null) === 'sender_mark'
+            || ($match['matchType'] ?? null) === 'sender_mark'
+            || ($match['source'] ?? null) === 'sender_mark_in_document';
+        $name = !$isSenderMark && is_string($match['matchedName'] ?? null) && trim((string) $match['matchedName']) !== ''
             ? normalize_inline_whitespace((string) $match['matchedName'])
             : normalize_inline_whitespace((string) ($match['value'] ?? $match['matchText'] ?? ''));
         $normalizedName = $name !== '' ? \Docflow\Senders\NameNormalizer::normalize($name) : '';
@@ -17887,7 +17980,7 @@ function score_title_candidate(
         ? normalize_inline_whitespace((string) $senderNameLookup[$normalizedTitle])
         : '';
     $senderNameSignal = is_array($signals['sender_name'] ?? null) ? $signals['sender_name'] : [];
-    $senderNamePoints = min(0.0, (float) ($senderNameSignal['points'] ?? -40.0));
+    $senderNamePoints = min(0.0, (float) ($senderNameSignal['points'] ?? -60.0));
     if ($matchedSenderName !== '' && ($senderNameSignal['enabled'] ?? true) === true && $senderNamePoints < 0.0) {
         $score += $senderNamePoints;
         $result['matchedSenderName'] = $matchedSenderName;
@@ -17906,6 +17999,7 @@ function extract_title_field_result(
     array $heuristics = [],
     array $positionSettings = [],
     ?array $senderNameInDocumentMatches = null,
+    ?array $senderMarkInDocumentMatches = null,
     array $multiLineTextBlockSettings = []
 ): array
 {
@@ -17924,7 +18018,10 @@ function extract_title_field_result(
         $senderNameInDocumentResult = ['matches' => $senderNameInDocumentMatches];
     }
     $senderNameLookup = title_sender_name_lookup_from_document_matches(
-        is_array($senderNameInDocumentResult['matches'] ?? null) ? $senderNameInDocumentResult['matches'] : []
+        array_merge(
+            is_array($senderNameInDocumentResult['matches'] ?? null) ? $senderNameInDocumentResult['matches'] : [],
+            is_array($senderMarkInDocumentMatches) ? $senderMarkInDocumentMatches : []
+        )
     );
     $multilineCandidates = title_candidates_from_multiline_text_blocks($lines, $lineGeometries, $resolvedBlockSettings);
     $consumedRefs = title_multiline_candidate_consumed_refs($multilineCandidates);
@@ -19125,6 +19222,267 @@ function extract_sender_name_in_document_field_result(
         'source' => $primary !== null ? 'sender_name_in_document' : 'none',
         'raw' => is_array($primary) ? ($primary['raw'] ?? null) : null,
         'matchText' => is_array($primary) ? ($primary['matchText'] ?? null) : null,
+        'matches' => $matches,
+    ];
+}
+
+function sender_mark_prefixes_from_sender_name(string $name): array
+{
+    $normalizedName = normalize_inline_whitespace($name);
+    if ($normalizedName === '') {
+        return [];
+    }
+    $words = preg_split('/\s+/u', $normalizedName, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    $prefixes = [];
+    $seen = [];
+    $prefixParts = [];
+    $wordCount = count($words);
+    for ($index = 0; $index < $wordCount - 1; $index++) {
+        $word = (string) $words[$index];
+        $prefixParts[] = $word;
+        $prefix = normalize_inline_whitespace(implode(' ', $prefixParts));
+        $normalizedPrefix = $prefix !== '' ? \Docflow\Senders\NameNormalizer::normalize($prefix) : '';
+        if ($prefix === '' || $normalizedPrefix === '' || isset($seen[$normalizedPrefix])) {
+            continue;
+        }
+        if (count_pattern_matches('/\p{L}/u', $prefix) < 2) {
+            continue;
+        }
+        $seen[$normalizedPrefix] = true;
+        $prefixes[$normalizedPrefix] = $prefix;
+    }
+    return $prefixes;
+}
+
+function sender_mark_prefix_lookup_from_sender_matches(array $senderNameMatches): array
+{
+    $lookup = [];
+    foreach ($senderNameMatches as $matchIndex => $match) {
+        if (!is_array($match)) {
+            continue;
+        }
+        $name = is_string($match['matchedName'] ?? null) && trim((string) $match['matchedName']) !== ''
+            ? normalize_inline_whitespace((string) $match['matchedName'])
+            : normalize_inline_whitespace((string) ($match['value'] ?? $match['matchText'] ?? ''));
+        $prefixes = sender_mark_prefixes_from_sender_name($name);
+        if ($prefixes === []) {
+            continue;
+        }
+        foreach ($prefixes as $normalizedPrefix => $prefix) {
+            $lookup[$normalizedPrefix][] = [
+                'prefix' => $prefix,
+                'senderName' => $name,
+                'senderMatch' => $match,
+                'senderMatchIndex' => is_int($matchIndex) ? $matchIndex : null,
+            ];
+        }
+    }
+    return $lookup;
+}
+
+function sender_mark_letter_ratio(string $text): float
+{
+    $text = trim($text);
+    if ($text === '') {
+        return 0.0;
+    }
+    $letters = count_pattern_matches('/\p{L}/u', $text);
+    $visible = count_pattern_matches('/[^\s]/u', $text);
+    if ($visible <= 0) {
+        return 0.0;
+    }
+    return max(0.0, min(1.0, $letters / $visible));
+}
+
+function sender_mark_match_dedupe_key(array $match): string
+{
+    $bboxIndexes = is_array($match['valueBBoxIndexes'] ?? null)
+        ? array_values(array_filter($match['valueBBoxIndexes'], static fn($index): bool => is_int($index) && $index > 0))
+        : [];
+    sort($bboxIndexes, SORT_NUMERIC);
+    return implode('|', [
+        (string) ((int) ($match['lineIndex'] ?? -1)),
+        (string) ((int) ($match['start'] ?? 0)),
+        (string) ($match['value'] ?? ''),
+        implode(',', $bboxIndexes),
+        (string) ((int) ($match['sourceSenderId'] ?? 0)),
+        (string) ((int) ($match['sourceSenderUnitId'] ?? 0)),
+    ]);
+}
+
+function score_sender_mark_candidate(
+    array $block,
+    array $prefixContext,
+    array $heuristics
+): ?array {
+    $text = is_string($block['text'] ?? null) ? normalize_inline_whitespace((string) $block['text']) : '';
+    $candidateBbox = normalize_debug_word_bbox($block['bbox'] ?? null);
+    $senderMatch = is_array($prefixContext['senderMatch'] ?? null) ? $prefixContext['senderMatch'] : [];
+    $senderBbox = normalize_debug_word_bbox($senderMatch['valueBbox'] ?? ($senderMatch['valueBBox'] ?? null));
+    if ($text === '' || $candidateBbox === null || $senderBbox === null) {
+        return null;
+    }
+
+    $candidateHeight = bbox_height($candidateBbox);
+    $senderHeight = bbox_height($senderBbox);
+    if ($candidateHeight <= 0.0 || $senderHeight <= 0.0) {
+        return null;
+    }
+    $lineHeight = max(1.0, ($candidateHeight + $senderHeight) / 2.0);
+    $distance = bbox_edge_distance($candidateBbox, $senderBbox);
+    $distanceLineHeights = $distance / $lineHeight;
+    $sizeRatio = $candidateHeight / $senderHeight;
+    $letterRatio = sender_mark_letter_ratio($text);
+    $senderConfidence = isset($senderMatch['finalConfidence']) && is_numeric($senderMatch['finalConfidence'])
+        ? clamp_confidence((float) $senderMatch['finalConfidence'])
+        : (isset($senderMatch['confidence']) && is_numeric($senderMatch['confidence']) ? clamp_confidence((float) $senderMatch['confidence']) : 0.0);
+    if ($senderConfidence <= 0.0) {
+        return null;
+    }
+
+    $signals = [];
+    $score = 0.0;
+    $appendCurveSignal = static function (string $code, float $x, string $detail) use (&$signals, &$score, $heuristics): void {
+        $signal = is_array($heuristics['signals'][$code] ?? null) ? $heuristics['signals'][$code] : [];
+        if (($signal['enabled'] ?? true) !== true || !is_array($signal['curve'] ?? null)) {
+            return;
+        }
+        $points = interpolate_primary_date_score_curve($signal['curve'], $x);
+        if (abs($points) < 0.0001) {
+            return;
+        }
+        $score += $points;
+        $signals[] = [
+            'type' => $points >= 0.0 ? 'positive' : 'negative',
+            'code' => $code,
+            'score' => $points,
+            'detail' => $detail,
+        ];
+    };
+    $appendCurveSignal(
+        'distance_to_sender_name',
+        $distanceLineHeights,
+        'distance_line_heights:' . round($distanceLineHeights, 3)
+            . ',distance:' . round($distance, 1)
+    );
+    $appendCurveSignal(
+        'relative_text_size',
+        $sizeRatio,
+        'relative_size:' . round($sizeRatio, 3)
+            . ',height:' . round($candidateHeight, 3)
+            . ',sender_height:' . round($senderHeight, 3)
+    );
+    $appendCurveSignal('letter_ratio', $letterRatio, 'letter_ratio:' . round($letterRatio, 3));
+
+    $weightedScore = $score * $senderConfidence;
+    if ($weightedScore <= 0.0) {
+        return null;
+    }
+
+    $sourceSenderMatchIndex = is_int($prefixContext['senderMatchIndex'] ?? null)
+        ? (int) $prefixContext['senderMatchIndex']
+        : null;
+    $sourceSenderId = isset($senderMatch['senderId']) && is_numeric($senderMatch['senderId']) ? (int) $senderMatch['senderId'] : null;
+    $sourceSenderUnitId = isset($senderMatch['senderUnitId']) && is_numeric($senderMatch['senderUnitId']) ? (int) $senderMatch['senderUnitId'] : null;
+    return [
+        'value' => $text,
+        'raw' => $text,
+        'matchText' => $text,
+        'source' => 'sender_mark_in_document',
+        'matchType' => 'sender_mark',
+        'matchingMode' => 'sender_name_prefix_nearby',
+        'confidence' => clamp_confidence($weightedScore / max(1.0, (float) ($heuristics['full_confidence_score'] ?? 100.0))),
+        'baseConfidence' => clamp_confidence($score / max(1.0, (float) ($heuristics['full_confidence_score'] ?? 100.0))),
+        'finalConfidence' => clamp_confidence($weightedScore / max(1.0, (float) ($heuristics['full_confidence_score'] ?? 100.0))),
+        'score' => $weightedScore,
+        'rawScore' => $score,
+        'fullConfidenceScore' => max(1.0, (float) ($heuristics['full_confidence_score'] ?? 100.0)),
+        'lineIndex' => (int) ($block['lineIndex'] ?? -1),
+        'start' => (int) ($block['start'] ?? 0),
+        'valueBbox' => $candidateBbox,
+        'valueBBoxIndexes' => is_array($block['bboxIndexes'] ?? null) ? $block['bboxIndexes'] : [],
+        'pageNumber' => is_int($block['pageNumber'] ?? null) ? (int) $block['pageNumber'] : null,
+        'signals' => $signals,
+        'senderNameConfidence' => $senderConfidence,
+        'sourceSenderName' => is_string($prefixContext['senderName'] ?? null) ? (string) $prefixContext['senderName'] : '',
+        'sourceSenderNameValue' => is_string($senderMatch['value'] ?? null) ? (string) $senderMatch['value'] : null,
+        'sourceSenderNameMatchIndex' => $sourceSenderMatchIndex,
+        'sourceSenderNameBbox' => $senderBbox,
+        'sourceSenderNameBBoxIndexes' => is_array($senderMatch['valueBBoxIndexes'] ?? null) ? $senderMatch['valueBBoxIndexes'] : [],
+        'sourceSenderId' => $sourceSenderId,
+        'sourceSenderUnitId' => $sourceSenderUnitId,
+        'distanceToSenderNameLineHeights' => $distanceLineHeights,
+        'relativeTextSizeToSenderName' => $sizeRatio,
+        'letterRatio' => $letterRatio,
+        'matchedName' => is_string($prefixContext['senderName'] ?? null) ? (string) $prefixContext['senderName'] : $text,
+        'senderMatchType' => 'sender_mark',
+        'blockType' => is_string($block['blockType'] ?? null) ? (string) $block['blockType'] : 'single_line',
+        'lineCount' => is_int($block['lineCount'] ?? null) ? (int) $block['lineCount'] : 1,
+        'lineIndexes' => is_array($block['lineIndexes'] ?? null) ? $block['lineIndexes'] : [],
+        'blockParts' => is_array($block['parts'] ?? null) ? $block['parts'] : [],
+        'blockJoinMetrics' => is_array($block['joinMetrics'] ?? null) ? $block['joinMetrics'] : [],
+    ];
+}
+
+function extract_sender_mark_in_document_field_result(
+    array $lines,
+    array $lineGeometries,
+    array $settings = [],
+    array $senderNameInDocumentMatches = [],
+    array $heuristics = []
+): array {
+    $heuristics = normalize_sender_mark_heuristics($heuristics);
+    $prefixLookup = sender_mark_prefix_lookup_from_sender_matches($senderNameInDocumentMatches);
+    if ($prefixLookup === []) {
+        return [
+            'value' => null,
+            'confidence' => 0.0,
+            'lineIndex' => null,
+            'source' => 'none',
+            'raw' => null,
+            'matchText' => null,
+            'matches' => [],
+        ];
+    }
+
+    $matchesByKey = [];
+    foreach (build_multiline_text_blocks($lines, $lineGeometries, $settings) as $block) {
+        if (!is_array($block)) {
+            continue;
+        }
+        $text = is_string($block['text'] ?? null) ? normalize_inline_whitespace((string) $block['text']) : '';
+        $normalizedText = $text !== '' ? \Docflow\Senders\NameNormalizer::normalize($text) : '';
+        if ($normalizedText === '' || !is_array($prefixLookup[$normalizedText] ?? null)) {
+            continue;
+        }
+        foreach ($prefixLookup[$normalizedText] as $prefixContext) {
+            if (!is_array($prefixContext)) {
+                continue;
+            }
+            $match = score_sender_mark_candidate($block, $prefixContext, $heuristics);
+            if ($match === null) {
+                continue;
+            }
+            $matchKey = sender_mark_match_dedupe_key($match);
+            $previous = is_array($matchesByKey[$matchKey] ?? null) ? $matchesByKey[$matchKey] : null;
+            if ($previous !== null && (float) ($previous['score'] ?? 0.0) >= (float) ($match['score'] ?? 0.0)) {
+                continue;
+            }
+            $matchesByKey[$matchKey] = $match;
+        }
+    }
+
+    $matches = sort_extraction_field_matches_by_confidence(array_values($matchesByKey));
+    $primary = is_array($matches[0] ?? null) ? $matches[0] : null;
+    return [
+        'value' => $primary['value'] ?? null,
+        'confidence' => is_array($primary) && is_numeric($primary['finalConfidence'] ?? null) ? (float) $primary['finalConfidence'] : 0.0,
+        'lineIndex' => is_array($primary) ? ($primary['lineIndex'] ?? null) : null,
+        'source' => $primary !== null ? 'sender_mark_in_document' : 'none',
+        'raw' => is_array($primary) ? ($primary['raw'] ?? null) : null,
+        'matchText' => is_array($primary) ? ($primary['matchText'] ?? null) : null,
+        'selectedCandidate' => $primary,
+        'fullConfidenceScore' => max(1.0, (float) ($heuristics['full_confidence_score'] ?? 100.0)),
         'matches' => $matches,
     ];
 }
@@ -21611,6 +21969,31 @@ function extract_configured_text_field_results(
     $senderNameInDocumentMatches = is_array($senderNameInDocumentResult['matches'] ?? null)
         ? $senderNameInDocumentResult['matches']
         : [];
+    $senderMarkField = null;
+    foreach ($fields as $field) {
+        if (!is_array($field)) {
+            continue;
+        }
+        $fieldExtractor = valid_extraction_field_extractor(
+            is_string($field['extractor'] ?? null) ? (string) $field['extractor'] : 'generic_label'
+        );
+        $fieldKey = is_string($field['key'] ?? null) ? trim((string) $field['key']) : '';
+        $systemFieldKey = is_string($field['systemFieldKey'] ?? null) ? trim((string) $field['systemFieldKey']) : '';
+        if ($fieldExtractor === 'sender_mark_in_document' || $fieldKey === 'sender_mark_in_document' || $systemFieldKey === 'sender_mark_in_document') {
+            $senderMarkField = $field;
+            break;
+        }
+    }
+    $senderMarkInDocumentResult = extract_sender_mark_in_document_field_result(
+        $lines,
+        $lineGeometries,
+        $multiLineTextBlockSettings,
+        $senderNameInDocumentMatches,
+        is_array($senderMarkField['senderMarkHeuristics'] ?? null) ? $senderMarkField['senderMarkHeuristics'] : []
+    );
+    $senderMarkInDocumentMatches = is_array($senderMarkInDocumentResult['matches'] ?? null)
+        ? $senderMarkInDocumentResult['matches']
+        : [];
 
     foreach ($fields as $field) {
         if (!is_array($field)) {
@@ -21630,6 +22013,7 @@ function extract_configured_text_field_results(
             is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : [],
             $positionSettings,
             $senderNameInDocumentMatches,
+            $senderMarkInDocumentMatches,
             $multiLineTextBlockSettings
         );
         $titleMatches = title_result_matches($titleResult, $lineGeometries);
@@ -21689,6 +22073,7 @@ function extract_configured_text_field_results(
                     is_array($field['titleHeuristics'] ?? null) ? $field['titleHeuristics'] : [],
                     $positionSettings,
                     $senderNameInDocumentMatches,
+                    $senderMarkInDocumentMatches,
                     $multiLineTextBlockSettings
                 );
             $ruleSets = [];
@@ -21697,6 +22082,10 @@ function extract_configured_text_field_results(
                 : title_result_matches($result, $lineGeometries);
         } elseif ($extractor === 'sender_name_in_document') {
             $result = $senderNameInDocumentResult;
+            $ruleSets = [];
+            $matches = is_array($result['matches'] ?? null) ? $result['matches'] : [];
+        } elseif ($extractor === 'sender_mark_in_document') {
+            $result = $senderMarkInDocumentResult;
             $ruleSets = [];
             $matches = is_array($result['matches'] ?? null) ? $result['matches'] : [];
         } else {
@@ -21932,6 +22321,10 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'orientationWidth' => is_numeric($match['orientationWidth'] ?? null) ? (float) $match['orientationWidth'] : null,
                         'orientationHeight' => is_numeric($match['orientationHeight'] ?? null) ? (float) $match['orientationHeight'] : null,
                         'orientationRatio' => is_numeric($match['orientationRatio'] ?? null) ? (float) $match['orientationRatio'] : null,
+                        'senderNameConfidence' => is_numeric($match['senderNameConfidence'] ?? null) ? (float) $match['senderNameConfidence'] : null,
+                        'distanceToSenderNameLineHeights' => is_numeric($match['distanceToSenderNameLineHeights'] ?? null) ? (float) $match['distanceToSenderNameLineHeights'] : null,
+                        'relativeTextSizeToSenderName' => is_numeric($match['relativeTextSizeToSenderName'] ?? null) ? (float) $match['relativeTextSizeToSenderName'] : null,
+                        'letterRatio' => is_numeric($match['letterRatio'] ?? null) ? (float) $match['letterRatio'] : null,
                         'relativeTextSize' => is_numeric($match['relativeTextSize'] ?? null) ? (float) $match['relativeTextSize'] : null,
                         'uppercaseRatio' => is_numeric($match['uppercaseRatio'] ?? null) ? (float) $match['uppercaseRatio'] : null,
                         'textDensityRatio' => is_numeric($match['textDensityRatio'] ?? null) ? (float) $match['textDensityRatio'] : null,
@@ -21988,6 +22381,14 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'matchedName' => is_string($match['matchedName'] ?? null) ? trim((string) $match['matchedName']) : null,
                         'senderMatchType' => is_string($match['senderMatchType'] ?? null) ? trim((string) $match['senderMatchType']) : null,
                         'matchingMode' => is_string($match['matchingMode'] ?? null) ? trim((string) $match['matchingMode']) : null,
+                        'sourceSenderName' => is_string($match['sourceSenderName'] ?? null) ? trim((string) $match['sourceSenderName']) : null,
+                        'sourceSenderNameValue' => is_string($match['sourceSenderNameValue'] ?? null) ? trim((string) $match['sourceSenderNameValue']) : null,
+                        'sourceSenderNameMatchIndex' => is_int($match['sourceSenderNameMatchIndex'] ?? null) ? (int) $match['sourceSenderNameMatchIndex'] : null,
+                        'sourceSenderNameBbox' => is_array($match['sourceSenderNameBbox'] ?? null) ? $match['sourceSenderNameBbox'] : null,
+                        'sourceSenderNameBBoxIndexes' => is_array($match['sourceSenderNameBBoxIndexes'] ?? null) ? array_values(array_filter(
+                            $match['sourceSenderNameBBoxIndexes'],
+                            static fn($index): bool => is_int($index) && $index > 0
+                        )) : [],
                         'blockType' => is_string($match['blockType'] ?? null) ? trim((string) $match['blockType']) : null,
                         'lineCount' => is_int($match['lineCount'] ?? null) ? (int) $match['lineCount'] : null,
                         'lineIndexes' => is_array($match['lineIndexes'] ?? null) ? array_values(array_filter(

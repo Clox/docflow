@@ -96,6 +96,19 @@ try {
             $multiLineTextBlockSettings = is_array($config['multiLineTextBlocks'] ?? null)
                 ? $config['multiLineTextBlocks']
                 : [];
+            $senderMarkHeuristics = [];
+            foreach ($systemFields as $systemField) {
+                if (!is_array($systemField)) {
+                    continue;
+                }
+                $extractor = is_string($systemField['extractor'] ?? null) ? trim((string) $systemField['extractor']) : '';
+                $systemFieldKey = is_string($systemField['systemFieldKey'] ?? null) ? trim((string) $systemField['systemFieldKey']) : '';
+                $key = is_string($systemField['key'] ?? null) ? trim((string) $systemField['key']) : '';
+                if ($extractor === 'sender_mark_in_document' || $systemFieldKey === 'sender_mark_in_document' || $key === 'sender_mark_in_document') {
+                    $senderMarkHeuristics = is_array($systemField['senderMarkHeuristics'] ?? null) ? $systemField['senderMarkHeuristics'] : [];
+                    break;
+                }
+            }
             $precomputedSenderNameResult = extract_sender_name_in_document_field_result(
                 $matchingLines,
                 $lineGeometries,
@@ -103,6 +116,16 @@ try {
             );
             $precomputedSenderNameMatches = is_array($precomputedSenderNameResult['matches'] ?? null)
                 ? $precomputedSenderNameResult['matches']
+                : [];
+            $precomputedSenderMarkResult = extract_sender_mark_in_document_field_result(
+                $matchingLines,
+                $lineGeometries,
+                $multiLineTextBlockSettings,
+                $precomputedSenderNameMatches,
+                $senderMarkHeuristics
+            );
+            $precomputedSenderMarkMatches = is_array($precomputedSenderMarkResult['matches'] ?? null)
+                ? $precomputedSenderMarkResult['matches']
                 : [];
             $precomputedTitleResult = null;
             $precomputedTitleMatches = [];
@@ -123,6 +146,7 @@ try {
                     is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : [],
                     $positionSettings,
                     $precomputedSenderNameMatches,
+                    $precomputedSenderMarkMatches,
                     $multiLineTextBlockSettings
                 );
                 $precomputedTitleMatches = title_result_matches($precomputedTitleResult, $lineGeometries);
@@ -202,6 +226,40 @@ try {
                     continue;
                 }
 
+                if (
+                    $extractor === 'sender_mark_in_document'
+                    || $systemFieldKey === 'sender_mark_in_document'
+                    || $key === 'sender_mark_in_document'
+                ) {
+                    $senderMarkResult = $precomputedSenderMarkResult;
+                    $senderMarkMatches = is_array($senderMarkResult['matches'] ?? null)
+                        ? $senderMarkResult['matches']
+                        : [];
+                    $senderMarkValues = normalize_auto_archiving_field_value_list(array_map(
+                        static fn(array $match): mixed => $match['value'] ?? null,
+                        $senderMarkMatches
+                    ));
+                    if ($senderMarkValues !== []) {
+                        $fieldValues['sender_mark_in_document'] = $senderMarkValues;
+                    }
+                    $fieldMeta['sender_mark_in_document'] = [
+                        'key' => 'sender_mark_in_document',
+                        'name' => is_string($systemField['name'] ?? null) && trim((string) $systemField['name']) !== ''
+                            ? trim((string) $systemField['name'])
+                            : 'Avsändarmärke i dokument',
+                        'extractor' => 'sender_mark_in_document',
+                        'value' => $senderMarkResult['value'] ?? null,
+                        'raw' => is_string($senderMarkResult['raw'] ?? null) ? (string) $senderMarkResult['raw'] : null,
+                        'confidence' => isset($senderMarkResult['confidence']) && is_numeric($senderMarkResult['confidence']) ? (float) $senderMarkResult['confidence'] : 0.0,
+                        'baseConfidence' => isset($senderMarkResult['confidence']) && is_numeric($senderMarkResult['confidence']) ? (float) $senderMarkResult['confidence'] : 0.0,
+                        'finalConfidence' => isset($senderMarkResult['confidence']) && is_numeric($senderMarkResult['confidence']) ? (float) $senderMarkResult['confidence'] : 0.0,
+                        'score' => is_numeric($senderMarkResult['selectedCandidate']['score'] ?? null) ? (float) $senderMarkResult['selectedCandidate']['score'] : null,
+                        'fullConfidenceScore' => is_numeric($senderMarkResult['fullConfidenceScore'] ?? null) ? (float) $senderMarkResult['fullConfidenceScore'] : 100.0,
+                        'matches' => $senderMarkMatches,
+                    ];
+                    continue;
+                }
+
                 if ($extractor !== 'title' && $systemFieldKey !== 'title' && $key !== 'title') {
                     continue;
                 }
@@ -214,6 +272,7 @@ try {
                         is_array($systemField['titleHeuristics'] ?? null) ? $systemField['titleHeuristics'] : [],
                         $positionSettings,
                         $precomputedSenderNameMatches,
+                        $precomputedSenderMarkMatches,
                         $multiLineTextBlockSettings
                     );
                 $titleMatches = $precomputedTitleMatches !== []

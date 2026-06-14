@@ -82,7 +82,7 @@ $senderSignals = array_values(array_filter(
     static fn (mixed $signal): bool => is_array($signal) && ($signal['code'] ?? null) === 'sender_name'
 ));
 assert_title_sender_name_signal(count($senderSignals) === 1, 'Exact normalized sender name should trigger.');
-assert_title_sender_name_signal((float) ($senderSignals[0]['score'] ?? 0.0) === -40.0, 'Sender name penalty should be -40.');
+assert_title_sender_name_signal((float) ($senderSignals[0]['score'] ?? 0.0) === -60.0, 'Sender name penalty should be -60.');
 assert_title_sender_name_signal(
     ($senderSignals[0]['detail'] ?? null) === 'name:Karlstads kommun',
     'Signal detail should contain the matched sender name.'
