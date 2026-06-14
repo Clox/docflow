@@ -27,6 +27,34 @@ function sender_name_test_geometry(string $text, int $wordIndex, array $bbox, in
     ];
 }
 
+function sender_name_words_test_geometry(array $words, int $firstWordIndex, array $bboxes, int $pageNumber = 1): array
+{
+    $line = implode(' ', $words);
+    $segments = [];
+    $offset = 0;
+    foreach ($words as $index => $word) {
+        $wordText = (string) $word;
+        $start = $offset;
+        $end = $start + strlen($wordText);
+        $segments[] = [
+            'text' => $wordText,
+            'start' => $start,
+            'end' => $end,
+            'wordIndex' => $firstWordIndex + $index,
+            'bbox' => $bboxes[$index],
+        ];
+        $offset = $end + 1;
+    }
+
+    return [
+        'text' => $line,
+        'segments' => $segments,
+        'pageNumber' => $pageNumber,
+        'pageWidth' => 600.0,
+        'pageHeight' => 800.0,
+    ];
+}
+
 $definitions = system_extraction_field_definitions();
 assert_sender_name_in_document(
     ($definitions['sender_name_in_document']['name'] ?? null) === 'Avsändarnamn i dokument',
@@ -116,6 +144,41 @@ $separatedResult = extract_sender_name_in_document_field_result(
 assert_sender_name_in_document(
     ($separatedResult['matches'] ?? []) === [],
     'Lines without sufficient x overlap must not form a multiline block.'
+);
+
+$prefixedLine = 'Klarna Bank AB (publ), FE 50500';
+$prefixedResult = extract_sender_name_in_document_field_result(
+    [$prefixedLine],
+    [sender_name_words_test_geometry(
+        ['Klarna', 'Bank', 'AB', '(publ),', 'FE', '50500'],
+        8,
+        [
+            ['x0' => 299.0, 'y0' => 321.0, 'x1' => 422.0, 'y1' => 369.0],
+            ['x0' => 438.0, 'y0' => 321.0, 'x1' => 530.0, 'y1' => 369.0],
+            ['x0' => 546.0, 'y0' => 321.0, 'x1' => 592.0, 'y1' => 369.0],
+            ['x0' => 608.0, 'y0' => 321.0, 'x1' => 748.0, 'y1' => 369.0],
+            ['x0' => 756.0, 'y0' => 321.0, 'x1' => 802.0, 'y1' => 369.0],
+            ['x0' => 811.0, 'y0' => 321.0, 'x1' => 933.0, 'y1' => 369.0],
+        ]
+    )],
+    $settings,
+    [[
+        'senderId' => 30,
+        'senderUnitId' => null,
+        'name' => 'Klarna Bank AB',
+        'normalizedName' => 'klarna bank ab',
+        'type' => 'sender_name',
+    ]]
+);
+$prefixedMatches = is_array($prefixedResult['matches'] ?? null) ? $prefixedResult['matches'] : [];
+$prefixedMatch = $prefixedMatches[0] ?? null;
+assert_sender_name_in_document(is_array($prefixedMatch), 'Sender name in document must match a registered name as a prefix of a longer block.');
+assert_sender_name_in_document(($prefixedMatch['value'] ?? null) === 'Klarna Bank AB', 'The prefix match value must only contain the matched sender name.');
+assert_sender_name_in_document(($prefixedMatch['matchingMode'] ?? null) === 'exact_normalized_prefix', 'Prefix matches must be marked in debug metadata.');
+assert_sender_name_in_document(($prefixedMatch['valueBBoxIndexes'] ?? null) === [9, 10, 11], 'The prefix match must expose only the sender-name bbox indexes.');
+assert_sender_name_in_document(
+    ($prefixedMatch['valueBbox'] ?? null) === ['x0' => 299.0, 'y0' => 321.0, 'x1' => 592.0, 'y1' => 369.0],
+    'The prefix match bbox must stop at the sender-name prefix.'
 );
 
 echo "sender_name_in_document_system_field_test: ok\n";

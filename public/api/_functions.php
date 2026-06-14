@@ -18852,6 +18852,194 @@ function sender_name_in_document_lookup_from_entries(array $entries): array
     return $lookup;
 }
 
+function sender_name_in_document_block_segments(array $block, array $lineGeometries): array
+{
+    $segments = [];
+    foreach (is_array($block['parts'] ?? null) ? $block['parts'] : [] as $part) {
+        if (!is_array($part)) {
+            continue;
+        }
+        $lineIndex = is_int($part['lineIndex'] ?? null) ? (int) $part['lineIndex'] : -1;
+        $start = is_int($part['start'] ?? null) ? (int) $part['start'] : -1;
+        $end = is_int($part['end'] ?? null) ? (int) $part['end'] : -1;
+        $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+        if ($lineIndex < 0 || $start < 0 || $end <= $start || $lineGeometry === null) {
+            continue;
+        }
+        foreach (is_array($lineGeometry['segments'] ?? null) ? $lineGeometry['segments'] : [] as $segment) {
+            if (!is_array($segment)) {
+                continue;
+            }
+            $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+            $segmentEnd = is_int($segment['end'] ?? null) ? (int) $segment['end'] : -1;
+            $segmentText = is_string($segment['text'] ?? null) ? trim((string) $segment['text']) : '';
+            $segmentBbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+            $wordIndex = is_int($segment['wordIndex'] ?? null) ? (int) $segment['wordIndex'] : null;
+            if ($segmentStart < 0 || $segmentEnd <= $segmentStart || $segmentEnd <= $start || $segmentStart >= $end) {
+                continue;
+            }
+            if ($segmentText === '' || $segmentBbox === null || $wordIndex === null || $wordIndex < 0) {
+                continue;
+            }
+            $segments[] = [
+                'text' => $segmentText,
+                'lineIndex' => $lineIndex,
+                'start' => $segmentStart,
+                'end' => $segmentEnd,
+                'bbox' => $segmentBbox,
+                'bboxIndex' => $wordIndex + 1,
+                'pageNumber' => is_int($block['pageNumber'] ?? null)
+                    ? (int) $block['pageNumber']
+                    : matching_line_page_number($lineGeometries, $lineIndex),
+            ];
+        }
+    }
+
+    usort($segments, static function (array $left, array $right): int {
+        $lineCompare = ((int) ($left['lineIndex'] ?? PHP_INT_MAX)) <=> ((int) ($right['lineIndex'] ?? PHP_INT_MAX));
+        if ($lineCompare !== 0) {
+            return $lineCompare;
+        }
+        return ((int) ($left['start'] ?? PHP_INT_MAX)) <=> ((int) ($right['start'] ?? PHP_INT_MAX));
+    });
+
+    return array_values($segments);
+}
+
+function sender_name_in_document_prefix_blocks(array $block, array $lookup, array $lineGeometries): array
+{
+    $segments = sender_name_in_document_block_segments($block, $lineGeometries);
+    if ($segments === []) {
+        $text = is_string($block['text'] ?? null) ? trim((string) $block['text']) : '';
+        $normalizedText = $text !== '' ? \Docflow\Senders\NameNormalizer::normalize($text) : '';
+        if ($normalizedText === '' || !is_array($lookup[$normalizedText] ?? null)) {
+            return [];
+        }
+        return [[
+            ...$block,
+            'text' => $text,
+            'normalizedText' => $normalizedText,
+            'matchingMode' => 'exact_normalized',
+        ]];
+    }
+
+    $prefixTexts = [];
+    $bbox = null;
+    $bboxIndexes = [];
+    $lineIndexes = [];
+    $partsByLine = [];
+    $matchedPrefixes = [];
+    foreach ($segments as $segment) {
+        $segmentText = is_string($segment['text'] ?? null) ? trim((string) $segment['text']) : '';
+        $segmentBbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+        $lineIndex = is_int($segment['lineIndex'] ?? null) ? (int) $segment['lineIndex'] : -1;
+        $bboxIndex = is_int($segment['bboxIndex'] ?? null) ? (int) $segment['bboxIndex'] : 0;
+        if ($segmentText === '' || $segmentBbox === null || $lineIndex < 0 || $bboxIndex < 1) {
+            continue;
+        }
+
+        $prefixTexts[] = $segmentText;
+        $bbox = multiline_text_block_bbox_union($bbox, $segmentBbox);
+        $bboxIndexes[$bboxIndex] = true;
+        $lineIndexes[$lineIndex] = true;
+        if (!isset($partsByLine[$lineIndex])) {
+            $partsByLine[$lineIndex] = [
+                'textParts' => [],
+                'lineIndex' => $lineIndex,
+                'start' => is_int($segment['start'] ?? null) ? (int) $segment['start'] : 0,
+                'end' => is_int($segment['end'] ?? null) ? (int) $segment['end'] : 0,
+                'bbox' => null,
+                'bboxIndexes' => [],
+            ];
+        }
+        $partsByLine[$lineIndex]['textParts'][] = $segmentText;
+        $partsByLine[$lineIndex]['end'] = max((int) ($partsByLine[$lineIndex]['end'] ?? 0), (int) ($segment['end'] ?? 0));
+        $partsByLine[$lineIndex]['bbox'] = multiline_text_block_bbox_union(
+            is_array($partsByLine[$lineIndex]['bbox'] ?? null) ? $partsByLine[$lineIndex]['bbox'] : null,
+            $segmentBbox
+        );
+        $partsByLine[$lineIndex]['bboxIndexes'][$bboxIndex] = true;
+
+        $prefixText = normalize_inline_whitespace(implode(' ', $prefixTexts));
+        $normalizedPrefix = $prefixText !== '' ? \Docflow\Senders\NameNormalizer::normalize($prefixText) : '';
+        if ($normalizedPrefix === '' || !is_array($lookup[$normalizedPrefix] ?? null)) {
+            continue;
+        }
+        $fullBlockText = is_string($block['text'] ?? null) ? trim((string) $block['text']) : '';
+        $normalizedFullBlockText = $fullBlockText !== '' ? \Docflow\Senders\NameNormalizer::normalize($fullBlockText) : '';
+        $resolvedBboxIndexes = array_keys($bboxIndexes);
+        sort($resolvedBboxIndexes, SORT_NUMERIC);
+        $resolvedLineIndexes = array_keys($lineIndexes);
+        sort($resolvedLineIndexes, SORT_NUMERIC);
+        $parts = [];
+        foreach ($partsByLine as $part) {
+            if (!is_array($part)) {
+                continue;
+            }
+            $partBboxIndexes = array_keys(is_array($part['bboxIndexes'] ?? null) ? $part['bboxIndexes'] : []);
+            sort($partBboxIndexes, SORT_NUMERIC);
+            $parts[] = [
+                'text' => normalize_inline_whitespace(implode(' ', is_array($part['textParts'] ?? null) ? $part['textParts'] : [])),
+                'lineIndex' => (int) ($part['lineIndex'] ?? -1),
+                'start' => (int) ($part['start'] ?? 0),
+                'end' => (int) ($part['end'] ?? 0),
+                'bbox' => is_array($part['bbox'] ?? null) ? $part['bbox'] : null,
+                'bboxIndexes' => array_values($partBboxIndexes),
+            ];
+        }
+
+        $matchedPrefixes[] = [
+            ...$block,
+            'text' => $prefixText,
+            'normalizedText' => $normalizedPrefix,
+            'bbox' => $bbox,
+            'bboxIndexes' => array_values($resolvedBboxIndexes),
+            'lineIndexes' => array_values($resolvedLineIndexes),
+            'lineIndex' => (int) ($segments[0]['lineIndex'] ?? ($block['lineIndex'] ?? -1)),
+            'start' => (int) ($segments[0]['start'] ?? ($block['start'] ?? 0)),
+            'end' => (int) ($segment['end'] ?? ($block['end'] ?? 0)),
+            'lineCount' => count($resolvedLineIndexes),
+            'blockType' => count($resolvedLineIndexes) > 1 ? 'multiline' : 'single_line',
+            'parts' => array_values($parts),
+            'joinMetrics' => count($resolvedLineIndexes) > 1 && is_array($block['joinMetrics'] ?? null)
+                ? array_slice($block['joinMetrics'], 0, max(0, count($resolvedLineIndexes) - 1))
+                : [],
+            'matchingMode' => $normalizedFullBlockText === $normalizedPrefix
+                ? 'exact_normalized'
+                : 'exact_normalized_prefix',
+        ];
+    }
+
+    if ($matchedPrefixes === []) {
+        return [];
+    }
+
+    $maxLength = max(array_map(
+        static fn(array $candidate): int => strlen((string) ($candidate['normalizedText'] ?? '')),
+        $matchedPrefixes
+    ));
+    return array_values(array_filter(
+        $matchedPrefixes,
+        static fn(array $candidate): bool => strlen((string) ($candidate['normalizedText'] ?? '')) === $maxLength
+    ));
+}
+
+function sender_name_in_document_match_dedupe_key(array $match): string
+{
+    $bboxIndexes = is_array($match['valueBBoxIndexes'] ?? null)
+        ? array_values(array_filter($match['valueBBoxIndexes'], static fn($index): bool => is_int($index) && $index > 0))
+        : [];
+    sort($bboxIndexes, SORT_NUMERIC);
+    return implode('|', [
+        (string) ((int) ($match['senderId'] ?? 0)),
+        (string) ((int) ($match['senderUnitId'] ?? 0)),
+        (string) ((int) ($match['lineIndex'] ?? -1)),
+        (string) ((int) ($match['start'] ?? 0)),
+        (string) ($match['value'] ?? ''),
+        implode(',', $bboxIndexes),
+    ]);
+}
+
 function extract_sender_name_in_document_field_result(
     array $lines,
     array $lineGeometries,
@@ -18862,57 +19050,69 @@ function extract_sender_name_in_document_field_result(
         is_array($nameEntries) ? $nameEntries : cached_sender_name_entries_for_analysis()
     );
     $matches = [];
+    $matchKeys = [];
     foreach (build_multiline_text_blocks($lines, $lineGeometries, $settings) as $block) {
         if (!is_array($block)) {
             continue;
         }
-        $text = is_string($block['text'] ?? null) ? trim((string) $block['text']) : '';
-        $normalizedText = $text !== '' ? \Docflow\Senders\NameNormalizer::normalize($text) : '';
-        if ($normalizedText === '' || !is_array($lookup[$normalizedText] ?? null)) {
+        $prefixBlocks = sender_name_in_document_prefix_blocks($block, $lookup, $lineGeometries);
+        if ($prefixBlocks === []) {
             continue;
         }
 
-        foreach ($lookup[$normalizedText] as $matchedEntry) {
-            if (!is_array($matchedEntry)) {
+        foreach ($prefixBlocks as $prefixBlock) {
+            $text = is_string($prefixBlock['text'] ?? null) ? trim((string) $prefixBlock['text']) : '';
+            $normalizedText = is_string($prefixBlock['normalizedText'] ?? null) ? (string) $prefixBlock['normalizedText'] : '';
+            if ($text === '' || $normalizedText === '' || !is_array($lookup[$normalizedText] ?? null)) {
                 continue;
             }
-            $match = [
-                'value' => $text,
-                'raw' => $text,
-                'matchText' => $text,
-                'source' => 'sender_name_in_document',
-                'matchType' => is_string($matchedEntry['matchType'] ?? null) ? (string) $matchedEntry['matchType'] : 'sender_name',
-                'matchingMode' => 'exact_normalized',
-                'confidence' => 1.0,
-                'baseConfidence' => 1.0,
-                'finalConfidence' => 1.0,
-                'score' => 100.0,
-                'fullConfidenceScore' => 100.0,
-                'lineIndex' => (int) ($block['lineIndex'] ?? -1),
-                'start' => (int) ($block['start'] ?? 0),
-                'valueBbox' => is_array($block['bbox'] ?? null) ? $block['bbox'] : null,
-                'valueBBoxIndexes' => is_array($block['bboxIndexes'] ?? null) ? $block['bboxIndexes'] : [],
-                'pageNumber' => is_int($block['pageNumber'] ?? null) ? (int) $block['pageNumber'] : null,
-                'senderId' => (int) ($matchedEntry['senderId'] ?? 0),
-                'senderUnitId' => isset($matchedEntry['senderUnitId']) ? (int) $matchedEntry['senderUnitId'] : null,
-                'matchedName' => is_string($matchedEntry['matchedName'] ?? null) ? (string) $matchedEntry['matchedName'] : $text,
-                'senderMatchType' => is_string($matchedEntry['matchType'] ?? null) ? (string) $matchedEntry['matchType'] : 'sender_name',
-                'blockType' => is_string($block['blockType'] ?? null) ? (string) $block['blockType'] : 'single_line',
-                'lineCount' => is_int($block['lineCount'] ?? null) ? (int) $block['lineCount'] : 1,
-                'lineIndexes' => is_array($block['lineIndexes'] ?? null) ? $block['lineIndexes'] : [],
-                'blockParts' => is_array($block['parts'] ?? null) ? $block['parts'] : [],
-                'blockJoinMetrics' => is_array($block['joinMetrics'] ?? null) ? $block['joinMetrics'] : [],
-            ];
-            $match['signals'] = [
-                [
-                    'type' => 'positive',
-                    'code' => 'exact_sender_name',
+            foreach ($lookup[$normalizedText] as $matchedEntry) {
+                if (!is_array($matchedEntry)) {
+                    continue;
+                }
+                $match = [
+                    'value' => $text,
+                    'raw' => $text,
+                    'matchText' => $text,
+                    'source' => 'sender_name_in_document',
+                    'matchType' => is_string($matchedEntry['matchType'] ?? null) ? (string) $matchedEntry['matchType'] : 'sender_name',
+                    'matchingMode' => is_string($prefixBlock['matchingMode'] ?? null) ? (string) $prefixBlock['matchingMode'] : 'exact_normalized_prefix',
+                    'confidence' => 1.0,
+                    'baseConfidence' => 1.0,
+                    'finalConfidence' => 1.0,
                     'score' => 100.0,
-                    'detail' => 'matched_name:' . $match['matchedName']
-                        . ',match_type:' . $match['senderMatchType'],
-                ],
-            ];
-            $matches[] = $match;
+                    'fullConfidenceScore' => 100.0,
+                    'lineIndex' => (int) ($prefixBlock['lineIndex'] ?? -1),
+                    'start' => (int) ($prefixBlock['start'] ?? 0),
+                    'valueBbox' => is_array($prefixBlock['bbox'] ?? null) ? $prefixBlock['bbox'] : null,
+                    'valueBBoxIndexes' => is_array($prefixBlock['bboxIndexes'] ?? null) ? $prefixBlock['bboxIndexes'] : [],
+                    'pageNumber' => is_int($prefixBlock['pageNumber'] ?? null) ? (int) $prefixBlock['pageNumber'] : null,
+                    'senderId' => (int) ($matchedEntry['senderId'] ?? 0),
+                    'senderUnitId' => isset($matchedEntry['senderUnitId']) ? (int) $matchedEntry['senderUnitId'] : null,
+                    'matchedName' => is_string($matchedEntry['matchedName'] ?? null) ? (string) $matchedEntry['matchedName'] : $text,
+                    'senderMatchType' => is_string($matchedEntry['matchType'] ?? null) ? (string) $matchedEntry['matchType'] : 'sender_name',
+                    'blockType' => is_string($prefixBlock['blockType'] ?? null) ? (string) $prefixBlock['blockType'] : 'single_line',
+                    'lineCount' => is_int($prefixBlock['lineCount'] ?? null) ? (int) $prefixBlock['lineCount'] : 1,
+                    'lineIndexes' => is_array($prefixBlock['lineIndexes'] ?? null) ? $prefixBlock['lineIndexes'] : [],
+                    'blockParts' => is_array($prefixBlock['parts'] ?? null) ? $prefixBlock['parts'] : [],
+                    'blockJoinMetrics' => is_array($prefixBlock['joinMetrics'] ?? null) ? $prefixBlock['joinMetrics'] : [],
+                ];
+                $matchKey = sender_name_in_document_match_dedupe_key($match);
+                if (isset($matchKeys[$matchKey])) {
+                    continue;
+                }
+                $matchKeys[$matchKey] = true;
+                $match['signals'] = [
+                    [
+                        'type' => 'positive',
+                        'code' => 'exact_sender_name',
+                        'score' => 100.0,
+                        'detail' => 'matched_name:' . $match['matchedName']
+                            . ',match_type:' . $match['senderMatchType'],
+                    ],
+                ];
+                $matches[] = $match;
+            }
         }
     }
 
