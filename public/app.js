@@ -11206,6 +11206,67 @@ function applyAnalysisOutdatedJobIds(jobIds) {
   return true;
 }
 
+function beginAnalysisAffectingSettingsSave(tabId) {
+  if (typeof tabId === 'string' && tabId !== '') {
+    loadingSettingsPanels.add(tabId);
+  }
+  updateSettingsActionButtons();
+  const rollbackJobIds = [];
+  const optimisticJobIds = Array.isArray(state.readyJobs)
+    ? state.readyJobs
+      .filter((job) => job
+        && typeof job.id === 'string'
+        && job.id !== ''
+        && job.status === 'ready'
+        && job.archived !== true)
+      .map((job) => job.id)
+    : [];
+
+  if (Array.isArray(state.readyJobs)) {
+    state.readyJobs.forEach((job) => {
+      if (
+        job
+        && typeof job.id === 'string'
+        && job.id !== ''
+        && job.status === 'ready'
+        && job.archived !== true
+        && job.analysisOutdated !== true
+      ) {
+        rollbackJobIds.push(job.id);
+      }
+    });
+  }
+
+  applyAnalysisOutdatedJobIds(optimisticJobIds);
+
+  return () => {
+    if (rollbackJobIds.length < 1 || !Array.isArray(state.readyJobs)) {
+      return;
+    }
+    const rollbackSet = new Set(rollbackJobIds);
+    let changed = false;
+    const nextReadyJobs = state.readyJobs.map((job) => {
+      if (!job || typeof job.id !== 'string' || !rollbackSet.has(job.id) || job.analysisOutdated !== true) {
+        return job;
+      }
+      changed = true;
+      const nextJob = { ...job };
+      delete nextJob.analysisOutdated;
+      return nextJob;
+    });
+    if (changed) {
+      applyState({ readyJobs: nextReadyJobs });
+    }
+  };
+}
+
+function endAnalysisAffectingSettingsSave(tabId) {
+  if (typeof tabId === 'string' && tabId !== '') {
+    loadingSettingsPanels.delete(tabId);
+  }
+  updateSettingsActionButtons();
+}
+
 function refreshMarkedOutdatedJobsFromPayload(payload) {
   const outdatedJobIds = analysisOutdatedJobIdsFromPayload(payload);
   if (outdatedJobIds.length < 1) {
@@ -21434,10 +21495,14 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     clientsApplyEl.addEventListener('click', async () => {
+      const rollback = beginAnalysisAffectingSettingsSave('clients');
       try {
         await saveClientsSettings();
       } catch (error) {
+        rollback();
         alert(error.message || 'Kunde inte spara huvudmän.');
+      } finally {
+        endAnalysisAffectingSettingsSave('clients');
       }
     });
   } else if (tabId === 'senders') {
@@ -21552,10 +21617,14 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     sendersApplyEl.addEventListener('click', async () => {
+      const rollback = beginAnalysisAffectingSettingsSave('senders');
       try {
         await saveSendersSettings();
       } catch (error) {
+        rollback();
         alert(error.message || 'Kunde inte spara avsändare.');
+      } finally {
+        endAnalysisAffectingSettingsSave('senders');
       }
     });
   } else if (tabId === 'matching') {
@@ -21673,10 +21742,14 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     matchingApplyEl.addEventListener('click', async () => {
+      const rollback = beginAnalysisAffectingSettingsSave('matching');
       try {
         await saveMatchingSettings();
       } catch (error) {
+        rollback();
         alert(error.message || 'Kunde inte spara matchningsinställningar.');
+      } finally {
+        endAnalysisAffectingSettingsSave('matching');
       }
     });
 	  } else if (tabId === 'ocr-processing') {
@@ -21756,10 +21829,14 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     ocrProcessingApplyEl.addEventListener('click', async () => {
+      const rollback = beginAnalysisAffectingSettingsSave('ocr-processing');
       try {
         await saveOcrProcessingSettings();
       } catch (error) {
+        rollback();
         alert(error.message || 'Kunde inte spara OCR-inställningar.');
+      } finally {
+        endAnalysisAffectingSettingsSave('ocr-processing');
       }
     });
     jbig2RefreshButtonEl.addEventListener('click', async () => {
@@ -21878,10 +21955,14 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     archiveStructureApplyEl.addEventListener('click', async () => {
+      const rollback = beginAnalysisAffectingSettingsSave('archive-structure');
       try {
         await saveArchiveStructure();
       } catch (error) {
+        rollback();
         alert(error.message || 'Kunde inte spara arkivstruktur.');
+      } finally {
+        endAnalysisAffectingSettingsSave('archive-structure');
       }
     });
   } else if (tabId === 'labels') {
@@ -21927,10 +22008,14 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     labelsApplyEl.addEventListener('click', async () => {
+      const rollback = beginAnalysisAffectingSettingsSave('labels');
       try {
         await saveLabels();
       } catch (error) {
+        rollback();
         alert(error.message || 'Kunde inte spara etiketter.');
+      } finally {
+        endAnalysisAffectingSettingsSave('labels');
       }
     });
   } else if (tabId === 'value-patterns') {
@@ -21974,10 +22059,14 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     valuePatternsApplyEl.addEventListener('click', async () => {
+      const rollback = beginAnalysisAffectingSettingsSave('value-patterns');
       try {
         await saveValuePatterns();
       } catch (error) {
+        rollback();
         alert(error.message || 'Kunde inte spara värdemönster.');
+      } finally {
+        endAnalysisAffectingSettingsSave('value-patterns');
       }
     });
   } else if (tabId === 'data-fields') {
@@ -22061,10 +22150,14 @@ function bindSettingsPanelRefs(tabId) {
       updateSettingsActionButtons();
     });
     extractionFieldsApplyEl.addEventListener('click', async () => {
+      const rollback = beginAnalysisAffectingSettingsSave('data-fields');
       try {
         await saveExtractionFields();
       } catch (error) {
+        rollback();
         alert(error.message || 'Kunde inte spara datafält.');
+      } finally {
+        endAnalysisAffectingSettingsSave('data-fields');
       }
     });
     setExtractionFieldsTab('fields');
@@ -36472,7 +36565,6 @@ async function saveClientsSettings() {
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
   await fetchState({ refreshClients: true });
-  await invalidateAnalysisViews();
 }
 
 async function saveSendersSettings() {
@@ -36504,7 +36596,6 @@ async function saveSendersSettings() {
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
   await fetchState({ refreshSenders: true });
-  await invalidateAnalysisViews();
 }
 
 async function saveMatchingSettings() {
@@ -36556,7 +36647,6 @@ async function saveMatchingSettings() {
   renderMatchingEditor();
   watchReprocessedJobIdsFromPayload(payload);
   refreshMarkedOutdatedJobsFromPayload(payload);
-  await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -36600,7 +36690,6 @@ async function saveArchiveStructure() {
   renderArchiveStructureEditor();
   watchReprocessedJobIdsFromPayload(payload);
   refreshMarkedOutdatedJobsFromPayload(payload);
-  await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -36644,7 +36733,6 @@ async function saveLabels() {
   refreshSelectedJobProposalUi(previousProposalContext, { syncLabels: true });
   watchReprocessedJobIdsFromPayload(payload);
   refreshMarkedOutdatedJobsFromPayload(payload);
-  await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -36677,7 +36765,6 @@ async function saveValuePatterns() {
   applyArchivingRulesPayloadFromResponse(payload, { bumpLocalRevision: true, forceRender: true });
   watchReprocessedJobIdsFromPayload(payload);
   refreshMarkedOutdatedJobsFromPayload(payload);
-  await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -36728,7 +36815,6 @@ async function saveExtractionFields() {
   refreshSelectedJobProposalUi(previousProposalContext);
   watchReprocessedJobIdsFromPayload(payload);
   refreshMarkedOutdatedJobsFromPayload(payload);
-  await invalidateAnalysisViews();
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
@@ -36812,7 +36898,6 @@ async function saveOcrProcessingSettings() {
   renderOcrProcessingCommand();
   watchReprocessedJobIdsFromPayload(payload);
   refreshMarkedOutdatedJobsFromPayload(payload);
-  await invalidateAnalysisViews({ clearOcrCache: true });
   updateSettingsActionButtons();
   await refreshConfigurationBackupCreateState();
 }
