@@ -2933,6 +2933,17 @@ function default_title_heuristics(): array
                 ],
                 'description' => 'Poängkurva baserad på viktad visuell textyta nära rubrikkandidaten.',
             ],
+            'short_line_before_long_line' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.0, 'y' => -55.0],
+                    ['x' => 0.25, 'y' => -45.0],
+                    ['x' => 0.50, 'y' => -20.0],
+                    ['x' => 0.75, 'y' => 0.0],
+                    ['x' => 1.0, 'y' => 0.0],
+                ],
+                'description' => 'Ger minuspoäng för flerradiga Rubrik-kandidater där en tidig rad är oproportionerligt kort jämfört med en senare rad.',
+            ],
             'sender_name' => [
                 'enabled' => true,
                 'points' => -60.0,
@@ -17539,6 +17550,45 @@ function title_candidate_text_density(
     ];
 }
 
+function title_candidate_short_line_before_long_line_ratio(array $candidate): ?float
+{
+    if (($candidate['blockType'] ?? null) !== 'multiline' || (int) ($candidate['lineCount'] ?? 1) < 2) {
+        return null;
+    }
+
+    $widths = [];
+    foreach (is_array($candidate['blockParts'] ?? null) ? $candidate['blockParts'] : [] as $part) {
+        if (!is_array($part)) {
+            continue;
+        }
+        $bbox = normalize_debug_word_bbox($part['bbox'] ?? null);
+        if ($bbox === null) {
+            continue;
+        }
+        $width = (float) ($bbox['x1'] ?? 0.0) - (float) ($bbox['x0'] ?? 0.0);
+        if ($width > 0.0) {
+            $widths[] = $width;
+        }
+    }
+
+    if (count($widths) < 2) {
+        return null;
+    }
+
+    $worstRatio = null;
+    $count = count($widths);
+    for ($index = 0; $index < $count - 1; $index++) {
+        $maxFollowingWidth = max(array_slice($widths, $index + 1));
+        if ($maxFollowingWidth <= 0.0) {
+            continue;
+        }
+        $ratio = $widths[$index] / $maxFollowingWidth;
+        $worstRatio = $worstRatio === null ? $ratio : min($worstRatio, $ratio);
+    }
+
+    return $worstRatio !== null ? max(0.0, $worstRatio) : null;
+}
+
 function title_sender_name_lookup_from_document_matches(array $matches): array
 {
     $lookup = [];
@@ -17995,6 +18045,16 @@ function score_title_candidate(
             'density:' . round($densityRatio, 4)
                 . ',max_distance:' . round((float) ($density['maxDistanceLineHeights'] ?? 3.0), 2)
                 . ' line_heights,boxes:' . (int) ($density['contributingBboxes'] ?? 0)
+        );
+    }
+
+    $shortLineBeforeLongLineRatio = title_candidate_short_line_before_long_line_ratio($candidate);
+    if ($shortLineBeforeLongLineRatio !== null) {
+        $result['shortLineBeforeLongLineRatio'] = $shortLineBeforeLongLineRatio;
+        $addSignal(
+            'short_line_before_long_line',
+            $shortLineBeforeLongLineRatio,
+            'ratio:' . round($shortLineBeforeLongLineRatio, 3)
         );
     }
 

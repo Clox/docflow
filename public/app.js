@@ -8123,6 +8123,7 @@ function formatPrimaryDateSignalLabel(code) {
     uppercase_ratio: 'Versalgrad',
     brevity: 'Korthet',
     sender_name: 'Avsändarnamn',
+    short_line_before_long_line: 'Kort rad före lång rad',
     exact_sender_name: 'Exakt namnmatchning',
     distance_to_sender_name: 'Avstånd till avsändarnamn',
     relative_text_size: 'Textstorlek',
@@ -8261,6 +8262,16 @@ function formatPrimaryDateSignalDetail(signal) {
   if (signal?.code === 'sender_name') {
     const senderNameMatch = detail.match(/^name:(.+)$/u);
     return senderNameMatch ? senderNameMatch[1].trim() : detail;
+  }
+  if (signal?.code === 'short_line_before_long_line') {
+    const ratioMatch = detail.match(/\bratio:([0-9.]+)/u);
+    if (ratioMatch) {
+      const ratio = Number(ratioMatch[1]);
+      if (Number.isFinite(ratio)) {
+        return `ratio ${formatPrimaryDateScoreNumber(ratio)}`;
+      }
+    }
+    return detail;
   }
   if (signal?.code === 'exact_sender_name') {
     const matchedName = detail.match(/\bmatched_name:([^,]+)/u)?.[1]?.trim() || '';
@@ -26953,6 +26964,17 @@ function defaultTitleHeuristics() {
         ],
         description: 'Poängkurva baserad på viktad visuell textyta nära rubrikkandidaten.',
       },
+      short_line_before_long_line: {
+        enabled: true,
+        curve: [
+          { x: 0, y: -55 },
+          { x: 0.25, y: -45 },
+          { x: 0.50, y: -20 },
+          { x: 0.75, y: 0 },
+          { x: 1, y: 0 },
+        ],
+        description: 'Ger minuspoäng för flerradiga Rubrik-kandidater där en tidig rad är oproportionerligt kort jämfört med en senare rad.',
+      },
       sender_name: {
         enabled: true,
         points: -60,
@@ -31867,6 +31889,7 @@ const titleHeuristicLabels = {
   uppercase_ratio: 'Versalgrad',
   brevity: 'Korthet',
   text_density: 'Texttäthet',
+  short_line_before_long_line: 'Kort rad före lång rad',
   sender_name: 'Avsändarnamn',
 };
 
@@ -31957,6 +31980,17 @@ const titleHeuristicCurveCharts = {
     xAsPercent: true,
     yAsPercent: false,
     xStep: 0.01,
+    yStep: 1,
+  },
+  short_line_before_long_line: {
+    xAxisTitle: 'Kortaste tidigare rad / bredaste senare rad',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Breddkvot',
+    yPointLabel: 'Poäng',
+    yMin: -100,
+    yMax: 40,
+    yAsPercent: false,
+    xStep: 0.05,
     yStep: 1,
   },
 };

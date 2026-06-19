@@ -234,6 +234,121 @@ assert_title_multiline_candidates(
     'Title text size must use representative line height for multiline candidates, not the full block bbox height.'
 );
 
+$labelValueCandidate = [
+    'value' => 'AVSER Rickard Bernt Peter Henriksen, 19920112-4212',
+    'raw' => 'AVSER Rickard Bernt Peter Henriksen, 19920112-4212',
+    'line' => 'AVSER Rickard Bernt Peter Henriksen, 19920112-4212',
+    'lineIndex' => 0,
+    'start' => 0,
+    'end' => 52,
+    'bbox' => ['x0' => 40.0, 'y0' => 60.0, 'x1' => 866.0, 'y1' => 108.0],
+    'pageNumber' => 1,
+    'blockType' => 'multiline',
+    'lineCount' => 2,
+    'lineIndexes' => [0, 1],
+    'blockParts' => [
+        [
+            'text' => 'AVSER',
+            'lineIndex' => 0,
+            'bbox' => ['x0' => 40.0, 'y0' => 60.0, 'x1' => 175.0, 'y1' => 82.0],
+        ],
+        [
+            'text' => 'Rickard Bernt Peter Henriksen, 19920112-4212',
+            'lineIndex' => 1,
+            'bbox' => ['x0' => 40.0, 'y0' => 86.0, 'x1' => 866.0, 'y1' => 108.0],
+        ],
+    ],
+];
+$legitimateShortLastLineCandidate = [
+    'value' => 'Ansökan om ekonomiskt bistånd maj 2026',
+    'raw' => 'Ansökan om ekonomiskt bistånd maj 2026',
+    'line' => 'Ansökan om ekonomiskt bistånd maj 2026',
+    'lineIndex' => 0,
+    'start' => 0,
+    'end' => 40,
+    'bbox' => ['x0' => 40.0, 'y0' => 160.0, 'x1' => 540.0, 'y1' => 208.0],
+    'pageNumber' => 1,
+    'blockType' => 'multiline',
+    'lineCount' => 2,
+    'lineIndexes' => [0, 1],
+    'blockParts' => [
+        [
+            'text' => 'Ansökan om ekonomiskt bistånd',
+            'lineIndex' => 0,
+            'bbox' => ['x0' => 40.0, 'y0' => 160.0, 'x1' => 540.0, 'y1' => 182.0],
+        ],
+        [
+            'text' => 'maj 2026',
+            'lineIndex' => 1,
+            'bbox' => ['x0' => 40.0, 'y0' => 186.0, 'x1' => 220.0, 'y1' => 208.0],
+        ],
+    ],
+];
+$shortLineHeuristics = [
+    'signals' => [
+        'vertical_position' => ['enabled' => false],
+        'horizontal_position_centered' => ['enabled' => false],
+        'horizontal_position_left_aligned' => ['enabled' => false],
+        'text_size' => ['enabled' => false],
+        'uppercase_ratio' => ['enabled' => false],
+        'brevity' => ['enabled' => false],
+        'text_density' => ['enabled' => false],
+        'sender_name' => ['enabled' => false],
+        'short_line_before_long_line' => [
+            'curve' => [
+                ['x' => 0.0, 'y' => -55.0],
+                ['x' => 0.25, 'y' => -45.0],
+                ['x' => 0.50, 'y' => -20.0],
+                ['x' => 0.75, 'y' => 0.0],
+                ['x' => 1.0, 'y' => 0.0],
+            ],
+        ],
+    ],
+];
+$labelValueScored = score_title_candidate(
+    $labelValueCandidate,
+    [],
+    [
+        title_multiline_test_geometry('AVSER', 0, ['x0' => 40.0, 'y0' => 60.0, 'x1' => 175.0, 'y1' => 82.0]),
+        title_multiline_test_geometry('Rickard Bernt Peter Henriksen, 19920112-4212', 1, ['x0' => 40.0, 'y0' => 86.0, 'x1' => 866.0, 'y1' => 108.0]),
+    ],
+    $shortLineHeuristics
+);
+$labelValueShortLineSignals = array_values(array_filter(
+    $labelValueScored['signals'] ?? [],
+    static fn(mixed $signal): bool => is_array($signal) && ($signal['code'] ?? null) === 'short_line_before_long_line'
+));
+assert_title_multiline_candidates(
+    abs((float) ($labelValueScored['shortLineBeforeLongLineRatio'] ?? 0.0) - (135.0 / 826.0)) < 0.0001,
+    'Short-line-before-long-line ratio must compare each earlier line to the widest following line.'
+);
+assert_title_multiline_candidates(
+    count($labelValueShortLineSignals) === 1
+        && (float) ($labelValueShortLineSignals[0]['score'] ?? 0.0) < 0.0
+        && str_contains((string) ($labelValueShortLineSignals[0]['detail'] ?? ''), 'ratio:0.163'),
+    'Label + value multiline title candidates must get a negative short-line-before-long-line signal with debug ratio.'
+);
+$legitimateShortLastLineScored = score_title_candidate(
+    $legitimateShortLastLineCandidate,
+    [],
+    [
+        title_multiline_test_geometry('Ansökan om ekonomiskt bistånd', 0, ['x0' => 40.0, 'y0' => 160.0, 'x1' => 540.0, 'y1' => 182.0]),
+        title_multiline_test_geometry('maj 2026', 1, ['x0' => 40.0, 'y0' => 186.0, 'x1' => 220.0, 'y1' => 208.0]),
+    ],
+    $shortLineHeuristics
+);
+assert_title_multiline_candidates(
+    abs((float) ($legitimateShortLastLineScored['shortLineBeforeLongLineRatio'] ?? 0.0) - (500.0 / 180.0)) < 0.0001,
+    'A short last line must not be used as the penalized line.'
+);
+assert_title_multiline_candidates(
+    count(array_filter(
+        $legitimateShortLastLineScored['signals'] ?? [],
+        static fn(mixed $signal): bool => is_array($signal) && ($signal['code'] ?? null) === 'short_line_before_long_line'
+    )) === 0,
+    'A normal multiline title with a short last line must not get a short-line-before-long-line penalty.'
+);
+
 $senderLines = ['Munkfors', 'kommun'];
 $senderGeometries = [
     title_multiline_test_geometry('Munkfors', 0, ['x0' => 40.0, 'y0' => 60.0, 'x1' => 112.0, 'y1' => 72.0]),
