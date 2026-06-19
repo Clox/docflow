@@ -113,4 +113,91 @@ assert_title_horizontal_position(
     'The losing left-aligned signal should not be shown in the candidate signal list.'
 );
 
+$zeroCurve = [
+    ['x' => 0.0, 'y' => 0.0],
+    ['x' => 1.0, 'y' => 0.0],
+];
+$zeroConfidenceResult = extract_title_field_result(
+    ['Neutral rubrik'],
+    [[
+        'text' => 'Neutral rubrik',
+        'pageNumber' => 1,
+        'pageWidth' => 1000.0,
+        'pageHeight' => 1400.0,
+        'segments' => [[
+            'start' => 0,
+            'end' => strlen('Neutral rubrik'),
+            'wordIndex' => 1,
+            'bbox' => ['x0' => 40.0, 'y0' => 80.0, 'x1' => 240.0, 'y1' => 110.0],
+        ]],
+    ]],
+    [
+        'signals' => [
+            'vertical_position' => ['curve' => $zeroCurve],
+            'horizontal_position_centered' => ['curve' => $zeroCurve],
+            'horizontal_position_left_aligned' => ['curve' => $zeroCurve],
+            'text_size' => ['curve' => $zeroCurve],
+            'uppercase_ratio' => ['curve' => $zeroCurve],
+            'brevity' => ['curve' => $zeroCurve],
+            'text_density' => ['curve' => $zeroCurve],
+        ],
+    ],
+    [],
+    [],
+    null,
+    []
+);
+$zeroConfidenceMatches = title_result_matches(
+    $zeroConfidenceResult,
+    [[
+        'text' => 'Neutral rubrik',
+        'pageNumber' => 1,
+        'pageWidth' => 1000.0,
+        'pageHeight' => 1400.0,
+        'segments' => [[
+            'start' => 0,
+            'end' => strlen('Neutral rubrik'),
+            'wordIndex' => 1,
+            'bbox' => ['x0' => 40.0, 'y0' => 80.0, 'x1' => 240.0, 'y1' => 110.0],
+        ]],
+    ]]
+);
+$zeroConfidenceMatch = array_values(array_filter(
+    $zeroConfidenceMatches,
+    static fn(array $match): bool => ($match['value'] ?? null) === 'Neutral rubrik'
+))[0] ?? null;
+assert_title_horizontal_position(
+    is_array($zeroConfidenceMatch),
+    'Zero-confidence title candidates must remain visible in all-candidates match metadata.'
+);
+assert_title_horizontal_position(
+    (float) ($zeroConfidenceMatch['finalConfidence'] ?? -1.0) === 0.0,
+    'The zero-confidence title candidate should keep 0% confidence.'
+);
+
+$pageOneCandidate = [
+    'blockType' => 'multiline',
+    'value' => 'Sida ett',
+    'score' => 10.0,
+    'lineIndex' => 0,
+    'pageNumber' => 1,
+    'valueBBoxIndexes' => [33],
+];
+$pageTwoCandidate = [
+    'blockType' => 'multiline',
+    'value' => 'Sida två',
+    'score' => 20.0,
+    'lineIndex' => 10,
+    'pageNumber' => 2,
+    'valueBBoxIndexes' => [33],
+];
+assert_title_horizontal_position(
+    !title_candidates_have_overlapping_bbox_indexes($pageOneCandidate, $pageTwoCandidate),
+    'Title bbox overlap detection must treat equal bbox numbers on different pages as separate boxes.'
+);
+assert_title_horizontal_position(
+    count(title_select_non_overlapping_multiline_candidates([$pageOneCandidate, $pageTwoCandidate])) === 2,
+    'Multiline title candidates on different pages must not suppress each other just because bbox indexes match.'
+);
+
 echo "title_horizontal_position_signal_test: ok\n";

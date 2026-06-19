@@ -17574,6 +17574,10 @@ function title_candidates_from_lines(
     foreach ($consumedBBoxIndexes as $index) {
         if (is_int($index) && $index > 0) {
             $consumedBboxes[$index] = true;
+            continue;
+        }
+        if (is_string($index) && trim($index) !== '') {
+            $consumedBboxes[trim($index)] = true;
         }
     }
     $consumedLines = [];
@@ -17625,9 +17629,11 @@ function title_candidates_from_lines(
             $valueBBoxIndexes = $lineGeometry !== null
                 ? line_geometry_span_word_bbox_indexes($lineGeometry, $start, $end)
                 : [];
+            $pageNumber = is_int($lineIndex) ? matching_line_page_number($lineGeometries, $lineIndex) : null;
             $overlapsConsumedBbox = false;
             foreach ($valueBBoxIndexes as $bboxIndex) {
-                if (isset($consumedBboxes[$bboxIndex])) {
+                $bboxRef = title_bbox_ref_key($pageNumber, $bboxIndex);
+                if (isset($consumedBboxes[$bboxRef]) || isset($consumedBboxes[$bboxIndex])) {
                     $overlapsConsumedBbox = true;
                     break;
                 }
@@ -17648,7 +17654,7 @@ function title_candidates_from_lines(
                 'end' => $end,
                 'bbox' => $bbox,
                 'valueBBoxIndexes' => $valueBBoxIndexes,
-                'pageNumber' => is_int($lineIndex) ? matching_line_page_number($lineGeometries, $lineIndex) : null,
+                'pageNumber' => $pageNumber,
                 'blockType' => 'single_line',
                 'lineCount' => 1,
                 'lineIndexes' => [is_int($lineIndex) ? $lineIndex : 0],
@@ -17661,14 +17667,17 @@ function title_candidates_from_lines(
 function title_multiline_candidate_consumed_refs(array $candidates): array
 {
     $bboxIndexes = [];
+    $bboxRefs = [];
     $lineIndexes = [];
     foreach ($candidates as $candidate) {
         if (!is_array($candidate) || ($candidate['blockType'] ?? null) !== 'multiline') {
             continue;
         }
+        $pageNumber = is_int($candidate['pageNumber'] ?? null) ? (int) $candidate['pageNumber'] : null;
         foreach (is_array($candidate['valueBBoxIndexes'] ?? null) ? $candidate['valueBBoxIndexes'] : [] as $index) {
             if (is_int($index) && $index > 0) {
                 $bboxIndexes[$index] = true;
+                $bboxRefs[title_bbox_ref_key($pageNumber, $index)] = true;
             }
         }
         foreach (is_array($candidate['lineIndexes'] ?? null) ? $candidate['lineIndexes'] : [] as $index) {
@@ -17679,28 +17688,43 @@ function title_multiline_candidate_consumed_refs(array $candidates): array
     }
 
     $resolvedBboxIndexes = array_keys($bboxIndexes);
+    $resolvedBboxRefs = array_keys($bboxRefs);
     $resolvedLineIndexes = array_keys($lineIndexes);
     sort($resolvedBboxIndexes, SORT_NUMERIC);
+    sort($resolvedBboxRefs, SORT_NATURAL);
     sort($resolvedLineIndexes, SORT_NUMERIC);
     return [
         'bboxIndexes' => $resolvedBboxIndexes,
+        'bboxRefs' => $resolvedBboxRefs,
         'lineIndexes' => $resolvedLineIndexes,
     ];
 }
 
-function title_candidates_have_overlapping_bbox_indexes(array $left, array $right): bool
+function title_bbox_ref_key(?int $pageNumber, int $bboxIndex): string
 {
-    $indexes = [];
-    foreach (is_array($left['valueBBoxIndexes'] ?? null) ? $left['valueBBoxIndexes'] : [] as $index) {
+    return ($pageNumber !== null && $pageNumber > 0 ? (string) $pageNumber : '?') . ':' . $bboxIndex;
+}
+
+function title_candidate_bbox_ref_keys(array $candidate): array
+{
+    $pageNumber = is_int($candidate['pageNumber'] ?? null) ? (int) $candidate['pageNumber'] : null;
+    $keys = [];
+    foreach (is_array($candidate['valueBBoxIndexes'] ?? null) ? $candidate['valueBBoxIndexes'] : [] as $index) {
         if (is_int($index) && $index > 0) {
-            $indexes[$index] = true;
+            $keys[title_bbox_ref_key($pageNumber, $index)] = true;
         }
     }
+    return $keys;
+}
+
+function title_candidates_have_overlapping_bbox_indexes(array $left, array $right): bool
+{
+    $indexes = title_candidate_bbox_ref_keys($left);
     if ($indexes === []) {
         return false;
     }
-    foreach (is_array($right['valueBBoxIndexes'] ?? null) ? $right['valueBBoxIndexes'] : [] as $index) {
-        if (is_int($index) && isset($indexes[$index])) {
+    foreach (array_keys(title_candidate_bbox_ref_keys($right)) as $index) {
+        if (isset($indexes[$index])) {
             return true;
         }
     }
@@ -18047,7 +18071,7 @@ function extract_title_field_result(
             $lines,
             $lineGeometries,
             $spanSettings,
-            is_array($consumedRefs['bboxIndexes'] ?? null) ? $consumedRefs['bboxIndexes'] : [],
+            is_array($consumedRefs['bboxRefs'] ?? null) ? $consumedRefs['bboxRefs'] : [],
             is_array($consumedRefs['lineIndexes'] ?? null) ? $consumedRefs['lineIndexes'] : []
         )
     );
@@ -18058,10 +18082,6 @@ function extract_title_field_result(
     $candidates = array_values(array_filter(
         $candidates,
         static fn($candidate): bool => is_array($candidate)
-    ));
-    $candidates = array_values(array_filter(
-        $candidates,
-        static fn(array $candidate): bool => (float) ($candidate['score'] ?? 0.0) > 0.0
     ));
 
     usort($candidates, static function (array $a, array $b): int {
