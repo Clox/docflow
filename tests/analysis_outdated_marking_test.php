@@ -56,6 +56,11 @@ try {
         'status' => 'ready',
         'archived' => false,
     ]);
+    analysis_outdated_test_write_job($jobsDir, 'ready_already_outdated', [
+        'status' => 'ready',
+        'archived' => false,
+        'analysisOutdated' => true,
+    ]);
     analysis_outdated_test_write_job($jobsDir, 'ready_archived', [
         'status' => 'ready',
         'archived' => true,
@@ -81,13 +86,23 @@ try {
         ($result['markedCount'] ?? null) === 1,
         'The marked count should include only ready review jobs.'
     );
+    assert_analysis_outdated_marking(
+        ($result['outdatedJobIds'] ?? null) === ['ready_already_outdated', 'ready_review'],
+        'The outdated list should include all ready review jobs that are outdated after marking.'
+    );
+    assert_analysis_outdated_marking(
+        ($result['outdatedCount'] ?? null) === 2,
+        'The outdated count should include already outdated ready review jobs.'
+    );
 
     $readyJob = load_json_file($jobsDir . '/ready_review/job.json');
+    $alreadyOutdatedJob = load_json_file($jobsDir . '/ready_already_outdated/job.json');
     $archivedJob = load_json_file($jobsDir . '/ready_archived/job.json');
     $processingJob = load_json_file($jobsDir . '/processing_review/job.json');
     $failedJob = load_json_file($jobsDir . '/failed_review/job.json');
 
     assert_analysis_outdated_marking(($readyJob['analysisOutdated'] ?? false) === true, 'Ready review jobs must be flagged as outdated.');
+    assert_analysis_outdated_marking(($alreadyOutdatedJob['analysisOutdated'] ?? false) === true, 'Already outdated ready review jobs must stay flagged as outdated.');
     assert_analysis_outdated_marking(!array_key_exists('analysisOutdated', $archivedJob), 'Archived jobs must not be flagged as outdated.');
     assert_analysis_outdated_marking(!array_key_exists('analysisOutdated', $processingJob), 'Processing jobs must not be flagged as outdated.');
     assert_analysis_outdated_marking(!array_key_exists('analysisOutdated', $failedJob), 'Failed jobs must not be flagged as outdated.');

@@ -11150,15 +11150,70 @@ function watchReprocessedJobIdsFromPayload(payload) {
   requestStateRefresh(0);
 }
 
+function analysisOutdatedJobIdsFromPayload(payload) {
+  const ids = new Set();
+  const addIds = (values) => {
+    if (!Array.isArray(values)) {
+      return;
+    }
+    values.forEach((jobId) => {
+      if (typeof jobId === 'string' && jobId.trim() !== '') {
+        ids.add(jobId.trim());
+      }
+    });
+  };
+  addIds(payload?.markedOutdatedJobs?.outdatedJobIds);
+  addIds(payload?.markedOutdatedJobs?.markedJobIds);
+  return Array.from(ids);
+}
+
+function applyAnalysisOutdatedJobIds(jobIds) {
+  if (!Array.isArray(jobIds) || jobIds.length < 1) {
+    return false;
+  }
+  const idSet = new Set(jobIds.filter((jobId) => typeof jobId === 'string' && jobId !== ''));
+  if (idSet.size < 1 || !Array.isArray(state.readyJobs)) {
+    return false;
+  }
+
+  let changed = false;
+  const nextReadyJobs = state.readyJobs.map((job) => {
+    if (
+      !job
+      || typeof job.id !== 'string'
+      || !idSet.has(job.id)
+      || job.status !== 'ready'
+      || job.archived === true
+      || job.analysisOutdated === true
+    ) {
+      return job;
+    }
+    changed = true;
+    return {
+      ...job,
+      analysisOutdated: true,
+    };
+  });
+
+  if (!changed) {
+    syncSelectedJobActionsWarning(findJobById(selectedJobId));
+    return false;
+  }
+
+  applyState({
+    readyJobs: nextReadyJobs,
+  });
+  return true;
+}
+
 function refreshMarkedOutdatedJobsFromPayload(payload) {
-  const markedJobIds = Array.isArray(payload?.markedOutdatedJobs?.markedJobIds)
-    ? payload.markedOutdatedJobs.markedJobIds.filter((jobId) => typeof jobId === 'string' && jobId !== '')
-    : [];
-  if (markedJobIds.length < 1) {
+  const outdatedJobIds = analysisOutdatedJobIdsFromPayload(payload);
+  if (outdatedJobIds.length < 1) {
     return;
   }
 
-  requestStateRefresh(0);
+  applyAnalysisOutdatedJobIds(outdatedJobIds);
+  requestStateRefresh(0, { force: true });
 }
 
 async function bumpArchivingRulesVersionDev() {

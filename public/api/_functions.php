@@ -24827,10 +24827,13 @@ function mark_ready_jobs_analysis_outdated_for_analysis_change(
         return [
             'markedJobIds' => [],
             'markedCount' => 0,
+            'outdatedJobIds' => [],
+            'outdatedCount' => 0,
         ];
     }
 
     $markedJobIds = [];
+    $outdatedJobIds = [];
     foreach ($entries as $entry) {
         if ($entry === '.' || $entry === '..' || !is_valid_job_id($entry)) {
             continue;
@@ -24843,15 +24846,23 @@ function mark_ready_jobs_analysis_outdated_for_analysis_change(
         if (!is_array($job) || ($job['status'] ?? '') !== 'ready' || ($job['archived'] ?? false) === true) {
             continue;
         }
+        if (($job['analysisOutdated'] ?? false) === true) {
+            $outdatedJobIds[] = $entry;
+            continue;
+        }
         if (set_job_analysis_outdated_flag($config, $entry, true)) {
             $markedJobIds[] = $entry;
+            $outdatedJobIds[] = $entry;
         }
     }
 
     sort($markedJobIds, SORT_STRING);
+    sort($outdatedJobIds, SORT_STRING);
     return [
         'markedJobIds' => $markedJobIds,
         'markedCount' => count($markedJobIds),
+        'outdatedJobIds' => $outdatedJobIds,
+        'outdatedCount' => count($outdatedJobIds),
     ];
 }
 
