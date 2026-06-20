@@ -96,6 +96,9 @@ function load_config(): array
     $multiLineTextBlocks = normalize_multiline_text_block_settings(
         $config['multiLineTextBlocks'] ?? []
     );
+    $layoutAnalysis = normalize_layout_analysis_settings(
+        $config['layoutAnalysis'] ?? []
+    );
 
     if (!is_string($inboxDirectory) || $inboxDirectory === '') {
         throw new RuntimeException('config.json: inboxDirectory is required');
@@ -158,6 +161,7 @@ function load_config(): array
         'ocrTextExtractionMethod' => $ocrTextExtractionMethod,
         'ocrPdfTextSubstitutions' => $ocrPdfTextSubstitutions,
         'multiLineTextBlocks' => $multiLineTextBlocks,
+        'layoutAnalysis' => $layoutAnalysis,
         'chromeExtensionSuppressMissingNotice' => $chromeExtensionSuppressMissingNotice,
     ];
 }
@@ -200,6 +204,286 @@ function normalize_multiline_text_block_settings(mixed $input): array
         'maxTextSizeRatio' => max(1.0, min(5.0, $maxTextSizeRatio)),
         'minXOverlapRatio' => max(0.0, min(1.0, $minXOverlapRatio)),
         'maxHorizontalOffsetLineHeights' => max(0.0, min(20.0, $maxHorizontalOffset)),
+    ];
+}
+
+function default_layout_analysis_settings(): array
+{
+    return [
+        'leftMargin' => [
+            'ignoreVerticalText' => true,
+            'minBboxWidth' => 18.0,
+            'minTextLength' => 2,
+            'minOcrConfidence' => 0.0,
+            'edgeFilterRatio' => 0.01,
+            'clusterTolerance' => 24.0,
+        ],
+    ];
+}
+
+function normalize_layout_analysis_settings(mixed $input): array
+{
+    $defaults = default_layout_analysis_settings();
+    $source = is_array($input) ? $input : [];
+    $leftSource = is_array($source['leftMargin'] ?? null) ? $source['leftMargin'] : [];
+    $leftDefaults = $defaults['leftMargin'];
+
+    return [
+        'leftMargin' => [
+            'ignoreVerticalText' => is_bool($leftSource['ignoreVerticalText'] ?? null)
+                ? (bool) $leftSource['ignoreVerticalText']
+                : $leftDefaults['ignoreVerticalText'],
+            'minBboxWidth' => max(0.0, is_numeric($leftSource['minBboxWidth'] ?? null)
+                ? (float) $leftSource['minBboxWidth']
+                : $leftDefaults['minBboxWidth']),
+            'minTextLength' => max(1, is_numeric($leftSource['minTextLength'] ?? null)
+                ? (int) round((float) $leftSource['minTextLength'])
+                : $leftDefaults['minTextLength']),
+            'minOcrConfidence' => max(0.0, min(1.0, is_numeric($leftSource['minOcrConfidence'] ?? null)
+                ? (float) $leftSource['minOcrConfidence']
+                : $leftDefaults['minOcrConfidence'])),
+            'edgeFilterRatio' => max(0.0, min(0.25, is_numeric($leftSource['edgeFilterRatio'] ?? null)
+                ? (float) $leftSource['edgeFilterRatio']
+                : $leftDefaults['edgeFilterRatio'])),
+            'clusterTolerance' => max(1.0, is_numeric($leftSource['clusterTolerance'] ?? null)
+                ? (float) $leftSource['clusterTolerance']
+                : $leftDefaults['clusterTolerance']),
+        ],
+    ];
+}
+
+function layout_analysis_word_confidence(array $word): ?float
+{
+    foreach (['confidence', 'ocrConfidence', 'score'] as $key) {
+        if (!is_numeric($word[$key] ?? null)) {
+            continue;
+        }
+        $value = (float) $word[$key];
+        if ($value > 1.0) {
+            $value /= 100.0;
+        }
+        return max(0.0, min(1.0, $value));
+    }
+    return null;
+}
+
+function layout_analysis_text_length(string $text): int
+{
+    return count_pattern_matches('/[\p{L}\p{N}]/u', $text);
+}
+
+function layout_analysis_word_rows(array $words): array
+{
+    $items = [];
+    foreach ($words as $index => $word) {
+        if (!is_array($word)) {
+            continue;
+        }
+        $text = normalize_inline_whitespace((string) ($word['text'] ?? ''));
+        $bbox = normalize_debug_word_bbox($word['bbox'] ?? null);
+        if ($text === '' || $bbox === null) {
+            continue;
+        }
+        $height = bbox_height($bbox);
+        $width = (float) ($bbox['x1'] ?? 0.0) - (float) ($bbox['x0'] ?? 0.0);
+        if ($height <= 0.0 || $width <= 0.0) {
+            continue;
+        }
+        $items[] = [
+            'wordIndex' => (int) $index,
+            'text' => $text,
+            'bbox' => $bbox,
+            'centerY' => ((float) $bbox['y0'] + (float) $bbox['y1']) / 2.0,
+            'height' => $height,
+            'confidence' => layout_analysis_word_confidence($word),
+        ];
+    }
+
+    usort($items, static function (array $left, array $right): int {
+        $yDiff = (float) $left['centerY'] <=> (float) $right['centerY'];
+        if ($yDiff !== 0) {
+            return $yDiff;
+        }
+        return (float) ($left['bbox']['x0'] ?? 0.0) <=> (float) ($right['bbox']['x0'] ?? 0.0);
+    });
+
+    $rows = [];
+    foreach ($items as $item) {
+        $rowIndex = null;
+        foreach ($rows as $candidateIndex => $row) {
+            $rowHeight = max(0.000001, (float) ($row['height'] ?? 0.0));
+            $itemHeight = max(0.000001, (float) ($item['height'] ?? 0.0));
+            if ((max($rowHeight, $itemHeight) / min($rowHeight, $itemHeight)) > 3.0) {
+                continue;
+            }
+            $tolerance = max($rowHeight, $itemHeight) * 0.5;
+            if (abs((float) ($row['centerY'] ?? 0.0) - (float) ($item['centerY'] ?? 0.0)) <= $tolerance) {
+                $rowIndex = $candidateIndex;
+                break;
+            }
+        }
+        if ($rowIndex === null) {
+            $rows[] = [
+                'words' => [$item],
+                'centerY' => (float) $item['centerY'],
+                'height' => (float) $item['height'],
+            ];
+            continue;
+        }
+        $rows[$rowIndex]['words'][] = $item;
+        $wordCount = count($rows[$rowIndex]['words']);
+        $rows[$rowIndex]['centerY'] = (((float) $rows[$rowIndex]['centerY'] * ($wordCount - 1)) + (float) $item['centerY']) / $wordCount;
+        $rows[$rowIndex]['height'] = max((float) $rows[$rowIndex]['height'], (float) $item['height']);
+    }
+
+    foreach ($rows as &$row) {
+        usort($row['words'], static fn(array $left, array $right): int => (float) ($left['bbox']['x0'] ?? 0.0) <=> (float) ($right['bbox']['x0'] ?? 0.0));
+        $bbox = null;
+        $texts = [];
+        $wordIndexes = [];
+        $confidences = [];
+        foreach ($row['words'] as $word) {
+            $bbox = multiline_text_block_bbox_union($bbox, $word['bbox']);
+            $texts[] = (string) $word['text'];
+            $wordIndexes[] = (int) $word['wordIndex'];
+            if (is_numeric($word['confidence'] ?? null)) {
+                $confidences[] = (float) $word['confidence'];
+            }
+        }
+        $row['text'] = normalize_inline_whitespace(implode(' ', $texts));
+        $row['bbox'] = $bbox;
+        $row['wordIndexes'] = $wordIndexes;
+        $row['confidence'] = $confidences !== []
+            ? array_sum($confidences) / max(1, count($confidences))
+            : null;
+    }
+    unset($row);
+
+    return array_values(array_filter($rows, static fn(array $row): bool => is_array($row['bbox'] ?? null)));
+}
+
+function analyze_page_left_margin(array $words, mixed $settings = [], ?float $pageWidth = null): array
+{
+    $normalized = normalize_layout_analysis_settings(['leftMargin' => is_array($settings) ? $settings : []]);
+    $settings = $normalized['leftMargin'];
+    $rows = layout_analysis_word_rows($words);
+    $eligible = [];
+    $edgeInset = $pageWidth !== null && $pageWidth > 0.0 ? $pageWidth * (float) $settings['edgeFilterRatio'] : 0.0;
+
+    foreach ($rows as $row) {
+        $bbox = normalize_debug_word_bbox($row['bbox'] ?? null);
+        if ($bbox === null) {
+            continue;
+        }
+        $width = (float) ($bbox['x1'] ?? 0.0) - (float) ($bbox['x0'] ?? 0.0);
+        $height = (float) ($bbox['y1'] ?? 0.0) - (float) ($bbox['y0'] ?? 0.0);
+        $text = normalize_inline_whitespace((string) ($row['text'] ?? ''));
+        $confidence = is_numeric($row['confidence'] ?? null) ? (float) $row['confidence'] : null;
+        if ($width < (float) $settings['minBboxWidth']) {
+            continue;
+        }
+        if (layout_analysis_text_length($text) < (int) $settings['minTextLength']) {
+            continue;
+        }
+        if (($settings['ignoreVerticalText'] ?? true) === true && $height > $width) {
+            continue;
+        }
+        if ($confidence !== null && $confidence < (float) $settings['minOcrConfidence']) {
+            continue;
+        }
+        if ($edgeInset > 0.0 && ((float) $bbox['x0'] < $edgeInset || ($pageWidth !== null && (float) $bbox['x1'] > ($pageWidth - $edgeInset)))) {
+            continue;
+        }
+        $eligible[] = [
+            'x' => (float) $bbox['x0'],
+            'weight' => max(1, layout_analysis_text_length($text)),
+            'bbox' => $bbox,
+            'text' => $text,
+            'wordIndexes' => is_array($row['wordIndexes'] ?? null) ? array_values(array_filter(
+                $row['wordIndexes'],
+                static fn($index): bool => is_int($index) && $index >= 0
+            )) : [],
+        ];
+    }
+
+    usort($eligible, static fn(array $left, array $right): int => (float) $left['x'] <=> (float) $right['x']);
+    $clusters = [];
+    $tolerance = (float) $settings['clusterTolerance'];
+    foreach ($eligible as $row) {
+        $clusterIndex = null;
+        foreach ($clusters as $index => $cluster) {
+            if (abs((float) $row['x'] - (float) $cluster['center']) <= $tolerance) {
+                $clusterIndex = $index;
+                break;
+            }
+        }
+        if ($clusterIndex === null) {
+            $clusters[] = [
+                'center' => (float) $row['x'],
+                'weight' => (float) $row['weight'],
+                'rows' => [$row],
+            ];
+            continue;
+        }
+        $currentWeight = (float) $clusters[$clusterIndex]['weight'];
+        $nextWeight = $currentWeight + (float) $row['weight'];
+        $clusters[$clusterIndex]['center'] = (((float) $clusters[$clusterIndex]['center'] * $currentWeight) + ((float) $row['x'] * (float) $row['weight'])) / max(1.0, $nextWeight);
+        $clusters[$clusterIndex]['weight'] = $nextWeight;
+        $clusters[$clusterIndex]['rows'][] = $row;
+    }
+
+    if ($clusters === []) {
+        return [
+            'available' => false,
+            'x' => null,
+            'basisWordIndexes' => [],
+            'basisCount' => 0,
+            'eligibleRowCount' => count($eligible),
+            'clusterCount' => 0,
+            'settings' => $settings,
+        ];
+    }
+
+    usort($clusters, static function (array $left, array $right): int {
+        $weightCompare = (float) ($right['weight'] ?? 0.0) <=> (float) ($left['weight'] ?? 0.0);
+        if ($weightCompare !== 0) {
+            return $weightCompare;
+        }
+        $countCompare = count($right['rows'] ?? []) <=> count($left['rows'] ?? []);
+        if ($countCompare !== 0) {
+            return $countCompare;
+        }
+        return (float) ($left['center'] ?? 0.0) <=> (float) ($right['center'] ?? 0.0);
+    });
+
+    $winningCluster = $clusters[0];
+    $basisWordIndexes = [];
+    foreach (is_array($winningCluster['rows'] ?? null) ? $winningCluster['rows'] : [] as $row) {
+        foreach (is_array($row['wordIndexes'] ?? null) ? $row['wordIndexes'] : [] as $index) {
+            $basisWordIndexes[$index] = true;
+        }
+    }
+    $basisWordIndexes = array_keys($basisWordIndexes);
+    sort($basisWordIndexes, SORT_NUMERIC);
+
+    return [
+        'available' => true,
+        'x' => (float) $winningCluster['center'],
+        'basisWordIndexes' => $basisWordIndexes,
+        'basisCount' => count($basisWordIndexes),
+        'eligibleRowCount' => count($eligible),
+        'clusterCount' => count($clusters),
+        'settings' => $settings,
+    ];
+}
+
+function analyze_page_layout(array $page, mixed $settings = []): array
+{
+    $settings = normalize_layout_analysis_settings($settings);
+    $words = is_array($page['words'] ?? null) ? $page['words'] : [];
+    $pageWidth = is_numeric($page['pageWidth'] ?? null) ? (float) $page['pageWidth'] : null;
+    return [
+        'leftMargin' => analyze_page_left_margin($words, $settings['leftMargin'], $pageWidth),
     ];
 }
 
@@ -718,6 +1002,9 @@ function build_configuration_export_payload(): array
             'multiLineTextBlocks' => normalize_multiline_text_block_settings(
                 $config['multiLineTextBlocks'] ?? []
             ),
+            'layoutAnalysis' => normalize_layout_analysis_settings(
+                $config['layoutAnalysis'] ?? []
+            ),
         ],
         'system' => [
             'stateUpdateTransport' => (string) ($config['stateUpdateTransport'] ?? 'polling'),
@@ -1096,6 +1383,9 @@ function apply_configuration_import_payload(array $payload): array
     if (array_key_exists('multiLineTextBlocks', $payload['ocr'])) {
         $nextConfig['multiLineTextBlocks'] = normalize_multiline_text_block_settings($payload['ocr']['multiLineTextBlocks']);
     }
+    if (array_key_exists('layoutAnalysis', $payload['ocr'])) {
+        $nextConfig['layoutAnalysis'] = normalize_layout_analysis_settings($payload['ocr']['layoutAnalysis']);
+    }
     if (array_key_exists('stateUpdateTransport', $payload['system'])) {
         $nextConfig['stateUpdateTransport'] = sanitize_state_update_transport_value($payload['system']['stateUpdateTransport'], 'polling');
     }
@@ -1174,6 +1464,8 @@ function apply_configuration_import_payload(array $payload): array
         )
         || normalize_multiline_text_block_settings($currentConfig['multiLineTextBlocks'] ?? [])
             !== normalize_multiline_text_block_settings($savedConfig['multiLineTextBlocks'] ?? [])
+        || normalize_layout_analysis_settings($currentConfig['layoutAnalysis'] ?? [])
+            !== normalize_layout_analysis_settings($savedConfig['layoutAnalysis'] ?? [])
     );
     $clientConfigChanged = json_encode($currentClients, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
         !== json_encode($importedClients, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -1216,6 +1508,9 @@ function apply_configuration_import_payload(array $payload): array
                 : [],
             'multiLineTextBlocks' => normalize_multiline_text_block_settings(
                 $savedConfig['multiLineTextBlocks'] ?? []
+            ),
+            'layoutAnalysis' => normalize_layout_analysis_settings(
+                $savedConfig['layoutAnalysis'] ?? []
             ),
         ],
         'system' => [

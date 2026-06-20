@@ -58,6 +58,7 @@ try {
                 'ocrTextExtractionMethod' => 'layout',
                 'ocrPdfTextSubstitutions' => [],
                 'multiLineTextBlocks' => default_multiline_text_block_settings(),
+                'layoutAnalysis' => default_layout_analysis_settings(),
             ],
         'system' => is_array($result['system'] ?? null)
             ? $result['system']

@@ -50,6 +50,10 @@ if (array_key_exists('multiLineTextBlocks', $payload) && !is_array($payload['mul
     json_response(['error' => 'Invalid multiline text block payload'], 400);
     exit;
 }
+if (array_key_exists('layoutAnalysis', $payload) && !is_array($payload['layoutAnalysis'])) {
+    json_response(['error' => 'Invalid layout analysis payload'], 400);
+    exit;
+}
 
 $positionAdjustment = normalize_matching_position_adjustment_settings(
     is_array($payload['positionAdjustment'] ?? null) ? $payload['positionAdjustment'] : []
@@ -64,11 +68,15 @@ $dataFieldAcceptanceThreshold = is_numeric($payload['dataFieldAcceptanceThreshol
 $multiLineTextBlocks = normalize_multiline_text_block_settings(
     is_array($payload['multiLineTextBlocks'] ?? null) ? $payload['multiLineTextBlocks'] : []
 );
+$layoutAnalysis = normalize_layout_analysis_settings(
+    is_array($payload['layoutAnalysis'] ?? null) ? $payload['layoutAnalysis'] : []
+);
 
 try {
     $config = load_config();
     $previousPayload = load_matching_settings_payload();
     $previousMultiLineTextBlocks = normalize_multiline_text_block_settings($config['multiLineTextBlocks'] ?? []);
+    $previousLayoutAnalysis = normalize_layout_analysis_settings($config['layoutAnalysis'] ?? []);
     write_json_file(DATA_DIR . '/matching.json', [
         'replacements' => $normalized,
         'positionAdjustment' => $positionAdjustment,
@@ -77,9 +85,11 @@ try {
     ]);
     $rawConfig = load_raw_config();
     $rawConfig['multiLineTextBlocks'] = $multiLineTextBlocks;
+    $rawConfig['layoutAnalysis'] = $layoutAnalysis;
     save_raw_config($rawConfig);
 
     $multiLineTextBlocksChanged = $previousMultiLineTextBlocks !== $multiLineTextBlocks;
+    $layoutAnalysisChanged = $previousLayoutAnalysis !== $layoutAnalysis;
     $reprocessedJobs = empty_reprocessed_jobs_payload($multiLineTextBlocksChanged ? 'full' : 'post-ocr');
     $markedOutdatedJobs = [
         'markedJobIds' => [],
@@ -95,7 +105,7 @@ try {
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
     ) {
         $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change(load_config());
-    } elseif ($multiLineTextBlocksChanged) {
+    } elseif ($multiLineTextBlocksChanged || $layoutAnalysisChanged) {
         $markedOutdatedJobs = mark_ready_jobs_analysis_outdated_for_analysis_change(load_config());
     }
 
@@ -106,6 +116,7 @@ try {
         'bboxSpanBuilding' => $bboxSpanBuilding,
         'dataFieldAcceptanceThreshold' => $dataFieldAcceptanceThreshold,
         'multiLineTextBlocks' => $multiLineTextBlocks,
+        'layoutAnalysis' => $layoutAnalysis,
         'reprocessedJobs' => $reprocessedJobs,
         'markedOutdatedJobs' => $markedOutdatedJobs,
     ]);

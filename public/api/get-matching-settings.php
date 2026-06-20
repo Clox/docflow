@@ -18,6 +18,7 @@ try {
             ? clamp_confidence((float) $payload['dataFieldAcceptanceThreshold'])
             : 0.5,
         'multiLineTextBlocks' => normalize_multiline_text_block_settings($config['multiLineTextBlocks'] ?? []),
+        'layoutAnalysis' => normalize_layout_analysis_settings($config['layoutAnalysis'] ?? []),
     ]);
 } catch (Throwable $e) {
     json_response([
@@ -26,5 +27,6 @@ try {
         'bboxSpanBuilding' => default_matching_bbox_span_building_settings(),
         'dataFieldAcceptanceThreshold' => 0.5,
         'multiLineTextBlocks' => default_multiline_text_block_settings(),
+        'layoutAnalysis' => default_layout_analysis_settings(),
     ], 500);
 }

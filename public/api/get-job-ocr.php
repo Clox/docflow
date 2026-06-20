@@ -147,6 +147,17 @@ function load_engine_object_pages(string $jobDir, string $engine): array
     return $pages;
 }
 
+function append_layout_analysis_to_pages(array $pages, array $settings): array
+{
+    return array_map(static function ($page) use ($settings) {
+        if (!is_array($page)) {
+            return $page;
+        }
+        $page['layoutAnalysis'] = analyze_page_layout($page, $settings);
+        return $page;
+    }, $pages);
+}
+
 try {
     $config = load_config();
 
@@ -207,6 +218,10 @@ try {
             }
 
             if ($pages !== []) {
+                $pages = append_layout_analysis_to_pages(
+                    $pages,
+                    is_array($config['layoutAnalysis'] ?? null) ? $config['layoutAnalysis'] : []
+                );
                 $chunks = [];
                 foreach ($pages as $page) {
                     $pageNumber = (int) ($page['number'] ?? 0);
@@ -228,6 +243,10 @@ try {
     if ($objectPrefix !== null) {
         $objectPages = load_engine_object_pages($jobDir, $objectPrefix);
         if ($objectPages !== []) {
+            $objectPages = append_layout_analysis_to_pages(
+                $objectPages,
+                is_array($config['layoutAnalysis'] ?? null) ? $config['layoutAnalysis'] : []
+            );
             $chunks = [];
             foreach ($objectPages as $page) {
                 $pageNumber = (int) ($page['number'] ?? 0);

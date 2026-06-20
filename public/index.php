@@ -363,6 +363,20 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                 aria-checked="true"
                 title="Visa eller dölj zongränser i OCR-vyn"
               >Dölj zoner</button>
+              <button
+                id="ocr-toggle-left-margin-action"
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked="true"
+                title="Visa eller dölj beräknad vänstermarginal i OCR-vyn"
+              >Dölj vänstermarginal</button>
+              <button
+                id="ocr-toggle-left-margin-basis-action"
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked="false"
+                title="Visa eller dölj de OCR-boxar som användes för vänstermarginalen"
+              >Visa underlag för vänstermarginal</button>
             </div>
           </div>
         </div>
@@ -695,6 +709,37 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         </label>
       </div>
       <p class="settings-help">Radavstånd mäts mellan bboxarnas ytterkanter. X-överlappning anges som ratio, exempelvis <code>0.30</code>.</p>
+    </div>
+    <div id="matching-layout-analysis-section" class="matching-settings-section matching-layout-analysis-section">
+      <h4>Layoutanalys</h4>
+      <p>Generell sidanalys som beräknar dokumentets vänstermarginal från OCR-bboxar. Resultatet sparas per sida och kan användas av flera funktioner.</p>
+      <div class="multiline-text-block-settings">
+        <label class="matching-row-checkbox">
+          <input id="layout-analysis-left-margin-ignore-vertical" type="checkbox">
+          <span>Ignorera vertikal text</span>
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Minsta bbox-bredd</span>
+          <input id="layout-analysis-left-margin-min-bbox-width" type="number" min="0" step="1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Minsta textlängd</span>
+          <input id="layout-analysis-left-margin-min-text-length" type="number" min="1" step="1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Minsta OCR-confidence</span>
+          <input id="layout-analysis-left-margin-min-confidence" type="number" min="0" max="100" step="1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Sidkantsfilter</span>
+          <input id="layout-analysis-left-margin-edge-filter" type="number" min="0" max="25" step="0.1">
+        </label>
+        <label class="floating-input-group">
+          <span class="floating-input-label">Klustertolerans</span>
+          <input id="layout-analysis-left-margin-cluster-tolerance" type="number" min="1" step="1">
+        </label>
+      </div>
+      <p class="settings-help">Sidkantsfilter anges i procent av sidbredden. OCR-confidence anges i procent; saknas confidence i OCR-datat används boxen ändå.</p>
     </div>
     <div id="matching-replacements-section" class="matching-settings-section matching-replacements-section">
       <h4>Teckenersättningar före matchning</h4>

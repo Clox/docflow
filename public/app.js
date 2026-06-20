@@ -45,6 +45,8 @@ const ocrMenuButtonEl = document.getElementById('ocr-menu-button');
 const ocrMenuEl = document.getElementById('ocr-menu');
 const ocrDownloadActionEl = document.getElementById('ocr-download-action');
 const ocrToggleZonesActionEl = document.getElementById('ocr-toggle-zones-action');
+const ocrToggleLeftMarginActionEl = document.getElementById('ocr-toggle-left-margin-action');
+const ocrToggleLeftMarginBasisActionEl = document.getElementById('ocr-toggle-left-margin-basis-action');
 let ocrWordTooltipEl = null;
 let ocrWordTooltipSectionsEl = null;
 let ocrWordTooltipPrimaryColumnEl = null;
@@ -247,6 +249,12 @@ let matchingMaxHorizontalGapMultiplierEl = null;
 let matchingMaxVerticalOffsetMultiplierEl = null;
 let matchingMaxLineHeightDifferenceMultiplierEl = null;
 let matchingDataFieldAcceptanceThresholdEl = null;
+let layoutAnalysisLeftMarginIgnoreVerticalEl = null;
+let layoutAnalysisLeftMarginMinBboxWidthEl = null;
+let layoutAnalysisLeftMarginMinTextLengthEl = null;
+let layoutAnalysisLeftMarginMinConfidenceEl = null;
+let layoutAnalysisLeftMarginEdgeFilterEl = null;
+let layoutAnalysisLeftMarginClusterToleranceEl = null;
 let ocrSkipExistingTextEl = null;
 let ocrOptimizeLevelEl = null;
 let ocrTextExtractionMethodEl = null;
@@ -572,6 +580,9 @@ let ocrDataFieldSelection = {
 let ocrShowPageImage = false;
 let ocrPageImageBlend = 0.5;
 let ocrShowZones = window.localStorage.getItem('docflow.ocr.showZones') !== '0';
+let ocrShowLeftMargin = window.localStorage.getItem('docflow.ocr.showLeftMargin') !== '0';
+let ocrShowLeftMarginBasis = window.localStorage.getItem('docflow.ocr.showLeftMarginBasis') === '1';
+let ocrLayoutOverlaySourceOverride = false;
 let ocrRequestSeq = 0;
 let ocrSearchMatches = [];
 let ocrSearchActiveIndex = -1;
@@ -617,6 +628,7 @@ let matchingDraft = [];
 let matchingPositionAdjustmentDraft = defaultMatchingPositionAdjustmentSettings();
 let matchingBboxSpanBuildingDraft = defaultMatchingBboxSpanBuildingSettings();
 let matchingDataFieldAcceptanceThresholdDraft = 0.5;
+let layoutAnalysisDraft = defaultLayoutAnalysisSettings();
 let ocrSkipExistingTextBaseline = true;
 let ocrOptimizeLevelBaseline = 1;
 let ocrTextExtractionMethodBaseline = 'layout';
@@ -3787,6 +3799,11 @@ async function setViewerOcr(jobId) {
   const jobChanged = loadedOcrJobId !== '' && loadedOcrJobId !== jobId;
   if (jobChanged) {
     clearOcrViewCache();
+  }
+
+  if (ensureOcrLayoutOverlaySource()) {
+    loadedOcrJobId = '';
+    loadedOcrSource = '';
   }
 
   if (loadedOcrJobId === jobId && loadedOcrSource === currentOcrSource && ocrDocumentPages.length > 0) {
@@ -15404,6 +15421,30 @@ function setActiveOcrSource(source, options = {}) {
   }
 }
 
+function ocrLayoutOverlayRequested() {
+  return ocrShowLeftMargin === true || ocrShowLeftMarginBasis === true;
+}
+
+function ensureOcrLayoutOverlaySource() {
+  if (ocrLayoutOverlaySourceOverride || !ocrLayoutOverlayRequested() || normalizeOcrSource(currentOcrSource) !== 'merged') {
+    return false;
+  }
+  currentOcrSource = 'merged-objects';
+  ocrSearchInputEl.placeholder = `Sök i ${ocrSourceDisplayName(currentOcrSource)}`;
+  ocrSourceTabEls.forEach((buttonEl) => {
+    const isActive = buttonEl.dataset.ocrSource === currentOcrSource;
+    buttonEl.classList.toggle('active', isActive);
+    buttonEl.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+  return true;
+}
+
+function disableOcrLayoutOverlays() {
+  ocrShowLeftMarginBasis = false;
+  window.localStorage.setItem('docflow.ocr.showLeftMarginBasis', '0');
+  syncOcrMenuState(findJobById(selectedJobId));
+}
+
 function ensureOcrDataFieldSource() {
   if (!isOcrDataFieldMode()) {
     return false;
@@ -15440,6 +15481,18 @@ function syncOcrMenuState(job = findJobById(selectedJobId)) {
     ocrToggleZonesActionEl.disabled = disabled;
     ocrToggleZonesActionEl.textContent = ocrShowZones ? 'Dölj zoner' : 'Visa zoner';
     ocrToggleZonesActionEl.setAttribute('aria-checked', ocrShowZones ? 'true' : 'false');
+  }
+  if (ocrToggleLeftMarginActionEl instanceof HTMLButtonElement) {
+    ocrToggleLeftMarginActionEl.disabled = disabled;
+    ocrToggleLeftMarginActionEl.textContent = ocrShowLeftMargin ? 'Dölj vänstermarginal' : 'Visa vänstermarginal';
+    ocrToggleLeftMarginActionEl.setAttribute('aria-checked', ocrShowLeftMargin ? 'true' : 'false');
+  }
+  if (ocrToggleLeftMarginBasisActionEl instanceof HTMLButtonElement) {
+    ocrToggleLeftMarginBasisActionEl.disabled = disabled || !ocrShowLeftMargin;
+    ocrToggleLeftMarginBasisActionEl.textContent = ocrShowLeftMarginBasis
+      ? 'Dölj underlag för vänstermarginal'
+      : 'Visa underlag för vänstermarginal';
+    ocrToggleLeftMarginBasisActionEl.setAttribute('aria-checked', ocrShowLeftMarginBasis ? 'true' : 'false');
   }
 }
 
@@ -16706,6 +16759,27 @@ function normalizeObjectWord(word, index) {
   };
 }
 
+function sanitizeOcrPageLayoutAnalysis(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const leftSource = source.leftMargin && typeof source.leftMargin === 'object' ? source.leftMargin : {};
+  const x = Number(leftSource.x);
+  const basisWordIndexes = Array.isArray(leftSource.basisWordIndexes)
+    ? Array.from(new Set(leftSource.basisWordIndexes
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 0)))
+    : [];
+  return {
+    leftMargin: {
+      available: leftSource.available === true && Number.isFinite(x),
+      x: Number.isFinite(x) ? x : null,
+      basisWordIndexes,
+      basisCount: Number.isFinite(Number(leftSource.basisCount)) ? Number(leftSource.basisCount) : basisWordIndexes.length,
+      eligibleRowCount: Number.isFinite(Number(leftSource.eligibleRowCount)) ? Number(leftSource.eligibleRowCount) : 0,
+      clusterCount: Number.isFinite(Number(leftSource.clusterCount)) ? Number(leftSource.clusterCount) : 0,
+    },
+  };
+}
+
 function objectRenderSource(source) {
   return source === 'merged-objects' ? 'merged' : source;
 }
@@ -16759,6 +16833,7 @@ function normalizeOcrPages(pages, fallbackText = '', mode = 'text') {
       words,
       searchText: searchModel.searchText || text,
       searchEntries: searchModel.searchEntries,
+      layoutAnalysis: sanitizeOcrPageLayoutAnalysis(page && page.layoutAnalysis),
     };
   });
 
@@ -18766,6 +18841,27 @@ function renderOcrZoneOverlays(surfaceEl, page, objectScale) {
   });
 }
 
+function renderOcrLeftMarginOverlay(surfaceEl, page, objectScale) {
+  if (!ocrShowLeftMargin || !page || page.renderMode !== 'objects') {
+    return;
+  }
+  const leftMargin = page.layoutAnalysis && page.layoutAnalysis.leftMargin
+    ? page.layoutAnalysis.leftMargin
+    : null;
+  const x = Number(leftMargin && leftMargin.x);
+  if (!leftMargin || leftMargin.available !== true || !Number.isFinite(x)) {
+    return;
+  }
+
+  const lineEl = document.createElement('div');
+  lineEl.className = 'ocr-left-margin-line';
+  lineEl.style.left = `${Math.max(0, x * objectScale)}px`;
+  lineEl.style.top = '0';
+  lineEl.style.height = `${Math.max(1, Number(page.pageHeight || 0) * objectScale)}px`;
+  lineEl.title = `Vänstermarginal\nx = ${Math.round(x).toLocaleString('sv-SE')} px`;
+  surfaceEl.appendChild(lineEl);
+}
+
 function renderObjectOcrPage(page, pageMatches, objectScale) {
   const wrapperEl = document.createElement('div');
   wrapperEl.className = 'ocr-page ocr-page--objects';
@@ -18782,7 +18878,14 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
   const wordElements = new Map();
   const wordsToFit = [];
   const matchLookup = buildObjectPageMatchLookup(page, pageMatches);
+  const leftMarginBasisWordIndexes = ocrShowLeftMargin && ocrShowLeftMarginBasis
+    && page.layoutAnalysis
+    && page.layoutAnalysis.leftMargin
+    && Array.isArray(page.layoutAnalysis.leftMargin.basisWordIndexes)
+    ? new Set(page.layoutAnalysis.leftMargin.basisWordIndexes)
+    : new Set();
   renderOcrZoneOverlays(surfaceEl, page, objectScale);
+  renderOcrLeftMarginOverlay(surfaceEl, page, objectScale);
 
   [...page.words].sort((left, right) => {
     const leftArea = left.rect.width * left.rect.height;
@@ -18804,6 +18907,9 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
       if (matchLookup.activeWordIndexes.has(word.index)) {
         wordEl.classList.add('is-active');
       }
+    }
+    if (leftMarginBasisWordIndexes.has(word.index)) {
+      wordEl.classList.add('is-left-margin-basis');
     }
     const scaledLeft = word.rect.x0 * objectScale;
     const scaledTop = word.rect.y0 * objectScale;
@@ -21664,7 +21770,14 @@ function bindSettingsPanelRefs(tabId) {
     ocrMultilineMaxTextSizeRatioEl = document.getElementById('ocr-multiline-max-text-size-ratio');
     ocrMultilineMinXOverlapEl = document.getElementById('ocr-multiline-min-x-overlap');
     ocrMultilineMaxHorizontalOffsetEl = document.getElementById('ocr-multiline-max-horizontal-offset');
+    layoutAnalysisLeftMarginIgnoreVerticalEl = document.getElementById('layout-analysis-left-margin-ignore-vertical');
+    layoutAnalysisLeftMarginMinBboxWidthEl = document.getElementById('layout-analysis-left-margin-min-bbox-width');
+    layoutAnalysisLeftMarginMinTextLengthEl = document.getElementById('layout-analysis-left-margin-min-text-length');
+    layoutAnalysisLeftMarginMinConfidenceEl = document.getElementById('layout-analysis-left-margin-min-confidence');
+    layoutAnalysisLeftMarginEdgeFilterEl = document.getElementById('layout-analysis-left-margin-edge-filter');
+    layoutAnalysisLeftMarginClusterToleranceEl = document.getElementById('layout-analysis-left-margin-cluster-tolerance');
     writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
+    writeLayoutAnalysisSettingsInputs(layoutAnalysisDraft);
     const bindMatchingPenaltyInput = (inputEl, key) => {
       if (!(inputEl instanceof HTMLInputElement)) {
         return;
@@ -21727,6 +21840,26 @@ function bindSettingsPanelRefs(tabId) {
         updateSettingsActionButtons();
       });
     });
+    [
+      layoutAnalysisLeftMarginIgnoreVerticalEl,
+      layoutAnalysisLeftMarginMinBboxWidthEl,
+      layoutAnalysisLeftMarginMinTextLengthEl,
+      layoutAnalysisLeftMarginMinConfidenceEl,
+      layoutAnalysisLeftMarginEdgeFilterEl,
+      layoutAnalysisLeftMarginClusterToleranceEl,
+    ].forEach((input) => {
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+      input.addEventListener('input', () => {
+        layoutAnalysisDraft = readLayoutAnalysisSettingsInputs();
+        updateSettingsActionButtons();
+      });
+      input.addEventListener('change', () => {
+        writeLayoutAnalysisSettingsInputs(readLayoutAnalysisSettingsInputs());
+        updateSettingsActionButtons();
+      });
+    });
     matchingAddRowEl.addEventListener('click', () => {
       matchingDraft.push(defaultReplacement());
       renderMatchingEditor();
@@ -21745,6 +21878,7 @@ function bindSettingsPanelRefs(tabId) {
       matchingBboxSpanBuildingDraft = sanitizeMatchingBboxSpanBuildingSettings(parsed.bboxSpanBuilding);
       matchingDataFieldAcceptanceThresholdDraft = parsed.dataFieldAcceptanceThreshold ?? 0.5;
       writeMultiLineTextBlockSettingsInputs(parsed.multiLineTextBlocks);
+      writeLayoutAnalysisSettingsInputs(parsed.layoutAnalysis);
       if (matchingDraft.length === 0) {
         matchingDraft = [defaultReplacement()];
       }
@@ -22737,8 +22871,80 @@ function sanitizeMultiLineTextBlockSettings(input) {
   };
 }
 
+function defaultLayoutAnalysisSettings() {
+  return {
+    leftMargin: {
+      ignoreVerticalText: true,
+      minBboxWidth: 18,
+      minTextLength: 2,
+      minOcrConfidence: 0,
+      edgeFilterRatio: 0.01,
+      clusterTolerance: 24,
+    },
+  };
+}
+
+function sanitizeLayoutAnalysisSettings(input) {
+  const defaults = defaultLayoutAnalysisSettings();
+  const source = input && typeof input === 'object' ? input : {};
+  const leftSource = source.leftMargin && typeof source.leftMargin === 'object' ? source.leftMargin : {};
+  const clamp = (value, fallback, min, max) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(min, Math.min(max, numeric)) : fallback;
+  };
+  return {
+    leftMargin: {
+      ignoreVerticalText: typeof leftSource.ignoreVerticalText === 'boolean'
+        ? leftSource.ignoreVerticalText
+        : defaults.leftMargin.ignoreVerticalText,
+      minBboxWidth: clamp(leftSource.minBboxWidth, defaults.leftMargin.minBboxWidth, 0, 10000),
+      minTextLength: Math.round(clamp(leftSource.minTextLength, defaults.leftMargin.minTextLength, 1, 1000)),
+      minOcrConfidence: clamp(leftSource.minOcrConfidence, defaults.leftMargin.minOcrConfidence, 0, 1),
+      edgeFilterRatio: clamp(leftSource.edgeFilterRatio, defaults.leftMargin.edgeFilterRatio, 0, 0.25),
+      clusterTolerance: clamp(leftSource.clusterTolerance, defaults.leftMargin.clusterTolerance, 1, 10000),
+    },
+  };
+}
+
 function normalizedMultiLineTextBlockSettingsJson(settings) {
   return JSON.stringify(sanitizeMultiLineTextBlockSettings(settings));
+}
+
+function readLayoutAnalysisSettingsInputs() {
+  return sanitizeLayoutAnalysisSettings({
+    leftMargin: {
+      ignoreVerticalText: layoutAnalysisLeftMarginIgnoreVerticalEl?.checked === true,
+      minBboxWidth: layoutAnalysisLeftMarginMinBboxWidthEl?.value,
+      minTextLength: layoutAnalysisLeftMarginMinTextLengthEl?.value,
+      minOcrConfidence: Number(layoutAnalysisLeftMarginMinConfidenceEl?.value) / 100,
+      edgeFilterRatio: Number(layoutAnalysisLeftMarginEdgeFilterEl?.value) / 100,
+      clusterTolerance: layoutAnalysisLeftMarginClusterToleranceEl?.value,
+    },
+  });
+}
+
+function writeLayoutAnalysisSettingsInputs(settings) {
+  const normalized = sanitizeLayoutAnalysisSettings(settings);
+  const leftMargin = normalized.leftMargin;
+  if (layoutAnalysisLeftMarginIgnoreVerticalEl instanceof HTMLInputElement) {
+    layoutAnalysisLeftMarginIgnoreVerticalEl.checked = leftMargin.ignoreVerticalText;
+  }
+  if (layoutAnalysisLeftMarginMinBboxWidthEl instanceof HTMLInputElement) {
+    layoutAnalysisLeftMarginMinBboxWidthEl.value = String(leftMargin.minBboxWidth);
+  }
+  if (layoutAnalysisLeftMarginMinTextLengthEl instanceof HTMLInputElement) {
+    layoutAnalysisLeftMarginMinTextLengthEl.value = String(leftMargin.minTextLength);
+  }
+  if (layoutAnalysisLeftMarginMinConfidenceEl instanceof HTMLInputElement) {
+    layoutAnalysisLeftMarginMinConfidenceEl.value = String(Math.round(leftMargin.minOcrConfidence * 1000) / 10);
+  }
+  if (layoutAnalysisLeftMarginEdgeFilterEl instanceof HTMLInputElement) {
+    layoutAnalysisLeftMarginEdgeFilterEl.value = String(Math.round(leftMargin.edgeFilterRatio * 1000) / 10);
+  }
+  if (layoutAnalysisLeftMarginClusterToleranceEl instanceof HTMLInputElement) {
+    layoutAnalysisLeftMarginClusterToleranceEl.value = String(leftMargin.clusterTolerance);
+  }
+  layoutAnalysisDraft = normalized;
 }
 
 function readMultiLineTextBlockSettingsInputs() {
@@ -22776,14 +22982,16 @@ function normalizedMatchingJson(
   positionAdjustment = matchingPositionAdjustmentDraft,
   dataFieldAcceptanceThreshold = matchingDataFieldAcceptanceThresholdDraft,
   bboxSpanBuilding = matchingBboxSpanBuildingDraft,
-  multiLineTextBlocks = multiLineTextBlocksDraft
+  multiLineTextBlocks = multiLineTextBlocksDraft,
+  layoutAnalysis = layoutAnalysisDraft
 ) {
   return JSON.stringify({
     replacements: replacements.map(sanitizeReplacement),
     positionAdjustment: sanitizeMatchingPositionAdjustmentSettings(positionAdjustment),
     bboxSpanBuilding: sanitizeMatchingBboxSpanBuildingSettings(bboxSpanBuilding),
     dataFieldAcceptanceThreshold,
-    multiLineTextBlocks: sanitizeMultiLineTextBlockSettings(multiLineTextBlocks)
+    multiLineTextBlocks: sanitizeMultiLineTextBlockSettings(multiLineTextBlocks),
+    layoutAnalysis: sanitizeLayoutAnalysisSettings(layoutAnalysis)
   });
 }
 
@@ -36326,6 +36534,8 @@ async function loadMatchingSettings() {
     || typeof payload.positionAdjustment !== 'object'
     || !payload.multiLineTextBlocks
     || typeof payload.multiLineTextBlocks !== 'object'
+    || !payload.layoutAnalysis
+    || typeof payload.layoutAnalysis !== 'object'
   ) {
     throw new Error('Ogiltigt svar för matchningsinställningar');
   }
@@ -36335,12 +36545,14 @@ async function loadMatchingSettings() {
   matchingBboxSpanBuildingDraft = sanitizeMatchingBboxSpanBuildingSettings(payload.bboxSpanBuilding);
   matchingDataFieldAcceptanceThresholdDraft = payload.dataFieldAcceptanceThreshold ?? 0.5;
   multiLineTextBlocksDraft = sanitizeMultiLineTextBlockSettings(payload.multiLineTextBlocks);
+  layoutAnalysisDraft = sanitizeLayoutAnalysisSettings(payload.layoutAnalysis);
   multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
   writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
+  writeLayoutAnalysisSettingsInputs(layoutAnalysisDraft);
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft, multiLineTextBlocksDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft, multiLineTextBlocksDraft, layoutAnalysisDraft);
   renderMatchingEditor();
   updateSettingsActionButtons();
 }
@@ -36646,7 +36858,8 @@ async function saveMatchingSettings() {
       positionAdjustment,
       bboxSpanBuilding,
       dataFieldAcceptanceThreshold: matchingDataFieldAcceptanceThresholdDraft,
-      multiLineTextBlocks: readMultiLineTextBlockSettingsInputs()
+      multiLineTextBlocks: readMultiLineTextBlockSettingsInputs(),
+      layoutAnalysis: readLayoutAnalysisSettingsInputs()
     })
   });
 
@@ -36660,6 +36873,8 @@ async function saveMatchingSettings() {
     || typeof payload.positionAdjustment !== 'object'
     || !payload.multiLineTextBlocks
     || typeof payload.multiLineTextBlocks !== 'object'
+    || !payload.layoutAnalysis
+    || typeof payload.layoutAnalysis !== 'object'
   ) {
     const message = payload && typeof payload.error === 'string'
       ? payload.error
@@ -36672,13 +36887,21 @@ async function saveMatchingSettings() {
   matchingBboxSpanBuildingDraft = sanitizeMatchingBboxSpanBuildingSettings(payload.bboxSpanBuilding);
   matchingDataFieldAcceptanceThresholdDraft = payload.dataFieldAcceptanceThreshold ?? 0.5;
   multiLineTextBlocksDraft = sanitizeMultiLineTextBlockSettings(payload.multiLineTextBlocks);
+  layoutAnalysisDraft = sanitizeLayoutAnalysisSettings(payload.layoutAnalysis);
   multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
   writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
+  writeLayoutAnalysisSettingsInputs(layoutAnalysisDraft);
   if (matchingDraft.length === 0) {
     matchingDraft = [defaultReplacement()];
   }
-  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft, multiLineTextBlocksDraft);
+  matchingBaselineJson = normalizedMatchingJson(matchingDraft, matchingPositionAdjustmentDraft, matchingDataFieldAcceptanceThresholdDraft, matchingBboxSpanBuildingDraft, multiLineTextBlocksDraft, layoutAnalysisDraft);
   renderMatchingEditor();
+  clearOcrViewCache();
+  if (currentViewMode === 'ocr' && selectedJobId) {
+    loadedOcrJobId = '';
+    loadedOcrSource = '';
+    void setViewerOcr(selectedJobId);
+  }
   watchReprocessedJobIdsFromPayload(payload);
   refreshMarkedOutdatedJobsFromPayload(payload);
   updateSettingsActionButtons();
@@ -37189,6 +37412,43 @@ if (ocrToggleZonesActionEl instanceof HTMLButtonElement) {
   });
 }
 
+if (ocrToggleLeftMarginActionEl instanceof HTMLButtonElement) {
+  ocrToggleLeftMarginActionEl.addEventListener('click', async () => {
+    ocrShowLeftMargin = !ocrShowLeftMargin;
+    ocrLayoutOverlaySourceOverride = false;
+    if (!ocrShowLeftMargin) {
+      ocrShowLeftMarginBasis = false;
+      window.localStorage.setItem('docflow.ocr.showLeftMarginBasis', '0');
+    }
+    window.localStorage.setItem('docflow.ocr.showLeftMargin', ocrShowLeftMargin ? '1' : '0');
+    syncOcrMenuState(findJobById(selectedJobId));
+    closeOcrMenu();
+    if (ocrShowLeftMargin && currentViewMode === 'ocr' && selectedJobId && normalizeOcrSource(currentOcrSource) === 'merged') {
+      setActiveOcrSource('merged-objects');
+      return;
+    }
+    rerenderOcrPagesPreservingScroll();
+  });
+}
+
+if (ocrToggleLeftMarginBasisActionEl instanceof HTMLButtonElement) {
+  ocrToggleLeftMarginBasisActionEl.addEventListener('click', async () => {
+    if (!ocrShowLeftMargin) {
+      return;
+    }
+    ocrLayoutOverlaySourceOverride = false;
+    ocrShowLeftMarginBasis = !ocrShowLeftMarginBasis;
+    window.localStorage.setItem('docflow.ocr.showLeftMarginBasis', ocrShowLeftMarginBasis ? '1' : '0');
+    syncOcrMenuState(findJobById(selectedJobId));
+    closeOcrMenu();
+    if (ocrShowLeftMarginBasis && currentViewMode === 'ocr' && selectedJobId && normalizeOcrSource(currentOcrSource) === 'merged') {
+      setActiveOcrSource('merged-objects');
+      return;
+    }
+    rerenderOcrPagesPreservingScroll();
+  });
+}
+
 if (selectedJobDeleteActionEl instanceof HTMLButtonElement) {
   selectedJobDeleteActionEl.addEventListener('click', async () => {
     await deleteSelectedJob();
@@ -37633,14 +37893,17 @@ settingsTabEls.forEach((tabButton) => {
         matchingBboxSpanBuildingDraft = defaultMatchingBboxSpanBuildingSettings();
         matchingDataFieldAcceptanceThresholdDraft = 0.5;
         multiLineTextBlocksDraft = defaultMultiLineTextBlockSettings();
+        layoutAnalysisDraft = defaultLayoutAnalysisSettings();
         multiLineTextBlocksBaselineJson = normalizedMultiLineTextBlockSettingsJson(multiLineTextBlocksDraft);
         writeMultiLineTextBlockSettingsInputs(multiLineTextBlocksDraft);
+        writeLayoutAnalysisSettingsInputs(layoutAnalysisDraft);
         matchingBaselineJson = normalizedMatchingJson(
           matchingDraft,
           matchingPositionAdjustmentDraft,
           matchingDataFieldAcceptanceThresholdDraft,
           matchingBboxSpanBuildingDraft,
-          multiLineTextBlocksDraft
+          multiLineTextBlocksDraft,
+          layoutAnalysisDraft
         );
         renderMatchingEditor();
       } else if (tabId === 'ocr-processing') {
@@ -37731,6 +37994,12 @@ if (ocrPageImageOpacityEl) {
 ocrSourceTabEls.forEach((buttonEl) => {
   buttonEl.addEventListener('click', () => {
     const source = buttonEl.dataset.ocrSource || 'merged';
+    if (normalizeOcrSource(source) === 'merged' && ocrLayoutOverlayRequested()) {
+      ocrLayoutOverlaySourceOverride = true;
+      disableOcrLayoutOverlays();
+    } else {
+      ocrLayoutOverlaySourceOverride = false;
+    }
     if (normalizeOcrSource(source) === currentOcrSource) {
       return;
     }

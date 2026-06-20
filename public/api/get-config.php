@@ -28,6 +28,9 @@ try {
         'multiLineTextBlocks' => normalize_multiline_text_block_settings(
             $config['multiLineTextBlocks'] ?? []
         ),
+        'layoutAnalysis' => normalize_layout_analysis_settings(
+            $config['layoutAnalysis'] ?? []
+        ),
         'jbig2' => $jbig2,
         'python' => $python,
         'rapidocr' => $rapidocr,
