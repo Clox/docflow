@@ -3181,11 +3181,11 @@ function default_title_heuristics(): array
                 'enabled' => true,
                 'curve' => [
                     ['x' => 0.0, 'y' => 30.0],
-                    ['x' => 0.08, 'y' => 25.0],
-                    ['x' => 0.20, 'y' => 10.0],
-                    ['x' => 0.45, 'y' => -20.0],
+                    ['x' => 0.5, 'y' => 25.0],
+                    ['x' => 1.5, 'y' => 10.0],
+                    ['x' => 4.0, 'y' => -20.0],
                 ],
-                'description' => 'Poängkurva baserad på rubrikkandidatens vänsterkant relativt sidans vänsterkant. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
+                'description' => 'Poängkurva baserad på rubrikkandidatens vänsterkant relativt sidans beräknade vänstermarginal, mätt i radhöjder. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
             ],
             'text_size' => [
                 'enabled' => true,
@@ -17698,6 +17698,83 @@ function title_candidate_text_size_height(array $candidate, ?array $candidateBbo
     return $height > 0.0 ? $height : null;
 }
 
+function title_layout_analysis_by_page(array $lineGeometries, array $layoutAnalysisSettings): array
+{
+    $wordsByPage = [];
+    $pageWidths = [];
+    foreach ($lineGeometries as $lineIndex => $geometry) {
+        if (!is_array($geometry)) {
+            continue;
+        }
+        $pageNumber = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
+        if ($pageNumber <= 0) {
+            $pageNumber = 1;
+        }
+        if (is_numeric($geometry['pageWidth'] ?? null) && (float) $geometry['pageWidth'] > 0.0) {
+            $pageWidths[$pageNumber] = (float) $geometry['pageWidth'];
+        }
+        $lineText = is_string($geometry['text'] ?? null) ? (string) $geometry['text'] : '';
+        foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segmentIndex => $segment) {
+            if (!is_array($segment)) {
+                continue;
+            }
+            $bbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+            if ($bbox === null) {
+                continue;
+            }
+            $text = is_string($segment['text'] ?? null) ? (string) $segment['text'] : '';
+            if ($text === '' && is_int($segment['start'] ?? null) && is_int($segment['end'] ?? null)) {
+                $start = max(0, (int) $segment['start']);
+                $length = max(0, (int) $segment['end'] - $start);
+                $text = $length > 0
+                    ? (function_exists('mb_substr') ? mb_substr($lineText, $start, $length, 'UTF-8') : substr($lineText, $start, $length))
+                    : '';
+            }
+            $text = normalize_inline_whitespace($text);
+            if ($text === '') {
+                continue;
+            }
+            $wordIndex = is_int($segment['wordIndex'] ?? null)
+                ? (int) $segment['wordIndex']
+                : (((int) $lineIndex * 10000) + (int) $segmentIndex);
+            $word = [
+                'text' => $text,
+                'bbox' => $bbox,
+                'wordIndex' => $wordIndex,
+            ];
+            if (is_numeric($segment['confidence'] ?? null)) {
+                $word['confidence'] = (float) $segment['confidence'];
+            }
+            $wordsByPage[$pageNumber][] = $word;
+        }
+    }
+
+    $result = [];
+    foreach ($wordsByPage as $pageNumber => $words) {
+        $result[(int) $pageNumber] = [
+            'leftMargin' => analyze_page_left_margin(
+                is_array($words) ? $words : [],
+                $layoutAnalysisSettings['leftMargin'] ?? [],
+                is_numeric($pageWidths[$pageNumber] ?? null) ? (float) $pageWidths[$pageNumber] : null
+            ),
+        ];
+    }
+    return $result;
+}
+
+function title_left_margin_x_for_page(array $layoutAnalysisByPage, ?int $pageNumber): ?float
+{
+    if ($pageNumber === null) {
+        return null;
+    }
+    $layout = is_array($layoutAnalysisByPage[$pageNumber] ?? null) ? $layoutAnalysisByPage[$pageNumber] : null;
+    $leftMargin = is_array($layout['leftMargin'] ?? null) ? $layout['leftMargin'] : null;
+    if ($leftMargin === null || ($leftMargin['available'] ?? false) !== true || !is_numeric($leftMargin['x'] ?? null)) {
+        return null;
+    }
+    return (float) $leftMargin['x'];
+}
+
 function title_candidate_word_count(string $text): int
 {
     return count(preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY) ?: []);
@@ -18158,7 +18235,8 @@ function score_title_candidate(
     array $lines,
     array $lineGeometries = [],
     array $heuristics = [],
-    array $senderNameLookup = []
+    array $senderNameLookup = [],
+    array $layoutAnalysisByPage = []
 ): array
 {
     $heuristics = normalize_title_heuristics($heuristics);
@@ -18249,28 +18327,47 @@ function score_title_candidate(
         if ($pageWidth !== null && $pageWidth > 0.0) {
             $centerDistance = max(0.0, min(1.0, abs(((float) $center['x']) - ($pageWidth / 2.0)) / max(1.0, $pageWidth / 2.0)));
             $result['centerDistance'] = $centerDistance;
-            $leftAlignmentRatio = max(0.0, min(1.0, ((float) ($bbox['x0'] ?? 0.0)) / $pageWidth));
-            $result['leftAlignmentRatio'] = $leftAlignmentRatio;
+            $leftMarginX = title_left_margin_x_for_page($layoutAnalysisByPage, $pageNumber);
+            $candidateX = (float) ($bbox['x0'] ?? 0.0);
+            $leftAlignmentDistance = null;
+            $leftAlignmentDistanceLineHeights = null;
+            if ($leftMarginX !== null) {
+                $heightForAlignment = title_candidate_text_size_height($candidate, $bbox);
+                $medianHeightForAlignment = title_page_median_line_height($lineGeometries, $pageNumber);
+                $distanceUnit = $medianHeightForAlignment !== null && $medianHeightForAlignment > 0.0
+                    ? $medianHeightForAlignment
+                    : ($heightForAlignment !== null && $heightForAlignment > 0.0 ? $heightForAlignment : 1.0);
+                $leftAlignmentDistance = abs($candidateX - $leftMarginX);
+                $leftAlignmentDistanceLineHeights = $leftAlignmentDistance / max(1.0, $distanceUnit);
+                $result['leftMarginX'] = $leftMarginX;
+                $result['leftAlignmentDistance'] = $leftAlignmentDistance;
+                $result['leftAlignmentDistanceLineHeights'] = $leftAlignmentDistanceLineHeights;
+            }
 
             $centeredScore = $signalScore('horizontal_position_centered', $centerDistance);
-            $leftAlignedScore = $signalScore('horizontal_position_left_aligned', $leftAlignmentRatio);
+            $leftAlignedScore = $leftAlignmentDistanceLineHeights !== null
+                ? $signalScore('horizontal_position_left_aligned', $leftAlignmentDistanceLineHeights)
+                : null;
+            $leftAlignedDetail = $leftAlignmentDistanceLineHeights !== null && $leftMarginX !== null && $leftAlignmentDistance !== null
+                ? 'margin_x:' . round($leftMarginX, 3)
+                    . ',candidate_x:' . round($candidateX, 3)
+                    . ',distance:' . round($leftAlignmentDistance, 3)
+                    . ',distance_line_heights:' . round($leftAlignmentDistanceLineHeights, 3)
+                    . ',center_distance:' . round($centerDistance, 3)
+                : '';
             $horizontalSignals = array_values(array_filter([
                 $centeredScore !== null ? [
                     'code' => 'horizontal_position_centered',
                     'score' => $centeredScore,
-                    'detail' => 'winner:centered,center_distance:' . round($centerDistance, 3)
-                        . ',left_ratio:' . round($leftAlignmentRatio, 3),
-                    'ignoredDetail' => 'ignored:centered,center_distance:' . round($centerDistance, 3)
-                        . ',left_ratio:' . round($leftAlignmentRatio, 3),
+                    'detail' => 'winner:centered,center_distance:' . round($centerDistance, 3),
+                    'ignoredDetail' => 'ignored:centered,center_distance:' . round($centerDistance, 3),
                     'winner' => 'centered',
                 ] : null,
                 $leftAlignedScore !== null ? [
                     'code' => 'horizontal_position_left_aligned',
                     'score' => $leftAlignedScore,
-                    'detail' => 'winner:left_aligned,left_ratio:' . round($leftAlignmentRatio, 3)
-                        . ',center_distance:' . round($centerDistance, 3),
-                    'ignoredDetail' => 'ignored:left_aligned,left_ratio:' . round($leftAlignmentRatio, 3)
-                        . ',center_distance:' . round($centerDistance, 3),
+                    'detail' => 'winner:left_aligned,' . $leftAlignedDetail,
+                    'ignoredDetail' => 'ignored:left_aligned,' . $leftAlignedDetail,
                     'winner' => 'left_aligned',
                 ] : null,
             ], static fn($entry): bool => is_array($entry)));
@@ -18391,6 +18488,9 @@ function extract_title_field_result(
             ? $config['multiLineTextBlocks']
             : [];
     }
+    $config = isset($config) && is_array($config) ? $config : load_config();
+    $layoutAnalysisSettings = normalize_layout_analysis_settings($config['layoutAnalysis'] ?? []);
+    $layoutAnalysisByPage = title_layout_analysis_by_page($lineGeometries, $layoutAnalysisSettings);
     if ($senderNameInDocumentMatches === null) {
         $senderNameInDocumentResult = extract_sender_name_in_document_field_result($lines, $lineGeometries, $resolvedBlockSettings);
     } else {
@@ -18410,7 +18510,8 @@ function extract_title_field_result(
             $lines,
             $lineGeometries,
             $heuristics,
-            $senderNameLookup
+            $senderNameLookup,
+            $layoutAnalysisByPage
         ),
         $multilineCandidates
     );
@@ -18420,7 +18521,8 @@ function extract_title_field_result(
             $lines,
             $lineGeometries,
             $heuristics,
-            $senderNameLookup
+            $senderNameLookup,
+            $layoutAnalysisByPage
         ),
         title_candidates_from_lines(
             $lines,

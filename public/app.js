@@ -8255,6 +8255,22 @@ function formatPrimaryDateSignalDetail(signal) {
       return `${formatPrimaryDateScoreNumber(ratio * 100)} % från mitten`;
     }
   }
+  if (signal?.code === 'horizontal_position_left_aligned') {
+    const marginMatch = detail.match(/\bmargin_x:([0-9.]+)/u);
+    const candidateMatch = detail.match(/\bcandidate_x:([0-9.]+)/u);
+    const distanceMatch = detail.match(/\bdistance:([0-9.]+)/u);
+    const lineHeightDistanceMatch = detail.match(/\bdistance_line_heights:([0-9.]+)/u);
+    const marginX = marginMatch ? Number(marginMatch[1]) : NaN;
+    const candidateX = candidateMatch ? Number(candidateMatch[1]) : NaN;
+    const distance = distanceMatch ? Number(distanceMatch[1]) : NaN;
+    const lineHeightDistance = lineHeightDistanceMatch ? Number(lineHeightDistanceMatch[1]) : NaN;
+    if (Number.isFinite(distance) && Number.isFinite(lineHeightDistance) && Number.isFinite(marginX)) {
+      return `${formatPrimaryDateScoreNumber(distance)} px från vänstermarginalen (${formatPrimaryDateScoreNumber(lineHeightDistance)} radhöjder, marginal x ${formatPrimaryDateScoreNumber(marginX)} px)`;
+    }
+    if (Number.isFinite(candidateX) && Number.isFinite(marginX)) {
+      return `kandidat x ${formatPrimaryDateScoreNumber(candidateX)} px, marginal x ${formatPrimaryDateScoreNumber(marginX)} px`;
+    }
+  }
   const leftRatioMatch = detail.match(/\bleft_ratio:([0-9.]+)/u);
   if (leftRatioMatch) {
     const ratio = Number(leftRatioMatch[1]);
@@ -27125,11 +27141,11 @@ function defaultTitleHeuristics() {
         enabled: true,
         curve: [
           { x: 0, y: 30 },
-          { x: 0.08, y: 25 },
-          { x: 0.20, y: 10 },
-          { x: 0.45, y: -20 },
+          { x: 0.5, y: 25 },
+          { x: 1.5, y: 10 },
+          { x: 4, y: -20 },
         ],
-        description: 'Poängkurva baserad på rubrikkandidatens vänsterkant relativt sidans vänsterkant. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
+        description: 'Poängkurva baserad på rubrikkandidatens vänsterkant relativt sidans beräknade vänstermarginal, mätt i radhöjder. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
       },
       text_size: {
         enabled: true,
@@ -32133,15 +32149,14 @@ const titleHeuristicCurveCharts = {
     yStep: 1,
   },
   horizontal_position_left_aligned: {
-    xAxisTitle: 'Vänsterkant från sidans vänsterkant (%)',
+    xAxisTitle: 'Avstånd från beräknad vänstermarginal (radhöjder)',
     yAxisTitle: 'Poäng',
-    xPointLabel: 'Vänsterkant från sidans vänsterkant',
+    xPointLabel: 'Avstånd från beräknad vänstermarginal',
     yPointLabel: 'Poäng',
     yMin: -80,
     yMax: 80,
-    xAsPercent: true,
     yAsPercent: false,
-    xStep: 0.01,
+    xStep: 0.25,
     yStep: 1,
   },
   text_size: {

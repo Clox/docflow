@@ -29,7 +29,7 @@ function title_horizontal_signal_result(float $centeredPoints, float $leftAligne
             'horizontal_position_left_aligned' => [
                 'curve' => [
                     ['x' => 0.0, 'y' => $leftAlignedPoints],
-                    ['x' => 1.0, 'y' => $leftAlignedPoints],
+                    ['x' => 4.0, 'y' => $leftAlignedPoints],
                 ],
             ],
             'text_size' => ['curve' => $zeroCurve],
@@ -64,7 +64,15 @@ function title_horizontal_signal_result(float $centeredPoints, float $leftAligne
             ]],
         ]],
         $heuristics,
-        []
+        [],
+        [
+            1 => [
+                'leftMargin' => [
+                    'available' => true,
+                    'x' => 40.0,
+                ],
+            ],
+        ]
     );
 }
 
@@ -93,6 +101,18 @@ assert_title_horizontal_position(
             && ($signal['code'] ?? null) === 'horizontal_position_centered'
     )) === 0,
     'The losing centered signal should not be shown in the candidate signal list.'
+);
+$leftWinningSignal = array_values(array_filter(
+    $leftWins['signals'] ?? [],
+    static fn(mixed $signal): bool => is_array($signal)
+        && ($signal['code'] ?? null) === 'horizontal_position_left_aligned'
+))[0] ?? null;
+assert_title_horizontal_position(
+    is_array($leftWinningSignal)
+        && str_contains((string) ($leftWinningSignal['detail'] ?? ''), 'margin_x:40')
+        && str_contains((string) ($leftWinningSignal['detail'] ?? ''), 'candidate_x:40')
+        && str_contains((string) ($leftWinningSignal['detail'] ?? ''), 'distance:0'),
+    'The left-aligned title signal should describe distance from the computed left margin.'
 );
 
 $centerWins = title_horizontal_signal_result(29.0, 12.0);
