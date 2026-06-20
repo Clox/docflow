@@ -8383,6 +8383,14 @@ function formatPrimaryDateSignalDetail(signal) {
     if (Number.isFinite(ratio)) {
       const maxDistanceMatch = detail.match(/\bmax_distance:([0-9.]+)\s+line_heights/u);
       const maxDistance = maxDistanceMatch ? Number(maxDistanceMatch[1]) : null;
+      const horizontalDistanceMatch = detail.match(/\bhorizontal_distance:([0-9.]+)/u);
+      const verticalDistanceMatch = detail.match(/\bvertical_distance:([0-9.]+)/u);
+      const boxesMatch = detail.match(/\bboxes:(\d+)/u);
+      const ignoredBelowMatch = detail.match(/\bignored_below:(\d+)/u);
+      const horizontalDistance = horizontalDistanceMatch ? Number(horizontalDistanceMatch[1]) : null;
+      const verticalDistance = verticalDistanceMatch ? Number(verticalDistanceMatch[1]) : null;
+      const boxes = boxesMatch ? Number(boxesMatch[1]) : null;
+      const ignoredBelow = ignoredBelowMatch ? Number(ignoredBelowMatch[1]) : null;
       let level = '';
       if (ratio <= 0.2) {
         level = 'mycket låg';
@@ -8394,6 +8402,20 @@ function formatPrimaryDateSignalDetail(signal) {
         level = 'hög';
       } else {
         level = 'mycket hög';
+      }
+      if (signal?.code === 'text_density' && Number.isFinite(horizontalDistance) && Number.isFinite(verticalDistance)) {
+        const parts = [
+          `${level}, ${formatPrimaryDateScoreNumber(ratio * 100)} %`,
+          `h ${formatPrimaryDateScoreNumber(horizontalDistance)} radhöjder`,
+          `v ${formatPrimaryDateScoreNumber(verticalDistance)} radhöjder`,
+        ];
+        if (Number.isFinite(boxes)) {
+          parts.push(`${boxes} bboxar`);
+        }
+        if (Number.isFinite(ignoredBelow)) {
+          parts.push(`${ignoredBelow} under ignorerade`);
+        }
+        return parts.join(', ');
       }
       if (signal?.code === 'text_density' && Number.isFinite(maxDistance)) {
         return `${level}, ${formatPrimaryDateScoreNumber(ratio * 100)} %, maxavstånd ${formatPrimaryDateScoreNumber(maxDistance)} radhöjder`;
@@ -27252,14 +27274,18 @@ function defaultTitleHeuristics() {
       },
       text_density: {
         enabled: true,
-        max_distance_line_heights: 3,
+        horizontal_max_distance_line_heights: 3,
+        vertical_max_distance_line_heights: 2,
+        left_weight: 1,
+        right_weight: 1,
+        above_weight: 0.4,
         curve: [
           { x: 0, y: 25 },
           { x: 0.35, y: 15 },
           { x: 0.70, y: 0 },
           { x: 1, y: -35 },
         ],
-        description: 'Poängkurva baserad på viktad visuell textyta nära rubrikkandidaten.',
+        description: 'Poängkurva baserad på viktad visuell textyta bredvid eller ovanför rubrikkandidaten. Text under kandidaten ignoreras.',
       },
       short_line_before_long_line: {
         enabled: true,
@@ -27364,6 +27390,33 @@ function sanitizeTitleHeuristics(input) {
         )
       );
     }
+    const legacyDistance = raw.max_distance_line_heights;
+    if (Object.prototype.hasOwnProperty.call(defaultsForSignal, 'horizontal_max_distance_line_heights')) {
+      result.signals[key].horizontal_max_distance_line_heights = Math.max(
+        0.1,
+        sanitizePrimaryDateNumber(
+          raw.horizontal_max_distance_line_heights ?? legacyDistance,
+          defaultsForSignal.horizontal_max_distance_line_heights
+        )
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(defaultsForSignal, 'vertical_max_distance_line_heights')) {
+      result.signals[key].vertical_max_distance_line_heights = Math.max(
+        0.1,
+        sanitizePrimaryDateNumber(
+          raw.vertical_max_distance_line_heights ?? legacyDistance,
+          defaultsForSignal.vertical_max_distance_line_heights
+        )
+      );
+    }
+    ['left_weight', 'right_weight', 'above_weight'].forEach((prop) => {
+      if (Object.prototype.hasOwnProperty.call(defaultsForSignal, prop)) {
+        result.signals[key][prop] = Math.max(
+          0,
+          sanitizePrimaryDateNumber(raw[prop], defaultsForSignal[prop])
+        );
+      }
+    });
   });
 
   return result;
@@ -32103,6 +32156,11 @@ function primaryDateHeuristicPropertyLabel(prop) {
     points: 'Poäng',
     max_points: 'Maxpoäng',
     max_distance_line_heights: 'Maxavstånd i radhöjder',
+    horizontal_max_distance_line_heights: 'Horisontellt maxavstånd i radhöjder',
+    vertical_max_distance_line_heights: 'Vertikalt maxavstånd i radhöjder',
+    left_weight: 'Vikt vänster',
+    right_weight: 'Vikt höger',
+    above_weight: 'Vikt ovanför',
     direct_before_points: 'Direkt före',
     same_line_points: 'Samma rad',
     line_above_points: 'Raden ovanför',
@@ -32679,27 +32737,38 @@ function createTitleHeuristicRuleEditor({
       'primary-date-heuristic-number-field'
     ));
   }
-  if (typeof rule.max_distance_line_heights === 'number') {
+  const appendNumberSetting = (prop, label, min = 0.1, step = '0.1') => {
+    if (typeof rule[prop] !== 'number') {
+      return;
+    }
     const distanceInput = document.createElement('input');
     distanceInput.type = 'number';
-    distanceInput.step = '0.1';
-    distanceInput.min = '0.1';
-    distanceInput.value = String(rule.max_distance_line_heights);
+    distanceInput.step = step;
+    distanceInput.min = String(min);
+    distanceInput.value = String(rule[prop]);
     distanceInput.addEventListener('input', () => {
       const next = sanitizeTitleHeuristics(collection[index].titleHeuristics);
       const value = Number(distanceInput.value);
       if (Number.isFinite(value)) {
-        next.signals[ruleKey].max_distance_line_heights = Math.max(0.1, value);
+        next.signals[ruleKey][prop] = Math.max(min, value);
         collection[index].titleHeuristics = sanitizeTitleHeuristics(next);
         updateSettingsActionButtons();
       }
     });
     fields.appendChild(createFloatingField(
-      'Texttäthet - maxavstånd (radhöjder)',
+      label,
       distanceInput,
       'primary-date-heuristic-number-field'
     ));
+  };
+  if (typeof rule.max_distance_line_heights === 'number') {
+    appendNumberSetting('max_distance_line_heights', 'Texttäthet - maxavstånd (radhöjder)', 0.1, '0.1');
   }
+  appendNumberSetting('horizontal_max_distance_line_heights', 'Texttäthet - horisontellt maxavstånd (radhöjder)', 0.1, '0.1');
+  appendNumberSetting('vertical_max_distance_line_heights', 'Texttäthet - vertikalt maxavstånd (radhöjder)', 0.1, '0.1');
+  appendNumberSetting('left_weight', 'Texttäthet - vikt vänster', 0, '0.1');
+  appendNumberSetting('right_weight', 'Texttäthet - vikt höger', 0, '0.1');
+  appendNumberSetting('above_weight', 'Texttäthet - vikt ovanför', 0, '0.1');
 
   row.append(header, help, fields);
   return row;

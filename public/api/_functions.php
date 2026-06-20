@@ -3209,14 +3209,18 @@ function default_title_heuristics(): array
             ],
             'text_density' => [
                 'enabled' => true,
-                'max_distance_line_heights' => 3.0,
+                'horizontal_max_distance_line_heights' => 3.0,
+                'vertical_max_distance_line_heights' => 2.0,
+                'left_weight' => 1.0,
+                'right_weight' => 1.0,
+                'above_weight' => 0.4,
                 'curve' => [
                     ['x' => 0.0, 'y' => 25.0],
                     ['x' => 0.35, 'y' => 15.0],
                     ['x' => 0.70, 'y' => 0.0],
                     ['x' => 1.0, 'y' => -35.0],
                 ],
-                'description' => 'Poängkurva baserad på viktad visuell textyta nära rubrikkandidaten.',
+                'description' => 'Poängkurva baserad på viktad visuell textyta bredvid eller ovanför rubrikkandidaten. Text under kandidaten ignoreras.',
             ],
             'short_line_before_long_line' => [
                 'enabled' => true,
@@ -3522,6 +3526,37 @@ function normalize_title_heuristics(mixed $input): array
                     (float) $default['max_distance_line_heights']
                 )
             );
+        }
+        if (array_key_exists('horizontal_max_distance_line_heights', $default)) {
+            $legacyDistance = $raw['max_distance_line_heights'] ?? null;
+            $result['signals'][$key]['horizontal_max_distance_line_heights'] = max(
+                0.1,
+                normalize_primary_date_number(
+                    $raw['horizontal_max_distance_line_heights'] ?? $legacyDistance,
+                    (float) $default['horizontal_max_distance_line_heights']
+                )
+            );
+        }
+        if (array_key_exists('vertical_max_distance_line_heights', $default)) {
+            $legacyDistance = $raw['max_distance_line_heights'] ?? null;
+            $result['signals'][$key]['vertical_max_distance_line_heights'] = max(
+                0.1,
+                normalize_primary_date_number(
+                    $raw['vertical_max_distance_line_heights'] ?? $legacyDistance,
+                    (float) $default['vertical_max_distance_line_heights']
+                )
+            );
+        }
+        foreach (['left_weight', 'right_weight', 'above_weight'] as $weightKey) {
+            if (array_key_exists($weightKey, $default)) {
+                $result['signals'][$key][$weightKey] = max(
+                    0.0,
+                    normalize_primary_date_number(
+                        $raw[$weightKey] ?? null,
+                        (float) $default[$weightKey]
+                    )
+                );
+            }
         }
         $result['signals'][$key]['description'] = (string) $default['description'];
     }
@@ -17786,7 +17821,7 @@ function title_candidate_uppercase_ratio(string $text): float
 function title_candidate_text_density(
     array $candidate,
     array $lineGeometries,
-    float $maxDistanceLineHeights
+    float|array $settings
 ): array
 {
     $candidateBbox = normalize_debug_word_bbox($candidate['bbox'] ?? null);
@@ -17796,15 +17831,39 @@ function title_candidate_text_density(
     $candidatePageNumber = is_numeric($candidate['pageNumber'] ?? null)
         ? (int) $candidate['pageNumber']
         : ($lineIndex >= 0 ? matching_line_page_number($lineGeometries, $lineIndex) : null);
-    $maxDistanceLineHeights = max(0.1, $maxDistanceLineHeights);
+    $settings = is_array($settings)
+        ? $settings
+        : ['horizontal_max_distance_line_heights' => (float) $settings, 'vertical_max_distance_line_heights' => (float) $settings];
+    $legacyDistance = $settings['max_distance_line_heights'] ?? null;
+    $horizontalMaxDistanceLineHeights = max(
+        0.1,
+        normalize_primary_date_number(
+            $settings['horizontal_max_distance_line_heights'] ?? $legacyDistance,
+            3.0
+        )
+    );
+    $verticalMaxDistanceLineHeights = max(
+        0.1,
+        normalize_primary_date_number(
+            $settings['vertical_max_distance_line_heights'] ?? $legacyDistance,
+            2.0
+        )
+    );
+    $directionWeights = [
+        'left' => max(0.0, normalize_primary_date_number($settings['left_weight'] ?? null, 1.0)),
+        'right' => max(0.0, normalize_primary_date_number($settings['right_weight'] ?? null, 1.0)),
+        'above' => max(0.0, normalize_primary_date_number($settings['above_weight'] ?? null, 0.4)),
+    ];
     if ($candidateBbox === null) {
         return [
             'available' => false,
             'ratio' => 0.0,
             'weightedArea' => 0.0,
             'referenceArea' => 0.0,
-            'maxDistanceLineHeights' => $maxDistanceLineHeights,
+            'horizontalMaxDistanceLineHeights' => $horizontalMaxDistanceLineHeights,
+            'verticalMaxDistanceLineHeights' => $verticalMaxDistanceLineHeights,
             'contributingBboxes' => 0,
+            'ignoredBelowBboxes' => 0,
         ];
     }
 
@@ -17815,17 +17874,20 @@ function title_candidate_text_density(
             'ratio' => 0.0,
             'weightedArea' => 0.0,
             'referenceArea' => 0.0,
-            'maxDistanceLineHeights' => $maxDistanceLineHeights,
+            'horizontalMaxDistanceLineHeights' => $horizontalMaxDistanceLineHeights,
+            'verticalMaxDistanceLineHeights' => $verticalMaxDistanceLineHeights,
             'contributingBboxes' => 0,
+            'ignoredBelowBboxes' => 0,
         ];
     }
 
-    $maxDistance = max(1.0, $candidateHeight * $maxDistanceLineHeights);
+    $horizontalMaxDistance = max(1.0, $candidateHeight * $horizontalMaxDistanceLineHeights);
+    $verticalMaxDistance = max(1.0, $candidateHeight * $verticalMaxDistanceLineHeights);
     $expandedBbox = [
-        'x0' => (float) $candidateBbox['x0'] - $maxDistance,
-        'y0' => (float) $candidateBbox['y0'] - $maxDistance,
-        'x1' => (float) $candidateBbox['x1'] + $maxDistance,
-        'y1' => (float) $candidateBbox['y1'] + $maxDistance,
+        'x0' => (float) $candidateBbox['x0'] - $horizontalMaxDistance,
+        'y0' => (float) $candidateBbox['y0'] - $verticalMaxDistance,
+        'x1' => (float) $candidateBbox['x1'] + $horizontalMaxDistance,
+        'y1' => (float) $candidateBbox['y1'],
     ];
     $referenceZoneArea = max(1.0, bbox_area($expandedBbox));
     $referenceArea = max(1.0, $referenceZoneArea * 0.15);
@@ -17839,6 +17901,7 @@ function title_candidate_text_density(
 
     $weightedArea = 0.0;
     $contributingBboxes = 0;
+    $ignoredBelowBboxes = 0;
     foreach ($lineGeometries as $geometryIndex => $geometry) {
         if (!is_array($geometry)) {
             continue;
@@ -17880,8 +17943,36 @@ function title_candidate_text_density(
                 continue;
             }
 
-            $distance = bbox_edge_distance($candidateBbox, $bbox);
-            if ($distance >= $maxDistance) {
+            if ((float) ($bbox['y0'] ?? 0.0) > (float) ($candidateBbox['y1'] ?? 0.0)) {
+                $ignoredBelowBboxes++;
+                continue;
+            }
+
+            $direction = null;
+            $distance = null;
+            $maxDistance = null;
+            if ((float) ($bbox['y1'] ?? 0.0) <= (float) ($candidateBbox['y0'] ?? 0.0)) {
+                $direction = 'above';
+                $distance = max(0.0, (float) ($candidateBbox['y0'] ?? 0.0) - (float) ($bbox['y1'] ?? 0.0));
+                $maxDistance = $verticalMaxDistance;
+            } elseif ((float) ($bbox['x1'] ?? 0.0) <= (float) ($candidateBbox['x0'] ?? 0.0)) {
+                $direction = 'left';
+                $distance = max(0.0, (float) ($candidateBbox['x0'] ?? 0.0) - (float) ($bbox['x1'] ?? 0.0));
+                $maxDistance = $horizontalMaxDistance;
+            } elseif ((float) ($bbox['x0'] ?? 0.0) >= (float) ($candidateBbox['x1'] ?? 0.0)) {
+                $direction = 'right';
+                $distance = max(0.0, (float) ($bbox['x0'] ?? 0.0) - (float) ($candidateBbox['x1'] ?? 0.0));
+                $maxDistance = $horizontalMaxDistance;
+            } else {
+                $bboxCenter = bbox_center_point($bbox);
+                $candidateCenter = bbox_center_point($candidateBbox);
+                $direction = (float) ($bboxCenter['x'] ?? 0.0) < (float) ($candidateCenter['x'] ?? 0.0) ? 'left' : 'right';
+                $distance = 0.0;
+                $maxDistance = $horizontalMaxDistance;
+            }
+
+            $directionWeight = (float) ($directionWeights[$direction] ?? 0.0);
+            if ($directionWeight <= 0.0 || $distance === null || $maxDistance === null || $distance >= $maxDistance) {
                 continue;
             }
             $distanceWeight = max(0.0, 1.0 - ($distance / $maxDistance));
@@ -17895,7 +17986,7 @@ function title_candidate_text_density(
                 : ($aspectRatio > 10.0 ? 0.70 : 1.0);
             $contribution = min(
                 $maxContribution,
-                $area * $distanceWeight * $sizeSimilarityWeight * $aspectWeight
+                $area * $distanceWeight * $sizeSimilarityWeight * $aspectWeight * $directionWeight
             );
             if ($contribution <= 0.0) {
                 continue;
@@ -17911,8 +18002,13 @@ function title_candidate_text_density(
         'weightedArea' => $weightedArea,
         'referenceArea' => $referenceArea,
         'referenceZoneArea' => $referenceZoneArea,
-        'maxDistanceLineHeights' => $maxDistanceLineHeights,
+        'horizontalMaxDistanceLineHeights' => $horizontalMaxDistanceLineHeights,
+        'verticalMaxDistanceLineHeights' => $verticalMaxDistanceLineHeights,
+        'leftWeight' => $directionWeights['left'],
+        'rightWeight' => $directionWeights['right'],
+        'aboveWeight' => $directionWeights['above'],
         'contributingBboxes' => $contributingBboxes,
+        'ignoredBelowBboxes' => $ignoredBelowBboxes,
     ];
 }
 
@@ -18402,7 +18498,7 @@ function score_title_candidate(
     $density = title_candidate_text_density(
         $candidate,
         $lineGeometries,
-        (float) ($textDensitySettings['max_distance_line_heights'] ?? 3.0)
+        $textDensitySettings
     );
     $densityRatio = (float) ($density['ratio'] ?? 0.0);
     $result['textDensityRatio'] = $densityRatio;
@@ -18411,8 +18507,10 @@ function score_title_candidate(
             'text_density',
             $densityRatio,
             'density:' . round($densityRatio, 4)
-                . ',max_distance:' . round((float) ($density['maxDistanceLineHeights'] ?? 3.0), 2)
-                . ' line_heights,boxes:' . (int) ($density['contributingBboxes'] ?? 0)
+                . ',boxes:' . (int) ($density['contributingBboxes'] ?? 0)
+                . ',ignored_below:' . (int) ($density['ignoredBelowBboxes'] ?? 0)
+                . ',horizontal_distance:' . round((float) ($density['horizontalMaxDistanceLineHeights'] ?? 3.0), 2)
+                . ',vertical_distance:' . round((float) ($density['verticalMaxDistanceLineHeights'] ?? 2.0), 2)
         );
     }
 

@@ -113,17 +113,17 @@ assert_title_text_density(
 
 $denseSegments = [];
 for ($index = 0; $index < 24; $index++) {
-    $column = $index % 8;
-    $row = intdiv($index, 8);
+    $column = $index % 4;
+    $row = intdiv($index, 4);
     $denseSegments[] = [
         'start' => $index * 5,
         'end' => ($index * 5) + 4,
         'wordIndex' => $index + 1,
         'bbox' => [
-            'x0' => 5.0 + ($column * 38.0),
-            'y0' => 43.0 + ($row * 15.0),
-            'x1' => 38.0 + ($column * 38.0),
-            'y1' => 56.0 + ($row * 15.0),
+            'x0' => 0.0 + ($column * 4.0),
+            'y0' => 14.0 + ($row * 5.0),
+            'x1' => 16.0 + ($column * 4.0),
+            'y1' => 28.0 + ($row * 5.0),
         ],
     ];
 }
@@ -135,6 +135,25 @@ $denseTextDensity = title_candidate_text_density(
 assert_title_text_density(
     (float) ($denseTextDensity['ratio'] ?? 0.0) > 0.40,
     'Many nearby text bboxes should produce a high, comparable density value.'
+);
+
+$belowDensity = title_candidate_text_density(
+    $candidate,
+    title_text_density_geometry([[
+        'start' => 0,
+        'end' => 4,
+        'wordIndex' => 1,
+        'bbox' => ['x0' => 20.0, 'y0' => 43.0, 'x1' => 180.0, 'y1' => 63.0],
+    ]]),
+    3.0
+);
+assert_title_text_density(
+    abs((float) ($belowDensity['ratio'] ?? -1.0)) < 0.0001,
+    'Text below a title candidate must not contribute to text density.'
+);
+assert_title_text_density(
+    (int) ($belowDensity['ignoredBelowBboxes'] ?? 0) === 1,
+    'Text density debug data should count bboxes ignored below the candidate.'
 );
 
 $extremeDensity = title_candidate_text_density(
@@ -155,13 +174,24 @@ assert_title_text_density(
 $normalized = normalize_title_heuristics([
     'signals' => [
         'text_density' => [
-            'max_distance_line_heights' => 4.5,
+            'horizontal_max_distance_line_heights' => 4.5,
+            'vertical_max_distance_line_heights' => 2.5,
+            'left_weight' => 0.8,
+            'right_weight' => 0.9,
+            'above_weight' => 0.2,
         ],
     ],
 ]);
 assert_title_text_density(
-    (float) ($normalized['signals']['text_density']['max_distance_line_heights'] ?? 0.0) === 4.5,
-    'The Title text density maximum distance setting should be preserved.'
+    (float) ($normalized['signals']['text_density']['horizontal_max_distance_line_heights'] ?? 0.0) === 4.5
+        && (float) ($normalized['signals']['text_density']['vertical_max_distance_line_heights'] ?? 0.0) === 2.5,
+    'The Title text density horizontal and vertical maximum distance settings should be preserved.'
+);
+assert_title_text_density(
+    (float) ($normalized['signals']['text_density']['left_weight'] ?? 0.0) === 0.8
+        && (float) ($normalized['signals']['text_density']['right_weight'] ?? 0.0) === 0.9
+        && (float) ($normalized['signals']['text_density']['above_weight'] ?? 0.0) === 0.2,
+    'The Title text density direction weights should be preserved.'
 );
 
 $scored = score_title_candidate(
@@ -171,7 +201,8 @@ $scored = score_title_candidate(
     [
         'signals' => [
             'text_density' => [
-                'max_distance_line_heights' => 3.0,
+                'horizontal_max_distance_line_heights' => 3.0,
+                'vertical_max_distance_line_heights' => 2.0,
                 'curve' => [
                     ['x' => 0.0, 'y' => 1.0],
                     ['x' => 1.0, 'y' => -100.0],
@@ -188,8 +219,10 @@ assert_title_text_density(is_array($densitySignal), 'Title scoring should emit t
 $detail = (string) ($densitySignal['detail'] ?? '');
 assert_title_text_density(str_contains($detail, 'density:'), 'Debug detail should contain the visual density.');
 assert_title_text_density(
-    str_contains($detail, 'max_distance:3 line_heights'),
-    'Debug detail should contain the configured maximum distance.'
+    str_contains($detail, 'horizontal_distance:3')
+        && str_contains($detail, 'vertical_distance:2')
+        && str_contains($detail, 'ignored_below:'),
+    'Debug detail should contain configured directional distances and ignored-below count.'
 );
 assert_title_text_density(!str_contains($detail, 'words:'), 'Debug detail must no longer be word-count based.');
 
