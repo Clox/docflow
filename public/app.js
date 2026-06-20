@@ -17088,13 +17088,17 @@ function buildWordTooltip(word) {
   const y0 = Math.round(word.rect.y0);
   const x1 = Math.round(word.rect.x1);
   const y1 = Math.round(word.rect.y1);
+  const height = Math.max(0, y1 - y0);
   const copyPayload = buildOcrWordCopyPayload(word);
   return {
     indexLabel: `BBox #${copyPayload.index}`,
     text: typeof word.text === 'string' ? word.text : '',
     metaRows: Number.isFinite(word.score)
-      ? [{ label: 'Score', value: Number(word.score).toFixed(4) }]
-      : [],
+      ? [
+          { label: 'Score', value: Number(word.score).toFixed(4) },
+          { label: 'Höjd', value: `${height} px` },
+        ]
+      : [{ label: 'Höjd', value: `${height} px` }],
     metaDiagram: {
       title: 'Koordinater',
       startLabel: `X${x0},Y${y0}`,
@@ -17947,7 +17951,7 @@ function renderOcrWordTooltipMeta(section, tooltipData) {
     }
   });
 
-  if (metaRows.length > 0) {
+  const appendMetaRows = () => {
     metaRows.forEach((row) => {
       if (row && row.raw === true) {
         const rawEl = document.createElement('div');
@@ -17979,7 +17983,7 @@ function renderOcrWordTooltipMeta(section, tooltipData) {
       rowEl.appendChild(valueEl);
       metaEl.appendChild(rowEl);
     });
-  }
+  };
 
   if (metaText !== '') {
     const textEl = document.createElement('div');
@@ -18010,6 +18014,10 @@ function renderOcrWordTooltipMeta(section, tooltipData) {
     figureEl.appendChild(endEl);
     metaEl.appendChild(titleEl);
     metaEl.appendChild(figureEl);
+  }
+
+  if (metaRows.length > 0) {
+    appendMetaRows();
   }
 }
 
