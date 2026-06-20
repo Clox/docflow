@@ -10,7 +10,7 @@ function assert_title_horizontal_position(bool $condition, string $message): voi
     }
 }
 
-function title_horizontal_signal_result(float $centeredPoints, float $leftAlignedPoints): array
+function title_horizontal_signal_result(array $bbox, float $leftMarginX = 40.0): array
 {
     $zeroCurve = [
         ['x' => 0.0, 'y' => 0.0],
@@ -20,16 +20,10 @@ function title_horizontal_signal_result(float $centeredPoints, float $leftAligne
         'full_confidence_score' => 120.0,
         'signals' => [
             'vertical_position' => ['curve' => $zeroCurve],
-            'horizontal_position_centered' => [
+            'horizontal_position' => [
                 'curve' => [
-                    ['x' => 0.0, 'y' => $centeredPoints],
-                    ['x' => 1.0, 'y' => $centeredPoints],
-                ],
-            ],
-            'horizontal_position_left_aligned' => [
-                'curve' => [
-                    ['x' => 0.0, 'y' => $leftAlignedPoints],
-                    ['x' => 4.0, 'y' => $leftAlignedPoints],
+                    ['x' => 0.0, 'y' => 30.0],
+                    ['x' => 20.0, 'y' => 30.0],
                 ],
             ],
             'text_size' => ['curve' => $zeroCurve],
@@ -47,7 +41,7 @@ function title_horizontal_signal_result(float $centeredPoints, float $leftAligne
             'lineIndex' => 0,
             'start' => 0,
             'end' => strlen('Beslut om bistånd'),
-            'bbox' => ['x0' => 40.0, 'y0' => 80.0, 'x1' => 280.0, 'y1' => 110.0],
+            'bbox' => $bbox,
             'valueBBoxIndexes' => [1, 2, 3],
         ],
         ['Beslut om bistånd'],
@@ -60,7 +54,7 @@ function title_horizontal_signal_result(float $centeredPoints, float $leftAligne
                 'start' => 0,
                 'end' => strlen('Beslut om bistånd'),
                 'wordIndex' => 0,
-                'bbox' => ['x0' => 40.0, 'y0' => 80.0, 'x1' => 280.0, 'y1' => 110.0],
+                'bbox' => $bbox,
             ]],
         ]],
         $heuristics,
@@ -69,68 +63,64 @@ function title_horizontal_signal_result(float $centeredPoints, float $leftAligne
             1 => [
                 'leftMargin' => [
                     'available' => true,
-                    'x' => 40.0,
+                    'x' => $leftMarginX,
                 ],
             ],
         ]
     );
 }
 
-$leftWins = title_horizontal_signal_result(18.0, 27.0);
+$leftMode = title_horizontal_signal_result(['x0' => 40.0, 'y0' => 80.0, 'x1' => 280.0, 'y1' => 110.0]);
 assert_title_horizontal_position(
-    abs((float) ($leftWins['score'] ?? 0.0) - 27.0) < 0.0001,
-    'Horizontal title signals must use only the highest score, not the sum.'
+    abs((float) ($leftMode['score'] ?? 0.0) - 30.0) < 0.0001,
+    'Horizontal title position should contribute through one shared signal.'
 );
 assert_title_horizontal_position(
-    ($leftWins['horizontalPositionWinner'] ?? null) === 'left_aligned',
-    'Left-aligned signal should be recorded as winner when it scores highest.'
+    ($leftMode['horizontalPositionMode'] ?? null) === 'left',
+    'The shared horizontal signal should choose left margin mode when it is closest.'
 );
 assert_title_horizontal_position(
     count(array_filter(
-        $leftWins['signals'] ?? [],
+        $leftMode['signals'] ?? [],
         static fn(mixed $signal): bool => is_array($signal)
-            && ($signal['code'] ?? null) === 'horizontal_position_left_aligned'
-            && ($signal['type'] ?? null) !== 'ignored'
+            && ($signal['code'] ?? null) === 'horizontal_position'
     )) === 1,
-    'The winning left-aligned signal should be used.'
+    'The candidate signal list should contain one shared horizontal signal.'
 );
 assert_title_horizontal_position(
     count(array_filter(
-        $leftWins['signals'] ?? [],
+        $leftMode['signals'] ?? [],
         static fn(mixed $signal): bool => is_array($signal)
-            && ($signal['code'] ?? null) === 'horizontal_position_centered'
+            && in_array($signal['code'] ?? null, ['horizontal_position_centered', 'horizontal_position_left_aligned'], true)
     )) === 0,
-    'The losing centered signal should not be shown in the candidate signal list.'
+    'Legacy separate horizontal title signals should not be shown in the candidate signal list.'
 );
-$leftWinningSignal = array_values(array_filter(
-    $leftWins['signals'] ?? [],
+$leftSignal = array_values(array_filter(
+    $leftMode['signals'] ?? [],
     static fn(mixed $signal): bool => is_array($signal)
-        && ($signal['code'] ?? null) === 'horizontal_position_left_aligned'
+        && ($signal['code'] ?? null) === 'horizontal_position'
 ))[0] ?? null;
 assert_title_horizontal_position(
-    is_array($leftWinningSignal)
-        && str_contains((string) ($leftWinningSignal['detail'] ?? ''), 'margin_x:40')
-        && str_contains((string) ($leftWinningSignal['detail'] ?? ''), 'candidate_x:40')
-        && str_contains((string) ($leftWinningSignal['detail'] ?? ''), 'distance:0'),
-    'The left-aligned title signal should describe distance from the computed left margin.'
+    is_array($leftSignal)
+        && str_contains((string) ($leftSignal['detail'] ?? ''), 'mode:left')
+        && str_contains((string) ($leftSignal['detail'] ?? ''), 'margin_x:40')
+        && str_contains((string) ($leftSignal['detail'] ?? ''), 'candidate_x:40')
+        && str_contains((string) ($leftSignal['detail'] ?? ''), 'distance:0'),
+    'The shared horizontal title signal should describe left-margin mode and distance.'
 );
 
-$centerWins = title_horizontal_signal_result(29.0, 12.0);
+$centerMode = title_horizontal_signal_result(['x0' => 380.0, 'y0' => 80.0, 'x1' => 620.0, 'y1' => 110.0]);
 assert_title_horizontal_position(
-    abs((float) ($centerWins['score'] ?? 0.0) - 29.0) < 0.0001,
-    'Centered and left-aligned title signals must not both contribute.'
+    abs((float) ($centerMode['score'] ?? 0.0) - 30.0) < 0.0001,
+    'The shared horizontal title signal should use the same curve for centered candidates.'
 );
 assert_title_horizontal_position(
-    ($centerWins['horizontalPositionWinner'] ?? null) === 'centered',
-    'Centered signal should be recorded as winner when it scores highest.'
+    ($centerMode['horizontalPositionMode'] ?? null) === 'center',
+    'The shared horizontal signal should choose center mode when it is closest.'
 );
 assert_title_horizontal_position(
-    count(array_filter(
-        $centerWins['signals'] ?? [],
-        static fn(mixed $signal): bool => is_array($signal)
-            && ($signal['code'] ?? null) === 'horizontal_position_left_aligned'
-    )) === 0,
-    'The losing left-aligned signal should not be shown in the candidate signal list.'
+    str_contains((string) (($centerMode['signals'][0]['detail'] ?? '')), 'mode:center'),
+    'The shared horizontal title signal should describe center mode in debug details.'
 );
 
 $zeroCurve = [
@@ -154,8 +144,7 @@ $zeroConfidenceResult = extract_title_field_result(
     [
         'signals' => [
             'vertical_position' => ['curve' => $zeroCurve],
-            'horizontal_position_centered' => ['curve' => $zeroCurve],
-            'horizontal_position_left_aligned' => ['curve' => $zeroCurve],
+            'horizontal_position' => ['curve' => $zeroCurve],
             'text_size' => ['curve' => $zeroCurve],
             'uppercase_ratio' => ['curve' => $zeroCurve],
             'brevity' => ['curve' => $zeroCurve],

@@ -3167,17 +3167,7 @@ function default_title_heuristics(): array
                 ],
                 'description' => 'Poängkurva baserad på rubrikkandidatens vertikala position på sidan.',
             ],
-            'horizontal_position_centered' => [
-                'enabled' => true,
-                'curve' => [
-                    ['x' => 0.0, 'y' => 30.0],
-                    ['x' => 0.25, 'y' => 20.0],
-                    ['x' => 0.55, 'y' => 0.0],
-                    ['x' => 1.0, 'y' => -20.0],
-                ],
-                'description' => 'Poängkurva baserad på hur nära rubrikkandidaten ligger sidans mitt. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
-            ],
-            'horizontal_position_left_aligned' => [
+            'horizontal_position' => [
                 'enabled' => true,
                 'curve' => [
                     ['x' => 0.0, 'y' => 30.0],
@@ -3185,7 +3175,7 @@ function default_title_heuristics(): array
                     ['x' => 1.5, 'y' => 10.0],
                     ['x' => 4.0, 'y' => -20.0],
                 ],
-                'description' => 'Poängkurva baserad på rubrikkandidatens vänsterkant relativt sidans beräknade vänstermarginal, mätt i radhöjder. Endast den starkaste av centrerad och vänsterställd horisontell position används; den andra ignoreras.',
+                'description' => 'Poängkurva baserad på närmaste horisontella rubrikläge, antingen vänsterkant mot sidans beräknade vänstermarginal eller mittpunkt mot sidans mittpunkt. Avståndet mäts i radhöjder.',
             ],
             'text_size' => [
                 'enabled' => true,
@@ -3504,8 +3494,12 @@ function normalize_title_heuristics(mixed $input): array
 
     foreach ($defaults['signals'] as $key => $default) {
         $raw = is_array($source['signals'][$key] ?? null) ? $source['signals'][$key] : [];
-        if ($key === 'horizontal_position_centered' && $raw === [] && is_array($source['signals']['horizontal_position'] ?? null)) {
-            $raw = $source['signals']['horizontal_position'];
+        if ($key === 'horizontal_position' && $raw === []) {
+            if (is_array($source['signals']['horizontal_position_left_aligned'] ?? null)) {
+                $raw = $source['signals']['horizontal_position_left_aligned'];
+            } elseif (is_array($source['signals']['horizontal_position_centered'] ?? null)) {
+                $raw = $source['signals']['horizontal_position_centered'];
+            }
         }
         $result['signals'][$key]['enabled'] = true;
         if (array_key_exists('curve', $default)) {
@@ -9707,7 +9701,7 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
             $candidate[$key] = $number;
         }
     }
-    foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner', 'sourceSenderName', 'sourceSenderNameValue'] as $key) {
+    foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner', 'horizontalPositionMode', 'sourceSenderName', 'sourceSenderNameValue'] as $key) {
         $text = debug_export_scalar_text($match[$key] ?? '');
         if ($text !== '') {
             $candidate[$key] = $text;
@@ -10146,7 +10140,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
                 $normalized[$key] = $number;
             }
         }
-        foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner', 'sourceSenderName', 'sourceSenderNameValue'] as $key) {
+        foreach (['positionPenaltyAxis', 'mainDirection', 'invalidReason', 'horizontalPositionWinner', 'horizontalPositionMode', 'sourceSenderName', 'sourceSenderNameValue'] as $key) {
             $text = debug_export_scalar_text($candidate[$key] ?? '');
             if ($text !== '') {
                 $normalized[$key] = $text;
@@ -18325,75 +18319,57 @@ function score_title_candidate(
 
         $pageWidth = is_numeric($dimensions['width'] ?? null) ? (float) $dimensions['width'] : null;
         if ($pageWidth !== null && $pageWidth > 0.0) {
-            $centerDistance = max(0.0, min(1.0, abs(((float) $center['x']) - ($pageWidth / 2.0)) / max(1.0, $pageWidth / 2.0)));
-            $result['centerDistance'] = $centerDistance;
+            $heightForHorizontalPosition = title_candidate_text_size_height($candidate, $bbox);
+            $medianHeightForHorizontalPosition = title_page_median_line_height($lineGeometries, $pageNumber);
+            $horizontalDistanceUnit = $medianHeightForHorizontalPosition !== null && $medianHeightForHorizontalPosition > 0.0
+                ? $medianHeightForHorizontalPosition
+                : ($heightForHorizontalPosition !== null && $heightForHorizontalPosition > 0.0 ? $heightForHorizontalPosition : 1.0);
+            $horizontalDistanceUnit = max(1.0, $horizontalDistanceUnit);
+
+            $centerDistancePixels = abs(((float) $center['x']) - ($pageWidth / 2.0));
+            $centerDistanceLineHeights = $centerDistancePixels / $horizontalDistanceUnit;
+            $result['centerDistance'] = $centerDistanceLineHeights;
+            $result['centerDistancePixels'] = $centerDistancePixels;
             $leftMarginX = title_left_margin_x_for_page($layoutAnalysisByPage, $pageNumber);
             $candidateX = (float) ($bbox['x0'] ?? 0.0);
             $leftAlignmentDistance = null;
             $leftAlignmentDistanceLineHeights = null;
             if ($leftMarginX !== null) {
-                $heightForAlignment = title_candidate_text_size_height($candidate, $bbox);
-                $medianHeightForAlignment = title_page_median_line_height($lineGeometries, $pageNumber);
-                $distanceUnit = $medianHeightForAlignment !== null && $medianHeightForAlignment > 0.0
-                    ? $medianHeightForAlignment
-                    : ($heightForAlignment !== null && $heightForAlignment > 0.0 ? $heightForAlignment : 1.0);
                 $leftAlignmentDistance = abs($candidateX - $leftMarginX);
-                $leftAlignmentDistanceLineHeights = $leftAlignmentDistance / max(1.0, $distanceUnit);
+                $leftAlignmentDistanceLineHeights = $leftAlignmentDistance / $horizontalDistanceUnit;
                 $result['leftMarginX'] = $leftMarginX;
                 $result['leftAlignmentDistance'] = $leftAlignmentDistance;
                 $result['leftAlignmentDistanceLineHeights'] = $leftAlignmentDistanceLineHeights;
             }
 
-            $centeredScore = $signalScore('horizontal_position_centered', $centerDistance);
-            $leftAlignedScore = $leftAlignmentDistanceLineHeights !== null
-                ? $signalScore('horizontal_position_left_aligned', $leftAlignmentDistanceLineHeights)
-                : null;
-            $leftAlignedDetail = $leftAlignmentDistanceLineHeights !== null && $leftMarginX !== null && $leftAlignmentDistance !== null
-                ? 'margin_x:' . round($leftMarginX, 3)
-                    . ',candidate_x:' . round($candidateX, 3)
-                    . ',distance:' . round($leftAlignmentDistance, 3)
-                    . ',distance_line_heights:' . round($leftAlignmentDistanceLineHeights, 3)
-                    . ',center_distance:' . round($centerDistance, 3)
-                : '';
-            $horizontalSignals = array_values(array_filter([
-                $centeredScore !== null ? [
-                    'code' => 'horizontal_position_centered',
-                    'score' => $centeredScore,
-                    'detail' => 'winner:centered,center_distance:' . round($centerDistance, 3),
-                    'ignoredDetail' => 'ignored:centered,center_distance:' . round($centerDistance, 3),
-                    'winner' => 'centered',
-                ] : null,
-                $leftAlignedScore !== null ? [
-                    'code' => 'horizontal_position_left_aligned',
-                    'score' => $leftAlignedScore,
-                    'detail' => 'winner:left_aligned,' . $leftAlignedDetail,
-                    'ignoredDetail' => 'ignored:left_aligned,' . $leftAlignedDetail,
-                    'winner' => 'left_aligned',
-                ] : null,
-            ], static fn($entry): bool => is_array($entry)));
-            if ($horizontalSignals !== []) {
-                usort($horizontalSignals, static function (array $left, array $right): int {
-                    $scoreCompare = ((float) ($right['score'] ?? 0.0)) <=> ((float) ($left['score'] ?? 0.0));
-                    if ($scoreCompare !== 0) {
-                        return $scoreCompare;
+            $horizontalMode = 'center';
+            $horizontalDistance = $centerDistanceLineHeights;
+            if ($leftAlignmentDistanceLineHeights !== null && $leftAlignmentDistanceLineHeights <= $centerDistanceLineHeights) {
+                $horizontalMode = 'left';
+                $horizontalDistance = $leftAlignmentDistanceLineHeights;
+            }
+            $result['horizontalPositionMode'] = $horizontalMode;
+            $result['horizontalPositionDistance'] = $horizontalDistance;
+            $horizontalScore = $signalScore('horizontal_position', $horizontalDistance);
+            if ($horizontalScore !== null) {
+                $result['horizontalPositionScore'] = $horizontalScore;
+                if (abs($horizontalScore) >= 0.0001) {
+                    $detail = 'mode:' . $horizontalMode
+                        . ',distance:' . round($horizontalDistance, 3)
+                        . ',left_distance:' . ($leftAlignmentDistanceLineHeights !== null ? round($leftAlignmentDistanceLineHeights, 3) : 'n/a')
+                        . ',center_distance:' . round($centerDistanceLineHeights, 3)
+                        . ',distance_unit:' . round($horizontalDistanceUnit, 3);
+                    if ($leftMarginX !== null && $leftAlignmentDistance !== null) {
+                        $detail .= ',margin_x:' . round($leftMarginX, 3)
+                            . ',candidate_x:' . round($candidateX, 3)
+                            . ',left_distance_px:' . round($leftAlignmentDistance, 3);
                     }
-                    $priority = [
-                        'horizontal_position_centered' => 0,
-                        'horizontal_position_left_aligned' => 1,
-                    ];
-                    return ($priority[(string) ($left['code'] ?? '')] ?? 99) <=> ($priority[(string) ($right['code'] ?? '')] ?? 99);
-                });
-                $winningHorizontalSignal = $horizontalSignals[0];
-                $winningHorizontalScore = (float) ($winningHorizontalSignal['score'] ?? 0.0);
-                $result['horizontalPositionWinner'] = (string) ($winningHorizontalSignal['winner'] ?? '');
-                $result['horizontalPositionScore'] = $winningHorizontalScore;
-                if (abs($winningHorizontalScore) >= 0.0001) {
-                    $score += $winningHorizontalScore;
+                    $score += $horizontalScore;
                     $appendSignal(
-                        $winningHorizontalScore >= 0.0 ? 'positive' : 'negative',
-                        (string) $winningHorizontalSignal['code'],
-                        $winningHorizontalScore,
-                        (string) $winningHorizontalSignal['detail']
+                        $horizontalScore >= 0.0 ? 'positive' : 'negative',
+                        'horizontal_position',
+                        $horizontalScore,
+                        $detail
                     );
                 }
             }
@@ -21714,13 +21690,13 @@ function title_result_matches(array $result, array $lineGeometries = []): array
         if (isset($matchesByKey[$matchKey]) && is_array($candidate['blockJoinMetrics'] ?? null)) {
             $matchesByKey[$matchKey]['blockJoinMetrics'] = $candidate['blockJoinMetrics'];
         }
-        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio'] as $numericKey) {
+        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'centerDistancePixels', 'leftAlignmentDistance', 'leftAlignmentDistanceLineHeights', 'horizontalPositionDistance', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio'] as $numericKey) {
             if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$numericKey] ?? null)) {
                 $matchesByKey[$matchKey][$numericKey] = (float) $candidate[$numericKey];
             }
         }
-        if (isset($matchesByKey[$matchKey]) && is_string($candidate['horizontalPositionWinner'] ?? null)) {
-            $matchesByKey[$matchKey]['horizontalPositionWinner'] = (string) $candidate['horizontalPositionWinner'];
+        if (isset($matchesByKey[$matchKey]) && is_string($candidate['horizontalPositionMode'] ?? null)) {
+            $matchesByKey[$matchKey]['horizontalPositionMode'] = (string) $candidate['horizontalPositionMode'];
         }
         if (isset($matchesByKey[$matchKey]) && is_array($candidate['valueBBoxIndexes'] ?? null)) {
             $matchesByKey[$matchKey]['valueBBoxIndexes'] = array_values(array_filter(
@@ -22792,9 +22768,13 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'fullConfidenceScore' => is_numeric($match['fullConfidenceScore'] ?? null) ? (float) $match['fullConfidenceScore'] : null,
                         'yRatio' => is_numeric($match['yRatio'] ?? null) ? (float) $match['yRatio'] : null,
                         'centerDistance' => is_numeric($match['centerDistance'] ?? null) ? (float) $match['centerDistance'] : null,
+                        'centerDistancePixels' => is_numeric($match['centerDistancePixels'] ?? null) ? (float) $match['centerDistancePixels'] : null,
                         'leftAlignmentRatio' => is_numeric($match['leftAlignmentRatio'] ?? null) ? (float) $match['leftAlignmentRatio'] : null,
+                        'leftAlignmentDistance' => is_numeric($match['leftAlignmentDistance'] ?? null) ? (float) $match['leftAlignmentDistance'] : null,
+                        'leftAlignmentDistanceLineHeights' => is_numeric($match['leftAlignmentDistanceLineHeights'] ?? null) ? (float) $match['leftAlignmentDistanceLineHeights'] : null,
+                        'horizontalPositionDistance' => is_numeric($match['horizontalPositionDistance'] ?? null) ? (float) $match['horizontalPositionDistance'] : null,
                         'horizontalPositionScore' => is_numeric($match['horizontalPositionScore'] ?? null) ? (float) $match['horizontalPositionScore'] : null,
-                        'horizontalPositionWinner' => is_string($match['horizontalPositionWinner'] ?? null) ? trim((string) $match['horizontalPositionWinner']) : null,
+                        'horizontalPositionMode' => is_string($match['horizontalPositionMode'] ?? null) ? trim((string) $match['horizontalPositionMode']) : null,
                         'orientationWidth' => is_numeric($match['orientationWidth'] ?? null) ? (float) $match['orientationWidth'] : null,
                         'orientationHeight' => is_numeric($match['orientationHeight'] ?? null) ? (float) $match['orientationHeight'] : null,
                         'orientationRatio' => is_numeric($match['orientationRatio'] ?? null) ? (float) $match['orientationRatio'] : null,
