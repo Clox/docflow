@@ -308,6 +308,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
               <div id="ocr-search-mode-toggle" class="ocr-search-mode-toggle segmented-control" role="tablist" aria-label="Sökläge">
                 <button type="button" class="segmented-control-button is-active" data-ocr-search-mode="text" aria-pressed="true">Text</button>
                 <button type="button" class="segmented-control-button" data-ocr-search-mode="datafield" aria-pressed="false">Datafält</button>
+                <button type="button" class="segmented-control-button" data-ocr-search-mode="zones" aria-pressed="false">Zoner</button>
               </div>
               <div class="ocr-search-filter">
                 <select id="ocr-search-field-hit-filter" class="matches-filter-select" title="Kandidater som når upp till tröskelvärdet för säkerhet.">
@@ -432,6 +433,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <button class="settings-tab" data-settings-tab="labels" type="button">Etiketter</button>
           <button class="settings-tab" data-settings-tab="value-patterns" type="button">Värdemönster</button>
           <button class="settings-tab" data-settings-tab="data-fields" type="button">Datafält</button>
+          <button class="settings-tab" data-settings-tab="zones" type="button">Zoner</button>
         </div>
         <div id="settings-nav-storage-section" class="settings-nav-section">
           <div class="settings-nav-group-title">Lagring</div>
@@ -453,6 +455,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         <div id="settings-panel-labels" class="settings-panel hidden"></div>
         <div id="settings-panel-value-patterns" class="settings-panel hidden"></div>
         <div id="settings-panel-data-fields" class="settings-panel hidden"></div>
+        <div id="settings-panel-zones" class="settings-panel hidden"></div>
         <div id="settings-panel-archiving-review" class="settings-panel hidden"></div>
         <div id="settings-panel-paths" class="settings-panel hidden"></div>
         <div id="settings-panel-system" class="settings-panel hidden"></div>
@@ -971,18 +974,14 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <div class="archive-subtabs sliding-tabs" role="tablist" aria-label="Datafältsvyer">
       <button id="extraction-fields-tab-custom" class="archive-subtab sliding-tab active" type="button" data-extraction-fields-tab="fields" role="tab" aria-selected="true">Datafält</button>
       <button id="extraction-fields-tab-system" class="archive-subtab sliding-tab" type="button" data-extraction-fields-tab="system" role="tab" aria-selected="false">Systemdatafält</button>
-      <button id="extraction-fields-tab-zones" class="archive-subtab sliding-tab" type="button" data-extraction-fields-tab="zones" role="tab" aria-selected="false">Zoner</button>
       <span class="sliding-tab-indicator" aria-hidden="true"></span>
     </div>
-    <p id="extraction-fields-tab-description">Definiera egna datafält genom att kombinera hur värdet hittas med hur värdet tolkas och normaliseras.</p>
+    <p id="extraction-fields-tab-description">Definiera egna datafält genom att ange hur information ska hittas, tolkas och normaliseras från dokument.</p>
     <div id="extraction-fields-view-custom" class="archive-view">
       <div id="extraction-fields-editor" class="categories-list"></div>
     </div>
     <div id="extraction-fields-view-system" class="archive-view hidden">
       <div id="system-extraction-fields-editor" class="categories-list"></div>
-    </div>
-    <div id="extraction-fields-view-zones" class="archive-view hidden">
-      <div id="extraction-zones-editor" class="categories-list"></div>
     </div>
     <div id="extraction-fields-actions-section" class="categories-actions settings-section-actions">
       <div id="extraction-fields-split-button" class="split-button">
@@ -1023,6 +1022,44 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <div class="panel-actions">
       <button id="extraction-fields-cancel" class="button-danger" type="button">Avbryt</button>
       <button id="extraction-fields-apply" class="button-success" type="button">Spara</button>
+    </div>
+  </template>
+
+  <template id="settings-template-zones">
+    <h3>Zoner</h3>
+    <div class="archive-subtabs sliding-tabs" role="tablist" aria-label="Zonvyer">
+      <button id="zones-tab-custom" class="archive-subtab sliding-tab active" type="button" data-zones-tab="zones" role="tab" aria-selected="true">Zoner</button>
+      <button id="zones-tab-system" class="archive-subtab sliding-tab" type="button" data-zones-tab="system" role="tab" aria-selected="false">Systemzoner</button>
+      <span class="sliding-tab-indicator" aria-hidden="true"></span>
+    </div>
+    <p id="zones-tab-description">Zoner delar upp dokumentet i områden och kan förhindra att information kopplas ihop över dokumentdelar som inte hör samman.</p>
+    <div id="zones-view-custom" class="archive-view">
+      <div id="extraction-zones-editor" class="categories-list"></div>
+    </div>
+    <div id="zones-view-system" class="archive-view hidden">
+      <div id="system-zones-editor" class="categories-list"></div>
+    </div>
+    <div id="zones-actions-section" class="categories-actions settings-section-actions">
+      <button id="zones-add-row" type="button">Lägg till zon</button>
+      <button
+        id="zones-match-pattern-inspector-toggle"
+        type="button"
+        class="match-pattern-inspector-toggle"
+        title="Visa genererat matchningsmönster"
+        aria-label="Visa genererat matchningsmönster"
+        aria-expanded="false"
+        aria-pressed="false"
+      >
+        <span class="match-pattern-inspector-toggle-label">
+          <span class="match-pattern-inspector-toggle-label-dot">.</span>
+          <span class="match-pattern-inspector-toggle-label-star">*</span>
+        </span>
+        <span class="match-pattern-inspector-toggle-icon" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="panel-actions">
+      <button id="zones-cancel" class="button-danger" type="button">Avbryt</button>
+      <button id="zones-apply" class="button-success" type="button">Spara</button>
     </div>
   </template>
 

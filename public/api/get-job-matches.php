@@ -80,12 +80,13 @@ try {
                 is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []
             );
             $positionSettings = matching_position_settings_from_payload($matchingPayload);
-            $liveZoneMatches = detect_configured_zone_matches(
+            $liveZoneMatches = detect_all_zone_matches(
                 split_lines_for_matching($ocrText),
-                is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
+                $rules,
                 $replacementMap,
                 $lineGeometries,
-                is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : []
+                is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : [],
+                $matchingPayload
             );
             $zoneMatches = $liveZoneMatches;
             $matchingLines = split_lines_for_matching($ocrText);

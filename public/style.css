@@ -1868,8 +1868,8 @@ body.is-resizing-sidebar {
 .ocr-search-mode-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
   min-width: 0;
   width: 100%;
   padding-right: 72px;
@@ -1890,8 +1890,9 @@ body.is-resizing-sidebar {
 .ocr-search-filter {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 5px;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
   min-width: 0;
 }
 
@@ -1909,7 +1910,11 @@ body.is-resizing-sidebar {
 }
 
 .ocr-search-filter .matches-filter-select {
-  min-width: 180px;
+  width: 122px;
+  min-width: 0;
+  max-width: 122px;
+  padding-left: 7px;
+  padding-right: 22px;
 }
 
 .segmented-control-button {
@@ -3356,6 +3361,13 @@ body.is-resizing-sidebar {
       rgba(71, 85, 105, 0.12) 8px,
       rgba(71, 85, 105, 0.12) 16px
     );
+}
+
+.ocr-zone-overlay.is-active {
+  border-color: rgba(14, 165, 233, 0.92);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.84) inset,
+    0 0 0 3px rgba(14, 165, 233, 0.24);
 }
 
 
@@ -7726,11 +7738,65 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .extraction-zone-header-fields {
-  grid-template-columns: minmax(120px, max-content) minmax(220px, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
 }
 
 .extraction-zone-header-fields .extraction-field-value-pattern-field {
   grid-column: 1 / -1;
+}
+
+.extraction-zone-header-fields .system-zone-description {
+  grid-column: 1 / -1;
+}
+
+.extraction-zone-enabled {
+  flex: 0 0 auto;
+  width: fit-content;
+  white-space: nowrap;
+}
+
+.system-zone-description {
+  margin: 0;
+  color: #475569;
+  line-height: 1.45;
+}
+
+.system-zone-text-matches {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.system-zone-text-matches-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.system-zone-text-matches-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.system-zone-text-match-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.7fr) minmax(220px, 1.4fr) minmax(80px, 0.35fr) max-content;
+  align-items: end;
+  gap: 8px;
+}
+
+.system-zone-text-match-points {
+  text-align: right;
+}
+
+.system-zone-text-match-add {
+  align-self: flex-start;
 }
 
 .extraction-field-header-value-type-field {
@@ -8002,10 +8068,22 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   z-index: 30;
   width: max-content;
   max-width: min(360px, calc(100vw - 32px));
+  box-sizing: border-box;
   pointer-events: auto;
 }
 
+.floating-input-help-panel.is-fixed-positioned {
+  z-index: 80;
+}
+
+.floating-input-help-panel.is-right-aligned {
+  right: 0;
+  left: auto;
+}
+
 .floating-input-help-panel-content {
+  box-sizing: border-box;
+  max-width: 100%;
   margin-top: 0;
   padding: 8px 10px;
   border: 1px solid #d8e0ea;

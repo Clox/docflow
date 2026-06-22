@@ -24,6 +24,7 @@ if (
     || !array_key_exists('systemFields', $payload)
     || !is_array($payload['systemFields'])
     || (array_key_exists('zones', $payload) && !is_array($payload['zones']))
+    || (array_key_exists('systemZones', $payload) && !is_array($payload['systemZones']))
     || (array_key_exists('valuePatterns', $payload) && !is_array($payload['valuePatterns']))
 ) {
     json_response(['error' => 'Invalid JSON payload'], 400);
@@ -52,6 +53,7 @@ try {
     $nextRules['predefinedFields'] = normalize_predefined_extraction_fields($payload['predefinedFields']);
     $nextRules['systemFields'] = normalize_system_extraction_fields($payload['systemFields']);
     $nextRules['zones'] = normalize_archiving_zones($payload['zones'] ?? []);
+    $nextRules['systemZones'] = normalize_system_zones($payload['systemZones'] ?? []);
     if (array_key_exists('valuePatterns', $payload)) {
         $nextRules['valuePatterns'] = normalize_value_pattern_definitions($payload['valuePatterns']);
     }
@@ -97,6 +99,7 @@ try {
         'predefinedFields' => is_array($activeRules['predefinedFields'] ?? null) ? $activeRules['predefinedFields'] : [],
         'systemFields' => is_array($activeRules['systemFields'] ?? null) ? $activeRules['systemFields'] : [],
         'zones' => is_array($activeRules['zones'] ?? null) ? $activeRules['zones'] : [],
+        'systemZones' => normalize_system_zones($activeRules['systemZones'] ?? []),
         'valuePatterns' => is_array($activeRules['valuePatterns'] ?? null) ? $activeRules['valuePatterns'] : [],
         'archivingRules' => build_archiving_rules_state_payload($config),
         'lastEventId' => latest_job_event_id(),

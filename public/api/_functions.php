@@ -979,6 +979,7 @@ function build_configuration_export_payload(): array
             'predefinedFields' => is_array($activeRules['predefinedFields'] ?? null) ? $activeRules['predefinedFields'] : [],
             'systemFields' => is_array($activeRules['systemFields'] ?? null) ? $activeRules['systemFields'] : [],
             'zones' => is_array($activeRules['zones'] ?? null) ? $activeRules['zones'] : [],
+            'systemZones' => normalize_system_zones($activeRules['systemZones'] ?? []),
         ],
         'matching' => [
             'replacements' => is_array($matching['replacements'] ?? null) ? $matching['replacements'] : [],
@@ -1331,6 +1332,7 @@ function apply_configuration_import_payload(array $payload): array
         'predefinedFields' => is_array($payload['dataFields']['predefinedFields'] ?? null) ? $payload['dataFields']['predefinedFields'] : [],
         'systemFields' => is_array($payload['dataFields']['systemFields'] ?? null) ? $payload['dataFields']['systemFields'] : [],
         'zones' => is_array($payload['dataFields']['zones'] ?? null) ? $payload['dataFields']['zones'] : [],
+        'systemZones' => is_array($payload['dataFields']['systemZones'] ?? null) ? $payload['dataFields']['systemZones'] : [],
     ]);
 
     $normalizedMatching = [
@@ -1497,6 +1499,7 @@ function apply_configuration_import_payload(array $payload): array
             'predefinedFields' => is_array($nextActiveRules['predefinedFields'] ?? null) ? $nextActiveRules['predefinedFields'] : [],
             'systemFields' => is_array($nextActiveRules['systemFields'] ?? null) ? $nextActiveRules['systemFields'] : [],
             'zones' => is_array($nextActiveRules['zones'] ?? null) ? $nextActiveRules['zones'] : [],
+            'systemZones' => normalize_system_zones($nextActiveRules['systemZones'] ?? []),
         ],
         'matching' => $normalizedMatching,
         'ocr' => [
@@ -5292,6 +5295,165 @@ function normalize_archiving_zones(mixed $input): array
     return $zones;
 }
 
+function default_system_zones(): array
+{
+    return [
+        'senderBlock' => [
+            'name' => 'Avsändarblock',
+            'description' => 'Identifierar sammanhängande avsändar- och kontaktblock i dokumentet.',
+            'enabled' => true,
+            'minPoints' => 45,
+            'minLines' => 3,
+            'maxLines' => 8,
+            'maxLineGap' => 1.8,
+            'topPositionPoints' => 16,
+            'leftMarginPoints' => 17,
+            'placeDatePoints' => 20,
+            'minStrongTextMatchPoints' => 25,
+            'textMatches' => [
+                [
+                    'name' => 'E-postadress',
+                    'pattern' => '[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}',
+                    'isRegex' => true,
+                    'points' => 35,
+                    'enabled' => true,
+                ],
+                [
+                    'name' => 'Telefonnummer',
+                    'pattern' => '(?:\+\d(?:[\s().-]*\d){6,}|0\d(?:[\s().-]*\d){5,})',
+                    'isRegex' => true,
+                    'points' => 25,
+                    'enabled' => true,
+                ],
+                ['name' => 'Kommun', 'pattern' => 'kommun', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'Kontor', 'pattern' => 'kontor', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'Avdelning', 'pattern' => 'avdelning', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'Myndighet', 'pattern' => 'myndighet', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'Förvaltning', 'pattern' => 'förvaltning', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'Enhet', 'pattern' => 'enhet', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'Bank', 'pattern' => 'bank', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'AB', 'pattern' => 'ab', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'Region', 'pattern' => 'region', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+            ],
+        ],
+    ];
+}
+
+function normalize_system_zone_float(mixed $value, float $fallback, float $min, float $max): float
+{
+    if (!is_numeric($value)) {
+        return $fallback;
+    }
+    $number = (float) $value;
+    if (!is_finite($number)) {
+        return $fallback;
+    }
+    return max($min, min($max, $number));
+}
+
+function normalize_system_zone_int(mixed $value, int $fallback, int $min, int $max): int
+{
+    if (!is_numeric($value)) {
+        return $fallback;
+    }
+    $number = (int) round((float) $value);
+    return max($min, min($max, $number));
+}
+
+function normalize_sender_block_points(mixed $value, int $fallback): int
+{
+    if (!is_numeric($value)) {
+        return $fallback;
+    }
+    $number = (float) $value;
+    if (!is_finite($number)) {
+        return $fallback;
+    }
+    if ($number > 0.0 && $number <= 1.0) {
+        $number *= 100.0;
+    }
+    return max(0, min(1000, (int) round($number)));
+}
+
+function normalize_sender_block_min_points(array $row, array $defaults): int
+{
+    if (array_key_exists('minPoints', $row)) {
+        return normalize_sender_block_points($row['minPoints'], (int) $defaults['minPoints']);
+    }
+    if (is_numeric($row['minConfidence'] ?? null)) {
+        $confidence = normalize_system_zone_float($row['minConfidence'], 0.0, 0.0, 1.0);
+        $divisor = normalize_system_zone_int($row['confidenceScoreDivisor'] ?? null, 100, 1, 10000);
+        return max(0, min(1000, (int) round($confidence * $divisor)));
+    }
+    return (int) $defaults['minPoints'];
+}
+
+function normalize_sender_block_text_match(mixed $input, int $index = 0): array
+{
+    $row = is_array($input) ? $input : [];
+    $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
+    $pattern = is_string($row['pattern'] ?? null) ? trim((string) $row['pattern']) : '';
+    return [
+        'name' => $name !== '' ? $name : 'Textmatchning',
+        'pattern' => $pattern,
+        'isRegex' => normalize_extraction_field_is_regex($row['isRegex'] ?? false),
+        'points' => normalize_system_zone_int($row['points'] ?? null, 0, 0, 1000),
+        'enabled' => ($row['enabled'] ?? true) !== false,
+        'id' => is_string($row['id'] ?? null) && trim((string) $row['id']) !== ''
+            ? trim((string) $row['id'])
+            : 'sender-block-text-match-' . ($index + 1),
+    ];
+}
+
+function normalize_sender_block_text_matches(mixed $input): array
+{
+    $source = is_array($input) ? $input : default_system_zones()['senderBlock']['textMatches'];
+    $matches = [];
+    foreach ($source as $index => $row) {
+        $match = normalize_sender_block_text_match($row, is_int($index) ? $index : count($matches));
+        if ($match['pattern'] === '' && $match['name'] === 'Textmatchning') {
+            continue;
+        }
+        $matches[] = $match;
+    }
+    return $matches;
+}
+
+function normalize_sender_block_system_zone(mixed $input): array
+{
+    $defaults = default_system_zones()['senderBlock'];
+    $row = is_array($input) ? $input : [];
+    $minLines = normalize_system_zone_int($row['minLines'] ?? null, (int) $defaults['minLines'], 1, 20);
+    $maxLines = normalize_system_zone_int($row['maxLines'] ?? null, (int) $defaults['maxLines'], 1, 30);
+    if ($maxLines < $minLines) {
+        $maxLines = $minLines;
+    }
+    return [
+        'name' => 'Avsändarblock',
+        'description' => is_string($row['description'] ?? null) && trim((string) $row['description']) !== ''
+            ? trim((string) $row['description'])
+            : $defaults['description'],
+        'enabled' => ($row['enabled'] ?? true) !== false,
+        'minPoints' => normalize_sender_block_min_points($row, $defaults),
+        'minLines' => $minLines,
+        'maxLines' => $maxLines,
+        'maxLineGap' => normalize_system_zone_float($row['maxLineGap'] ?? null, (float) $defaults['maxLineGap'], 0.0, 10.0),
+        'topPositionPoints' => normalize_sender_block_points($row['topPositionPoints'] ?? ($row['topPositionWeight'] ?? null), (int) $defaults['topPositionPoints']),
+        'leftMarginPoints' => normalize_sender_block_points($row['leftMarginPoints'] ?? ($row['leftMarginWeight'] ?? null), (int) $defaults['leftMarginPoints']),
+        'placeDatePoints' => normalize_system_zone_int($row['placeDatePoints'] ?? null, (int) $defaults['placeDatePoints'], 0, 1000),
+        'minStrongTextMatchPoints' => normalize_system_zone_int($row['minStrongTextMatchPoints'] ?? null, (int) $defaults['minStrongTextMatchPoints'], 0, 1000),
+        'textMatches' => normalize_sender_block_text_matches($row['textMatches'] ?? null),
+    ];
+}
+
+function normalize_system_zones(mixed $input): array
+{
+    $row = is_array($input) ? $input : [];
+    return [
+        'senderBlock' => normalize_sender_block_system_zone($row['senderBlock'] ?? null),
+    ];
+}
+
 function normalize_value_pattern_source(mixed $value): string
 {
     return is_string($value) && trim(strtolower($value)) === 'reference' ? 'reference' : 'manual';
@@ -5454,6 +5616,7 @@ function normalize_archiving_rules_set(mixed $input): array
         'zones' => normalize_archiving_zones(
             is_array($decoded['zones'] ?? null) ? $decoded['zones'] : []
         ),
+        'systemZones' => normalize_system_zones($decoded['systemZones'] ?? []),
     ];
 }
 
@@ -5468,6 +5631,7 @@ function normalize_archiving_rules_state(mixed $input): array
         'predefinedFields' => predefined_extraction_fields_template(),
         'systemFields' => system_extraction_fields_template(),
         'zones' => [],
+        'systemZones' => default_system_zones(),
         'valuePatterns' => [],
     ]);
     $active = array_key_exists('activeArchivingRules', $decoded)
@@ -9855,6 +10019,54 @@ function debug_export_label_name_map(array $extractedData): array
     return $map;
 }
 
+function debug_export_zone_snapshot(array $zone): array
+{
+    $bbox = normalize_debug_word_bbox($zone['boundingRect'] ?? null);
+    $isSystemZone = ($zone['isSystemZone'] ?? false) === true || (($zone['type'] ?? '') === 'systemzone');
+    $name = is_string($zone['zoneName'] ?? null) && trim((string) $zone['zoneName']) !== ''
+        ? trim((string) $zone['zoneName'])
+        : ($isSystemZone ? 'Systemzon' : 'Zon');
+    return [
+        'key' => implode('|', [
+            $isSystemZone ? 'systemzone' : 'zone',
+            is_string($zone['systemZoneType'] ?? null) ? trim((string) $zone['systemZoneType']) : '',
+            $name,
+            is_numeric($zone['pageNumber'] ?? null) ? (string) ((int) $zone['pageNumber']) : '',
+            normalize_inline_whitespace(is_string($zone['matchedText'] ?? null) ? (string) $zone['matchedText'] : ''),
+        ]),
+        'name' => $name,
+        'type' => $isSystemZone ? 'systemzone' : 'zone',
+        'systemZoneType' => is_string($zone['systemZoneType'] ?? null) ? trim((string) $zone['systemZoneType']) : '',
+        'pageNumber' => is_numeric($zone['pageNumber'] ?? null) ? (int) $zone['pageNumber'] : null,
+        'bbox' => $bbox,
+        'bboxIndexes' => array_values(array_unique(array_map('intval', is_array($zone['bboxIndexes'] ?? null) ? $zone['bboxIndexes'] : []))),
+        'confidence' => is_numeric($zone['confidence'] ?? null) ? round((float) $zone['confidence'], 4) : null,
+        'text' => normalize_inline_whitespace(is_string($zone['matchedText'] ?? null) ? (string) $zone['matchedText'] : ''),
+        'relevantText' => normalize_inline_whitespace(is_string($zone['relevantText'] ?? null) ? (string) $zone['relevantText'] : ''),
+        'signals' => is_array($zone['signals'] ?? null) ? $zone['signals'] : [],
+        'debug' => is_array($zone['debug'] ?? null) ? $zone['debug'] : [],
+    ];
+}
+
+function debug_export_zone_snapshots(array $zoneMatches): array
+{
+    $zones = [];
+    foreach ($zoneMatches as $zone) {
+        if (!is_array($zone)) {
+            continue;
+        }
+        $zones[] = debug_export_zone_snapshot($zone);
+    }
+    usort($zones, static function (array $left, array $right): int {
+        $pageCompare = ((int) ($left['pageNumber'] ?? 0)) <=> ((int) ($right['pageNumber'] ?? 0));
+        if ($pageCompare !== 0) {
+            return $pageCompare;
+        }
+        return strnatcasecmp((string) ($left['key'] ?? ''), (string) ($right['key'] ?? ''));
+    });
+    return $zones;
+}
+
 function debug_export_document_metadata_for_job(string $jobId, string $jobDir): array
 {
     $extractedPath = rtrim($jobDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'extracted.json';
@@ -9888,12 +10100,13 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
             $replacementMap = replacement_map(
                 is_array($matchingPayload['replacements'] ?? null) ? $matchingPayload['replacements'] : []
             );
-            $zoneMatches = detect_configured_zone_matches(
+            $zoneMatches = detect_all_zone_matches(
                 split_lines_for_matching($ocrText),
-                is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
+                $rules,
                 $replacementMap,
                 build_matching_line_geometries_for_job($jobData, $ocrText),
-                is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : []
+                is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : [],
+                $matchingPayload
             );
         }
     } catch (Throwable $e) {
@@ -9970,6 +10183,7 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
         $fields[] = debug_export_data_field_snapshot($normalizedKey, $values, $meta, $dataFieldAcceptanceThreshold, $zoneMatches, $pagesByNumber);
     }
     usort($fields, static fn (array $left, array $right): int => strnatcasecmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? '')));
+    $zones = debug_export_zone_snapshots($zoneMatches);
 
     return [
         'jobId' => $jobId,
@@ -9982,6 +10196,7 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
         'metadata' => $scalarMetadata,
         'labels' => $labels,
         'dataFields' => $fields,
+        'zones' => $zones,
     ];
 }
 
@@ -10350,6 +10565,72 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
     return $diffs;
 }
 
+function debug_export_zone_diff(array $leftZones, array $rightZones): array
+{
+    $normalize = static function (array $zones): array {
+        $map = [];
+        foreach ($zones as $zone) {
+            if (!is_array($zone)) {
+                continue;
+            }
+            $key = is_string($zone['key'] ?? null) && trim((string) $zone['key']) !== ''
+                ? trim((string) $zone['key'])
+                : implode('|', [
+                    (string) ($zone['type'] ?? 'zone'),
+                    (string) ($zone['systemZoneType'] ?? ''),
+                    (string) ($zone['name'] ?? ''),
+                    (string) ($zone['pageNumber'] ?? ''),
+                    normalize_inline_whitespace(is_string($zone['text'] ?? null) ? (string) $zone['text'] : ''),
+                ]);
+            if ($key === '') {
+                continue;
+            }
+            $map[$key] = $zone;
+        }
+        ksort($map, SORT_NATURAL);
+        return $map;
+    };
+    $comparable = static function (?array $zone): array {
+        if ($zone === null) {
+            return [];
+        }
+        return [
+            'name' => (string) ($zone['name'] ?? ''),
+            'type' => (string) ($zone['type'] ?? 'zone'),
+            'systemZoneType' => (string) ($zone['systemZoneType'] ?? ''),
+            'pageNumber' => debug_export_int_or_null($zone['pageNumber'] ?? null),
+            'bboxIndexes' => is_array($zone['bboxIndexes'] ?? null) ? array_values($zone['bboxIndexes']) : [],
+            'confidence' => debug_export_float_or_null($zone['confidence'] ?? null),
+            'text' => normalize_inline_whitespace(is_string($zone['text'] ?? null) ? (string) $zone['text'] : ''),
+            'signals' => is_array($zone['signals'] ?? null) ? $zone['signals'] : [],
+            'debug' => is_array($zone['debug'] ?? null) ? $zone['debug'] : [],
+        ];
+    };
+
+    $left = $normalize($leftZones);
+    $right = $normalize($rightZones);
+    $keys = array_values(array_unique(array_merge(array_keys($left), array_keys($right))));
+    sort($keys, SORT_NATURAL);
+    $diffs = [];
+    foreach ($keys as $key) {
+        $leftZone = $left[$key] ?? null;
+        $rightZone = $right[$key] ?? null;
+        if ($comparable(is_array($leftZone) ? $leftZone : null) === $comparable(is_array($rightZone) ? $rightZone : null)) {
+            continue;
+        }
+        $name = is_array($rightZone) && is_string($rightZone['name'] ?? null) && trim((string) $rightZone['name']) !== ''
+            ? trim((string) $rightZone['name'])
+            : (is_array($leftZone) && is_string($leftZone['name'] ?? null) ? trim((string) $leftZone['name']) : $key);
+        $diffs[] = [
+            'key' => $key,
+            'name' => $name,
+            'leftZone' => is_array($leftZone) ? $leftZone : null,
+            'rightZone' => is_array($rightZone) ? $rightZone : null,
+        ];
+    }
+    return $diffs;
+}
+
 function debug_export_metadata_scalar_diff(array $leftMetadata, array $rightMetadata): array
 {
     $normalize = static function (array $items): array {
@@ -10440,8 +10721,8 @@ function compare_debug_export_document_metadata(string $leftDirectory, string $r
     foreach ($jobIds as $jobId) {
         $left = isset($leftFiles[$jobId]) ? load_json_file($leftFiles[$jobId]) : null;
         $right = isset($rightFiles[$jobId]) ? load_json_file($rightFiles[$jobId]) : null;
-        $left = is_array($left) ? $left : ['jobId' => $jobId, 'labels' => [], 'dataFields' => []];
-        $right = is_array($right) ? $right : ['jobId' => $jobId, 'labels' => [], 'dataFields' => []];
+        $left = is_array($left) ? $left : ['jobId' => $jobId, 'labels' => [], 'dataFields' => [], 'zones' => []];
+        $right = is_array($right) ? $right : ['jobId' => $jobId, 'labels' => [], 'dataFields' => [], 'zones' => []];
         $labelDiff = debug_export_label_diff(
             is_array($left['labels'] ?? null) ? $left['labels'] : [],
             is_array($right['labels'] ?? null) ? $right['labels'] : []
@@ -10449,6 +10730,10 @@ function compare_debug_export_document_metadata(string $leftDirectory, string $r
         $fieldDiff = debug_export_data_field_diff(
             is_array($left['dataFields'] ?? null) ? $left['dataFields'] : [],
             is_array($right['dataFields'] ?? null) ? $right['dataFields'] : []
+        );
+        $zoneDiff = debug_export_zone_diff(
+            is_array($left['zones'] ?? null) ? $left['zones'] : [],
+            is_array($right['zones'] ?? null) ? $right['zones'] : []
         );
         $leftHasScalarMetadata = array_key_exists('metadata', $left) && is_array($left['metadata']);
         $rightHasScalarMetadata = array_key_exists('metadata', $right) && is_array($right['metadata']);
@@ -10467,7 +10752,8 @@ function compare_debug_export_document_metadata(string $leftDirectory, string $r
             $hasOtherDiff = $metadataDiff !== []
                 || ($labelDiff['added'] ?? []) !== []
                 || ($labelDiff['removed'] ?? []) !== []
-                || $fieldDiff !== [];
+                || $fieldDiff !== []
+                || $zoneDiff !== [];
             if (!$alreadyChanged && $hasOtherDiff && ($leftProposedValue !== '' || $rightProposedValue !== '')) {
                 $metadataDiff[] = [
                     'key' => 'proposedFilename',
@@ -10480,7 +10766,7 @@ function compare_debug_export_document_metadata(string $leftDirectory, string $r
                 ];
             }
         }
-        if (($labelDiff['added'] ?? []) === [] && ($labelDiff['removed'] ?? []) === [] && $fieldDiff === [] && $metadataDiff === []) {
+        if (($labelDiff['added'] ?? []) === [] && ($labelDiff['removed'] ?? []) === [] && $fieldDiff === [] && $zoneDiff === [] && $metadataDiff === []) {
             continue;
         }
         $diffs[] = [
@@ -10491,6 +10777,7 @@ function compare_debug_export_document_metadata(string $leftDirectory, string $r
             'metadata' => $metadataDiff,
             'labels' => $labelDiff,
             'dataFields' => $fieldDiff,
+            'zones' => $zoneDiff,
         ];
     }
     return $diffs;
@@ -14750,6 +15037,8 @@ function detect_configured_zone_matches(array $lines, array $zones, array $repla
             }
             $zone = is_array($item['zone'] ?? null) ? $item['zone'] : [];
             $matches[] = [
+                'type' => 'zone',
+                'isSystemZone' => false,
                 'zoneId' => is_string($zone['id'] ?? null) ? trim((string) $zone['id']) : '',
                 'zoneName' => is_string($zone['name'] ?? null) ? trim((string) $zone['name']) : '',
                 'pageNumber' => $pageNumber,
@@ -14761,6 +15050,355 @@ function detect_configured_zone_matches(array $lines, array $zones, array $repla
     }
 
     return $matches;
+}
+
+function system_zone_line_bbox(array $geometry): ?array
+{
+    $bbox = null;
+    foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+        if (!is_array($segment)) {
+            continue;
+        }
+        $segmentBbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+        if ($segmentBbox !== null) {
+            $bbox = union_bboxes($bbox, $segmentBbox);
+        }
+    }
+    return $bbox;
+}
+
+function system_zone_line_bbox_indexes(array $geometry): array
+{
+    $indexes = [];
+    foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+        if (!is_array($segment)) {
+            continue;
+        }
+        if (is_numeric($segment['wordIndex'] ?? null)) {
+            $indexes[] = ((int) $segment['wordIndex']) + 1;
+        }
+    }
+    $indexes = array_values(array_unique($indexes));
+    sort($indexes, SORT_NUMERIC);
+    return $indexes;
+}
+
+function system_zone_line_height(array $line): float
+{
+    $bbox = normalize_debug_word_bbox($line['bbox'] ?? null);
+    if ($bbox === null) {
+        return 1.0;
+    }
+    return max(1.0, (float) $bbox['y1'] - (float) $bbox['y0']);
+}
+
+function system_zone_normal_line_height(array $lines): float
+{
+    $heights = [];
+    foreach ($lines as $line) {
+        if (!is_array($line)) {
+            continue;
+        }
+        $heights[] = system_zone_line_height($line);
+    }
+    sort($heights, SORT_NUMERIC);
+    $count = count($heights);
+    if ($count === 0) {
+        return 1.0;
+    }
+    return max(1.0, (float) $heights[(int) floor(($count - 1) / 2)]);
+}
+
+function system_zone_horizontal_overlap_ratio(array $a, array $b): float
+{
+    $aWidth = max(1.0, (float) ($a['x1'] ?? 0.0) - (float) ($a['x0'] ?? 0.0));
+    $bWidth = max(1.0, (float) ($b['x1'] ?? 0.0) - (float) ($b['x0'] ?? 0.0));
+    $overlap = max(0.0, min((float) ($a['x1'] ?? 0.0), (float) ($b['x1'] ?? 0.0)) - max((float) ($a['x0'] ?? 0.0), (float) ($b['x0'] ?? 0.0)));
+    return max(0.0, min(1.0, $overlap / min($aWidth, $bWidth)));
+}
+
+function system_zone_sender_block_horizontal_fit(array $lineBox, array $referenceBox, float $normalHeight): array
+{
+    $unit = max(1.0, $normalHeight);
+    $lineCenter = (((float) ($lineBox['x0'] ?? 0.0)) + ((float) ($lineBox['x1'] ?? 0.0))) / 2.0;
+    $referenceCenter = (((float) ($referenceBox['x0'] ?? 0.0)) + ((float) ($referenceBox['x1'] ?? 0.0))) / 2.0;
+    $leftDistance = abs((float) ($lineBox['x0'] ?? 0.0) - (float) ($referenceBox['x0'] ?? 0.0)) / $unit;
+    $rightDistance = abs((float) ($lineBox['x1'] ?? 0.0) - (float) ($referenceBox['x1'] ?? 0.0)) / $unit;
+    $centerDistance = abs($lineCenter - $referenceCenter) / $unit;
+    $overlapRatio = system_zone_horizontal_overlap_ratio($lineBox, $referenceBox);
+
+    return [
+        'fits' => $leftDistance <= 3.0
+            || $rightDistance <= 3.0
+            || $centerDistance <= 4.5
+            || $overlapRatio >= 0.35,
+        'leftDistance' => $leftDistance,
+        'rightDistance' => $rightDistance,
+        'centerDistance' => $centerDistance,
+        'overlapRatio' => $overlapRatio,
+    ];
+}
+
+function system_zone_sender_block_text_match_hits(string $text, array $textMatches, array $replacementMap): array
+{
+    $hits = [];
+    foreach ($textMatches as $index => $match) {
+        if (!is_array($match) || ($match['enabled'] ?? true) === false) {
+            continue;
+        }
+        $patternText = is_string($match['pattern'] ?? null) ? trim((string) $match['pattern']) : '';
+        if ($patternText === '') {
+            continue;
+        }
+        $regex = build_data_field_search_term_regex($patternText, $replacementMap, ($match['isRegex'] ?? false) === true);
+        if ($regex === null || @preg_match($regex, $text) !== 1) {
+            continue;
+        }
+        $points = normalize_system_zone_int($match['points'] ?? null, 0, 0, 1000);
+        if ($points <= 0) {
+            continue;
+        }
+        $hits[] = [
+            'code' => 'text_match_' . ($index + 1),
+            'label' => 'Textmatchning: ' . (is_string($match['name'] ?? null) && trim((string) $match['name']) !== '' ? trim((string) $match['name']) : 'Textmatchning'),
+            'value' => $points,
+            'points' => $points,
+            'name' => is_string($match['name'] ?? null) ? trim((string) $match['name']) : '',
+            'pattern' => $patternText,
+            'isRegex' => ($match['isRegex'] ?? false) === true,
+            'generatedPattern' => $regex,
+        ];
+    }
+    return $hits;
+}
+
+function system_zone_sender_block_place_date_hit(string $text, int $points): ?array
+{
+    if ($points <= 0 || preg_match('/\b[A-ZÅÄÖ][a-zåäö]+(?:\s+den)?\s+\d{4}[-‑]\d{2}[-‑]\d{2}\b/u', $text) !== 1) {
+        return null;
+    }
+    return [
+        'code' => 'place_date',
+        'label' => 'Ort och datum',
+        'value' => $points,
+        'points' => $points,
+    ];
+}
+
+function detect_sender_block_system_zones(array $systemZones, array $lineGeometries, array $layoutAnalysisByPage = [], array $replacementMap = []): array
+{
+    $settings = normalize_sender_block_system_zone($systemZones['senderBlock'] ?? null);
+    if (($settings['enabled'] ?? true) === false || $lineGeometries === []) {
+        return [];
+    }
+
+    $linesByPage = [];
+    foreach ($lineGeometries as $lineIndex => $geometry) {
+        if (!is_array($geometry)) {
+            continue;
+        }
+        $text = normalize_inline_whitespace(is_string($geometry['text'] ?? null) ? (string) $geometry['text'] : '');
+        if ($text === '' || str_starts_with($text, '=== PAGE ')) {
+            continue;
+        }
+        $bbox = system_zone_line_bbox($geometry);
+        if ($bbox === null) {
+            continue;
+        }
+        $pageNumber = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
+        $pageHeight = is_numeric($geometry['pageHeight'] ?? null) ? (float) $geometry['pageHeight'] : null;
+        $linesByPage[$pageNumber][] = [
+            'lineIndex' => (int) $lineIndex,
+            'text' => $text,
+            'bbox' => $bbox,
+            'bboxIndexes' => system_zone_line_bbox_indexes($geometry),
+            'pageNumber' => $pageNumber,
+            'pageHeight' => $pageHeight,
+        ];
+    }
+
+    $matches = [];
+    foreach ($linesByPage as $pageNumber => $pageLines) {
+        usort($pageLines, static function (array $left, array $right): int {
+            $leftBox = normalize_debug_word_bbox($left['bbox'] ?? null) ?? [];
+            $rightBox = normalize_debug_word_bbox($right['bbox'] ?? null) ?? [];
+            $dy = ((float) ($leftBox['y0'] ?? 0.0)) <=> ((float) ($rightBox['y0'] ?? 0.0));
+            if ($dy !== 0) {
+                return $dy;
+            }
+            return ((float) ($leftBox['x0'] ?? 0.0)) <=> ((float) ($rightBox['x0'] ?? 0.0));
+        });
+        $normalHeight = system_zone_normal_line_height($pageLines);
+        $minLines = (int) $settings['minLines'];
+        $maxLines = (int) $settings['maxLines'];
+        $best = null;
+        $count = count($pageLines);
+        for ($start = 0; $start < $count; $start++) {
+            $block = [];
+            $bbox = null;
+            $bboxIndexes = [];
+            $horizontalChecks = [];
+            for ($end = $start; $end < min($count, $start + $maxLines); $end++) {
+                $line = $pageLines[$end];
+                if ($block !== []) {
+                    $previousBox = normalize_debug_word_bbox($block[count($block) - 1]['bbox'] ?? null);
+                    $lineBox = normalize_debug_word_bbox($line['bbox'] ?? null);
+                    if ($previousBox === null || $lineBox === null) {
+                        break;
+                    }
+                    $gap = ((float) $lineBox['y0'] - (float) $previousBox['y1']) / $normalHeight;
+                    if ($gap > (float) $settings['maxLineGap']) {
+                        break;
+                    }
+                    $blockBox = normalize_debug_word_bbox($bbox);
+                    $previousFit = system_zone_sender_block_horizontal_fit($lineBox, $previousBox, $normalHeight);
+                    $blockFit = $blockBox !== null
+                        ? system_zone_sender_block_horizontal_fit($lineBox, $blockBox, $normalHeight)
+                        : $previousFit;
+                    $horizontalChecks[] = [
+                        'lineIndex' => (int) ($line['lineIndex'] ?? -1),
+                        'previousFits' => (bool) $previousFit['fits'],
+                        'blockFits' => (bool) $blockFit['fits'],
+                        'previousOverlapRatio' => round((float) $previousFit['overlapRatio'], 4),
+                        'blockOverlapRatio' => round((float) $blockFit['overlapRatio'], 4),
+                        'previousLeftDistance' => round((float) $previousFit['leftDistance'], 4),
+                        'blockLeftDistance' => round((float) $blockFit['leftDistance'], 4),
+                        'previousCenterDistance' => round((float) $previousFit['centerDistance'], 4),
+                        'blockCenterDistance' => round((float) $blockFit['centerDistance'], 4),
+                    ];
+                    if (!$previousFit['fits'] && !$blockFit['fits']) {
+                        break;
+                    }
+                }
+                $block[] = $line;
+                $bbox = union_bboxes($bbox, normalize_debug_word_bbox($line['bbox'] ?? null));
+                $bboxIndexes = array_merge($bboxIndexes, is_array($line['bboxIndexes'] ?? null) ? $line['bboxIndexes'] : []);
+                if (count($block) < $minLines || $bbox === null) {
+                    continue;
+                }
+                $texts = array_map(static fn(array $row): string => (string) ($row['text'] ?? ''), $block);
+                $matchedText = normalize_inline_whitespace(implode(' ', $texts));
+                $pageHeight = is_numeric($line['pageHeight'] ?? null) ? (float) $line['pageHeight'] : null;
+                $topRatio = $pageHeight !== null && $pageHeight > 0.0 ? ((float) $bbox['y0'] / $pageHeight) : 0.0;
+                $topScore = max(0.0, min(1.0, 1.0 - ($topRatio / 0.45)));
+                $marginX = title_left_margin_x_for_page($layoutAnalysisByPage, (int) $pageNumber);
+                $leftDistance = $marginX !== null ? abs((float) $bbox['x0'] - $marginX) / $normalHeight : 1.0;
+                $leftScore = max(0.0, min(1.0, 1.0 - ($leftDistance / 5.0)));
+                $signals = [];
+                $topPoints = (int) round($topScore * (int) $settings['topPositionPoints']);
+                if ($topPoints !== 0) {
+                    $signals[] = [
+                        'code' => 'top_position',
+                        'label' => 'Högt på sidan',
+                        'value' => $topPoints,
+                        'points' => $topPoints,
+                        'detail' => 'score:' . round($topScore, 4),
+                    ];
+                }
+                $leftPoints = (int) round($leftScore * (int) $settings['leftMarginPoints']);
+                if ($leftPoints !== 0) {
+                    $signals[] = [
+                        'code' => 'left_margin',
+                        'label' => 'Nära vänstermarginal',
+                        'value' => $leftPoints,
+                        'points' => $leftPoints,
+                        'detail' => 'score:' . round($leftScore, 4),
+                    ];
+                }
+                $textMatchSignals = system_zone_sender_block_text_match_hits($matchedText, $settings['textMatches'], $replacementMap);
+                array_push($signals, ...$textMatchSignals);
+                $placeDateSignal = system_zone_sender_block_place_date_hit($matchedText, (int) $settings['placeDatePoints']);
+                if ($placeDateSignal !== null) {
+                    $signals[] = $placeDateSignal;
+                }
+                $strongTextMatchPoints = 0;
+                foreach ($textMatchSignals as $signal) {
+                    $points = (int) ($signal['points'] ?? 0);
+                    if ($points >= (int) $settings['minStrongTextMatchPoints']) {
+                        $strongTextMatchPoints += $points;
+                    }
+                }
+                if ((int) $settings['minStrongTextMatchPoints'] > 0 && $strongTextMatchPoints < (int) $settings['minStrongTextMatchPoints']) {
+                    continue;
+                }
+                $totalPoints = array_reduce($signals, static fn(int $sum, array $signal): int => $sum + (int) ($signal['points'] ?? $signal['value'] ?? 0), 0);
+                $accepted = $totalPoints >= (int) $settings['minPoints'];
+                if (!$accepted) {
+                    continue;
+                }
+                $confidence = min(1.0, $totalPoints / max(1, (int) $settings['minPoints']));
+                $candidate = [
+                    'confidence' => round($confidence, 4),
+                    'lineCount' => count($block),
+                    'zone' => [
+                        'type' => 'systemzone',
+                        'isSystemZone' => true,
+                        'systemZoneType' => 'sender_block',
+                        'zoneId' => 'system_sender_block',
+                        'zoneName' => 'Avsändarblock',
+                        'pageNumber' => (int) $pageNumber,
+                        'bboxIndexes' => array_values(array_unique($bboxIndexes)),
+                        'boundingRect' => $bbox,
+                        'matchedText' => $matchedText,
+                        'relevantText' => $matchedText,
+                        'confidence' => round($confidence, 4),
+                        'signals' => $signals,
+                        'debug' => [
+                            'source' => 'sender_block_system_zone',
+                            'basedOn' => 'line_geometries',
+                            'lineIndexes' => array_map(static fn(array $row): int => (int) ($row['lineIndex'] ?? -1), $block),
+                            'lineTexts' => $texts,
+                            'normalLineHeight' => round($normalHeight, 3),
+                            'topRatio' => round($topRatio, 4),
+                            'topScore' => round($topScore, 4),
+                            'topMaxPoints' => (int) $settings['topPositionPoints'],
+                            'marginX' => $marginX !== null ? round($marginX, 3) : null,
+                            'leftDistanceLineHeights' => round($leftDistance, 4),
+                            'leftScore' => round($leftScore, 4),
+                            'leftMaxPoints' => (int) $settings['leftMarginPoints'],
+                            'totalPoints' => $totalPoints,
+                            'minPoints' => (int) $settings['minPoints'],
+                            'accepted' => $accepted,
+                            'minStrongTextMatchPoints' => (int) $settings['minStrongTextMatchPoints'],
+                            'strongTextMatchPoints' => $strongTextMatchPoints,
+                            'horizontalChecks' => $horizontalChecks,
+                        ],
+                    ],
+                ];
+                if ($best === null || $candidate['confidence'] > $best['confidence'] || (
+                    $candidate['confidence'] === $best['confidence'] && $candidate['lineCount'] > $best['lineCount']
+                )) {
+                    $best = $candidate;
+                }
+            }
+        }
+        if (is_array($best['zone'] ?? null)) {
+            $matches[] = $best['zone'];
+        }
+    }
+
+    return $matches;
+}
+
+function detect_all_zone_matches(array $lines, array $rules, array $replacementMap, array $lineGeometries, array $valuePatterns = [], ?array $matchingPayload = null): array
+{
+    $configured = detect_configured_zone_matches(
+        $lines,
+        is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
+        $replacementMap,
+        $lineGeometries,
+        $valuePatterns
+    );
+    $config = load_config();
+    $layoutAnalysisSettings = normalize_layout_analysis_settings($config['layoutAnalysis'] ?? []);
+    $layoutAnalysisByPage = title_layout_analysis_by_page($lineGeometries, $layoutAnalysisSettings);
+    $system = detect_sender_block_system_zones(
+        normalize_system_zones($rules['systemZones'] ?? []),
+        $lineGeometries,
+        $layoutAnalysisByPage,
+        $replacementMap
+    );
+    return array_values(array_merge($configured, $system));
 }
 
 function find_all_label_hits(
@@ -15247,6 +15885,9 @@ function zone_id_for_bbox_center(array $bbox, array $zoneMatches, ?int $pageNumb
         if (!is_array($zone)) {
             continue;
         }
+        if (($zone['isSystemZone'] ?? false) === true || (($zone['type'] ?? '') === 'systemzone')) {
+            continue;
+        }
         if ($pageNumber !== null && is_numeric($zone['pageNumber'] ?? null) && (int) $zone['pageNumber'] !== $pageNumber) {
             continue;
         }
@@ -15280,6 +15921,9 @@ function candidate_crosses_zone_barrier(array $labelBbox, array $candidateBbox, 
     $end = is_array($connector['end'] ?? null) ? $connector['end'] : [];
     foreach ($zoneMatches as $zone) {
         if (!is_array($zone)) {
+            continue;
+        }
+        if (($zone['isSystemZone'] ?? false) === true || (($zone['type'] ?? '') === 'systemzone')) {
             continue;
         }
         if ($pageNumber !== null && is_numeric($zone['pageNumber'] ?? null) && (int) $zone['pageNumber'] !== $pageNumber) {
@@ -23785,12 +24429,13 @@ function calculate_auto_archiving_result_from_text(
     $positionSettings = matching_position_settings_from_payload($resolvedMatchingPayload);
     $lineGeometries = build_matching_line_geometries_for_job($job, $ocrText);
     $valuePatterns = is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : [];
-    $zoneMatches = detect_configured_zone_matches(
+    $zoneMatches = detect_all_zone_matches(
         split_lines_for_matching($ocrText),
-        is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
+        $rules,
         $replacementMap,
         $lineGeometries,
-        $valuePatterns
+        $valuePatterns,
+        $matchingPayload
     );
     $positionSettings['zoneMatches'] = $zoneMatches;
     $systemLabels = is_array($rules['systemLabels'] ?? null) ? $rules['systemLabels'] : [];

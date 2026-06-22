@@ -11,6 +11,7 @@ try {
         'predefinedFields' => is_array($rules['predefinedFields'] ?? null) ? $rules['predefinedFields'] : [],
         'systemFields' => is_array($rules['systemFields'] ?? null) ? $rules['systemFields'] : [],
         'zones' => is_array($rules['zones'] ?? null) ? $rules['zones'] : [],
+        'systemZones' => normalize_system_zones($rules['systemZones'] ?? []),
         'valuePatterns' => is_array($rules['valuePatterns'] ?? null) ? $rules['valuePatterns'] : [],
         'archivingRules' => build_archiving_rules_state_payload($config),
         'lastEventId' => latest_job_event_id(),
@@ -22,6 +23,7 @@ try {
         'predefinedFields' => [],
         'systemFields' => [],
         'zones' => [],
+        'systemZones' => default_system_zones(),
         'valuePatterns' => [],
         'error' => $e->getMessage(),
     ], 500);
