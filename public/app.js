@@ -18705,12 +18705,23 @@ function beginOcrWordTooltipDrag(event) {
   }
 
   event.preventDefault();
+  event.stopPropagation();
   clearOcrWordTooltipHideTimer();
   clearOcrWordTooltipShowTimer();
+
+  const captureEl = event.currentTarget instanceof HTMLElement ? event.currentTarget : ocrWordTooltipEl;
+  if (typeof captureEl.setPointerCapture === 'function') {
+    try {
+      captureEl.setPointerCapture(event.pointerId);
+    } catch (error) {
+      // Pointer capture is best-effort; document/window listeners below still handle the drag.
+    }
+  }
 
   const rect = ocrWordTooltipEl.getBoundingClientRect();
   ocrWordTooltipDragState = {
     pointerId: event.pointerId,
+    captureEl,
     startX: event.clientX,
     startY: event.clientY,
     originLeft: rect.left,
@@ -18741,6 +18752,20 @@ function endOcrWordTooltipDrag(event) {
     return;
   }
 
+  const { captureEl, pointerId } = ocrWordTooltipDragState;
+  if (
+    captureEl instanceof HTMLElement
+    && typeof captureEl.releasePointerCapture === 'function'
+    && typeof captureEl.hasPointerCapture === 'function'
+    && captureEl.hasPointerCapture(pointerId)
+  ) {
+    try {
+      captureEl.releasePointerCapture(pointerId);
+    } catch (error) {
+      // The browser may already have released capture after pointercancel/up.
+    }
+  }
+
   ocrWordTooltipDragState = null;
   if (ocrWordTooltipEl instanceof HTMLElement) {
     ocrWordTooltipEl.classList.remove('is-dragging');
@@ -18759,6 +18784,19 @@ function hideOcrWordTooltip() {
   clearOcrWordTooltipShowTimer();
   ocrWordTooltipAnchorEl = null;
   ocrWordTooltipHoverCount = 0;
+  if (
+    ocrWordTooltipDragState
+    && ocrWordTooltipDragState.captureEl instanceof HTMLElement
+    && typeof ocrWordTooltipDragState.captureEl.releasePointerCapture === 'function'
+    && typeof ocrWordTooltipDragState.captureEl.hasPointerCapture === 'function'
+    && ocrWordTooltipDragState.captureEl.hasPointerCapture(ocrWordTooltipDragState.pointerId)
+  ) {
+    try {
+      ocrWordTooltipDragState.captureEl.releasePointerCapture(ocrWordTooltipDragState.pointerId);
+    } catch (error) {
+      // Ignore stale capture while hiding the tooltip.
+    }
+  }
   ocrWordTooltipDragState = null;
   ocrWordTooltipIsManuallyPositioned = false;
   ocrWordTooltipIsLocked = false;
