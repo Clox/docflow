@@ -63,7 +63,15 @@ $signalCodes = array_map(static fn (array $signal): string => (string) ($signal[
 assert_system_zone_sender_block(!in_array('text_size', $signalCodes, true), 'Sender block must not use a text size signal.');
 assert_system_zone_sender_block(count(array_filter($zone['signals'], static fn (array $signal): bool => str_starts_with((string) ($signal['code'] ?? ''), 'text_match_'))) >= 2, 'The sender block should expose concrete text match signals.');
 assert_system_zone_sender_block((int) ($zone['debug']['totalPoints'] ?? 0) >= 65, 'The sender block should expose total point debug data.');
-assert_system_zone_sender_block((int) ($zone['debug']['strongTextMatchPoints'] ?? 0) >= 25, 'The sender block should expose strong text match debug data.');
+assert_system_zone_sender_block((int) ($zone['debug']['layoutPoints'] ?? 0) >= (int) ($zone['debug']['minLayoutPoints'] ?? 999), 'The sender block should expose passing layout point debug data.');
+assert_system_zone_sender_block((int) ($zone['debug']['contentPoints'] ?? 0) >= (int) ($zone['debug']['minContentPoints'] ?? 999), 'The sender block should expose passing content point debug data.');
+assert_system_zone_sender_block((int) ($zone['debug']['totalPoints'] ?? 0) >= (int) ($zone['debug']['minTotalPoints'] ?? 999), 'The sender block should expose passing total point debug data.');
+assert_system_zone_sender_block(in_array('line_count', $signalCodes, true), 'The sender block should include a line count layout signal.');
+assert_system_zone_sender_block(in_array('block_width', $signalCodes, true), 'The sender block should include a block width layout signal.');
+
+$textMatchSignals = array_values(array_filter($zone['signals'], static fn (array $signal): bool => str_starts_with((string) ($signal['code'] ?? ''), 'text_match_')));
+$phoneSignals = array_values(array_filter($textMatchSignals, static fn (array $signal): bool => (string) ($signal['name'] ?? '') === 'Telefonnummer'));
+assert_system_zone_sender_block(count($phoneSignals) === 1, 'A normal Swedish phone number should match the phone text match.');
 
 $singleOrg = [
     system_zone_test_geometry('KARLSTADS KOMMUN', 0, ['x0' => 100.0, 'y0' => 80.0, 'x1' => 370.0, 'y1' => 108.0]),
@@ -79,5 +87,18 @@ $separateColumns = [
 ];
 $separateColumnZones = detect_sender_block_system_zones(default_system_zones(), $separateColumns, $layout);
 assert_system_zone_sender_block($separateColumnZones === [], 'Organization text and recipient address in separate columns must not become one sender block.');
+
+$identityNumberBlock = [
+    system_zone_test_geometry('KOMMUNLEDNINGSKONTORET', 0, ['x0' => 100.0, 'y0' => 80.0, 'x1' => 420.0, 'y1' => 108.0]),
+    system_zone_test_geometry('Överförmyndaravdelningen', 1, ['x0' => 100.0, 'y0' => 116.0, 'x1' => 460.0, 'y1' => 142.0]),
+    system_zone_test_geometry('Karlstad 2026-03-04', 2, ['x0' => 100.0, 'y0' => 150.0, 'x1' => 370.0, 'y1' => 176.0]),
+    system_zone_test_geometry('Personnummer 19920112-4212', 3, ['x0' => 100.0, 'y0' => 184.0, 'x1' => 510.0, 'y1' => 210.0]),
+    system_zone_test_geometry('Kontonummer 9151 1464218', 4, ['x0' => 100.0, 'y0' => 218.0, 'x1' => 500.0, 'y1' => 244.0]),
+];
+$identityNumberZones = detect_sender_block_system_zones(default_system_zones(), $identityNumberBlock, $layout);
+if ($identityNumberZones !== []) {
+    $identityPhoneSignals = array_filter($identityNumberZones[0]['signals'] ?? [], static fn (array $signal): bool => (string) ($signal['name'] ?? '') === 'Telefonnummer');
+    assert_system_zone_sender_block(count($identityPhoneSignals) === 0, 'Personnummer and account-like numbers must not match the phone text match.');
+}
 
 echo "system_zones_sender_block_test: ok\n";

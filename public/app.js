@@ -8296,6 +8296,11 @@ function formatPrimaryDateSignalLabel(code) {
     distance_to_sender_name: 'Avstånd till avsändarnamn',
     relative_text_size: 'Textstorlek',
     letter_ratio: 'Bokstavsandel',
+    top_position: 'Högt på sidan',
+    left_margin: 'Nära vänstermarginal',
+    line_count: 'Antal rader',
+    block_width: 'Blockbredd',
+    place_date: 'Ort och datum',
   };
   return labels[code] || code;
 }
@@ -8391,6 +8396,42 @@ function formatPrimaryDateSignalDetail(signal) {
   const detail = typeof signal?.detail === 'string' ? signal.detail.trim() : '';
   if (detail === '') {
     return '';
+  }
+  if (signal?.code === 'top_position') {
+    const yRatioMatch = detail.match(/\by_ratio:([-0-9.]+)/u);
+    if (yRatioMatch) {
+      const ratio = Number(yRatioMatch[1]);
+      if (Number.isFinite(ratio)) {
+        return `Y-position ${formatPrimaryDateScoreNumber(ratio * 100)} % ner på sidan`;
+      }
+    }
+  }
+  if (signal?.code === 'left_margin') {
+    const distanceMatch = detail.match(/\bdistance_line_heights:([-0-9.]+)/u);
+    if (distanceMatch) {
+      const distance = Number(distanceMatch[1]);
+      if (Number.isFinite(distance)) {
+        return `${formatPrimaryDateScoreNumber(distance)} radhöjder från vänstermarginalen`;
+      }
+    }
+  }
+  if (signal?.code === 'line_count') {
+    const linesMatch = detail.match(/\blines:(\d+)/u);
+    if (linesMatch) {
+      const lines = Number(linesMatch[1]);
+      if (Number.isFinite(lines)) {
+        return `${lines.toLocaleString('sv-SE')} rader`;
+      }
+    }
+  }
+  if (signal?.code === 'block_width') {
+    const widthRatioMatch = detail.match(/\bwidth_ratio:([-0-9.]+)/u);
+    if (widthRatioMatch) {
+      const ratio = Number(widthRatioMatch[1]);
+      if (Number.isFinite(ratio)) {
+        return `Blockbredd ${formatPrimaryDateScoreNumber(ratio * 100)} % av sidbredden`;
+      }
+    }
   }
   const yRatioMatch = detail.match(/\by_ratio:([0-9.]+)/u);
   if (yRatioMatch) {
@@ -19130,15 +19171,23 @@ function ocrZoneTooltipData(zone, page) {
   const confidence = Number(zone?.confidence);
   const signalRows = Array.isArray(zone?.signals)
     ? zone.signals.map((signal) => {
-        const label = typeof signal?.label === 'string' && signal.label.trim() !== '' ? signal.label.trim() : String(signal?.code || 'Signal');
-        const value = Number(signal?.value);
+        const code = typeof signal?.code === 'string' ? signal.code.trim() : '';
+        const label = typeof signal?.label === 'string' && signal.label.trim() !== ''
+          ? signal.label.trim()
+          : formatPrimaryDateSignalLabel(code || 'Signal');
+        const value = Number(signal?.value ?? signal?.points ?? signal?.score);
         const weight = Number(signal?.weight);
-        const detail = typeof signal?.detail === 'string' && signal.detail.trim() !== ''
-          ? signal.detail.trim()
+        const normalizedSignal = {
+          code,
+          detail: typeof signal?.detail === 'string' ? signal.detail : '',
+        };
+        const formattedDetail = formatPrimaryDateSignalDetail(normalizedSignal);
+        const detail = formattedDetail !== ''
+          ? formattedDetail
           : (Number.isFinite(weight) ? `vikt ${weight.toLocaleString('sv-SE', { maximumFractionDigits: 3 })}` : '');
         return {
           text: label,
-          value: Number.isFinite(value) ? value.toLocaleString('sv-SE', { maximumFractionDigits: 3 }) : '',
+          value: Number.isFinite(value) ? formatPrimaryDateSignalScore(value) : '',
           detail,
           type: value >= 0 ? 'positive' : 'negative',
         };
@@ -27094,17 +27143,42 @@ function defaultSystemZones() {
       name: 'Avsändarblock',
       description: 'Identifierar sammanhängande avsändar- och kontaktblock i dokumentet.',
       enabled: true,
-      minPoints: 45,
+      minTotalPoints: 60,
+      minLayoutPoints: 35,
+      minContentPoints: 25,
       minLines: 3,
-      maxLines: 8,
       maxLineGap: 1.8,
-      topPositionPoints: 16,
-      leftMarginPoints: 17,
+      topPositionCurve: [
+        { x: 0, y: 20 },
+        { x: 0.15, y: 16 },
+        { x: 0.40, y: 0 },
+        { x: 0.80, y: -20 },
+      ],
+      leftMarginCurve: [
+        { x: 0, y: 20 },
+        { x: 1, y: 16 },
+        { x: 3, y: 4 },
+        { x: 6, y: -20 },
+      ],
+      lineCountCurve: [
+        { x: 1, y: -30 },
+        { x: 2, y: -10 },
+        { x: 3, y: 18 },
+        { x: 5, y: 22 },
+        { x: 8, y: 8 },
+        { x: 12, y: -35 },
+      ],
+      blockWidthCurve: [
+        { x: 0.05, y: -10 },
+        { x: 0.18, y: 14 },
+        { x: 0.45, y: 18 },
+        { x: 0.70, y: 0 },
+        { x: 0.95, y: -30 },
+      ],
       placeDatePoints: 20,
-      minStrongTextMatchPoints: 25,
       textMatches: [
         { name: 'E-postadress', pattern: '[A-Z0-9._%+\\-]+@[A-Z0-9.\\-]+\\.[A-Z]{2,}', isRegex: true, points: 35, enabled: true },
-        { name: 'Telefonnummer', pattern: '(?:\\+\\d(?:[\\s().-]*\\d){6,}|0\\d(?:[\\s().-]*\\d){5,})', isRegex: true, points: 25, enabled: true },
+        { name: 'Telefonnummer', pattern: '(?:\\+46[\\s().-]*(?:7[02369]|[1-9]\\d{0,2})(?:[\\s().-]*\\d{2,3}){2,4}|0(?:7[02369]|[1-9]\\d{0,2})[-\\s]+\\d{2,3}(?:[\\s-]*\\d{2}){2,3})', isRegex: true, points: 25, enabled: true },
         { name: 'Kommun', pattern: 'kommun', isRegex: false, points: 22, enabled: true },
         { name: 'Kontor', pattern: 'kontor', isRegex: false, points: 22, enabled: true },
         { name: 'Avdelning', pattern: 'avdelning', isRegex: false, points: 22, enabled: true },
@@ -27149,15 +27223,26 @@ function sanitizeSystemZoneTextMatches(input) {
 }
 
 function sanitizeSystemZoneMinPoints(source, defaults) {
+  if (source && Object.prototype.hasOwnProperty.call(source, 'minTotalPoints')) {
+    return sanitizeSystemZonePoints(source.minTotalPoints, defaults.minTotalPoints);
+  }
   if (source && Object.prototype.hasOwnProperty.call(source, 'minPoints')) {
-    return sanitizeSystemZonePoints(source.minPoints, defaults.minPoints);
+    return sanitizeSystemZonePoints(source.minPoints, defaults.minTotalPoints);
   }
   const minConfidence = Number(source?.minConfidence);
   if (Number.isFinite(minConfidence)) {
     const divisor = Math.max(1, Math.min(10000, Math.round(Number(source?.confidenceScoreDivisor) || 100)));
     return Math.max(0, Math.min(1000, Math.round(Math.max(0, Math.min(1, minConfidence)) * divisor)));
   }
-  return defaults.minPoints;
+  return defaults.minTotalPoints;
+}
+
+function sanitizeSystemZoneScoreCurve(value, fallback) {
+  return sanitizePrimaryDateScoreCurve(value, fallback);
+}
+
+function sanitizeSystemZoneScoreCurveForEditor(value, fallback) {
+  return sanitizePrimaryDateScoreCurveForEditor(value, fallback);
 }
 
 function sanitizeSystemZoneSenderBlock(input = {}) {
@@ -27180,14 +27265,16 @@ function sanitizeSystemZoneSenderBlock(input = {}) {
       ? source.description.trim()
       : defaults.description,
     enabled: source.enabled !== false,
-    minPoints: sanitizeSystemZoneMinPoints(source, defaults),
+    minTotalPoints: sanitizeSystemZoneMinPoints(source, defaults),
+    minLayoutPoints: sanitizeSystemZonePoints(source.minLayoutPoints, defaults.minLayoutPoints),
+    minContentPoints: sanitizeSystemZonePoints(source.minContentPoints, defaults.minContentPoints),
     minLines: integerSetting('minLines', 1, 20),
-    maxLines: integerSetting('maxLines', 1, 30),
     maxLineGap: numberSetting('maxLineGap', 0, 10),
-    topPositionPoints: sanitizeSystemZonePoints(source.topPositionPoints ?? source.topPositionWeight, defaults.topPositionPoints),
-    leftMarginPoints: sanitizeSystemZonePoints(source.leftMarginPoints ?? source.leftMarginWeight, defaults.leftMarginPoints),
+    topPositionCurve: sanitizeSystemZoneScoreCurve(source.topPositionCurve, defaults.topPositionCurve),
+    leftMarginCurve: sanitizeSystemZoneScoreCurve(source.leftMarginCurve, defaults.leftMarginCurve),
+    lineCountCurve: sanitizeSystemZoneScoreCurve(source.lineCountCurve, defaults.lineCountCurve),
+    blockWidthCurve: sanitizeSystemZoneScoreCurve(source.blockWidthCurve, defaults.blockWidthCurve),
     placeDatePoints: sanitizeSystemZonePoints(source.placeDatePoints, defaults.placeDatePoints),
-    minStrongTextMatchPoints: sanitizeSystemZonePoints(source.minStrongTextMatchPoints, defaults.minStrongTextMatchPoints),
     textMatches: sanitizeSystemZoneTextMatches(source.textMatches),
   };
 }
@@ -33028,6 +33115,55 @@ const senderMarkHeuristicCurveCharts = {
   },
 };
 
+const senderBlockCurveCharts = {
+  topPositionCurve: {
+    xAxisTitle: 'Y-position på sidan (%)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Y-position',
+    yPointLabel: 'Poäng',
+    xAsPercent: true,
+    yAsPercent: false,
+    xStep: 0.05,
+    yStep: 1,
+    yMin: -60,
+    yMax: 60,
+  },
+  leftMarginCurve: {
+    xAxisTitle: 'Avstånd från vänstermarginal (radhöjder)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Avstånd i radhöjder',
+    yPointLabel: 'Poäng',
+    yAsPercent: false,
+    xStep: 0.5,
+    yStep: 1,
+    yMin: -60,
+    yMax: 60,
+  },
+  lineCountCurve: {
+    xAxisTitle: 'Antal rader',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Rader',
+    yPointLabel: 'Poäng',
+    yAsPercent: false,
+    xStep: 1,
+    yStep: 1,
+    yMin: -80,
+    yMax: 80,
+  },
+  blockWidthCurve: {
+    xAxisTitle: 'Blockbredd av sidbredd (%)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Bredd',
+    yPointLabel: 'Poäng',
+    xAsPercent: true,
+    yAsPercent: false,
+    xStep: 0.05,
+    yStep: 1,
+    yMin: -80,
+    yMax: 80,
+  },
+};
+
 function createPrimaryDateHeuristicNumberInput({
   heuristics,
   section,
@@ -33064,6 +33200,7 @@ function createPrimaryDateHeuristicCurveEditor({
   curveCharts = primaryDateHeuristicCurveCharts,
   editorClass = 'primary-date-curve-editor',
   closeEventFlag = 'primaryDateCurveClosedOther',
+  onHeuristicsChange = null,
 }) {
   const chart = curveCharts[ruleKey] || {
     xAxisTitle: 'X',
@@ -33123,6 +33260,9 @@ function createPrimaryDateHeuristicCurveEditor({
         const next = sanitizeHeuristics(collection[index][heuristicsName]);
         next[section][ruleKey].curve = sanitizePrimaryDateScoreCurveForEditor(nextCurve, rule.curve);
         collection[index][heuristicsName] = next;
+        if (typeof onHeuristicsChange === 'function') {
+          onHeuristicsChange(next);
+        }
         if (context.preserveFocus !== true) {
           render();
         } else {
@@ -33161,6 +33301,9 @@ function createPrimaryDateHeuristicCurveEditor({
       : Math.max(0, lastPoint.x + 1);
     current.push({ x: nextX, y: lastPoint.y });
     collection[index][heuristicsName][section][ruleKey].curve = sanitizePrimaryDateScoreCurveForEditor(current, rule.curve);
+    if (typeof onHeuristicsChange === 'function') {
+      onHeuristicsChange(collection[index][heuristicsName]);
+    }
     render();
     updateSettingsActionButtons();
   });
@@ -34013,19 +34156,91 @@ function createSystemZoneFloatingField(labelText, inputEl, key) {
   const field = createFloatingField(labelText, inputEl);
   const label = field.querySelector('.floating-input-label');
   const descriptions = {
-    minPoints: 'Lägsta totalpoäng som krävs för att Avsändarblock ska sparas som systemzon.',
+    minTotalPoints: 'Lägsta sammanlagda poäng som krävs för att Avsändarblock ska sparas som systemzon.',
+    minLayoutPoints: 'Lägsta layoutpoäng som krävs. Detta hindrar innehållsträffar från att godkänna block med dålig placering eller form.',
+    minContentPoints: 'Lägsta innehållspoäng som krävs. Detta hindrar bra layout från att godkänna block utan relevant avsändarinnehåll.',
     minLines: 'Minsta antal närliggande OCR-rader som krävs för att ett block ska kunna räknas som Avsändarblock.',
-    maxLines: 'Högsta antal rader som blockbyggaren får slå ihop när den letar efter ett avsändar- eller kontaktblock.',
     maxLineGap: 'Största tillåtna radavstånd mellan två rader i samma block, normaliserat i radhöjder.',
-    topPositionPoints: 'Maxpoäng för att blocket ligger högt på sidan. Faktisk poäng skalas efter hur högt blocket ligger.',
-    leftMarginPoints: 'Maxpoäng för att blocket ligger nära dokumentets beräknade vänstermarginal. Faktisk poäng skalas efter avståndet.',
     placeDatePoints: 'Poäng när blocket innehåller ort och datum, till exempel Karlstad 2026-03-04.',
-    minStrongTextMatchPoints: 'Minimikrav för stark textmatchning. Standardvärdet gör att till exempel e-postadress eller telefonnummer krävs.',
   };
   const description = descriptions[key] || '';
   if (label instanceof HTMLElement && description !== '') {
     const helpDisclosure = createFloatingHelpToggle(description, {
       helpId: `system-zone-sender-block-${key}-help`,
+      buttonLabel: `Visa hjälp för ${labelText}`,
+    });
+    label.appendChild(helpDisclosure.button);
+    helpDisclosure.attachLabel(label);
+    field.appendChild(helpDisclosure.panel);
+  }
+  return field;
+}
+
+function sanitizeSenderBlockCurveHeuristics(input = {}) {
+  const defaults = defaultSystemZones().senderBlock;
+  const source = input && typeof input === 'object' ? input : {};
+  const signals = source.signals && typeof source.signals === 'object' ? source.signals : {};
+  return {
+    signals: {
+      topPositionCurve: {
+        enabled: true,
+        curve: sanitizeSystemZoneScoreCurve(signals.topPositionCurve?.curve, defaults.topPositionCurve),
+        description: 'Layoutpoängkurva för hur högt upp på sidan blocket börjar.',
+      },
+      leftMarginCurve: {
+        enabled: true,
+        curve: sanitizeSystemZoneScoreCurve(signals.leftMarginCurve?.curve, defaults.leftMarginCurve),
+        description: 'Layoutpoängkurva för avstånd från dokumentets beräknade vänstermarginal, mätt i radhöjder.',
+      },
+      lineCountCurve: {
+        enabled: true,
+        curve: sanitizeSystemZoneScoreCurve(signals.lineCountCurve?.curve, defaults.lineCountCurve),
+        description: 'Layoutpoängkurva för blockets verkliga antal rader.',
+      },
+      blockWidthCurve: {
+        enabled: true,
+        curve: sanitizeSystemZoneScoreCurve(signals.blockWidthCurve?.curve, defaults.blockWidthCurve),
+        description: 'Layoutpoängkurva för blockets bredd relativt sidans bredd.',
+      },
+    },
+  };
+}
+
+function createSenderBlockCurveField(labelText, senderBlock, curveKey, enabledCheckbox) {
+  const heuristics = sanitizeSenderBlockCurveHeuristics({
+    signals: {
+      [curveKey]: {
+        curve: senderBlock[curveKey],
+      },
+    },
+  });
+  const collection = [{ senderBlockCurveHeuristics: heuristics }];
+  const editor = createPrimaryDateHeuristicCurveEditor({
+    heuristics,
+    section: 'signals',
+    ruleKey: curveKey,
+    collection,
+    index: 0,
+    heuristicsName: 'senderBlockCurveHeuristics',
+    sanitizeHeuristics: sanitizeSenderBlockCurveHeuristics,
+    curveCharts: senderBlockCurveCharts,
+    editorClass: 'system-zone-curve-editor',
+    closeEventFlag: 'systemZoneCurveClosedOther',
+    onHeuristicsChange: (next) => {
+      systemZonesDraft.senderBlock = sanitizeSystemZoneSenderBlock({
+        ...systemZonesDraft.senderBlock,
+        enabled: enabledCheckbox.checked,
+        [curveKey]: next.signals[curveKey].curve,
+      });
+      updateSettingsActionButtons();
+    },
+  });
+  const field = createFloatingField(labelText, editor);
+  const label = field.querySelector('.floating-input-label');
+  const description = heuristics.signals[curveKey]?.description || '';
+  if (label instanceof HTMLElement && description !== '') {
+    const helpDisclosure = createFloatingHelpToggle(description, {
+      helpId: `system-zone-sender-block-${curveKey}-help`,
       buttonLabel: `Visa hjälp för ${labelText}`,
     });
     label.appendChild(helpDisclosure.button);
@@ -34216,14 +34431,18 @@ function renderSystemZonesEditor() {
   description.textContent = senderBlock.description || 'Identifierar sammanhängande avsändar- och kontaktblock i dokumentet.';
 
   const inputs = [
-    ['Minsta poäng', 'minPoints', createSystemZoneNumberInput(senderBlock.minPoints, { min: 0, max: 1000, step: 1 })],
+    ['Minsta totalpoäng', 'minTotalPoints', createSystemZoneNumberInput(senderBlock.minTotalPoints, { min: 0, max: 1000, step: 1 })],
+    ['Minsta layoutpoäng', 'minLayoutPoints', createSystemZoneNumberInput(senderBlock.minLayoutPoints, { min: 0, max: 1000, step: 1 })],
+    ['Minsta innehållspoäng', 'minContentPoints', createSystemZoneNumberInput(senderBlock.minContentPoints, { min: 0, max: 1000, step: 1 })],
     ['Minsta antal rader', 'minLines', createSystemZoneNumberInput(senderBlock.minLines, { min: 1, max: 20, step: 1 })],
-    ['Max antal rader', 'maxLines', createSystemZoneNumberInput(senderBlock.maxLines, { min: 1, max: 30, step: 1 })],
     ['Max radavstånd (radhöjder)', 'maxLineGap', createSystemZoneNumberInput(senderBlock.maxLineGap, { min: 0, max: 10, step: 0.1 })],
-    ['Poäng - högt på sidan', 'topPositionPoints', createSystemZoneNumberInput(senderBlock.topPositionPoints, { min: 0, max: 1000, step: 1 })],
-    ['Poäng - nära vänstermarginal', 'leftMarginPoints', createSystemZoneNumberInput(senderBlock.leftMarginPoints, { min: 0, max: 1000, step: 1 })],
     ['Poäng - ort och datum', 'placeDatePoints', createSystemZoneNumberInput(senderBlock.placeDatePoints, { min: 0, max: 1000, step: 1 })],
-    ['Minsta starka textmatchningspoäng', 'minStrongTextMatchPoints', createSystemZoneNumberInput(senderBlock.minStrongTextMatchPoints, { min: 0, max: 1000, step: 1 })],
+  ];
+  const curveFields = [
+    ['Poängkurva - högt på sidan', 'topPositionCurve'],
+    ['Poängkurva - nära vänstermarginal', 'leftMarginCurve'],
+    ['Poängkurva - antal rader', 'lineCountCurve'],
+    ['Poängkurva - blockbredd', 'blockWidthCurve'],
   ];
 
   const fields = document.createElement('div');
@@ -34248,6 +34467,9 @@ function renderSystemZonesEditor() {
       renderSystemZonesEditor();
       updateSettingsActionButtons();
     });
+  });
+  curveFields.forEach(([labelText, key]) => {
+    fields.appendChild(createSenderBlockCurveField(labelText, senderBlock, key, enabledCheckbox));
   });
   enabledCheckbox.addEventListener('change', () => {
     systemZonesDraft.senderBlock = sanitizeSystemZoneSenderBlock({

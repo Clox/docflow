@@ -5302,14 +5302,39 @@ function default_system_zones(): array
             'name' => 'Avsändarblock',
             'description' => 'Identifierar sammanhängande avsändar- och kontaktblock i dokumentet.',
             'enabled' => true,
-            'minPoints' => 45,
+            'minTotalPoints' => 60,
+            'minLayoutPoints' => 35,
+            'minContentPoints' => 25,
             'minLines' => 3,
-            'maxLines' => 8,
             'maxLineGap' => 1.8,
-            'topPositionPoints' => 16,
-            'leftMarginPoints' => 17,
+            'topPositionCurve' => [
+                ['x' => 0.00, 'y' => 20],
+                ['x' => 0.15, 'y' => 16],
+                ['x' => 0.40, 'y' => 0],
+                ['x' => 0.80, 'y' => -20],
+            ],
+            'leftMarginCurve' => [
+                ['x' => 0.0, 'y' => 20],
+                ['x' => 1.0, 'y' => 16],
+                ['x' => 3.0, 'y' => 4],
+                ['x' => 6.0, 'y' => -20],
+            ],
+            'lineCountCurve' => [
+                ['x' => 1, 'y' => -30],
+                ['x' => 2, 'y' => -10],
+                ['x' => 3, 'y' => 18],
+                ['x' => 5, 'y' => 22],
+                ['x' => 8, 'y' => 8],
+                ['x' => 12, 'y' => -35],
+            ],
+            'blockWidthCurve' => [
+                ['x' => 0.05, 'y' => -10],
+                ['x' => 0.18, 'y' => 14],
+                ['x' => 0.45, 'y' => 18],
+                ['x' => 0.70, 'y' => 0],
+                ['x' => 0.95, 'y' => -30],
+            ],
             'placeDatePoints' => 20,
-            'minStrongTextMatchPoints' => 25,
             'textMatches' => [
                 [
                     'name' => 'E-postadress',
@@ -5320,7 +5345,7 @@ function default_system_zones(): array
                 ],
                 [
                     'name' => 'Telefonnummer',
-                    'pattern' => '(?:\+\d(?:[\s().-]*\d){6,}|0\d(?:[\s().-]*\d){5,})',
+                    'pattern' => '(?:\+46[\s().-]*(?:7[02369]|[1-9]\d{0,2})(?:[\s().-]*\d{2,3}){2,4}|0(?:7[02369]|[1-9]\d{0,2})[-\s]+\d{2,3}(?:[\s-]*\d{2}){2,3})',
                     'isRegex' => true,
                     'points' => 25,
                     'enabled' => true,
@@ -5377,15 +5402,23 @@ function normalize_sender_block_points(mixed $value, int $fallback): int
 
 function normalize_sender_block_min_points(array $row, array $defaults): int
 {
+    if (array_key_exists('minTotalPoints', $row)) {
+        return normalize_sender_block_points($row['minTotalPoints'], (int) $defaults['minTotalPoints']);
+    }
     if (array_key_exists('minPoints', $row)) {
-        return normalize_sender_block_points($row['minPoints'], (int) $defaults['minPoints']);
+        return normalize_sender_block_points($row['minPoints'], (int) $defaults['minTotalPoints']);
     }
     if (is_numeric($row['minConfidence'] ?? null)) {
         $confidence = normalize_system_zone_float($row['minConfidence'], 0.0, 0.0, 1.0);
         $divisor = normalize_system_zone_int($row['confidenceScoreDivisor'] ?? null, 100, 1, 10000);
         return max(0, min(1000, (int) round($confidence * $divisor)));
     }
-    return (int) $defaults['minPoints'];
+    return (int) $defaults['minTotalPoints'];
+}
+
+function normalize_sender_block_curve(mixed $value, array $fallback): array
+{
+    return normalize_primary_date_score_curve($value, $fallback);
 }
 
 function normalize_sender_block_text_match(mixed $input, int $index = 0): array
@@ -5424,24 +5457,22 @@ function normalize_sender_block_system_zone(mixed $input): array
     $defaults = default_system_zones()['senderBlock'];
     $row = is_array($input) ? $input : [];
     $minLines = normalize_system_zone_int($row['minLines'] ?? null, (int) $defaults['minLines'], 1, 20);
-    $maxLines = normalize_system_zone_int($row['maxLines'] ?? null, (int) $defaults['maxLines'], 1, 30);
-    if ($maxLines < $minLines) {
-        $maxLines = $minLines;
-    }
     return [
         'name' => 'Avsändarblock',
         'description' => is_string($row['description'] ?? null) && trim((string) $row['description']) !== ''
             ? trim((string) $row['description'])
             : $defaults['description'],
         'enabled' => ($row['enabled'] ?? true) !== false,
-        'minPoints' => normalize_sender_block_min_points($row, $defaults),
+        'minTotalPoints' => normalize_sender_block_min_points($row, $defaults),
+        'minLayoutPoints' => normalize_sender_block_points($row['minLayoutPoints'] ?? null, (int) $defaults['minLayoutPoints']),
+        'minContentPoints' => normalize_sender_block_points($row['minContentPoints'] ?? null, (int) $defaults['minContentPoints']),
         'minLines' => $minLines,
-        'maxLines' => $maxLines,
         'maxLineGap' => normalize_system_zone_float($row['maxLineGap'] ?? null, (float) $defaults['maxLineGap'], 0.0, 10.0),
-        'topPositionPoints' => normalize_sender_block_points($row['topPositionPoints'] ?? ($row['topPositionWeight'] ?? null), (int) $defaults['topPositionPoints']),
-        'leftMarginPoints' => normalize_sender_block_points($row['leftMarginPoints'] ?? ($row['leftMarginWeight'] ?? null), (int) $defaults['leftMarginPoints']),
+        'topPositionCurve' => normalize_sender_block_curve($row['topPositionCurve'] ?? null, $defaults['topPositionCurve']),
+        'leftMarginCurve' => normalize_sender_block_curve($row['leftMarginCurve'] ?? null, $defaults['leftMarginCurve']),
+        'lineCountCurve' => normalize_sender_block_curve($row['lineCountCurve'] ?? null, $defaults['lineCountCurve']),
+        'blockWidthCurve' => normalize_sender_block_curve($row['blockWidthCurve'] ?? null, $defaults['blockWidthCurve']),
         'placeDatePoints' => normalize_system_zone_int($row['placeDatePoints'] ?? null, (int) $defaults['placeDatePoints'], 0, 1000),
-        'minStrongTextMatchPoints' => normalize_system_zone_int($row['minStrongTextMatchPoints'] ?? null, (int) $defaults['minStrongTextMatchPoints'], 0, 1000),
         'textMatches' => normalize_sender_block_text_matches($row['textMatches'] ?? null),
     ];
 }
@@ -15206,6 +15237,7 @@ function detect_sender_block_system_zones(array $systemZones, array $lineGeometr
             continue;
         }
         $pageNumber = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
+        $pageWidth = is_numeric($geometry['pageWidth'] ?? null) ? (float) $geometry['pageWidth'] : null;
         $pageHeight = is_numeric($geometry['pageHeight'] ?? null) ? (float) $geometry['pageHeight'] : null;
         $linesByPage[$pageNumber][] = [
             'lineIndex' => (int) $lineIndex,
@@ -15213,6 +15245,7 @@ function detect_sender_block_system_zones(array $systemZones, array $lineGeometr
             'bbox' => $bbox,
             'bboxIndexes' => system_zone_line_bbox_indexes($geometry),
             'pageNumber' => $pageNumber,
+            'pageWidth' => $pageWidth,
             'pageHeight' => $pageHeight,
         ];
     }
@@ -15230,7 +15263,6 @@ function detect_sender_block_system_zones(array $systemZones, array $lineGeometr
         });
         $normalHeight = system_zone_normal_line_height($pageLines);
         $minLines = (int) $settings['minLines'];
-        $maxLines = (int) $settings['maxLines'];
         $best = null;
         $count = count($pageLines);
         for ($start = 0; $start < $count; $start++) {
@@ -15238,7 +15270,7 @@ function detect_sender_block_system_zones(array $systemZones, array $lineGeometr
             $bbox = null;
             $bboxIndexes = [];
             $horizontalChecks = [];
-            for ($end = $start; $end < min($count, $start + $maxLines); $end++) {
+            for ($end = $start; $end < $count; $end++) {
                 $line = $pageLines[$end];
                 if ($block !== []) {
                     $previousBox = normalize_debug_word_bbox($block[count($block) - 1]['bbox'] ?? null);
@@ -15278,58 +15310,96 @@ function detect_sender_block_system_zones(array $systemZones, array $lineGeometr
                 }
                 $texts = array_map(static fn(array $row): string => (string) ($row['text'] ?? ''), $block);
                 $matchedText = normalize_inline_whitespace(implode(' ', $texts));
+                $lineCount = count($block);
+                $pageWidth = is_numeric($line['pageWidth'] ?? null) ? (float) $line['pageWidth'] : null;
                 $pageHeight = is_numeric($line['pageHeight'] ?? null) ? (float) $line['pageHeight'] : null;
                 $topRatio = $pageHeight !== null && $pageHeight > 0.0 ? ((float) $bbox['y0'] / $pageHeight) : 0.0;
-                $topScore = max(0.0, min(1.0, 1.0 - ($topRatio / 0.45)));
+                $blockWidth = max(0.0, (float) $bbox['x1'] - (float) $bbox['x0']);
+                $blockWidthRatio = $pageWidth !== null && $pageWidth > 0.0 ? $blockWidth / $pageWidth : 1.0;
                 $marginX = title_left_margin_x_for_page($layoutAnalysisByPage, (int) $pageNumber);
                 $leftDistance = $marginX !== null ? abs((float) $bbox['x0'] - $marginX) / $normalHeight : 1.0;
-                $leftScore = max(0.0, min(1.0, 1.0 - ($leftDistance / 5.0)));
                 $signals = [];
-                $topPoints = (int) round($topScore * (int) $settings['topPositionPoints']);
+                $topPoints = (int) round(interpolate_primary_date_score_curve($settings['topPositionCurve'], $topRatio));
                 if ($topPoints !== 0) {
                     $signals[] = [
                         'code' => 'top_position',
                         'label' => 'Högt på sidan',
                         'value' => $topPoints,
                         'points' => $topPoints,
-                        'detail' => 'score:' . round($topScore, 4),
+                        'group' => 'layout',
+                        'detail' => 'y_ratio:' . round($topRatio, 4),
                     ];
                 }
-                $leftPoints = (int) round($leftScore * (int) $settings['leftMarginPoints']);
+                $leftPoints = (int) round(interpolate_primary_date_score_curve($settings['leftMarginCurve'], $leftDistance));
                 if ($leftPoints !== 0) {
                     $signals[] = [
                         'code' => 'left_margin',
                         'label' => 'Nära vänstermarginal',
                         'value' => $leftPoints,
                         'points' => $leftPoints,
-                        'detail' => 'score:' . round($leftScore, 4),
+                        'group' => 'layout',
+                        'detail' => 'distance_line_heights:' . round($leftDistance, 4),
+                    ];
+                }
+                $lineCountPoints = (int) round(interpolate_primary_date_score_curve($settings['lineCountCurve'], (float) $lineCount));
+                if ($lineCountPoints !== 0) {
+                    $signals[] = [
+                        'code' => 'line_count',
+                        'label' => 'Antal rader',
+                        'value' => $lineCountPoints,
+                        'points' => $lineCountPoints,
+                        'group' => 'layout',
+                        'detail' => 'lines:' . $lineCount,
+                    ];
+                }
+                $blockWidthPoints = (int) round(interpolate_primary_date_score_curve($settings['blockWidthCurve'], $blockWidthRatio));
+                if ($blockWidthPoints !== 0) {
+                    $signals[] = [
+                        'code' => 'block_width',
+                        'label' => 'Blockbredd',
+                        'value' => $blockWidthPoints,
+                        'points' => $blockWidthPoints,
+                        'group' => 'layout',
+                        'detail' => 'width_ratio:' . round($blockWidthRatio, 4),
                     ];
                 }
                 $textMatchSignals = system_zone_sender_block_text_match_hits($matchedText, $settings['textMatches'], $replacementMap);
+                $textMatchSignals = array_map(static function (array $signal): array {
+                    $signal['group'] = 'content';
+                    return $signal;
+                }, $textMatchSignals);
                 array_push($signals, ...$textMatchSignals);
                 $placeDateSignal = system_zone_sender_block_place_date_hit($matchedText, (int) $settings['placeDatePoints']);
                 if ($placeDateSignal !== null) {
+                    $placeDateSignal['group'] = 'content';
                     $signals[] = $placeDateSignal;
                 }
-                $strongTextMatchPoints = 0;
-                foreach ($textMatchSignals as $signal) {
-                    $points = (int) ($signal['points'] ?? 0);
-                    if ($points >= (int) $settings['minStrongTextMatchPoints']) {
-                        $strongTextMatchPoints += $points;
-                    }
+                $layoutPoints = array_reduce($signals, static fn(int $sum, array $signal): int => $sum + ((string) ($signal['group'] ?? '') === 'layout' ? (int) ($signal['points'] ?? $signal['value'] ?? 0) : 0), 0);
+                $contentPoints = array_reduce($signals, static fn(int $sum, array $signal): int => $sum + ((string) ($signal['group'] ?? '') === 'content' ? (int) ($signal['points'] ?? $signal['value'] ?? 0) : 0), 0);
+                $totalPoints = $layoutPoints + $contentPoints;
+                $rejectionReasons = [];
+                if ($totalPoints < (int) $settings['minTotalPoints']) {
+                    $rejectionReasons[] = 'totalpoäng under tröskel';
                 }
-                if ((int) $settings['minStrongTextMatchPoints'] > 0 && $strongTextMatchPoints < (int) $settings['minStrongTextMatchPoints']) {
-                    continue;
+                if ($layoutPoints < (int) $settings['minLayoutPoints']) {
+                    $rejectionReasons[] = 'layoutpoäng under tröskel';
                 }
-                $totalPoints = array_reduce($signals, static fn(int $sum, array $signal): int => $sum + (int) ($signal['points'] ?? $signal['value'] ?? 0), 0);
-                $accepted = $totalPoints >= (int) $settings['minPoints'];
+                if ($contentPoints < (int) $settings['minContentPoints']) {
+                    $rejectionReasons[] = 'innehållspoäng under tröskel';
+                }
+                $accepted = $rejectionReasons === [];
                 if (!$accepted) {
                     continue;
                 }
-                $confidence = min(1.0, $totalPoints / max(1, (int) $settings['minPoints']));
+                $confidence = min(
+                    1.0,
+                    $totalPoints / max(1, (int) $settings['minTotalPoints']),
+                    $layoutPoints / max(1, (int) $settings['minLayoutPoints']),
+                    $contentPoints / max(1, (int) $settings['minContentPoints'])
+                );
                 $candidate = [
                     'confidence' => round($confidence, 4),
-                    'lineCount' => count($block),
+                    'lineCount' => $lineCount,
                     'zone' => [
                         'type' => 'systemzone',
                         'isSystemZone' => true,
@@ -15350,17 +15420,26 @@ function detect_sender_block_system_zones(array $systemZones, array $lineGeometr
                             'lineTexts' => $texts,
                             'normalLineHeight' => round($normalHeight, 3),
                             'topRatio' => round($topRatio, 4),
-                            'topScore' => round($topScore, 4),
-                            'topMaxPoints' => (int) $settings['topPositionPoints'],
                             'marginX' => $marginX !== null ? round($marginX, 3) : null,
                             'leftDistanceLineHeights' => round($leftDistance, 4),
-                            'leftScore' => round($leftScore, 4),
-                            'leftMaxPoints' => (int) $settings['leftMarginPoints'],
+                            'blockWidthRatio' => round($blockWidthRatio, 4),
+                            'lineCount' => $lineCount,
+                            'layoutPoints' => $layoutPoints,
+                            'contentPoints' => $contentPoints,
                             'totalPoints' => $totalPoints,
-                            'minPoints' => (int) $settings['minPoints'],
+                            'minLayoutPoints' => (int) $settings['minLayoutPoints'],
+                            'minContentPoints' => (int) $settings['minContentPoints'],
+                            'minTotalPoints' => (int) $settings['minTotalPoints'],
                             'accepted' => $accepted,
-                            'minStrongTextMatchPoints' => (int) $settings['minStrongTextMatchPoints'],
-                            'strongTextMatchPoints' => $strongTextMatchPoints,
+                            'rejectionReasons' => $rejectionReasons,
+                            'layoutSignalCodes' => array_values(array_map(
+                                static fn(array $signal): string => (string) ($signal['code'] ?? ''),
+                                array_filter($signals, static fn(array $signal): bool => (string) ($signal['group'] ?? '') === 'layout')
+                            )),
+                            'contentSignalCodes' => array_values(array_map(
+                                static fn(array $signal): string => (string) ($signal['code'] ?? ''),
+                                array_filter($signals, static fn(array $signal): bool => (string) ($signal['group'] ?? '') === 'content')
+                            )),
                             'horizontalChecks' => $horizontalChecks,
                         ],
                     ],
