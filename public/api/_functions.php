@@ -28679,6 +28679,15 @@ function build_job_state_entry(
         $liveSenderId = normalize_auto_archiving_result_sender_value($liveAutoResult['senderId'] ?? null);
         if ($senderSelectionId > 0 && $senderSelectionId === $storedSenderId) {
             $selectedSenderId = $liveSenderId;
+            $liveSenderUnitId = isset($liveAutoResult['senderUnitId']) ? (int) $liveAutoResult['senderUnitId'] : 0;
+            if (
+                !$hasSelectedSenderUnitOverride
+                && $selectedSenderId !== null
+                && $liveSenderUnitId > 0
+                && sender_unit_belongs_to_sender(load_senders(), $selectedSenderId, $liveSenderUnitId)
+            ) {
+                $selectedSenderUnitId = $liveSenderUnitId;
+            }
             $senderSummary = build_job_sender_summary($senderSummaryExtracted, $jobDir, null, $selectedSenderId);
         }
     }
