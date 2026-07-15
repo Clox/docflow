@@ -18174,8 +18174,11 @@ function renderOcrWordTooltipMeta(section, tooltipData) {
     : null;
   const scoreSummary = Array.isArray(tooltipData?.scoreSummary) ? tooltipData.scoreSummary : [];
   const scoreGroups = Array.isArray(tooltipData?.scoreGroups) ? tooltipData.scoreGroups : [];
+  const scoreGroupsBeforeFinalMetaRow = Array.isArray(tooltipData?.scoreGroupsBeforeFinalMetaRow)
+    ? tooltipData.scoreGroupsBeforeFinalMetaRow
+    : [];
 
-  if (metaText === '' && metaRows.length === 0 && scoreSummary.length === 0 && scoreGroups.length === 0 && !metaDiagram) {
+  if (metaText === '' && metaRows.length === 0 && scoreSummary.length === 0 && scoreGroups.length === 0 && scoreGroupsBeforeFinalMetaRow.length === 0 && !metaDiagram) {
     metaEl.hidden = true;
     return;
   }
@@ -18210,7 +18213,7 @@ function renderOcrWordTooltipMeta(section, tooltipData) {
     }
   }
 
-  scoreGroups.forEach((group) => {
+  const appendScoreGroups = (groups) => groups.forEach((group) => {
     if (!group || typeof group !== 'object' || !Array.isArray(group.rows) || group.rows.length === 0) {
       return;
     }
@@ -18258,9 +18261,13 @@ function renderOcrWordTooltipMeta(section, tooltipData) {
       metaEl.appendChild(groupEl);
     }
   });
+  appendScoreGroups(scoreGroups);
 
   const appendMetaRows = () => {
-    metaRows.forEach((row) => {
+    metaRows.forEach((row, rowIndex) => {
+      if (rowIndex === metaRows.length - 1 && scoreGroupsBeforeFinalMetaRow.length > 0) {
+        appendScoreGroups(scoreGroupsBeforeFinalMetaRow);
+      }
       if (row && row.raw === true) {
         const rawEl = document.createElement('div');
         rawEl.className = 'ocr-word-tooltip-meta-text';
@@ -19255,15 +19262,15 @@ function ocrZoneTooltipData(zone, page) {
       ? zone.matchedText.trim()
       : (typeof zone?.relevantText === 'string' ? zone.relevantText.trim() : ''),
     metaRows: [
-      ...(Number.isFinite(confidence) ? [{ label: 'Confidence', value: `${(confidence * 100).toLocaleString('sv-SE', { maximumFractionDigits: 1 })} %` }] : []),
       { label: 'BBoxar', value: bboxIndexes.length > 0 ? bboxIndexes.map((index) => `#${index}`).join(', ') : '-' },
+      ...(Number.isFinite(confidence) ? [{ label: 'Säkerhet', value: formatOcrPercent(confidence) }] : []),
     ],
     metaDiagram: {
       title: 'Koordinater',
       startLabel: `X${x0},Y${y0}`,
       endLabel: `X${x1},Y${y1}`,
     },
-    scoreGroups: [
+    scoreGroupsBeforeFinalMetaRow: [
       ...(signalRows.length > 0 ? [{ title: 'Signaler', rows: signalRows }] : []),
     ],
     copyText: `${JSON.stringify(zone, null, 2)}\n`,
