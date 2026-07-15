@@ -39,6 +39,7 @@ const ocrSearchNextEl = document.getElementById('ocr-search-next');
 const ocrSearchStatusEl = document.getElementById('ocr-search-status');
 const ocrSearchConfidenceRowEl = document.getElementById('ocr-search-confidence-row');
 const ocrSearchConfidenceEl = document.getElementById('ocr-search-confidence');
+const ocrSearchBodyTextBasisEl = document.getElementById('ocr-search-body-text-basis');
 const ocrSearchFieldHitFilterEl = document.getElementById('ocr-search-field-hit-filter');
 const ocrMenuWrapEl = document.getElementById('ocr-menu-wrap');
 const ocrMenuButtonEl = document.getElementById('ocr-menu-button');
@@ -586,6 +587,7 @@ let ocrDataFieldSelection = {
   fieldKey: '',
   matchIndex: -1,
 };
+let ocrShowBodyTextBasis = false;
 let ocrZoneSelectionIndex = -1;
 let ocrShowPageImage = false;
 let ocrPageImageBlend = 0.5;
@@ -4229,6 +4231,14 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 horizontalPositionDistance: Number.isFinite(Number(match.horizontalPositionDistance)) ? Number(match.horizontalPositionDistance) : null,
                 horizontalPositionScore: Number.isFinite(Number(match.horizontalPositionScore)) ? Number(match.horizontalPositionScore) : null,
                 horizontalPositionMode: typeof match.horizontalPositionMode === 'string' ? match.horizontalPositionMode : '',
+                bodyTextBeforeWeightedAmount: Number.isFinite(Number(match.bodyTextBeforeWeightedAmount)) ? Number(match.bodyTextBeforeWeightedAmount) : null,
+                bodyTextBeforeCurrentPageAmount: Number.isFinite(Number(match.bodyTextBeforeCurrentPageAmount)) ? Number(match.bodyTextBeforeCurrentPageAmount) : null,
+                bodyTextBeforePreviousPagesAmount: Number.isFinite(Number(match.bodyTextBeforePreviousPagesAmount)) ? Number(match.bodyTextBeforePreviousPagesAmount) : null,
+                bodyTextBeforeContributingLines: Number.isInteger(match.bodyTextBeforeContributingLines) ? match.bodyTextBeforeContributingLines : null,
+                bodyTextBeforeReducedLines: Number.isInteger(match.bodyTextBeforeReducedLines) ? match.bodyTextBeforeReducedLines : null,
+                bodyTextBeforeCandidate: match.bodyTextBeforeCandidate && typeof match.bodyTextBeforeCandidate === 'object'
+                  ? match.bodyTextBeforeCandidate
+                  : null,
                 signals: normalizePrimaryDateSignals(match.signals),
                 valueBbox: match.valueBbox && typeof match.valueBbox === 'object' ? match.valueBbox : null,
                 valueBBoxIndexes: Array.isArray(match.valueBBoxIndexes)
@@ -8283,6 +8293,7 @@ function formatPrimaryDateSignalLabel(code) {
     page_in_document: 'Sida i dokument',
     text_density: 'Texttäthet',
     running_text: 'Texttäthet',
+    body_text_before_candidate: 'Brödtext före kandidaten',
     vertical_position: 'Högt på sidan',
     horizontal_position: 'Horisontell position',
     horizontal_position_centered: 'Horisontell position: centrerad',
@@ -8396,6 +8407,15 @@ function formatPrimaryDateSignalDetail(signal) {
   const detail = typeof signal?.detail === 'string' ? signal.detail.trim() : '';
   if (detail === '') {
     return '';
+  }
+  if (signal?.code === 'body_text_before_candidate') {
+    const amountMatch = detail.match(/\bweighted_characters:([-0-9.]+)/u);
+    if (amountMatch) {
+      const amount = Number(amountMatch[1]);
+      if (Number.isFinite(amount)) {
+        return `${formatPrimaryDateScoreNumber(amount)} viktade tecken`;
+      }
+    }
   }
   if (signal?.code === 'top_position') {
     const yRatioMatch = detail.match(/\by_ratio:([-0-9.]+)/u);
@@ -8706,6 +8726,19 @@ function snapshotCompareCandidateDetailsText(candidate) {
     ? `${formatPrimaryDateScoreNumber(candidate.score)} / ${formatPrimaryDateScoreNumber(candidate.fullConfidenceScore)}`
     : formatPrimaryDateScoreNumber(candidate.score));
   appendPrimaryDateSignalTextLines(lines, 'Poängsignaler', candidate.signals);
+  const bodyTextBefore = candidate.bodyTextBeforeCandidate && typeof candidate.bodyTextBeforeCandidate === 'object'
+    ? candidate.bodyTextBeforeCandidate
+    : null;
+  if (bodyTextBefore) {
+    add('Viktad textmängd före kandidaten', formatPrimaryDateScoreNumber(bodyTextBefore.weightedTextAmount));
+    add('Aktuell sida', formatPrimaryDateScoreNumber(bodyTextBefore.currentPageWeightedTextAmount));
+    add('Tidigare sidor', formatPrimaryDateScoreNumber(bodyTextBefore.previousPagesWeightedTextAmount));
+    add('Bidragande rader', bodyTextBefore.contributingLineCount);
+    add('Reducerade rader', bodyTextBefore.reducedLineCount);
+    Object.entries(bodyTextBefore.reducedByStructureTypes || {}).forEach(([type, count]) => {
+      add(`Reducerade av ${type}`, count);
+    });
+  }
   add('Position på sidan', Number.isFinite(Number(candidate.yRatio)) ? `${formatPrimaryDateScoreNumber(Number(candidate.yRatio) * 100)} % ner på sidan` : '');
   add('Ogiltighetsorsak', candidate.invalidReason);
   add('Källa', candidate.source);
@@ -17659,6 +17692,11 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     'relativeTextSize',
     'uppercaseRatio',
     'textDensityRatio',
+    'bodyTextBeforeWeightedAmount',
+    'bodyTextBeforeCurrentPageAmount',
+    'bodyTextBeforePreviousPagesAmount',
+    'bodyTextBeforeContributingLines',
+    'bodyTextBeforeReducedLines',
     'wordCount',
   ].forEach((key) => {
     const numericValue = Number(row?.[key]);
@@ -17693,6 +17731,9 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   });
   if (Array.isArray(row?.signals) && row.signals.length > 0) {
     copyPayload.signals = normalizePrimaryDateSignals(row.signals);
+  }
+  if (row?.bodyTextBeforeCandidate && typeof row.bodyTextBeforeCandidate === 'object') {
+    copyPayload.bodyTextBeforeCandidate = row.bodyTextBeforeCandidate;
   }
 
   const bboxCopyPayload = {
@@ -17793,6 +17834,19 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
       });
     }
     metaRows.unshift(...blockMetaRows);
+  }
+  if (row?.bodyTextBeforeCandidate && typeof row.bodyTextBeforeCandidate === 'object') {
+    const body = row.bodyTextBeforeCandidate;
+    metaRows.unshift(
+      { label: 'Viktad textmängd', value: `${formatPrimaryDateScoreNumber(body.weightedTextAmount)} tecken` },
+      { label: 'Aktuell sida', value: formatPrimaryDateScoreNumber(body.currentPageWeightedTextAmount) },
+      { label: 'Tidigare sidor', value: formatPrimaryDateScoreNumber(body.previousPagesWeightedTextAmount) },
+      { label: 'Bidragande rader', value: String(body.contributingLineCount ?? 0) },
+      { label: 'Reducerade rader', value: String(body.reducedLineCount ?? 0) },
+    );
+    Object.entries(body.reducedByStructureTypes || {}).forEach(([type, count]) => {
+      metaRows.unshift({ label: `Reducerade av ${type}`, value: String(count) });
+    });
   }
 
   const securityRowIndex = metaRows.findIndex((row) => row && row.raw !== true && typeof row.label === 'string' && row.label.trim() === 'Säkerhet');
@@ -19030,7 +19084,9 @@ function bindOcrWordTooltip(wordEl, word, page = null, matchLookup = null, pageM
     return;
   }
   const tooltipWord = word;
-  wordEl.removeAttribute('title');
+  if (!wordEl.classList.contains('is-body-text-basis')) {
+    wordEl.removeAttribute('title');
+  }
   wordEl.addEventListener('mouseenter', () => {
     const detailRows = getOcrWordTooltipDetailRows(tooltipWord, page, matchLookup);
     scheduleOcrWordTooltipShow(wordEl, tooltipWord, detailRows, matchLookup);
@@ -19314,6 +19370,27 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
     && Array.isArray(page.layoutAnalysis.leftMargin.basisWordIndexes)
     ? new Set(page.layoutAnalysis.leftMargin.basisWordIndexes)
     : new Set();
+  const bodyTextBasisByWordIndex = new Map();
+  const activeBodyTextRow = ocrShowBodyTextBasis && ocrDataFieldCurrentGroup()?.fieldKey === 'title'
+    ? ocrDataFieldActiveRow()
+    : null;
+  const bodyTextBasisLines = Array.isArray(activeBodyTextRow?.bodyTextBeforeCandidate?.basisLines)
+    ? activeBodyTextRow.bodyTextBeforeCandidate.basisLines
+    : [];
+  bodyTextBasisLines.forEach((line) => {
+    if (Number(line?.pageNumber) !== Number(page.number) || !Array.isArray(line?.bboxIndexes)) {
+      return;
+    }
+    const likelihood = Math.max(0, Math.min(1, Number(line.effectiveBodyTextLikelihood) || 0));
+    const contribution = Math.max(0, Number(line.weightedContribution) || 0);
+    const reductions = Array.isArray(line.structureReductions) ? line.structureReductions : [];
+    line.bboxIndexes.forEach((bboxIndex) => {
+      const wordIndex = Number(bboxIndex) - 1;
+      if (Number.isInteger(wordIndex) && wordIndex >= 0) {
+        bodyTextBasisByWordIndex.set(wordIndex, { likelihood, contribution, reductions });
+      }
+    });
+  });
   renderOcrZoneOverlays(surfaceEl, page, objectScale);
   renderOcrLeftMarginOverlay(surfaceEl, page, objectScale);
 
@@ -19340,6 +19417,15 @@ function renderObjectOcrPage(page, pageMatches, objectScale) {
     }
     if (leftMarginBasisWordIndexes.has(word.index)) {
       wordEl.classList.add('is-left-margin-basis');
+    }
+    const bodyTextBasis = bodyTextBasisByWordIndex.get(word.index);
+    if (bodyTextBasis) {
+      wordEl.classList.add('is-body-text-basis');
+      wordEl.style.setProperty('--body-text-basis-strength', String(Math.max(0.18, bodyTextBasis.likelihood)));
+      const reductionText = bodyTextBasis.reductions
+        .map((reduction) => `${reduction.type || 'Struktur'} ${formatOcrPercent(Number(reduction.confidence) || 0, { spaced: true })}`)
+        .join(', ');
+      wordEl.title = `Brödtext före kandidaten\nBidrag: ${formatPrimaryDateScoreNumber(bodyTextBasis.contribution)} viktade tecken\nEffektiv brödtextlikhet: ${formatOcrPercent(bodyTextBasis.likelihood, { spaced: true })}${reductionText ? `\nReducerad av: ${reductionText}` : ''}`;
     }
     const scaledLeft = word.rect.x0 * objectScale;
     const scaledTop = word.rect.y0 * objectScale;
@@ -20041,6 +20127,18 @@ function syncOcrDataFieldConfidenceUi(row = null) {
   ocrSearchConfidenceRowEl.classList.toggle('hidden', !showConfidence);
   ocrSearchConfidenceEl.disabled = !showConfidence;
   ocrSearchConfidenceEl.setAttribute('aria-disabled', !showConfidence ? 'true' : 'false');
+  if (ocrSearchBodyTextBasisEl instanceof HTMLButtonElement) {
+    const showBasis = showConfidence
+      && ocrDataFieldCurrentGroup()?.fieldKey === 'title'
+      && Array.isArray(activeRow?.bodyTextBeforeCandidate?.basisLines);
+    ocrSearchBodyTextBasisEl.classList.toggle('hidden', !showBasis);
+    ocrSearchBodyTextBasisEl.disabled = !showBasis;
+    ocrSearchBodyTextBasisEl.setAttribute('aria-pressed', showBasis && ocrShowBodyTextBasis ? 'true' : 'false');
+    ocrSearchBodyTextBasisEl.textContent = showBasis && ocrShowBodyTextBasis ? 'Dölj underlag' : 'Visa underlag';
+    ocrSearchBodyTextBasisEl.title = showBasis
+      ? 'Markera OCR-raderna som bidrog till Brödtext före kandidaten.'
+      : '';
+  }
 
   if (!showConfidence) {
     ocrSearchConfidenceEl.textContent = '';
@@ -27972,6 +28070,19 @@ function defaultTitleHeuristics() {
         ],
         description: 'Poängkurva baserad på viktad visuell textyta bredvid eller ovanför rubrikkandidaten. Text under kandidaten ignoreras.',
       },
+      body_text_before_candidate: {
+        enabled: true,
+        max_characters_per_line: 160,
+        minimum_body_text_likelihood: 0.35,
+        curve: [
+          { x: 0, y: 0 },
+          { x: 40, y: 0 },
+          { x: 300, y: -35 },
+          { x: 1200, y: -75 },
+          { x: 2000, y: -90 },
+        ],
+        description: 'Poängkurva baserad på viktad mängd sannolik brödtext före kandidaten i dokumentets läsordning, inklusive tidigare sidor.',
+      },
       short_line_before_long_line: {
         enabled: true,
         curve: [
@@ -28102,6 +28213,18 @@ function sanitizeTitleHeuristics(input) {
         );
       }
     });
+    if (Object.prototype.hasOwnProperty.call(defaultsForSignal, 'max_characters_per_line')) {
+      result.signals[key].max_characters_per_line = Math.max(1, Math.round(sanitizePrimaryDateNumber(
+        raw.max_characters_per_line,
+        defaultsForSignal.max_characters_per_line
+      )));
+    }
+    if (Object.prototype.hasOwnProperty.call(defaultsForSignal, 'minimum_body_text_likelihood')) {
+      result.signals[key].minimum_body_text_likelihood = sanitizePrimaryDateRatio(
+        raw.minimum_body_text_likelihood,
+        defaultsForSignal.minimum_body_text_likelihood
+      );
+    }
   });
 
   return result;
@@ -32985,6 +33108,7 @@ const titleHeuristicLabels = {
   uppercase_ratio: 'Versalgrad',
   brevity: 'Korthet',
   text_density: 'Texttäthet',
+  body_text_before_candidate: 'Brödtext före kandidaten',
   short_line_before_long_line: 'Kort rad före lång rad',
   sender_name: 'Avsändarnamn',
 };
@@ -33063,6 +33187,17 @@ const titleHeuristicCurveCharts = {
     xAsPercent: true,
     yAsPercent: false,
     xStep: 0.01,
+    yStep: 1,
+  },
+  body_text_before_candidate: {
+    xAxisTitle: 'Viktad mängd brödtext före kandidaten',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Viktade tecken',
+    yPointLabel: 'Poäng',
+    yMin: -120,
+    yMax: 40,
+    yAsPercent: false,
+    xStep: 50,
     yStep: 1,
   },
   short_line_before_long_line: {
@@ -33556,6 +33691,29 @@ function createTitleHeuristicRuleEditor({
   appendNumberSetting('left_weight', 'Texttäthet - vikt vänster', 0, '0.1');
   appendNumberSetting('right_weight', 'Texttäthet - vikt höger', 0, '0.1');
   appendNumberSetting('above_weight', 'Texttäthet - vikt ovanför', 0, '0.1');
+  appendNumberSetting('max_characters_per_line', 'Max tecken per rad', 1, '1');
+  if (typeof rule.minimum_body_text_likelihood === 'number') {
+    const likelihoodInput = document.createElement('input');
+    likelihoodInput.type = 'number';
+    likelihoodInput.step = '0.05';
+    likelihoodInput.min = '0';
+    likelihoodInput.max = '1';
+    likelihoodInput.value = String(rule.minimum_body_text_likelihood);
+    likelihoodInput.addEventListener('input', () => {
+      const next = sanitizeTitleHeuristics(collection[index].titleHeuristics);
+      const value = Number(likelihoodInput.value);
+      if (Number.isFinite(value)) {
+        next.signals[ruleKey].minimum_body_text_likelihood = Math.max(0, Math.min(1, value));
+        collection[index].titleHeuristics = sanitizeTitleHeuristics(next);
+        updateSettingsActionButtons();
+      }
+    });
+    fields.appendChild(createFloatingField(
+      'Minsta brödtextlikhet',
+      likelihoodInput,
+      'primary-date-heuristic-number-field'
+    ));
+  }
 
   row.append(header, help, fields);
   return row;
@@ -39473,6 +39631,14 @@ ocrSearchNextEl.addEventListener('click', () => {
 if (ocrSearchConfidenceEl instanceof HTMLButtonElement) {
   ocrSearchConfidenceEl.addEventListener('click', () => {
     openMatchesViewForOcrDataFieldRow(ocrDataFieldActiveRow());
+  });
+}
+
+if (ocrSearchBodyTextBasisEl instanceof HTMLButtonElement) {
+  ocrSearchBodyTextBasisEl.addEventListener('click', () => {
+    ocrShowBodyTextBasis = !ocrShowBodyTextBasis;
+    syncOcrDataFieldConfidenceUi(ocrDataFieldActiveRow());
+    rerenderOcrPagesPreservingScroll();
   });
 }
 

@@ -335,6 +335,9 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                 <div id="ocr-search-confidence-row" class="ocr-search-confidence-row hidden">
                   <button id="ocr-search-confidence" class="ocr-search-confidence" type="button">
                   </button>
+                  <button id="ocr-search-body-text-basis" class="ocr-search-confidence hidden" type="button" aria-pressed="false">
+                    Visa underlag
+                  </button>
                 </div>
               </div>
             </div>
