@@ -3238,6 +3238,16 @@ function default_title_heuristics(): array
                 ],
                 'description' => 'Poängkurva baserad på viktad mängd sannolik brödtext före kandidaten i dokumentets läsordning, inklusive tidigare sidor.',
             ],
+            'zone_overlap' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.0, 'y' => 0.0],
+                    ['x' => 0.25, 'y' => -10.0],
+                    ['x' => 0.50, 'y' => -35.0],
+                    ['x' => 1.0, 'y' => -80.0],
+                ],
+                'description' => 'Poängkurva baserad på rubrikkandidatens starkaste effektiva överlappning med en vanlig zon eller systemzon.',
+            ],
             'short_line_before_long_line' => [
                 'enabled' => true,
                 'curve' => [
@@ -9936,6 +9946,8 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
         'bodyTextBeforeWeightedAmount',
         'bodyTextBeforeCurrentPageAmount',
         'bodyTextBeforePreviousPagesAmount',
+        'zoneOverlapEffective',
+        'zoneOverlapCandidate',
         'noisePenalty',
         'trailingDelimiterPenalty',
         'positionPenalty',
@@ -9948,7 +9960,7 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     ] as $key) {
         $number = debug_export_float_or_null($match[$key] ?? null);
         if ($number !== null) {
-            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                 ? $number
                 : clamp_confidence($number);
         }
@@ -9979,6 +9991,9 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     }
     if (is_array($match['bodyTextBeforeCandidate'] ?? null)) {
         $candidate['bodyTextBeforeCandidate'] = $match['bodyTextBeforeCandidate'];
+    }
+    if (is_array($match['zoneOverlap'] ?? null)) {
+        $candidate['zoneOverlap'] = $match['zoneOverlap'];
     }
     if ($labelBbox !== null) {
         $candidate['keyBBox'] = $labelBbox;
@@ -10435,6 +10450,8 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'bodyTextBeforeWeightedAmount',
             'bodyTextBeforeCurrentPageAmount',
             'bodyTextBeforePreviousPagesAmount',
+            'zoneOverlapEffective',
+            'zoneOverlapCandidate',
             'noisePenalty',
             'trailingDelimiterPenalty',
             'positionPenalty',
@@ -10447,7 +10464,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         ] as $key) {
             $number = debug_export_float_or_null($candidate[$key] ?? null);
             if ($number !== null) {
-                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                     ? $number
                     : clamp_confidence($number);
             }
@@ -10478,6 +10495,9 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         }
         if (is_array($candidate['bodyTextBeforeCandidate'] ?? null)) {
             $normalized['bodyTextBeforeCandidate'] = $candidate['bodyTextBeforeCandidate'];
+        }
+        if (is_array($candidate['zoneOverlap'] ?? null)) {
+            $normalized['zoneOverlap'] = $candidate['zoneOverlap'];
         }
         $keyBbox = debug_export_bbox_or_null($candidate['keyBBox'] ?? ($candidate['labelBbox'] ?? null));
         $valueBbox = debug_export_bbox_or_null($candidate['valueBBox'] ?? null);
@@ -10576,6 +10596,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
                 'score' => debug_export_float_or_null($candidate['score'] ?? null),
                 'signals' => is_array($candidate['signals'] ?? null) ? $candidate['signals'] : [],
                 'bodyTextBeforeCandidate' => is_array($candidate['bodyTextBeforeCandidate'] ?? null) ? $candidate['bodyTextBeforeCandidate'] : [],
+                'zoneOverlap' => is_array($candidate['zoneOverlap'] ?? null) ? $candidate['zoneOverlap'] : [],
             ];
         }, $candidates);
     };
@@ -19339,6 +19360,65 @@ function title_body_text_before_candidate(array $candidate, array $lineAnalysis,
     ];
 }
 
+function title_candidate_zone_overlap(array $candidate, array $zoneMatches): ?array
+{
+    $candidateBbox = is_array($candidate['bbox'] ?? null)
+        ? normalize_debug_word_bbox($candidate['bbox'])
+        : null;
+    $candidateArea = $candidateBbox !== null ? bbox_area($candidateBbox) : 0.0;
+    if ($candidateBbox === null || $candidateArea <= 0.0 || $zoneMatches === []) {
+        return null;
+    }
+    $candidatePage = is_numeric($candidate['pageNumber'] ?? null) ? (int) $candidate['pageNumber'] : null;
+    $best = null;
+    foreach ($zoneMatches as $zone) {
+        if (!is_array($zone)) {
+            continue;
+        }
+        $zonePage = is_numeric($zone['pageNumber'] ?? null) ? (int) $zone['pageNumber'] : null;
+        if ($candidatePage !== null && $zonePage !== null && $candidatePage !== $zonePage) {
+            continue;
+        }
+        $zoneBbox = normalize_debug_word_bbox($zone['boundingRect'] ?? null);
+        if ($zoneBbox === null) {
+            continue;
+        }
+        $intersection = bbox_intersection_area($candidateBbox, $zoneBbox);
+        if ($intersection <= 0.0) {
+            continue;
+        }
+        $candidateOverlap = max(0.0, min(1.0, $intersection / $candidateArea));
+        $isSystemZone = ($zone['isSystemZone'] ?? false) === true || ($zone['type'] ?? '') === 'systemzone';
+        $zoneConfidence = $isSystemZone
+            ? clamp_confidence(is_numeric($zone['confidence'] ?? null) ? (float) $zone['confidence'] : 0.0)
+            : 1.0;
+        $effectiveOverlap = max(0.0, min(1.0, $candidateOverlap * $zoneConfidence));
+        $zoneName = is_string($zone['zoneName'] ?? null) && trim((string) $zone['zoneName']) !== ''
+            ? trim((string) $zone['zoneName'])
+            : ($isSystemZone ? 'Systemzon' : 'Zon');
+        $row = [
+            'zoneName' => $zoneName,
+            'zoneType' => $isSystemZone ? 'systemzone' : 'zone',
+            'zoneConfidence' => $isSystemZone ? round($zoneConfidence, 6) : null,
+            'candidateOverlap' => round($candidateOverlap, 6),
+            'effectiveOverlap' => round($effectiveOverlap, 6),
+            'pageNumber' => $zonePage,
+            'zoneId' => is_string($zone['zoneId'] ?? null) ? trim((string) $zone['zoneId']) : '',
+        ];
+        if (
+            $best === null
+            || $effectiveOverlap > (float) ($best['effectiveOverlap'] ?? 0.0)
+            || (
+                abs($effectiveOverlap - (float) ($best['effectiveOverlap'] ?? 0.0)) < 0.0000001
+                && $candidateOverlap > (float) ($best['candidateOverlap'] ?? 0.0)
+            )
+        ) {
+            $best = $row;
+        }
+    }
+    return $best;
+}
+
 function score_title_candidate(
     array $candidate,
     array $lines,
@@ -19346,7 +19426,8 @@ function score_title_candidate(
     array $heuristics = [],
     array $senderNameLookup = [],
     array $layoutAnalysisByPage = [],
-    array $bodyTextLineAnalysis = []
+    array $bodyTextLineAnalysis = [],
+    array $zoneMatches = []
 ): array
 {
     $heuristics = normalize_title_heuristics($heuristics);
@@ -19563,6 +19644,40 @@ function score_title_candidate(
         );
     }
 
+    $zoneOverlapSettings = is_array($signals['zone_overlap'] ?? null) ? $signals['zone_overlap'] : [];
+    if (($zoneOverlapSettings['enabled'] ?? true) === true && $zoneMatches !== []) {
+        $zoneOverlap = title_candidate_zone_overlap($result, $zoneMatches);
+        if ($zoneOverlap !== null) {
+            $effectiveOverlap = (float) ($zoneOverlap['effectiveOverlap'] ?? 0.0);
+            $points = interpolate_primary_date_score_curve(
+                is_array($zoneOverlapSettings['curve'] ?? null) ? $zoneOverlapSettings['curve'] : [],
+                $effectiveOverlap
+            );
+            $result['zoneOverlap'] = $zoneOverlap;
+            $result['zoneOverlapEffective'] = $effectiveOverlap;
+            $result['zoneOverlapCandidate'] = (float) ($zoneOverlap['candidateOverlap'] ?? 0.0);
+            $score += $points;
+            $zoneNameForDetail = str_replace([',', "\r", "\n"], [' ', ' ', ' '], (string) ($zoneOverlap['zoneName'] ?? 'Zon'));
+            $result['signals'][] = [
+                'type' => $points >= 0.0 ? 'positive' : 'negative',
+                'code' => 'zone_overlap',
+                'score' => $points,
+                'detail' => 'zone_name:' . $zoneNameForDetail
+                    . ',zone_type:' . (string) ($zoneOverlap['zoneType'] ?? 'zone')
+                    . ',zone_confidence:' . ($zoneOverlap['zoneConfidence'] !== null ? round((float) $zoneOverlap['zoneConfidence'], 6) : 'n/a')
+                    . ',candidate_overlap:' . round((float) ($zoneOverlap['candidateOverlap'] ?? 0.0), 6)
+                    . ',effective_overlap:' . round($effectiveOverlap, 6),
+                'debug' => [
+                    'zone_name' => (string) ($zoneOverlap['zoneName'] ?? 'Zon'),
+                    'zone_type' => (string) ($zoneOverlap['zoneType'] ?? 'zone'),
+                    'zone_confidence' => $zoneOverlap['zoneConfidence'],
+                    'candidate_overlap' => (float) ($zoneOverlap['candidateOverlap'] ?? 0.0),
+                    'effective_overlap' => $effectiveOverlap,
+                ],
+            ];
+        }
+    }
+
     $shortLineBeforeLongLineRatio = title_candidate_short_line_before_long_line_ratio($candidate);
     if ($shortLineBeforeLongLineRatio !== null) {
         $result['shortLineBeforeLongLineRatio'] = $shortLineBeforeLongLineRatio;
@@ -19646,7 +19761,8 @@ function extract_title_field_result(
             $heuristics,
             $senderNameLookup,
             $layoutAnalysisByPage,
-            $bodyTextLineAnalysis
+            $bodyTextLineAnalysis,
+            is_array($positionSettings['zoneMatches'] ?? null) ? $positionSettings['zoneMatches'] : []
         ),
         $multilineCandidates
     );
@@ -19658,7 +19774,8 @@ function extract_title_field_result(
             $heuristics,
             $senderNameLookup,
             $layoutAnalysisByPage,
-            $bodyTextLineAnalysis
+            $bodyTextLineAnalysis,
+            is_array($positionSettings['zoneMatches'] ?? null) ? $positionSettings['zoneMatches'] : []
         ),
         title_candidates_from_lines(
             $lines,
@@ -22855,7 +22972,10 @@ function title_result_matches(array $result, array $lineGeometries = []): array
         if (isset($matchesByKey[$matchKey]) && is_array($candidate['bodyTextBeforeCandidate'] ?? null)) {
             $matchesByKey[$matchKey]['bodyTextBeforeCandidate'] = $candidate['bodyTextBeforeCandidate'];
         }
-        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'centerDistancePixels', 'leftAlignmentDistance', 'leftAlignmentDistanceLineHeights', 'horizontalPositionDistance', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforePreviousPagesAmount', 'bodyTextBeforeCurrentPageAmount'] as $numericKey) {
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['zoneOverlap'] ?? null)) {
+            $matchesByKey[$matchKey]['zoneOverlap'] = $candidate['zoneOverlap'];
+        }
+        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'centerDistancePixels', 'leftAlignmentDistance', 'leftAlignmentDistanceLineHeights', 'horizontalPositionDistance', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforePreviousPagesAmount', 'bodyTextBeforeCurrentPageAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate'] as $numericKey) {
             if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$numericKey] ?? null)) {
                 $matchesByKey[$matchKey][$numericKey] = (float) $candidate[$numericKey];
             }
@@ -23961,6 +24081,9 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'bodyTextBeforeContributingLines' => is_numeric($match['bodyTextBeforeContributingLines'] ?? null) ? (int) $match['bodyTextBeforeContributingLines'] : null,
                         'bodyTextBeforeReducedLines' => is_numeric($match['bodyTextBeforeReducedLines'] ?? null) ? (int) $match['bodyTextBeforeReducedLines'] : null,
                         'bodyTextBeforeCandidate' => is_array($match['bodyTextBeforeCandidate'] ?? null) ? $match['bodyTextBeforeCandidate'] : null,
+                        'zoneOverlapEffective' => is_numeric($match['zoneOverlapEffective'] ?? null) ? (float) $match['zoneOverlapEffective'] : null,
+                        'zoneOverlapCandidate' => is_numeric($match['zoneOverlapCandidate'] ?? null) ? (float) $match['zoneOverlapCandidate'] : null,
+                        'zoneOverlap' => is_array($match['zoneOverlap'] ?? null) ? $match['zoneOverlap'] : null,
                         'wordCount' => is_int($match['wordCount'] ?? null) ? (int) $match['wordCount'] : null,
                         'signals' => is_array($match['signals'] ?? null) ? array_values(array_filter(
                             $match['signals'],

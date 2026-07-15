@@ -4239,6 +4239,9 @@ function appendFieldMatchesSection(container, title, fieldsByKey, emptyText, opt
                 bodyTextBeforeCandidate: match.bodyTextBeforeCandidate && typeof match.bodyTextBeforeCandidate === 'object'
                   ? match.bodyTextBeforeCandidate
                   : null,
+                zoneOverlapEffective: Number.isFinite(Number(match.zoneOverlapEffective)) ? Number(match.zoneOverlapEffective) : null,
+                zoneOverlapCandidate: Number.isFinite(Number(match.zoneOverlapCandidate)) ? Number(match.zoneOverlapCandidate) : null,
+                zoneOverlap: match.zoneOverlap && typeof match.zoneOverlap === 'object' ? match.zoneOverlap : null,
                 signals: normalizePrimaryDateSignals(match.signals),
                 valueBbox: match.valueBbox && typeof match.valueBbox === 'object' ? match.valueBbox : null,
                 valueBBoxIndexes: Array.isArray(match.valueBBoxIndexes)
@@ -8294,6 +8297,7 @@ function formatPrimaryDateSignalLabel(code) {
     text_density: 'Texttäthet',
     running_text: 'Texttäthet',
     body_text_before_candidate: 'Brödtext före kandidaten',
+    zone_overlap: 'Överlapp med zon',
     vertical_position: 'Högt på sidan',
     horizontal_position: 'Horisontell position',
     horizontal_position_centered: 'Horisontell position: centrerad',
@@ -8359,6 +8363,7 @@ function normalizePrimaryDateSignals(signals) {
         score,
         detail: typeof signal.detail === 'string' ? signal.detail : '',
         context: typeof signal.context === 'string' ? signal.context : '',
+        debug: signal.debug && typeof signal.debug === 'object' ? signal.debug : null,
       };
     })
     .filter(Boolean);
@@ -8416,6 +8421,19 @@ function formatPrimaryDateSignalDetail(signal) {
         return `${formatPrimaryDateScoreNumber(amount)} viktade tecken`;
       }
     }
+  }
+  if (signal?.code === 'zone_overlap') {
+    const zoneNameMatch = detail.match(/\bzone_name:([^,]*)/u);
+    const zoneTypeMatch = detail.match(/\bzone_type:([^,]*)/u);
+    const candidateOverlapMatch = detail.match(/\bcandidate_overlap:([-0-9.]+)/u);
+    const effectiveOverlapMatch = detail.match(/\beffective_overlap:([-0-9.]+)/u);
+    const zoneName = zoneNameMatch ? zoneNameMatch[1].trim() : 'Zon';
+    const isSystemZone = zoneTypeMatch && zoneTypeMatch[1].trim() === 'systemzone';
+    const overlap = Number(isSystemZone ? effectiveOverlapMatch?.[1] : candidateOverlapMatch?.[1]);
+    if (Number.isFinite(overlap)) {
+      return `${zoneName}, ${formatPrimaryDateScoreNumber(overlap * 100)} % ${isSystemZone ? 'effektiv överlappning' : 'överlappning'}`;
+    }
+    return zoneName;
   }
   if (signal?.code === 'top_position') {
     const yRatioMatch = detail.match(/\by_ratio:([-0-9.]+)/u);
@@ -8738,6 +8756,18 @@ function snapshotCompareCandidateDetailsText(candidate) {
     Object.entries(bodyTextBefore.reducedByStructureTypes || {}).forEach(([type, count]) => {
       add(`Reducerade av ${type}`, count);
     });
+  }
+  const zoneOverlap = candidate.zoneOverlap && typeof candidate.zoneOverlap === 'object'
+    ? candidate.zoneOverlap
+    : null;
+  if (zoneOverlap) {
+    add('Överlappande zon', zoneOverlap.zoneName);
+    add('Zontyp', zoneOverlap.zoneType);
+    if (zoneOverlap.zoneConfidence !== null && zoneOverlap.zoneConfidence !== undefined) {
+      addPercent('Zonsäkerhet', zoneOverlap.zoneConfidence);
+    }
+    addPercent('Rå zonöverlappning', zoneOverlap.candidateOverlap);
+    addPercent('Effektiv zonöverlappning', zoneOverlap.effectiveOverlap);
   }
   add('Position på sidan', Number.isFinite(Number(candidate.yRatio)) ? `${formatPrimaryDateScoreNumber(Number(candidate.yRatio) * 100)} % ner på sidan` : '');
   add('Ogiltighetsorsak', candidate.invalidReason);
@@ -17697,6 +17727,8 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     'bodyTextBeforePreviousPagesAmount',
     'bodyTextBeforeContributingLines',
     'bodyTextBeforeReducedLines',
+    'zoneOverlapEffective',
+    'zoneOverlapCandidate',
     'wordCount',
   ].forEach((key) => {
     const numericValue = Number(row?.[key]);
@@ -17734,6 +17766,9 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
   }
   if (row?.bodyTextBeforeCandidate && typeof row.bodyTextBeforeCandidate === 'object') {
     copyPayload.bodyTextBeforeCandidate = row.bodyTextBeforeCandidate;
+  }
+  if (row?.zoneOverlap && typeof row.zoneOverlap === 'object') {
+    copyPayload.zoneOverlap = row.zoneOverlap;
   }
 
   const bboxCopyPayload = {
@@ -17847,6 +17882,18 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     Object.entries(body.reducedByStructureTypes || {}).forEach(([type, count]) => {
       metaRows.unshift({ label: `Reducerade av ${type}`, value: String(count) });
     });
+  }
+  if (row?.zoneOverlap && typeof row.zoneOverlap === 'object') {
+    const overlap = row.zoneOverlap;
+    metaRows.unshift(
+      { label: 'Överlappande zon', value: String(overlap.zoneName || 'Zon') },
+      { label: 'Zontyp', value: overlap.zoneType === 'systemzone' ? 'Systemzon' : 'Zon' },
+      ...(overlap.zoneConfidence !== null && overlap.zoneConfidence !== undefined && Number.isFinite(Number(overlap.zoneConfidence))
+        ? [{ label: 'Zonsäkerhet', value: formatOcrPercent(Number(overlap.zoneConfidence), { spaced: true }) }]
+        : []),
+      { label: 'Rå överlappning', value: formatOcrPercent(Number(overlap.candidateOverlap) || 0, { spaced: true }) },
+      { label: 'Effektiv överlappning', value: formatOcrPercent(Number(overlap.effectiveOverlap) || 0, { spaced: true }) },
+    );
   }
 
   const securityRowIndex = metaRows.findIndex((row) => row && row.raw !== true && typeof row.label === 'string' && row.label.trim() === 'Säkerhet');
@@ -28090,6 +28137,16 @@ function defaultTitleHeuristics() {
         ],
         description: 'Poängkurva baserad på viktad mängd sannolik brödtext före kandidaten i dokumentets läsordning, inklusive tidigare sidor.',
       },
+      zone_overlap: {
+        enabled: true,
+        curve: [
+          { x: 0, y: 0 },
+          { x: 0.25, y: -10 },
+          { x: 0.50, y: -35 },
+          { x: 1, y: -80 },
+        ],
+        description: 'Poängkurva baserad på rubrikkandidatens starkaste effektiva överlappning med en vanlig zon eller systemzon.',
+      },
       short_line_before_long_line: {
         enabled: true,
         curve: [
@@ -33116,6 +33173,7 @@ const titleHeuristicLabels = {
   brevity: 'Korthet',
   text_density: 'Texttäthet',
   body_text_before_candidate: 'Brödtext före kandidaten',
+  zone_overlap: 'Överlapp med zon',
   short_line_before_long_line: 'Kort rad före lång rad',
   sender_name: 'Avsändarnamn',
 };
@@ -33205,6 +33263,18 @@ const titleHeuristicCurveCharts = {
     yMax: 40,
     yAsPercent: false,
     xStep: 50,
+    yStep: 1,
+  },
+  zone_overlap: {
+    xAxisTitle: 'Effektiv överlappning (%)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Effektiv överlappning',
+    yPointLabel: 'Poäng',
+    yMin: -120,
+    yMax: 40,
+    xAsPercent: true,
+    yAsPercent: false,
+    xStep: 0.05,
     yStep: 1,
   },
   short_line_before_long_line: {

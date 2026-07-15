@@ -89,6 +89,7 @@ try {
                 $matchingPayload
             );
             $zoneMatches = $liveZoneMatches;
+            $positionSettings['zoneMatches'] = $liveZoneMatches;
             $matchingLines = split_lines_for_matching($ocrText);
             $acceptanceThreshold = is_numeric($matchingPayload['dataFieldAcceptanceThreshold'] ?? null)
                 ? clamp_confidence((float) $matchingPayload['dataFieldAcceptanceThreshold'])
