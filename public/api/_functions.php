@@ -3435,7 +3435,7 @@ function normalize_primary_date_heuristics(mixed $input): array
 
     foreach ($defaults['bonuses'] as $key => $default) {
         $raw = is_array($source['bonuses'][$key] ?? null) ? $source['bonuses'][$key] : [];
-        $result['bonuses'][$key]['enabled'] = true;
+        $result['bonuses'][$key]['enabled'] = ($raw['enabled'] ?? $default['enabled'] ?? true) !== false;
         foreach (['points', 'max_points'] as $field) {
             if (array_key_exists($field, $default)) {
                 $result['bonuses'][$key][$field] = normalize_primary_date_number($raw[$field] ?? null, (float) $default[$field]);
@@ -3472,7 +3472,7 @@ function normalize_primary_date_heuristics(mixed $input): array
         if ($key === 'text_density' && $raw === [] && is_array($source['penalties']['running_text'] ?? null)) {
             $raw = $source['penalties']['running_text'];
         }
-        $result['penalties'][$key]['enabled'] = true;
+        $result['penalties'][$key]['enabled'] = ($raw['enabled'] ?? $default['enabled'] ?? true) !== false;
         foreach (['points', 'max_points', 'direct_before_points', 'same_line_points', 'line_above_points', 'points_per_page'] as $field) {
             if (array_key_exists($field, $default)) {
                 $result['penalties'][$key][$field] = normalize_primary_date_number($raw[$field] ?? null, (float) $default[$field]);
@@ -3531,7 +3531,7 @@ function normalize_title_heuristics(mixed $input): array
                 $raw = $source['signals']['horizontal_position_centered'];
             }
         }
-        $result['signals'][$key]['enabled'] = true;
+        $result['signals'][$key]['enabled'] = ($raw['enabled'] ?? $default['enabled'] ?? true) !== false;
         if (array_key_exists('curve', $default)) {
             $result['signals'][$key]['curve'] = normalize_primary_date_score_curve(
                 $raw['curve'] ?? null,
@@ -3614,7 +3614,7 @@ function normalize_sender_mark_heuristics(mixed $input): array
 
     foreach ($defaults['signals'] as $key => $default) {
         $raw = is_array($source['signals'][$key] ?? null) ? $source['signals'][$key] : [];
-        $result['signals'][$key]['enabled'] = true;
+        $result['signals'][$key]['enabled'] = ($raw['enabled'] ?? $default['enabled'] ?? true) !== false;
         if (array_key_exists('curve', $default)) {
             $result['signals'][$key]['curve'] = normalize_primary_date_score_curve(
                 $raw['curve'] ?? null,
@@ -9940,7 +9940,12 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
         'distanceToSenderNameLineHeights',
         'relativeTextSizeToSenderName',
         'letterRatio',
+        'relativeTextHeight',
+        'relativeCharacterWidth',
         'relativeTextSize',
+        'visualTextSizeRatio',
+        'pageMedianTextHeight',
+        'pageMedianCharacterWidth',
         'uppercaseRatio',
         'textDensityRatio',
         'bodyTextBeforeWeightedAmount',
@@ -9960,7 +9965,7 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     ] as $key) {
         $number = debug_export_float_or_null($match[$key] ?? null);
         if ($number !== null) {
-            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                 ? $number
                 : clamp_confidence($number);
         }
@@ -9988,6 +9993,9 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     }
     if (is_array($match['signals'] ?? null)) {
         $candidate['signals'] = array_values($match['signals']);
+    }
+    if (is_array($match['textSizeBboxes'] ?? null)) {
+        $candidate['textSizeBboxes'] = array_values($match['textSizeBboxes']);
     }
     if (is_array($match['bodyTextBeforeCandidate'] ?? null)) {
         $candidate['bodyTextBeforeCandidate'] = $match['bodyTextBeforeCandidate'];
@@ -10444,7 +10452,12 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'distanceToSenderNameLineHeights',
             'relativeTextSizeToSenderName',
             'letterRatio',
+            'relativeTextHeight',
+            'relativeCharacterWidth',
             'relativeTextSize',
+            'visualTextSizeRatio',
+            'pageMedianTextHeight',
+            'pageMedianCharacterWidth',
             'uppercaseRatio',
             'textDensityRatio',
             'bodyTextBeforeWeightedAmount',
@@ -10464,7 +10477,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         ] as $key) {
             $number = debug_export_float_or_null($candidate[$key] ?? null);
             if ($number !== null) {
-                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                     ? $number
                     : clamp_confidence($number);
             }
@@ -10498,6 +10511,9 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         }
         if (is_array($candidate['zoneOverlap'] ?? null)) {
             $normalized['zoneOverlap'] = $candidate['zoneOverlap'];
+        }
+        if (is_array($candidate['textSizeBboxes'] ?? null)) {
+            $normalized['textSizeBboxes'] = array_values($candidate['textSizeBboxes']);
         }
         $keyBbox = debug_export_bbox_or_null($candidate['keyBBox'] ?? ($candidate['labelBbox'] ?? null));
         $valueBbox = debug_export_bbox_or_null($candidate['valueBBox'] ?? null);
@@ -18517,6 +18533,298 @@ function title_candidate_text_size_height(array $candidate, ?array $candidateBbo
     return $height > 0.0 ? $height : null;
 }
 
+function title_character_width_weights(): array
+{
+    static $weights = [
+        ' ' => 0.45,
+        'a' => 1.00, 'b' => 1.00, 'c' => 0.90, 'd' => 1.00, 'e' => 1.00, 'f' => 0.60,
+        'g' => 1.00, 'h' => 1.00, 'i' => 0.35, 'j' => 0.40, 'k' => 0.90, 'l' => 0.35,
+        'm' => 1.50, 'n' => 1.00, 'o' => 1.00, 'p' => 1.00, 'q' => 1.00, 'r' => 0.65,
+        's' => 0.90, 't' => 0.60, 'u' => 1.00, 'v' => 0.90, 'w' => 1.35, 'x' => 0.90,
+        'y' => 0.90, 'z' => 0.85,
+        'å' => 1.00, 'ä' => 1.00, 'ö' => 1.00, 'é' => 1.00, 'è' => 1.00, 'ü' => 1.00,
+        'A' => 1.15, 'B' => 1.15, 'C' => 1.15, 'D' => 1.20, 'E' => 1.05, 'F' => 0.95,
+        'G' => 1.25, 'H' => 1.20, 'I' => 0.45, 'J' => 0.75, 'K' => 1.10, 'L' => 0.90,
+        'M' => 1.50, 'N' => 1.25, 'O' => 1.30, 'P' => 1.05, 'Q' => 1.30, 'R' => 1.15,
+        'S' => 1.10, 'T' => 1.00, 'U' => 1.20, 'V' => 1.15, 'W' => 1.65, 'X' => 1.15,
+        'Y' => 1.10, 'Z' => 1.05,
+        'Å' => 1.15, 'Ä' => 1.15, 'Ö' => 1.30, 'É' => 1.05, 'È' => 1.05, 'Ü' => 1.20,
+        '0' => 1.00, '1' => 0.75, '2' => 1.00, '3' => 1.00, '4' => 1.00,
+        '5' => 1.00, '6' => 1.00, '7' => 1.00, '8' => 1.00, '9' => 1.00,
+        '.' => 0.35, ',' => 0.35, ':' => 0.35, ';' => 0.35, '!' => 0.40, '?' => 0.85,
+        '-' => 0.55, '–' => 0.90, '—' => 1.40, '_' => 1.00,
+        '/' => 0.60, '\\' => 0.60, '|' => 0.35,
+        '(' => 0.50, ')' => 0.50, '[' => 0.50, ']' => 0.50, '{' => 0.60, '}' => 0.60,
+        '"' => 0.55, "'" => 0.25, '’' => 0.25, '“' => 0.55, '”' => 0.55,
+        '+' => 1.00, '=' => 1.00, '*' => 0.70, '#' => 1.10, '%' => 1.40, '&' => 1.20, '@' => 1.60,
+        '§' => 1.00, '°' => 0.60, '€' => 1.00, '$' => 1.00, '£' => 1.00,
+    ];
+    return $weights;
+}
+
+function title_normalize_unicode_nfc(string $text): string
+{
+    if (class_exists('Normalizer')) {
+        $normalized = \Normalizer::normalize($text, \Normalizer::FORM_C);
+        if (is_string($normalized)) {
+            return $normalized;
+        }
+    }
+
+    // Minimal fallback for installations without ext-intl. It covers every decomposed
+    // accented character that has a dedicated weight in the table above.
+    return strtr($text, [
+        "a\u{030A}" => 'å', "A\u{030A}" => 'Å',
+        "a\u{0308}" => 'ä', "A\u{0308}" => 'Ä',
+        "o\u{0308}" => 'ö', "O\u{0308}" => 'Ö',
+        "e\u{0301}" => 'é', "E\u{0301}" => 'É',
+        "e\u{0300}" => 'è', "E\u{0300}" => 'È',
+        "u\u{0308}" => 'ü', "U\u{0308}" => 'Ü',
+    ]);
+}
+
+function title_character_weight_sum(string $text): float
+{
+    $normalized = title_normalize_unicode_nfc($text);
+    $characters = preg_split('//u', $normalized, -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($characters)) {
+        return 0.0;
+    }
+    $weights = title_character_width_weights();
+    $sum = 0.0;
+    foreach ($characters as $character) {
+        $sum += (float) ($weights[$character] ?? 1.0);
+    }
+    return $sum;
+}
+
+function title_text_size_bbox_measurement(string $text, mixed $bboxInput): ?array
+{
+    $bbox = normalize_debug_word_bbox($bboxInput);
+    $resolvedText = title_normalize_unicode_nfc($text);
+    if ($bbox === null || trim($resolvedText) === '') {
+        return null;
+    }
+    $width = (float) $bbox['x1'] - (float) $bbox['x0'];
+    $height = (float) $bbox['y1'] - (float) $bbox['y0'];
+    $characterWeightSum = title_character_weight_sum($resolvedText);
+    if ($width <= 0.0 || $height <= 0.0 || $characterWeightSum <= 0.0) {
+        return null;
+    }
+    return [
+        'text' => $resolvedText,
+        'bbox' => $bbox,
+        'width' => $width,
+        'height' => $height,
+        'characterWeightSum' => $characterWeightSum,
+        'normalizedCharacterWidth' => $width / $characterWeightSum,
+    ];
+}
+
+function title_geometry_segment_text(array $geometry, array $segment): string
+{
+    if (is_string($segment['text'] ?? null) && trim((string) $segment['text']) !== '') {
+        return (string) $segment['text'];
+    }
+    $lineText = is_string($geometry['text'] ?? null) ? (string) $geometry['text'] : '';
+    $start = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+    $end = is_int($segment['end'] ?? null) ? (int) $segment['end'] : -1;
+    if ($lineText === '' || $start < 0 || $end <= $start) {
+        return '';
+    }
+    $text = substr($lineText, $start, $end - $start);
+    return is_string($text) ? $text : '';
+}
+
+function title_page_character_width_reference(array $lineGeometries, ?int $pageNumber): ?array
+{
+    $measurements = [];
+    foreach ($lineGeometries as $lineIndex => $geometry) {
+        if (!is_array($geometry)) {
+            continue;
+        }
+        $geometryPage = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
+        if ($pageNumber !== null && $geometryPage !== $pageNumber) {
+            continue;
+        }
+        foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+            if (!is_array($segment)) {
+                continue;
+            }
+            $measurement = title_text_size_bbox_measurement(
+                title_geometry_segment_text($geometry, $segment),
+                $segment['bbox'] ?? null
+            );
+            if ($measurement === null) {
+                continue;
+            }
+            $measurement['lineIndex'] = is_int($lineIndex) ? $lineIndex : null;
+            $measurement['bboxIndex'] = is_int($segment['wordIndex'] ?? null)
+                ? (int) $segment['wordIndex'] + 1
+                : null;
+            $measurements[] = $measurement;
+        }
+    }
+    if ($measurements === []) {
+        return null;
+    }
+    $values = array_map(
+        static fn(array $measurement): float => (float) $measurement['normalizedCharacterWidth'],
+        $measurements
+    );
+    sort($values, SORT_NUMERIC);
+    $middle = intdiv(count($values), 2);
+    $median = count($values) % 2 === 1
+        ? (float) $values[$middle]
+        : ((float) $values[$middle - 1] + (float) $values[$middle]) / 2.0;
+    return [
+        'median' => $median,
+        'bboxCount' => count($measurements),
+    ];
+}
+
+function title_candidate_character_width_measurements(
+    array $candidate,
+    array $lineGeometries,
+    ?array $candidateBbox = null
+): array {
+    $candidatePage = is_numeric($candidate['pageNumber'] ?? null) ? (int) $candidate['pageNumber'] : null;
+    $candidateIndexes = array_fill_keys(array_values(array_filter(
+        is_array($candidate['valueBBoxIndexes'] ?? null) ? $candidate['valueBBoxIndexes'] : [],
+        static fn($index): bool => is_int($index) && $index > 0
+    )), true);
+    $scopes = [];
+    if (is_array($candidate['blockParts'] ?? null)) {
+        foreach ($candidate['blockParts'] as $part) {
+            if (!is_array($part) || !is_int($part['lineIndex'] ?? null)) {
+                continue;
+            }
+            $scopes[(int) $part['lineIndex']] = [
+                'start' => is_int($part['start'] ?? null) ? (int) $part['start'] : null,
+                'end' => is_int($part['end'] ?? null) ? (int) $part['end'] : null,
+            ];
+        }
+    }
+    if ($scopes === [] && is_int($candidate['lineIndex'] ?? null)) {
+        $scopes[(int) $candidate['lineIndex']] = [
+            'start' => is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : null,
+            'end' => is_int($candidate['end'] ?? null) ? (int) $candidate['end'] : null,
+        ];
+    }
+
+    $measurements = [];
+    foreach ($lineGeometries as $lineIndex => $geometry) {
+        if (!is_int($lineIndex) || !is_array($geometry) || !isset($scopes[$lineIndex])) {
+            continue;
+        }
+        $geometryPage = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
+        if ($candidatePage !== null && $geometryPage !== $candidatePage) {
+            continue;
+        }
+        $scope = $scopes[$lineIndex];
+        foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+            if (!is_array($segment)) {
+                continue;
+            }
+            $bboxIndex = is_int($segment['wordIndex'] ?? null) ? (int) $segment['wordIndex'] + 1 : null;
+            $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : null;
+            $segmentEnd = is_int($segment['end'] ?? null) ? (int) $segment['end'] : null;
+            $includedByIndex = $bboxIndex !== null && isset($candidateIndexes[$bboxIndex]);
+            $includedBySpan = is_int($scope['start'] ?? null)
+                && is_int($scope['end'] ?? null)
+                && $segmentStart !== null
+                && $segmentEnd !== null
+                && $segmentEnd > (int) $scope['start']
+                && $segmentStart < (int) $scope['end'];
+            if (!$includedByIndex && !$includedBySpan) {
+                continue;
+            }
+            $measurement = title_text_size_bbox_measurement(
+                title_geometry_segment_text($geometry, $segment),
+                $segment['bbox'] ?? null
+            );
+            if ($measurement === null) {
+                continue;
+            }
+            $measurement['lineIndex'] = $lineIndex;
+            $measurement['bboxIndex'] = $bboxIndex;
+            $measurements[] = $measurement;
+        }
+    }
+
+    if ($measurements !== []) {
+        return $measurements;
+    }
+    foreach (is_array($candidate['blockParts'] ?? null) ? $candidate['blockParts'] : [] as $part) {
+        if (!is_array($part)) {
+            continue;
+        }
+        $measurement = title_text_size_bbox_measurement(
+            is_string($part['text'] ?? null) ? (string) $part['text'] : '',
+            $part['bbox'] ?? null
+        );
+        if ($measurement !== null) {
+            $measurement['lineIndex'] = is_int($part['lineIndex'] ?? null) ? (int) $part['lineIndex'] : null;
+            $measurement['bboxIndex'] = null;
+            $measurements[] = $measurement;
+        }
+    }
+    if ($measurements !== []) {
+        return $measurements;
+    }
+    $measurement = title_text_size_bbox_measurement(
+        is_string($candidate['value'] ?? null) ? (string) $candidate['value'] : '',
+        $candidateBbox ?? ($candidate['bbox'] ?? null)
+    );
+    return $measurement !== null ? [$measurement] : [];
+}
+
+function title_candidate_character_width_ratio(
+    array $candidate,
+    array $lineGeometries,
+    ?int $pageNumber,
+    ?array $candidateBbox = null
+): ?array {
+    $reference = title_page_character_width_reference($lineGeometries, $pageNumber);
+    $pageMedian = is_array($reference) ? (float) ($reference['median'] ?? 0.0) : 0.0;
+    if ($pageMedian <= 0.0) {
+        return null;
+    }
+    $measurements = title_candidate_character_width_measurements($candidate, $lineGeometries, $candidateBbox);
+    if ($measurements === []) {
+        return null;
+    }
+    $weightedRatioSum = 0.0;
+    $totalWeight = 0.0;
+    foreach ($measurements as &$measurement) {
+        $weight = (float) ($measurement['characterWeightSum'] ?? 0.0);
+        $ratio = (float) ($measurement['normalizedCharacterWidth'] ?? 0.0) / $pageMedian;
+        if ($weight <= 0.0 || $ratio <= 0.0) {
+            continue;
+        }
+        $measurement['relativeCharacterWidth'] = $ratio;
+        $measurement['aggregationWeight'] = $weight;
+        $weightedRatioSum += $ratio * $weight;
+        $totalWeight += $weight;
+    }
+    unset($measurement);
+    if ($totalWeight <= 0.0) {
+        return null;
+    }
+    foreach ($measurements as &$measurement) {
+        $measurement['aggregationWeightRatio'] = (float) ($measurement['aggregationWeight'] ?? 0.0) / $totalWeight;
+        unset($measurement['bbox']);
+    }
+    unset($measurement);
+    return [
+        'ratio' => $weightedRatioSum / $totalWeight,
+        'pageMedian' => $pageMedian,
+        'pageReferenceBboxCount' => (int) ($reference['bboxCount'] ?? 0),
+        'totalCharacterWeight' => $totalWeight,
+        'bboxes' => array_values($measurements),
+    ];
+}
+
 function title_layout_analysis_by_page(array $lineGeometries, array $layoutAnalysisSettings): array
 {
     $wordsByPage = [];
@@ -19468,13 +19776,23 @@ function score_title_candidate(
     }
 
     $score = 0.0;
-    $appendSignal = static function (string $type, string $code, float $points, string $detail) use (&$result): void {
-        $result['signals'][] = [
+    $appendSignal = static function (
+        string $type,
+        string $code,
+        float $points,
+        string $detail,
+        ?array $debug = null
+    ) use (&$result): void {
+        $signal = [
             'type' => $type,
             'code' => $code,
             'score' => $points,
             'detail' => $detail,
         ];
+        if ($debug !== null) {
+            $signal['debug'] = $debug;
+        }
+        $result['signals'][] = $signal;
     };
     $signalScore = static function (string $code, float $x) use ($signals): ?float {
         if (($signals[$code]['enabled'] ?? true) !== true) {
@@ -19575,15 +19893,60 @@ function score_title_candidate(
         $height = title_candidate_text_size_height($candidate, $bbox);
         $medianHeight = title_page_median_line_height($lineGeometries, $pageNumber);
         if ($height > 0.0 && $medianHeight !== null && $medianHeight > 0.0) {
-            $relativeSize = $height / $medianHeight;
-            $result['relativeTextSize'] = $relativeSize;
-            $addSignal(
-                'text_size',
-                $relativeSize,
-                'relative_size:' . round($relativeSize, 3)
-                    . ',height:' . round($height, 3)
-                    . ',normal_height:' . round($medianHeight, 3)
+            $relativeHeight = $height / $medianHeight;
+            $characterWidth = title_candidate_character_width_ratio(
+                $candidate,
+                $lineGeometries,
+                $pageNumber,
+                $bbox
             );
+            $relativeCharacterWidth = is_array($characterWidth)
+                ? (float) ($characterWidth['ratio'] ?? 0.0)
+                : 0.0;
+            $visualSize = $relativeCharacterWidth > 0.0
+                ? sqrt($relativeHeight * $relativeCharacterWidth)
+                : $relativeHeight;
+            $result['relativeTextHeight'] = $relativeHeight;
+            $result['relativeCharacterWidth'] = $relativeCharacterWidth > 0.0 ? $relativeCharacterWidth : null;
+            $result['relativeTextSize'] = $visualSize;
+            $result['visualTextSizeRatio'] = $visualSize;
+            $result['pageMedianTextHeight'] = $medianHeight;
+            if (is_array($characterWidth)) {
+                $result['pageMedianCharacterWidth'] = (float) ($characterWidth['pageMedian'] ?? 0.0);
+                $result['textSizeBboxes'] = is_array($characterWidth['bboxes'] ?? null)
+                    ? array_values($characterWidth['bboxes'])
+                    : [];
+            }
+            $textSizeScore = $signalScore('text_size', $visualSize);
+            if ($textSizeScore !== null && abs($textSizeScore) >= 0.0001) {
+                $score += $textSizeScore;
+                $appendSignal(
+                    $textSizeScore >= 0.0 ? 'positive' : 'negative',
+                    'text_size',
+                    $textSizeScore,
+                    'relative_size:' . round($visualSize, 4)
+                        . ',relative_height:' . round($relativeHeight, 4)
+                        . ',relative_character_width:' . ($relativeCharacterWidth > 0.0 ? round($relativeCharacterWidth, 4) : 'n/a')
+                        . ',height:' . round($height, 3)
+                        . ',normal_height:' . round($medianHeight, 3)
+                        . ',normal_character_width:' . (is_array($characterWidth) ? round((float) ($characterWidth['pageMedian'] ?? 0.0), 4) : 'n/a'),
+                    [
+                        'relative_text_height' => $relativeHeight,
+                        'relative_character_width' => $relativeCharacterWidth > 0.0 ? $relativeCharacterWidth : null,
+                        'visual_text_size' => $visualSize,
+                        'page_median_text_height' => $medianHeight,
+                        'page_median_character_width' => is_array($characterWidth)
+                            ? (float) ($characterWidth['pageMedian'] ?? 0.0)
+                            : null,
+                        'page_reference_bbox_count' => is_array($characterWidth)
+                            ? (int) ($characterWidth['pageReferenceBboxCount'] ?? 0)
+                            : 0,
+                        'candidate_bboxes' => is_array($characterWidth) && is_array($characterWidth['bboxes'] ?? null)
+                            ? array_values($characterWidth['bboxes'])
+                            : [],
+                    ]
+                );
+            }
         }
     }
 
@@ -22975,10 +23338,13 @@ function title_result_matches(array $result, array $lineGeometries = []): array
         if (isset($matchesByKey[$matchKey]) && is_array($candidate['zoneOverlap'] ?? null)) {
             $matchesByKey[$matchKey]['zoneOverlap'] = $candidate['zoneOverlap'];
         }
-        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'centerDistancePixels', 'leftAlignmentDistance', 'leftAlignmentDistanceLineHeights', 'horizontalPositionDistance', 'horizontalPositionScore', 'relativeTextSize', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforePreviousPagesAmount', 'bodyTextBeforeCurrentPageAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate'] as $numericKey) {
+        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'centerDistancePixels', 'leftAlignmentDistance', 'leftAlignmentDistanceLineHeights', 'horizontalPositionDistance', 'horizontalPositionScore', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforePreviousPagesAmount', 'bodyTextBeforeCurrentPageAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate'] as $numericKey) {
             if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$numericKey] ?? null)) {
                 $matchesByKey[$matchKey][$numericKey] = (float) $candidate[$numericKey];
             }
+        }
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['textSizeBboxes'] ?? null)) {
+            $matchesByKey[$matchKey]['textSizeBboxes'] = array_values($candidate['textSizeBboxes']);
         }
         if (isset($matchesByKey[$matchKey]) && is_string($candidate['horizontalPositionMode'] ?? null)) {
             $matchesByKey[$matchKey]['horizontalPositionMode'] = (string) $candidate['horizontalPositionMode'];
@@ -24072,7 +24438,13 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'distanceToSenderNameLineHeights' => is_numeric($match['distanceToSenderNameLineHeights'] ?? null) ? (float) $match['distanceToSenderNameLineHeights'] : null,
                         'relativeTextSizeToSenderName' => is_numeric($match['relativeTextSizeToSenderName'] ?? null) ? (float) $match['relativeTextSizeToSenderName'] : null,
                         'letterRatio' => is_numeric($match['letterRatio'] ?? null) ? (float) $match['letterRatio'] : null,
+                        'relativeTextHeight' => is_numeric($match['relativeTextHeight'] ?? null) ? (float) $match['relativeTextHeight'] : null,
+                        'relativeCharacterWidth' => is_numeric($match['relativeCharacterWidth'] ?? null) ? (float) $match['relativeCharacterWidth'] : null,
                         'relativeTextSize' => is_numeric($match['relativeTextSize'] ?? null) ? (float) $match['relativeTextSize'] : null,
+                        'visualTextSizeRatio' => is_numeric($match['visualTextSizeRatio'] ?? null) ? (float) $match['visualTextSizeRatio'] : null,
+                        'pageMedianTextHeight' => is_numeric($match['pageMedianTextHeight'] ?? null) ? (float) $match['pageMedianTextHeight'] : null,
+                        'pageMedianCharacterWidth' => is_numeric($match['pageMedianCharacterWidth'] ?? null) ? (float) $match['pageMedianCharacterWidth'] : null,
+                        'textSizeBboxes' => is_array($match['textSizeBboxes'] ?? null) ? array_values($match['textSizeBboxes']) : [],
                         'uppercaseRatio' => is_numeric($match['uppercaseRatio'] ?? null) ? (float) $match['uppercaseRatio'] : null,
                         'textDensityRatio' => is_numeric($match['textDensityRatio'] ?? null) ? (float) $match['textDensityRatio'] : null,
                         'bodyTextBeforeWeightedAmount' => is_numeric($match['bodyTextBeforeWeightedAmount'] ?? null) ? (float) $match['bodyTextBeforeWeightedAmount'] : null,

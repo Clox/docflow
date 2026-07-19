@@ -8343,6 +8343,17 @@ function formatPrimaryDateScoreNumber(value) {
   });
 }
 
+function formatTextSizeMeasureNumber(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return '';
+  }
+  return numericValue.toLocaleString('sv-SE', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
 function normalizePrimaryDateSignals(signals) {
   if (!Array.isArray(signals)) {
     return [];
@@ -8528,6 +8539,29 @@ function formatPrimaryDateSignalDetail(signal) {
     const ratio = Number(leftRatioMatch[1]);
     if (Number.isFinite(ratio)) {
       return `${formatPrimaryDateScoreNumber(ratio * 100)} % från vänsterkanten`;
+    }
+  }
+  if (signal?.code === 'text_size') {
+    const visualSize = Number(detail.match(/\brelative_size:([0-9.]+)/u)?.[1]);
+    const relativeHeight = Number(detail.match(/\brelative_height:([0-9.]+)/u)?.[1]);
+    const relativeWidth = Number(detail.match(/\brelative_character_width:([0-9.]+)/u)?.[1]);
+    const medianHeight = Number(detail.match(/\bnormal_height:([0-9.]+)/u)?.[1]);
+    const medianWidth = Number(detail.match(/\bnormal_character_width:([0-9.]+)/u)?.[1]);
+    if (Number.isFinite(visualSize)) {
+      const parts = [`${formatTextSizeMeasureNumber(visualSize)} × normal`];
+      if (Number.isFinite(relativeHeight)) {
+        parts.push(`relativ texthöjd ${formatTextSizeMeasureNumber(relativeHeight)} ×`);
+      }
+      if (Number.isFinite(relativeWidth)) {
+        parts.push(`relativ teckenbredd ${formatTextSizeMeasureNumber(relativeWidth)} ×`);
+      }
+      if (Number.isFinite(medianHeight)) {
+        parts.push(`sidmedian höjd ${formatTextSizeMeasureNumber(medianHeight)} px`);
+      }
+      if (Number.isFinite(medianWidth)) {
+        parts.push(`sidmedian teckenbredd ${formatTextSizeMeasureNumber(medianWidth)} px`);
+      }
+      return parts.join(', ');
     }
   }
   const relativeSizeMatch = detail.match(/\brelative_size:([0-9.]+)/u);
@@ -8743,6 +8777,38 @@ function snapshotCompareCandidateDetailsText(candidate) {
   add('Poäng', Number.isFinite(Number(candidate.score)) && Number.isFinite(Number(candidate.fullConfidenceScore))
     ? `${formatPrimaryDateScoreNumber(candidate.score)} / ${formatPrimaryDateScoreNumber(candidate.fullConfidenceScore)}`
     : formatPrimaryDateScoreNumber(candidate.score));
+  add('Relativ texthöjd', Number.isFinite(Number(candidate.relativeTextHeight))
+    ? `${formatTextSizeMeasureNumber(candidate.relativeTextHeight)} ×`
+    : '');
+  add('Relativ teckenbredd', Number.isFinite(Number(candidate.relativeCharacterWidth))
+    ? `${formatTextSizeMeasureNumber(candidate.relativeCharacterWidth)} ×`
+    : '');
+  add('Samlad visuell textstorlek', Number.isFinite(Number(candidate.visualTextSizeRatio ?? candidate.relativeTextSize))
+    ? `${formatTextSizeMeasureNumber(candidate.visualTextSizeRatio ?? candidate.relativeTextSize)} ×`
+    : '');
+  add('Sidans median för texthöjd', Number.isFinite(Number(candidate.pageMedianTextHeight))
+    ? `${formatTextSizeMeasureNumber(candidate.pageMedianTextHeight)} px`
+    : '');
+  add('Sidans median för teckenkompenserad bredd', Number.isFinite(Number(candidate.pageMedianCharacterWidth))
+    ? `${formatTextSizeMeasureNumber(candidate.pageMedianCharacterWidth)} px`
+    : '');
+  if (Array.isArray(candidate.textSizeBboxes) && candidate.textSizeBboxes.length > 0) {
+    candidate.textSizeBboxes.forEach((bbox, bboxIndex) => {
+      if (!bbox || typeof bbox !== 'object') {
+        return;
+      }
+      const parts = [
+        typeof bbox.text === 'string' && bbox.text.trim() !== '' ? `”${bbox.text.trim()}”` : '',
+        Number.isFinite(Number(bbox.width)) ? `bredd ${formatTextSizeMeasureNumber(bbox.width)} px` : '',
+        Number.isFinite(Number(bbox.height)) ? `höjd ${formatTextSizeMeasureNumber(bbox.height)} px` : '',
+        Number.isFinite(Number(bbox.characterWeightSum)) ? `teckenvikt ${formatTextSizeMeasureNumber(bbox.characterWeightSum)}` : '',
+        Number.isFinite(Number(bbox.normalizedCharacterWidth)) ? `kompenserad bredd ${formatTextSizeMeasureNumber(bbox.normalizedCharacterWidth)} px` : '',
+        Number.isFinite(Number(bbox.relativeCharacterWidth)) ? `relativ bredd ${formatTextSizeMeasureNumber(bbox.relativeCharacterWidth)} ×` : '',
+        Number.isFinite(Number(bbox.aggregationWeight)) ? `sammanslagningsvikt ${formatTextSizeMeasureNumber(bbox.aggregationWeight)}` : '',
+      ].filter(Boolean);
+      add(`Textstorlek bbox ${bboxIndex + 1}`, parts.join(', '));
+    });
+  }
   appendPrimaryDateSignalTextLines(lines, 'Poängsignaler', candidate.signals);
   const bodyTextBefore = candidate.bodyTextBeforeCandidate && typeof candidate.bodyTextBeforeCandidate === 'object'
     ? candidate.bodyTextBeforeCandidate
@@ -27991,7 +28057,7 @@ function sanitizePrimaryDateHeuristics(input) {
     const raw = source.bonuses && source.bonuses[key] && typeof source.bonuses[key] === 'object'
       ? source.bonuses[key]
       : {};
-    result.bonuses[key].enabled = true;
+    result.bonuses[key].enabled = raw.enabled !== false && defaultsForRule.enabled !== false;
     ['points', 'max_points'].forEach((prop) => {
       if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
         result.bonuses[key][prop] = sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop]);
@@ -28026,7 +28092,7 @@ function sanitizePrimaryDateHeuristics(input) {
     if (key === 'text_density' && Object.keys(raw).length === 0 && source.penalties && source.penalties.running_text && typeof source.penalties.running_text === 'object') {
       raw = source.penalties.running_text;
     }
-    result.penalties[key].enabled = true;
+    result.penalties[key].enabled = raw.enabled !== false && defaultsForRule.enabled !== false;
     ['points', 'max_points', 'direct_before_points', 'same_line_points', 'line_above_points', 'points_per_page'].forEach((prop) => {
       if (Object.prototype.hasOwnProperty.call(defaultsForRule, prop)) {
         result.penalties[key][prop] = sanitizePrimaryDateNumber(raw[prop], defaultsForRule[prop]);
@@ -28231,7 +28297,7 @@ function sanitizeTitleHeuristics(input) {
       && typeof source.signals.horizontal_position_centered === 'object') {
       raw = source.signals.horizontal_position_centered;
     }
-    result.signals[key].enabled = true;
+    result.signals[key].enabled = raw.enabled !== false && defaultsForSignal.enabled !== false;
     if (Object.prototype.hasOwnProperty.call(defaultsForSignal, 'curve')) {
       result.signals[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForSignal.curve);
     }
@@ -28307,7 +28373,7 @@ function sanitizeSenderMarkHeuristics(input) {
     const raw = source.signals && source.signals[key] && typeof source.signals[key] === 'object'
       ? source.signals[key]
       : {};
-    result.signals[key].enabled = true;
+    result.signals[key].enabled = raw.enabled !== false && defaultsForSignal.enabled !== false;
     result.signals[key].curve = sanitizePrimaryDateScoreCurve(raw.curve, defaultsForSignal.curve);
   });
 
@@ -33548,12 +33614,26 @@ function createPrimaryDateHeuristicRuleEditor({
   const rule = heuristics[section][ruleKey];
   const row = document.createElement('div');
   row.className = 'primary-date-heuristic-rule';
+  row.classList.toggle('is-disabled', rule.enabled === false);
 
   const header = document.createElement('div');
   header.className = 'primary-date-heuristic-rule-header';
+  const enabledLabel = document.createElement('label');
+  enabledLabel.className = 'primary-date-heuristic-enabled';
+  const enabledCheckbox = document.createElement('input');
+  enabledCheckbox.type = 'checkbox';
+  enabledCheckbox.checked = rule.enabled !== false;
   const title = document.createElement('span');
   title.textContent = primaryDateHeuristicLabels[ruleKey] || ruleKey;
-  header.append(title);
+  enabledLabel.append(enabledCheckbox, title);
+  header.append(enabledLabel);
+  enabledCheckbox.addEventListener('change', () => {
+    const next = sanitizePrimaryDateHeuristics(collection[index].primaryDateHeuristics);
+    next[section][ruleKey].enabled = enabledCheckbox.checked;
+    collection[index].primaryDateHeuristics = sanitizePrimaryDateHeuristics(next);
+    row.classList.toggle('is-disabled', !enabledCheckbox.checked);
+    updateSettingsActionButtons();
+  });
 
   const help = document.createElement('p');
   help.className = 'primary-date-heuristic-help';
@@ -33692,13 +33772,27 @@ function createTitleHeuristicRuleEditor({
   const rule = heuristics.signals[ruleKey];
   const row = document.createElement('div');
   row.className = 'primary-date-heuristic-rule';
+  row.classList.toggle('is-disabled', rule.enabled === false);
 
   const header = document.createElement('div');
   header.className = 'primary-date-heuristic-rule-header';
+  const enabledLabel = document.createElement('label');
+  enabledLabel.className = 'primary-date-heuristic-enabled';
+  const enabledCheckbox = document.createElement('input');
+  enabledCheckbox.type = 'checkbox';
+  enabledCheckbox.checked = rule.enabled !== false;
   const title = document.createElement('span');
   title.textContent = titleHeuristicLabels[ruleKey] || ruleKey;
   title.title = rule.description || '';
-  header.append(title);
+  enabledLabel.append(enabledCheckbox, title);
+  header.append(enabledLabel);
+  enabledCheckbox.addEventListener('change', () => {
+    const next = sanitizeTitleHeuristics(collection[index].titleHeuristics);
+    next.signals[ruleKey].enabled = enabledCheckbox.checked;
+    collection[index].titleHeuristics = sanitizeTitleHeuristics(next);
+    row.classList.toggle('is-disabled', !enabledCheckbox.checked);
+    updateSettingsActionButtons();
+  });
 
   const help = document.createElement('p');
   help.className = 'primary-date-heuristic-help';
@@ -33877,13 +33971,27 @@ function createSenderMarkHeuristicRuleEditor({
   const rule = heuristics.signals[ruleKey];
   const row = document.createElement('div');
   row.className = 'primary-date-heuristic-rule';
+  row.classList.toggle('is-disabled', rule.enabled === false);
 
   const header = document.createElement('div');
   header.className = 'primary-date-heuristic-rule-header';
+  const enabledLabel = document.createElement('label');
+  enabledLabel.className = 'primary-date-heuristic-enabled';
+  const enabledCheckbox = document.createElement('input');
+  enabledCheckbox.type = 'checkbox';
+  enabledCheckbox.checked = rule.enabled !== false;
   const title = document.createElement('span');
   title.textContent = senderMarkHeuristicLabels[ruleKey] || ruleKey;
   title.title = rule.description || '';
-  header.append(title);
+  enabledLabel.append(enabledCheckbox, title);
+  header.append(enabledLabel);
+  enabledCheckbox.addEventListener('change', () => {
+    const next = sanitizeSenderMarkHeuristics(collection[index].senderMarkHeuristics);
+    next.signals[ruleKey].enabled = enabledCheckbox.checked;
+    collection[index].senderMarkHeuristics = sanitizeSenderMarkHeuristics(next);
+    row.classList.toggle('is-disabled', !enabledCheckbox.checked);
+    updateSettingsActionButtons();
+  });
 
   const help = document.createElement('p');
   help.className = 'primary-date-heuristic-help';

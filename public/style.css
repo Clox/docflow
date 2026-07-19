@@ -7378,6 +7378,22 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   font-weight: 700;
 }
 
+.primary-date-heuristic-enabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.primary-date-heuristic-enabled input {
+  margin: 0;
+}
+
+.primary-date-heuristic-rule.is-disabled .primary-date-heuristic-help,
+.primary-date-heuristic-rule.is-disabled .primary-date-heuristic-fields {
+  opacity: 0.5;
+}
+
 .primary-date-heuristic-help {
   margin: 4px 0 8px;
   color: #4b5563;

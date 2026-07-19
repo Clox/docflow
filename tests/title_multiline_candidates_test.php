@@ -230,7 +230,7 @@ $textSizeScored = score_title_candidate($multilineTextSizeCandidate, [], $normal
     ],
 ]);
 assert_title_multiline_candidates(
-    abs((float) ($textSizeScored['relativeTextSize'] ?? 0.0) - (63.0 / 69.0)) < 0.0001,
+    abs((float) ($textSizeScored['relativeTextHeight'] ?? 0.0) - (63.0 / 69.0)) < 0.0001,
     'Title text size must use representative line height for multiline candidates, not the full block bbox height.'
 );
 
