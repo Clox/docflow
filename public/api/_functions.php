@@ -3328,6 +3328,17 @@ function default_primary_date_heuristics(): array
                 ],
                 'description' => 'Poängkurva baserad på hur mycket omgivande text som finns runt kandidatdatumet.',
             ],
+            'same_line_text' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.0, 'y' => 0.0],
+                    ['x' => 3.0, 'y' => 0.0],
+                    ['x' => 10.0, 'y' => -25.0],
+                    ['x' => 25.0, 'y' => -70.0],
+                    ['x' => 50.0, 'y' => -100.0],
+                ],
+                'description' => 'Poängkurva baserad på avståndsviktad mängd annan OCR-text på samma rad som datumkandidaten. Identifierad ort och datumetikett undantas.',
+            ],
         ],
     ];
 }
@@ -9948,6 +9959,7 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
         'pageMedianCharacterWidth',
         'uppercaseRatio',
         'textDensityRatio',
+        'sameLineTextWeightedCharacters',
         'bodyTextBeforeWeightedAmount',
         'bodyTextBeforeCurrentPageAmount',
         'bodyTextBeforePreviousPagesAmount',
@@ -9965,12 +9977,12 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     ] as $key) {
         $number = debug_export_float_or_null($match[$key] ?? null);
         if ($number !== null) {
-            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'sameLineTextWeightedCharacters', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                 ? $number
                 : clamp_confidence($number);
         }
     }
-    foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount', 'sourceSenderNameMatchIndex', 'sourceSenderId', 'sourceSenderUnitId', 'bodyTextBeforeContributingLines', 'bodyTextBeforeReducedLines'] as $key) {
+    foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount', 'sourceSenderNameMatchIndex', 'sourceSenderId', 'sourceSenderUnitId', 'sameLineTextUnweightedCharacters', 'bodyTextBeforeContributingLines', 'bodyTextBeforeReducedLines'] as $key) {
         $number = debug_export_int_or_null($match[$key] ?? null);
         if ($number !== null) {
             $candidate[$key] = $number;
@@ -9996,6 +10008,9 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     }
     if (is_array($match['textSizeBboxes'] ?? null)) {
         $candidate['textSizeBboxes'] = array_values($match['textSizeBboxes']);
+    }
+    if (is_array($match['sameLineText'] ?? null)) {
+        $candidate['sameLineText'] = $match['sameLineText'];
     }
     if (is_array($match['bodyTextBeforeCandidate'] ?? null)) {
         $candidate['bodyTextBeforeCandidate'] = $match['bodyTextBeforeCandidate'];
@@ -10460,6 +10475,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'pageMedianCharacterWidth',
             'uppercaseRatio',
             'textDensityRatio',
+            'sameLineTextWeightedCharacters',
             'bodyTextBeforeWeightedAmount',
             'bodyTextBeforeCurrentPageAmount',
             'bodyTextBeforePreviousPagesAmount',
@@ -10477,12 +10493,12 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         ] as $key) {
             $number = debug_export_float_or_null($candidate[$key] ?? null);
             if ($number !== null) {
-                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'sameLineTextWeightedCharacters', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                     ? $number
                     : clamp_confidence($number);
             }
         }
-        foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount', 'sourceSenderNameMatchIndex', 'sourceSenderId', 'sourceSenderUnitId', 'bodyTextBeforeContributingLines', 'bodyTextBeforeReducedLines'] as $key) {
+        foreach (['pageNumber', 'lineIndex', 'labelLineIndex', 'start', 'ruleSetIndex', 'scopeLineIndex', 'wordCount', 'sourceSenderNameMatchIndex', 'sourceSenderId', 'sourceSenderUnitId', 'sameLineTextUnweightedCharacters', 'bodyTextBeforeContributingLines', 'bodyTextBeforeReducedLines'] as $key) {
             $number = debug_export_int_or_null($candidate[$key] ?? null);
             if ($number !== null) {
                 $normalized[$key] = $number;
@@ -10514,6 +10530,9 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         }
         if (is_array($candidate['textSizeBboxes'] ?? null)) {
             $normalized['textSizeBboxes'] = array_values($candidate['textSizeBboxes']);
+        }
+        if (is_array($candidate['sameLineText'] ?? null)) {
+            $normalized['sameLineText'] = $candidate['sameLineText'];
         }
         $keyBbox = debug_export_bbox_or_null($candidate['keyBBox'] ?? ($candidate['labelBbox'] ?? null));
         $valueBbox = debug_export_bbox_or_null($candidate['valueBBox'] ?? null);
@@ -17942,6 +17961,212 @@ function primary_date_text_density_signal(string $line, string $prefix, string $
     ];
 }
 
+function primary_date_same_line_text_signal(
+    array $candidate,
+    array $lineGeometries,
+    ?array $placeMatch = null,
+    ?array $dateWordMatch = null
+): ?array {
+    $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
+    $candidateStart = is_int($candidate['start'] ?? null) ? (int) $candidate['start'] : -1;
+    $candidateRaw = is_string($candidate['raw'] ?? null) ? (string) $candidate['raw'] : '';
+    $candidateEnd = $candidateStart >= 0 && $candidateRaw !== ''
+        ? $candidateStart + strlen($candidateRaw)
+        : -1;
+    $geometry = $lineIndex >= 0 && is_array($lineGeometries[$lineIndex] ?? null)
+        ? $lineGeometries[$lineIndex]
+        : null;
+    if ($geometry === null || $candidateStart < 0 || $candidateEnd <= $candidateStart) {
+        return null;
+    }
+    $candidateBbox = line_geometry_span_bbox($geometry, $candidateStart, $candidateEnd);
+    if ($candidateBbox === null) {
+        return null;
+    }
+
+    $ocrLineText = is_string($geometry['text'] ?? null)
+        ? (string) $geometry['text']
+        : (is_string($candidate['line'] ?? null) ? (string) $candidate['line'] : '');
+    $textBefore = $ocrLineText !== ''
+        ? normalize_inline_whitespace((string) substr($ocrLineText, 0, $candidateStart))
+        : '';
+    $textAfter = $ocrLineText !== ''
+        ? normalize_inline_whitespace((string) substr($ocrLineText, $candidateEnd))
+        : '';
+
+    $exceptionRanges = [];
+    $ignoredPlace = '';
+    if (
+        is_array($placeMatch)
+        && ($placeMatch['context'] ?? null) === 'same_line_before'
+        && (int) ($placeMatch['lineIndex'] ?? -1) === $lineIndex
+        && is_int($placeMatch['start'] ?? null)
+        && is_int($placeMatch['end'] ?? null)
+        && (int) $placeMatch['end'] > (int) $placeMatch['start']
+    ) {
+        $exceptionRanges[] = [
+            'start' => (int) $placeMatch['start'],
+            'end' => (int) $placeMatch['end'],
+            'type' => 'place',
+        ];
+        $ignoredPlace = is_string($placeMatch['text'] ?? null) && trim((string) $placeMatch['text']) !== ''
+            ? trim((string) $placeMatch['text'])
+            : trim((string) ($placeMatch['name'] ?? ''));
+    }
+
+    $ignoredDateLabel = '';
+    if (
+        is_array($dateWordMatch)
+        && (int) ($dateWordMatch['lineIndex'] ?? -1) === $lineIndex
+        && is_int($dateWordMatch['start'] ?? null)
+        && is_int($dateWordMatch['end'] ?? null)
+        && (int) $dateWordMatch['end'] > (int) $dateWordMatch['start']
+    ) {
+        $labelStart = (int) $dateWordMatch['start'];
+        $labelEnd = (int) $dateWordMatch['end'];
+        if ($ocrLineText !== '') {
+            $trailingText = substr($ocrLineText, $labelEnd);
+            if (is_string($trailingText) && preg_match('/^\s*[:;]/u', $trailingText, $punctuation) === 1) {
+                $labelEnd += strlen((string) ($punctuation[0] ?? ''));
+            }
+            $ignoredDateLabel = trim((string) substr($ocrLineText, $labelStart, $labelEnd - $labelStart));
+        }
+        if ($ignoredDateLabel === '') {
+            $ignoredDateLabel = trim((string) ($dateWordMatch['matchedText'] ?? 'datum'));
+        }
+        $exceptionRanges[] = [
+            'start' => $labelStart,
+            'end' => $labelEnd,
+            'type' => 'date_label',
+        ];
+    }
+
+    $candidateHeight = max(1.0, (float) $candidateBbox['y1'] - (float) $candidateBbox['y0']);
+    $unweightedCount = 0;
+    $rawCharacterCount = 0;
+    $weightedCount = 0.0;
+    $weightedBefore = 0.0;
+    $weightedAfter = 0.0;
+    $unweightedBefore = 0;
+    $unweightedAfter = 0;
+    $ignoredPlaceCharacters = 0;
+    $ignoredDateLabelCharacters = 0;
+    $fragments = [];
+
+    foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+        if (!is_array($segment)) {
+            continue;
+        }
+        $segmentBbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+        $segmentStart = is_int($segment['start'] ?? null) ? (int) $segment['start'] : -1;
+        $segmentEnd = is_int($segment['end'] ?? null) ? (int) $segment['end'] : -1;
+        $segmentText = title_geometry_segment_text($geometry, $segment);
+        if ($segmentBbox === null || $segmentStart < 0 || $segmentEnd <= $segmentStart || $segmentText === '') {
+            continue;
+        }
+        $characterMatches = [];
+        $characterCount = preg_match_all('/./us', $segmentText, $characterMatches, PREG_OFFSET_CAPTURE);
+        if (!is_int($characterCount) || $characterCount < 1) {
+            continue;
+        }
+        $segmentWidth = max(0.0, (float) $segmentBbox['x1'] - (float) $segmentBbox['x0']);
+        $segmentHeight = max(1.0, (float) $segmentBbox['y1'] - (float) $segmentBbox['y0']);
+        if ($segmentWidth <= 0.0) {
+            continue;
+        }
+        $fragmentText = '';
+        $fragmentWeighted = 0.0;
+        $fragmentUnweighted = 0;
+        $fragmentSide = '';
+        foreach (is_array($characterMatches[0] ?? null) ? $characterMatches[0] : [] as $characterIndex => $characterMatch) {
+            $character = is_string($characterMatch[0] ?? null) ? (string) $characterMatch[0] : '';
+            $localOffset = is_int($characterMatch[1] ?? null) ? (int) $characterMatch[1] : -1;
+            if ($character === '' || $localOffset < 0 || preg_match('/^\s$/u', $character) === 1) {
+                continue;
+            }
+            $absoluteStart = $segmentStart + $localOffset;
+            $absoluteEnd = $absoluteStart + strlen($character);
+            if ($absoluteEnd > $candidateStart && $absoluteStart < $candidateEnd) {
+                continue;
+            }
+            $side = $absoluteEnd <= $candidateStart
+                ? 'before'
+                : ($absoluteStart >= $candidateEnd ? 'after' : '');
+            if ($side === '') {
+                continue;
+            }
+            $rawCharacterCount++;
+            $ignoredType = '';
+            foreach ($exceptionRanges as $exceptionRange) {
+                if (
+                    $absoluteEnd > (int) ($exceptionRange['start'] ?? -1)
+                    && $absoluteStart < (int) ($exceptionRange['end'] ?? -1)
+                ) {
+                    $ignoredType = (string) ($exceptionRange['type'] ?? '');
+                    break;
+                }
+            }
+            if ($ignoredType === 'place') {
+                $ignoredPlaceCharacters++;
+                continue;
+            }
+            if ($ignoredType === 'date_label') {
+                $ignoredDateLabelCharacters++;
+                continue;
+            }
+
+            $characterLeft = (float) $segmentBbox['x0'] + ($segmentWidth * ($characterIndex / $characterCount));
+            $characterRight = (float) $segmentBbox['x0'] + ($segmentWidth * (($characterIndex + 1) / $characterCount));
+            $distance = $side === 'before'
+                ? max(0.0, (float) $candidateBbox['x0'] - $characterRight)
+                : max(0.0, $characterLeft - (float) $candidateBbox['x1']);
+            $zeroWeightDistance = 12.0 * max($candidateHeight, $segmentHeight);
+            $weight = max(0.0, min(1.0, 1.0 - ($distance / max(1.0, $zeroWeightDistance))));
+            $unweightedCount++;
+            $weightedCount += $weight;
+            if ($side === 'before') {
+                $unweightedBefore++;
+                $weightedBefore += $weight;
+            } else {
+                $unweightedAfter++;
+                $weightedAfter += $weight;
+            }
+            $fragmentText .= $character;
+            $fragmentWeighted += $weight;
+            $fragmentUnweighted++;
+            $fragmentSide = $side;
+        }
+        if ($fragmentUnweighted > 0) {
+            $fragments[] = [
+                'text' => $fragmentText,
+                'side' => $fragmentSide,
+                'unweightedCharacters' => $fragmentUnweighted,
+                'weightedCharacters' => $fragmentWeighted,
+                'bboxIndex' => is_int($segment['wordIndex'] ?? null) ? (int) $segment['wordIndex'] + 1 : null,
+            ];
+        }
+    }
+
+    return [
+        'textBefore' => $textBefore,
+        'textAfter' => $textAfter,
+        'unweightedCharacterCount' => $unweightedCount,
+        'rawCharacterCount' => $rawCharacterCount,
+        'weightedCharacterCount' => $weightedCount,
+        'signalValue' => $weightedCount,
+        'unweightedBefore' => $unweightedBefore,
+        'unweightedAfter' => $unweightedAfter,
+        'weightedBefore' => $weightedBefore,
+        'weightedAfter' => $weightedAfter,
+        'ignoredPlace' => $ignoredPlace !== '' ? $ignoredPlace : null,
+        'ignoredPlaceCharacters' => $ignoredPlaceCharacters,
+        'ignoredDateLabel' => $ignoredDateLabel !== '' ? $ignoredDateLabel : null,
+        'ignoredDateLabelCharacters' => $ignoredDateLabelCharacters,
+        'distanceWeighting' => 'linear_to_zero_at_12_line_heights',
+        'contributingFragments' => array_values($fragments),
+    ];
+}
+
 function primary_date_date_word_match(array $candidate, array $lines, array $replacementMap, array $positionSettings, array $lineGeometries): ?array
 {
     $lineIndex = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : -1;
@@ -18001,6 +18226,9 @@ function primary_date_date_word_match(array $candidate, array $lines, array $rep
         $candidateMatch = [
             'confidence' => $confidence,
             'matchedText' => matched_label_text_from_hit($hit) ?? 'datum',
+            'lineIndex' => is_int($hit['index'] ?? null) ? (int) $hit['index'] : null,
+            'start' => is_int($hit['labelStart'] ?? null) ? (int) $hit['labelStart'] : null,
+            'end' => is_int($hit['labelEnd'] ?? null) ? (int) $hit['labelEnd'] : null,
             'components' => $components,
         ];
         if ($best === null || $confidence > (float) ($best['confidence'] ?? 0.0)) {
@@ -18064,6 +18292,10 @@ function primary_date_place_distance_match(array $candidate, array $lines, array
                     'normalized' => $normalizedPlace,
                     'distance' => $distance,
                     'context' => $contextLineIndex === $lineIndex ? 'same_line_before' : 'line_above',
+                    'lineIndex' => $contextLineIndex,
+                    'start' => $placeStart,
+                    'end' => $placeEnd,
+                    'text' => $placeText,
                 ];
                 if ($best === null || $distance < (float) ($best['distance'] ?? INF)) {
                     $best = $candidateMatch;
@@ -18272,8 +18504,8 @@ function score_primary_date_candidate(
         }
     }
 
+    $dateWordMatch = primary_date_date_word_match($candidate, $lines, $replacementMap, $positionSettings, $lineGeometries);
     if (($penalties['date_word_nearby']['enabled'] ?? true) === true) {
-        $dateWordMatch = primary_date_date_word_match($candidate, $lines, $replacementMap, $positionSettings, $lineGeometries);
         $dateWordConfidence = is_array($dateWordMatch) && is_numeric($dateWordMatch['confidence'] ?? null)
             ? clamp_confidence((float) $dateWordMatch['confidence'])
             : null;
@@ -18291,6 +18523,41 @@ function score_primary_date_candidate(
                 'score' => $dateWordScore,
                 'detail' => 'confidence:' . round($dateWordConfidence ?? 0.0, 3) . ',label:' . (string) ($dateWordMatch['matchedText'] ?? 'datum'),
             ];
+        }
+    }
+
+    $sameLineTextSettings = is_array($penalties['same_line_text'] ?? null)
+        ? $penalties['same_line_text']
+        : [];
+    if (($sameLineTextSettings['enabled'] ?? true) === true) {
+        $sameLineText = primary_date_same_line_text_signal(
+            $candidate,
+            $lineGeometries,
+            $placeMatch,
+            $dateWordMatch
+        );
+        if (is_array($sameLineText)) {
+            $sameLineValue = max(0.0, (float) ($sameLineText['signalValue'] ?? 0.0));
+            $sameLineScore = interpolate_primary_date_score_curve(
+                is_array($sameLineTextSettings['curve'] ?? null) ? $sameLineTextSettings['curve'] : [],
+                $sameLineValue
+            );
+            $score += $sameLineScore;
+            $signals[] = [
+                'type' => $sameLineScore >= 0.0 ? 'positive' : 'negative',
+                'code' => 'same_line_text',
+                'score' => $sameLineScore,
+                'detail' => 'weighted_characters:' . round($sameLineValue, 4)
+                    . ',unweighted_characters:' . (int) ($sameLineText['unweightedCharacterCount'] ?? 0)
+                    . ',before_characters:' . (int) ($sameLineText['unweightedBefore'] ?? 0)
+                    . ',after_characters:' . (int) ($sameLineText['unweightedAfter'] ?? 0)
+                    . ',ignored_place_characters:' . (int) ($sameLineText['ignoredPlaceCharacters'] ?? 0)
+                    . ',ignored_date_label_characters:' . (int) ($sameLineText['ignoredDateLabelCharacters'] ?? 0),
+                'debug' => $sameLineText,
+            ];
+            $result['sameLineText'] = $sameLineText;
+            $result['sameLineTextWeightedCharacters'] = $sameLineValue;
+            $result['sameLineTextUnweightedCharacters'] = (int) ($sameLineText['unweightedCharacterCount'] ?? 0);
         }
     }
 
@@ -23199,6 +23466,14 @@ function primary_date_result_matches(array $result, array $lineGeometries = []):
         if (isset($matchesByKey[$matchKey]) && is_numeric($candidate['yRatio'] ?? null)) {
             $matchesByKey[$matchKey]['yRatio'] = (float) $candidate['yRatio'];
         }
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['sameLineText'] ?? null)) {
+            $matchesByKey[$matchKey]['sameLineText'] = $candidate['sameLineText'];
+        }
+        foreach (['sameLineTextWeightedCharacters', 'sameLineTextUnweightedCharacters'] as $sameLineKey) {
+            if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$sameLineKey] ?? null)) {
+                $matchesByKey[$matchKey][$sameLineKey] = (float) $candidate[$sameLineKey];
+            }
+        }
     }
 
     if ($matchesByKey === [] && ($result['value'] ?? null) !== null) {
@@ -24447,6 +24722,9 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'textSizeBboxes' => is_array($match['textSizeBboxes'] ?? null) ? array_values($match['textSizeBboxes']) : [],
                         'uppercaseRatio' => is_numeric($match['uppercaseRatio'] ?? null) ? (float) $match['uppercaseRatio'] : null,
                         'textDensityRatio' => is_numeric($match['textDensityRatio'] ?? null) ? (float) $match['textDensityRatio'] : null,
+                        'sameLineTextWeightedCharacters' => is_numeric($match['sameLineTextWeightedCharacters'] ?? null) ? (float) $match['sameLineTextWeightedCharacters'] : null,
+                        'sameLineTextUnweightedCharacters' => is_numeric($match['sameLineTextUnweightedCharacters'] ?? null) ? (int) $match['sameLineTextUnweightedCharacters'] : null,
+                        'sameLineText' => is_array($match['sameLineText'] ?? null) ? $match['sameLineText'] : null,
                         'bodyTextBeforeWeightedAmount' => is_numeric($match['bodyTextBeforeWeightedAmount'] ?? null) ? (float) $match['bodyTextBeforeWeightedAmount'] : null,
                         'bodyTextBeforeCurrentPageAmount' => is_numeric($match['bodyTextBeforeCurrentPageAmount'] ?? null) ? (float) $match['bodyTextBeforeCurrentPageAmount'] : null,
                         'bodyTextBeforePreviousPagesAmount' => is_numeric($match['bodyTextBeforePreviousPagesAmount'] ?? null) ? (float) $match['bodyTextBeforePreviousPagesAmount'] : null,

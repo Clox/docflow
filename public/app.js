@@ -8296,6 +8296,7 @@ function formatPrimaryDateSignalLabel(code) {
     page_in_document: 'Sida i dokument',
     text_density: 'Texttäthet',
     running_text: 'Texttäthet',
+    same_line_text: 'Text på samma rad',
     body_text_before_candidate: 'Brödtext före kandidaten',
     zone_overlap: 'Överlapp med zon',
     vertical_position: 'Högt på sidan',
@@ -8423,6 +8424,33 @@ function formatPrimaryDateSignalDetail(signal) {
   const detail = typeof signal?.detail === 'string' ? signal.detail.trim() : '';
   if (detail === '') {
     return '';
+  }
+  if (signal?.code === 'same_line_text') {
+    const debug = signal.debug && typeof signal.debug === 'object' ? signal.debug : {};
+    const weightedMatch = detail.match(/\bweighted_characters:([-0-9.]+)/u);
+    const unweightedMatch = detail.match(/\bunweighted_characters:(\d+)/u);
+    const weighted = Number(debug.signalValue ?? weightedMatch?.[1]);
+    const unweighted = Number(debug.unweightedCharacterCount ?? unweightedMatch?.[1]);
+    const parts = [];
+    if (Number.isFinite(weighted)) {
+      parts.push(`${formatTextSizeMeasureNumber(weighted)} viktade tecken`);
+    }
+    if (Number.isFinite(unweighted)) {
+      parts.push(`${unweighted.toLocaleString('sv-SE')} oviktade`);
+    }
+    if (typeof debug.textBefore === 'string' && debug.textBefore.trim() !== '') {
+      parts.push(`före: ”${debug.textBefore.trim()}”`);
+    }
+    if (typeof debug.textAfter === 'string' && debug.textAfter.trim() !== '') {
+      parts.push(`efter: ”${debug.textAfter.trim()}”`);
+    }
+    if (typeof debug.ignoredPlace === 'string' && debug.ignoredPlace.trim() !== '') {
+      parts.push(`ort ignorerad: ${debug.ignoredPlace.trim()}`);
+    }
+    if (typeof debug.ignoredDateLabel === 'string' && debug.ignoredDateLabel.trim() !== '') {
+      parts.push(`datumetikett ignorerad: ${debug.ignoredDateLabel.trim()}`);
+    }
+    return parts.join(', ');
   }
   if (signal?.code === 'body_text_before_candidate') {
     const amountMatch = detail.match(/\bweighted_characters:([-0-9.]+)/u);
@@ -8777,6 +8805,22 @@ function snapshotCompareCandidateDetailsText(candidate) {
   add('Poäng', Number.isFinite(Number(candidate.score)) && Number.isFinite(Number(candidate.fullConfidenceScore))
     ? `${formatPrimaryDateScoreNumber(candidate.score)} / ${formatPrimaryDateScoreNumber(candidate.fullConfidenceScore)}`
     : formatPrimaryDateScoreNumber(candidate.score));
+  const sameLineText = candidate.sameLineText && typeof candidate.sameLineText === 'object'
+    ? candidate.sameLineText
+    : null;
+  if (sameLineText) {
+    add('Text före datum', typeof sameLineText.textBefore === 'string' && sameLineText.textBefore.trim() !== ''
+      ? `”${sameLineText.textBefore.trim()}”`
+      : '””');
+    add('Text efter datum', typeof sameLineText.textAfter === 'string' && sameLineText.textAfter.trim() !== ''
+      ? `”${sameLineText.textAfter.trim()}”`
+      : '””');
+    add('Oviktade tecken på samma rad', sameLineText.unweightedCharacterCount);
+    add('Viktade tecken på samma rad', formatTextSizeMeasureNumber(sameLineText.weightedCharacterCount));
+    add('Signalvärde för text på samma rad', formatTextSizeMeasureNumber(sameLineText.signalValue));
+    add('Ignorerad ort', sameLineText.ignoredPlace);
+    add('Ignorerad datumetikett', sameLineText.ignoredDateLabel);
+  }
   add('Relativ texthöjd', Number.isFinite(Number(candidate.relativeTextHeight))
     ? `${formatTextSizeMeasureNumber(candidate.relativeTextHeight)} ×`
     : '');
@@ -17788,6 +17832,8 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
     'relativeTextSize',
     'uppercaseRatio',
     'textDensityRatio',
+    'sameLineTextWeightedCharacters',
+    'sameLineTextUnweightedCharacters',
     'bodyTextBeforeWeightedAmount',
     'bodyTextBeforeCurrentPageAmount',
     'bodyTextBeforePreviousPagesAmount',
@@ -17802,6 +17848,9 @@ function buildOcrDataFieldMatchTooltip(row, page = null, pageMatches = null) {
       copyPayload[key] = numericValue;
     }
   });
+  if (row?.sameLineText && typeof row.sameLineText === 'object') {
+    copyPayload.sameLineText = row.sameLineText;
+  }
   if (showKeySection && row?.keyBbox) {
     copyPayload.keyBbox = row.keyBbox;
   }
@@ -27970,6 +28019,17 @@ function defaultPrimaryDateHeuristics() {
         ],
         description: 'Poängkurva baserad på hur mycket omgivande text som finns runt kandidatdatumet.',
       },
+      same_line_text: {
+        enabled: true,
+        curve: [
+          { x: 0, y: 0 },
+          { x: 3, y: 0 },
+          { x: 10, y: -25 },
+          { x: 25, y: -70 },
+          { x: 50, y: -100 },
+        ],
+        description: 'Poängkurva baserad på avståndsviktad mängd annan OCR-text på samma rad som datumkandidaten. Identifierad ort och datumetikett undantas.',
+      },
     },
   };
 }
@@ -33133,6 +33193,7 @@ const primaryDateHeuristicLabels = {
   page_in_document: 'Sida i dokument',
   text_density: 'Texttäthet',
   running_text: 'Texttäthet',
+  same_line_text: 'Text på samma rad',
 };
 
 function primaryDateHeuristicPropertyLabel(prop) {
@@ -33216,6 +33277,17 @@ const primaryDateHeuristicCurveCharts = {
     yMax: 80,
     yAsPercent: false,
     xStep: 0.05,
+    yStep: 1,
+  },
+  same_line_text: {
+    xAxisTitle: 'Viktade tecken på samma rad',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'Viktade tecken',
+    yPointLabel: 'Poäng',
+    yMin: -140,
+    yMax: 60,
+    yAsPercent: false,
+    xStep: 1,
     yStep: 1,
   },
   running_text: {
