@@ -5348,11 +5348,10 @@ function default_system_zones(): array
             'name' => 'Avsändarblock',
             'description' => 'Identifierar sammanhängande avsändar- och kontaktblock i dokumentet.',
             'enabled' => true,
-            'minTotalPoints' => 60,
             'minLayoutPoints' => 35,
             'minContentPoints' => 25,
-            'minLines' => 3,
             'maxLineGap' => 1.8,
+            'maxHorizontalGapLineHeights' => 4.5,
             'topPositionCurve' => [
                 ['x' => 0.00, 'y' => 20],
                 ['x' => 0.15, 'y' => 16],
@@ -5381,7 +5380,14 @@ function default_system_zones(): array
                 ['x' => 0.95, 'y' => -30],
             ],
             'placeDatePoints' => 20,
-            'textMatches' => [
+            'unidentifiedTextRatioCurve' => [
+                ['x' => 0, 'y' => 0],
+                ['x' => 0.2, 'y' => 0],
+                ['x' => 0.5, 'y' => -10],
+                ['x' => 0.75, 'y' => -25],
+                ['x' => 1, 'y' => -45],
+            ],
+            'contentMatches' => [
                 [
                     'name' => 'E-postadress',
                     'pattern' => '[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}',
@@ -5391,7 +5397,7 @@ function default_system_zones(): array
                 ],
                 [
                     'name' => 'Telefonnummer',
-                    'pattern' => '(?:\+46[\s().-]*(?:7[02369]|[1-9]\d{0,2})(?:[\s().-]*\d{2,3}){2,4}|0(?:7[02369]|[1-9]\d{0,2})[-\s]+\d{2,3}(?:[\s-]*\d{2}){2,3})',
+                    'pattern' => '(?<!\d)(?:\+46[\s-]?(?:7[02369][\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}|(?:8|[1-6]\d{1,2}|9\d{1,2})[\s-]?\d{2,3}(?:[\s-]?\d{2}){1,2})|0(?:7[02369][\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}|(?:8|[1-6]\d{1,2}|9\d{1,2})[\s-]\d{2,3}(?:[\s-]?\d{2}){1,2}))(?!\d)',
                     'isRegex' => true,
                     'points' => 25,
                     'enabled' => true,
@@ -5402,10 +5408,32 @@ function default_system_zones(): array
                 ['name' => 'Myndighet', 'pattern' => 'myndighet', 'isRegex' => false, 'points' => 22, 'enabled' => true],
                 ['name' => 'Förvaltning', 'pattern' => 'förvaltning', 'isRegex' => false, 'points' => 22, 'enabled' => true],
                 ['name' => 'Enhet', 'pattern' => 'enhet', 'isRegex' => false, 'points' => 22, 'enabled' => true],
-                ['name' => 'Bank', 'pattern' => 'bank', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'Banknamn', 'pattern' => '(?:Skandiabanken|Swedbank|Nordea|SEB|Handelsbanken|Länsförsäkringar\s+Bank|ICA\s+Banken|\p{L}*Sparbank\p{L}*)', 'isRegex' => true, 'points' => 18, 'enabled' => true],
                 ['name' => 'AB', 'pattern' => 'ab', 'isRegex' => false, 'points' => 22, 'enabled' => true],
                 ['name' => 'Region', 'pattern' => 'region', 'isRegex' => false, 'points' => 22, 'enabled' => true],
+                ['name' => 'Belopp', 'pattern' => 'belopp', 'isRegex' => false, 'points' => -20, 'enabled' => true],
+                ['name' => 'Kontonummer', 'pattern' => 'kontonummer', 'isRegex' => false, 'points' => -25, 'enabled' => true],
+                ['name' => 'Transaktionskonto', 'pattern' => 'transaktionskonto', 'isRegex' => false, 'points' => -30, 'enabled' => true],
+                ['name' => 'Bankinformation', 'pattern' => 'bankinformation', 'isRegex' => false, 'points' => -30, 'enabled' => true],
+                ['name' => 'Giltig tom', 'pattern' => 'giltig tom', 'isRegex' => false, 'points' => -25, 'enabled' => true],
+                ['name' => 'Betala senast', 'pattern' => 'betala senast', 'isRegex' => false, 'points' => -30, 'enabled' => true],
+                ['name' => 'OCR', 'pattern' => 'OCR', 'isRegex' => false, 'points' => -20, 'enabled' => true],
+                ['name' => 'Referens', 'pattern' => 'referens', 'isRegex' => false, 'points' => -20, 'enabled' => true],
+                ['name' => 'Bankgiro', 'pattern' => 'bankgiro', 'isRegex' => false, 'points' => -30, 'enabled' => true],
+                ['name' => 'Plusgiro', 'pattern' => 'plusgiro', 'isRegex' => false, 'points' => -30, 'enabled' => true],
+                ['name' => 'Tjugotusen kronor', 'pattern' => 'tjugotusen kronor', 'isRegex' => false, 'points' => -25, 'enabled' => true],
+                ['name' => 'Ska överföras', 'pattern' => 'ska överföras', 'isRegex' => false, 'points' => -35, 'enabled' => true],
             ],
+        ],
+        'recipientBlock' => [
+            'name' => 'Mottagarblock',
+            'description' => 'Identifierar namn- och adressblock för dokumentets mottagare eller adressat.',
+            'enabled' => true,
+            'minTotalPoints' => 55,
+            'minLines' => 2,
+            'maxLines' => 6,
+            'maxLineGap' => 1.8,
+            'maxHorizontalGapLineHeights' => 4.5,
         ],
     ];
 }
@@ -5446,22 +5474,6 @@ function normalize_sender_block_points(mixed $value, int $fallback): int
     return max(0, min(1000, (int) round($number)));
 }
 
-function normalize_sender_block_min_points(array $row, array $defaults): int
-{
-    if (array_key_exists('minTotalPoints', $row)) {
-        return normalize_sender_block_points($row['minTotalPoints'], (int) $defaults['minTotalPoints']);
-    }
-    if (array_key_exists('minPoints', $row)) {
-        return normalize_sender_block_points($row['minPoints'], (int) $defaults['minTotalPoints']);
-    }
-    if (is_numeric($row['minConfidence'] ?? null)) {
-        $confidence = normalize_system_zone_float($row['minConfidence'], 0.0, 0.0, 1.0);
-        $divisor = normalize_system_zone_int($row['confidenceScoreDivisor'] ?? null, 100, 1, 10000);
-        return max(0, min(1000, (int) round($confidence * $divisor)));
-    }
-    return (int) $defaults['minTotalPoints'];
-}
-
 function normalize_sender_block_curve(mixed $value, array $fallback): array
 {
     return normalize_primary_date_score_curve($value, $fallback);
@@ -5476,7 +5488,7 @@ function normalize_sender_block_text_match(mixed $input, int $index = 0): array
         'name' => $name !== '' ? $name : 'Textmatchning',
         'pattern' => $pattern,
         'isRegex' => normalize_extraction_field_is_regex($row['isRegex'] ?? false),
-        'points' => normalize_system_zone_int($row['points'] ?? null, 0, 0, 1000),
+        'points' => max(-1000, min(1000, is_numeric($row['points'] ?? null) ? (int) round((float) $row['points']) : 0)),
         'enabled' => ($row['enabled'] ?? true) !== false,
         'id' => is_string($row['id'] ?? null) && trim((string) $row['id']) !== ''
             ? trim((string) $row['id'])
@@ -5486,7 +5498,7 @@ function normalize_sender_block_text_match(mixed $input, int $index = 0): array
 
 function normalize_sender_block_text_matches(mixed $input): array
 {
-    $source = is_array($input) ? $input : default_system_zones()['senderBlock']['textMatches'];
+    $source = is_array($input) ? $input : default_system_zones()['senderBlock']['contentMatches'];
     $matches = [];
     foreach ($source as $index => $row) {
         $match = normalize_sender_block_text_match($row, is_int($index) ? $index : count($matches));
@@ -5502,24 +5514,89 @@ function normalize_sender_block_system_zone(mixed $input): array
 {
     $defaults = default_system_zones()['senderBlock'];
     $row = is_array($input) ? $input : [];
-    $minLines = normalize_system_zone_int($row['minLines'] ?? null, (int) $defaults['minLines'], 1, 20);
+    $hasExplicitContentMatches = is_array($row['contentMatches'] ?? null);
+    if ($hasExplicitContentMatches) {
+        $contentMatches = normalize_sender_block_text_matches($row['contentMatches']);
+    } elseif (array_key_exists('textMatches', $row) || array_key_exists('foreignContentMatches', $row)) {
+        $contentMatches = normalize_sender_block_text_matches(is_array($row['textMatches'] ?? null) ? $row['textMatches'] : []);
+        $legacyCurve = normalize_sender_block_curve($row['foreignContentCurve'] ?? null, [
+            ['x' => 0, 'y' => 0], ['x' => 1, 'y' => -25], ['x' => 2, 'y' => -55], ['x' => 4, 'y' => -100],
+        ]);
+        foreach (is_array($row['foreignContentMatches'] ?? null) ? $row['foreignContentMatches'] : [] as $legacyMatch) {
+            $match = normalize_sender_block_text_match($legacyMatch, count($contentMatches));
+            $legacyWeight = max(0, (int) ($match['points'] ?? 0));
+            $match['points'] = (int) round(interpolate_primary_date_score_curve($legacyCurve, (float) $legacyWeight));
+            $contentMatches[] = $match;
+        }
+    } else {
+        $contentMatches = normalize_sender_block_text_matches($defaults['contentMatches']);
+    }
+    $legacyPhonePattern = '(?:\+46[\s().-]*(?:7[02369]|[1-9]\d{0,2})(?:[\s().-]*\d{2,3}){2,4}|0(?:7[02369]|[1-9]\d{0,2})[-\s]+\d{2,3}(?:[\s-]*\d{2}){2,3})';
+    $hasBankName = false;
+    foreach ($contentMatches as $index => $match) {
+        if (strcasecmp((string) ($match['name'] ?? ''), 'Bank') === 0 && strcasecmp((string) ($match['pattern'] ?? ''), 'bank') === 0) {
+            unset($contentMatches[$index]);
+            continue;
+        }
+        if (strcasecmp((string) ($match['name'] ?? ''), 'Telefonnummer') === 0 && (string) ($match['pattern'] ?? '') === $legacyPhonePattern) {
+            foreach ($defaults['contentMatches'] as $defaultMatch) {
+                if (($defaultMatch['name'] ?? '') === 'Telefonnummer') {
+                    $contentMatches[$index]['pattern'] = $defaultMatch['pattern'];
+                    $contentMatches[$index]['isRegex'] = true;
+                    break;
+                }
+            }
+        }
+        if (strcasecmp((string) ($match['name'] ?? ''), 'Banknamn') === 0) {
+            $hasBankName = true;
+        }
+    }
+    if (!$hasBankName && !$hasExplicitContentMatches) {
+        foreach ($defaults['contentMatches'] as $defaultMatch) {
+            if (($defaultMatch['name'] ?? '') === 'Banknamn') {
+                $contentMatches[] = normalize_sender_block_text_match($defaultMatch, count($contentMatches));
+                break;
+            }
+        }
+    }
+    $contentMatches = array_values($contentMatches);
     return [
         'name' => 'Avsändarblock',
         'description' => is_string($row['description'] ?? null) && trim((string) $row['description']) !== ''
             ? trim((string) $row['description'])
             : $defaults['description'],
         'enabled' => ($row['enabled'] ?? true) !== false,
-        'minTotalPoints' => normalize_sender_block_min_points($row, $defaults),
         'minLayoutPoints' => normalize_sender_block_points($row['minLayoutPoints'] ?? null, (int) $defaults['minLayoutPoints']),
         'minContentPoints' => normalize_sender_block_points($row['minContentPoints'] ?? null, (int) $defaults['minContentPoints']),
-        'minLines' => $minLines,
         'maxLineGap' => normalize_system_zone_float($row['maxLineGap'] ?? null, (float) $defaults['maxLineGap'], 0.0, 10.0),
+        'maxHorizontalGapLineHeights' => normalize_system_zone_float($row['maxHorizontalGapLineHeights'] ?? null, (float) $defaults['maxHorizontalGapLineHeights'], 0.0, 30.0),
         'topPositionCurve' => normalize_sender_block_curve($row['topPositionCurve'] ?? null, $defaults['topPositionCurve']),
         'leftMarginCurve' => normalize_sender_block_curve($row['leftMarginCurve'] ?? null, $defaults['leftMarginCurve']),
         'lineCountCurve' => normalize_sender_block_curve($row['lineCountCurve'] ?? null, $defaults['lineCountCurve']),
         'blockWidthCurve' => normalize_sender_block_curve($row['blockWidthCurve'] ?? null, $defaults['blockWidthCurve']),
+        'unidentifiedTextRatioCurve' => normalize_sender_block_curve($row['unidentifiedTextRatioCurve'] ?? null, $defaults['unidentifiedTextRatioCurve']),
         'placeDatePoints' => normalize_system_zone_int($row['placeDatePoints'] ?? null, (int) $defaults['placeDatePoints'], 0, 1000),
-        'textMatches' => normalize_sender_block_text_matches($row['textMatches'] ?? null),
+        'contentMatches' => $contentMatches,
+    ];
+}
+
+function normalize_recipient_block_system_zone(mixed $input): array
+{
+    $defaults = default_system_zones()['recipientBlock'];
+    $row = is_array($input) ? $input : [];
+    $minLines = normalize_system_zone_int($row['minLines'] ?? null, (int) $defaults['minLines'], 1, 20);
+    $maxLines = normalize_system_zone_int($row['maxLines'] ?? null, (int) $defaults['maxLines'], 1, 50);
+    return [
+        'name' => 'Mottagarblock',
+        'description' => is_string($row['description'] ?? null) && trim((string) $row['description']) !== ''
+            ? trim((string) $row['description'])
+            : $defaults['description'],
+        'enabled' => ($row['enabled'] ?? true) !== false,
+        'minTotalPoints' => normalize_sender_block_points($row['minTotalPoints'] ?? null, (int) $defaults['minTotalPoints']),
+        'minLines' => $minLines,
+        'maxLines' => max($minLines, $maxLines),
+        'maxLineGap' => normalize_system_zone_float($row['maxLineGap'] ?? null, (float) $defaults['maxLineGap'], 0.0, 10.0),
+        'maxHorizontalGapLineHeights' => normalize_system_zone_float($row['maxHorizontalGapLineHeights'] ?? null, (float) $defaults['maxHorizontalGapLineHeights'], 0.0, 30.0),
     ];
 }
 
@@ -5528,6 +5605,7 @@ function normalize_system_zones(mixed $input): array
     $row = is_array($input) ? $input : [];
     return [
         'senderBlock' => normalize_sender_block_system_zone($row['senderBlock'] ?? null),
+        'recipientBlock' => normalize_recipient_block_system_zone($row['recipientBlock'] ?? null),
     ];
 }
 
@@ -15284,11 +15362,29 @@ function system_zone_sender_block_text_match_hits(string $text, array $textMatch
             continue;
         }
         $regex = build_data_field_search_term_regex($patternText, $replacementMap, ($match['isRegex'] ?? false) === true);
-        if ($regex === null || @preg_match($regex, $text) !== 1) {
+        $matches = [];
+        if ($regex === null || @preg_match_all($regex, $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
             continue;
         }
-        $points = normalize_system_zone_int($match['points'] ?? null, 0, 0, 1000);
-        if ($points <= 0) {
+        $points = max(-1000, min(1000, is_numeric($match['points'] ?? null) ? (int) round((float) $match['points']) : 0));
+        if ($points === 0) {
+            continue;
+        }
+        $matchedValues = [];
+        $matchedSpans = [];
+        foreach (is_array($matches[0] ?? null) ? $matches[0] : [] as $matched) {
+            $matchedValue = is_array($matched) && is_string($matched[0] ?? null)
+                ? normalize_inline_whitespace((string) $matched[0])
+                : '';
+            if ($matchedValue !== '') {
+                $matchedValues[] = $matchedValue;
+                $start = is_numeric($matched[1] ?? null) ? (int) $matched[1] : -1;
+                if ($start >= 0) {
+                    $matchedSpans[] = ['text' => $matchedValue, 'start' => $start, 'end' => $start + strlen((string) $matched[0])];
+                }
+            }
+        }
+        if ($matchedValues === []) {
             continue;
         }
         $hits[] = [
@@ -15296,10 +15392,22 @@ function system_zone_sender_block_text_match_hits(string $text, array $textMatch
             'label' => 'Textmatchning: ' . (is_string($match['name'] ?? null) && trim((string) $match['name']) !== '' ? trim((string) $match['name']) : 'Textmatchning'),
             'value' => $points,
             'points' => $points,
+            'contentPoints' => $points,
+            'group' => 'content',
+            'pointType' => 'content',
             'name' => is_string($match['name'] ?? null) ? trim((string) $match['name']) : '',
             'pattern' => $patternText,
             'isRegex' => ($match['isRegex'] ?? false) === true,
             'generatedPattern' => $regex,
+            'matchedValues' => $matchedValues,
+            'matchedSpans' => $matchedSpans,
+            'detail' => 'matched_values:' . json_encode($matchedValues, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'debug' => [
+                'name' => is_string($match['name'] ?? null) ? trim((string) $match['name']) : '',
+                'matchedValues' => $matchedValues,
+                'matchedSpans' => $matchedSpans,
+                'contentPoints' => $points,
+            ],
         ];
     }
     return $hits;
@@ -15318,247 +15426,473 @@ function system_zone_sender_block_place_date_hit(string $text, int $points): ?ar
     ];
 }
 
-function detect_sender_block_system_zones(array $systemZones, array $lineGeometries, array $layoutAnalysisByPage = [], array $replacementMap = []): array
+function system_zone_sender_block_unidentified_text_analysis(string $text, array $lineTexts, array $contentSignals): array
 {
-    $settings = normalize_sender_block_system_zone($systemZones['senderBlock'] ?? null);
-    if (($settings['enabled'] ?? true) === false || $lineGeometries === []) {
-        return [];
+    $identifiedSpans = [];
+    $identifiedValues = [];
+    foreach ($contentSignals as $signal) {
+        foreach (is_array($signal['matchedSpans'] ?? null) ? $signal['matchedSpans'] : [] as $span) {
+            if (is_numeric($span['start'] ?? null) && is_numeric($span['end'] ?? null) && (int) $span['end'] > (int) $span['start']) {
+                $identifiedSpans[] = ['start' => (int) $span['start'], 'end' => (int) $span['end'], 'type' => (string) ($signal['name'] ?? $signal['label'] ?? 'innehåll')];
+                $identifiedValues[] = ['type' => (string) ($signal['name'] ?? $signal['label'] ?? 'innehåll'), 'text' => (string) ($span['text'] ?? '')];
+            }
+        }
     }
 
-    $linesByPage = [];
+    $structuralPatterns = [
+        'Webbadress' => '(?:https?://|www\.)[^\s]+',
+        'Organisationsnummer' => '(?<!\d)\d{6}[-\s]?\d{4}(?!\d)',
+        'Gatuadress' => '(?<!\p{L})(?:[\p{L}.-]+\s+){0,3}[\p{L}.-]*(?:gatan|vägen|gränd|stigen|allén|gata|väg)\s+\d+[A-Z]?(?!\p{L})',
+        'Postnummer och ort' => '(?<!\d)\d{3}\s?\d{2}\s+[\p{L}]{2,}(?:\s+[\p{L}]{2,})*(?!\d)',
+        'Ort och datum' => '\b[A-ZÅÄÖ][a-zåäö]+(?:\s+den)?\s+\d{4}[-‑]\d{2}[-‑]\d{2}\b',
+    ];
+    foreach ($structuralPatterns as $type => $pattern) {
+        $matches = [];
+        if (@preg_match_all('~' . $pattern . '~iu', $text, $matches, PREG_OFFSET_CAPTURE) < 1) {
+            continue;
+        }
+        foreach ($matches[0] as $match) {
+            $value = is_string($match[0] ?? null) ? (string) $match[0] : '';
+            $start = is_numeric($match[1] ?? null) ? (int) $match[1] : -1;
+            if ($value !== '' && $start >= 0) {
+                $identifiedSpans[] = ['start' => $start, 'end' => $start + strlen($value), 'type' => $type];
+                $identifiedValues[] = ['type' => $type, 'text' => $value];
+            }
+        }
+    }
+
+    $cursor = 0;
+    foreach ($lineTexts as $lineText) {
+        $lineText = normalize_inline_whitespace((string) $lineText);
+        if ($lineText === '') continue;
+        $start = strpos($text, $lineText, $cursor);
+        if ($start === false) continue;
+        $lettersOnly = preg_replace('/[^\p{L}]/u', '', $lineText) ?? '';
+        $uppercaseOnly = preg_replace('/[^\p{Lu}]/u', '', $lineText) ?? '';
+        preg_match_all('/\p{L}/u', $lettersOnly, $letterMatches);
+        preg_match_all('/\p{Lu}/u', $uppercaseOnly, $uppercaseMatches);
+        $letterCount = count($letterMatches[0] ?? []);
+        $uppercaseRatio = $letterCount > 0 ? count($uppercaseMatches[0] ?? []) / $letterCount : 0.0;
+        $isOrganizationLine = $letterCount >= 4 && $uppercaseRatio >= 0.7;
+        $isPersonName = preg_match('/^[\p{Lu}][\p{L}.\'-]+(?:\s+[\p{Lu}][\p{L}.\'-]+){1,4}$/u', $lineText) === 1;
+        if ($isOrganizationLine || $isPersonName) {
+            $type = $isPersonName ? 'Personnamn' : 'Organisationsrad';
+            $identifiedSpans[] = ['start' => $start, 'end' => $start + strlen($lineText), 'type' => $type];
+            $identifiedValues[] = ['type' => $type, 'text' => $lineText];
+        }
+        $cursor = $start + strlen($lineText);
+    }
+
+    $relevantMatches = [];
+    preg_match_all('/[\p{L}\p{N}]/u', $text, $relevantMatches, PREG_OFFSET_CAPTURE);
+    $totalCharacters = count($relevantMatches[0] ?? []);
+    $identifiedCharacters = 0;
+    foreach ($relevantMatches[0] ?? [] as $character) {
+        $offset = (int) ($character[1] ?? -1);
+        foreach ($identifiedSpans as $span) {
+            if ($offset >= $span['start'] && $offset < $span['end']) {
+                $identifiedCharacters++;
+                break;
+            }
+        }
+    }
+    $unidentifiedCharacters = max(0, $totalCharacters - $identifiedCharacters);
+    $ratio = $totalCharacters > 0 ? $unidentifiedCharacters / $totalCharacters : 0.0;
+    return [
+        'totalRelevantCharacters' => $totalCharacters,
+        'identifiedCharacters' => $identifiedCharacters,
+        'unidentifiedCharacters' => $unidentifiedCharacters,
+        'unidentifiedTextRatio' => round(max(0.0, min(1.0, $ratio)), 6),
+        'identifiedParts' => $identifiedValues,
+    ];
+}
+
+/**
+ * Splits OCR rows into visual row segments. A large horizontal gap is a column
+ * boundary, not whitespace inside one system-zone row.
+ */
+function system_zone_visual_line_segments(array $lineGeometries, float $maxHorizontalGapLineHeights): array
+{
+    $heights = [];
+    $heightsByPage = [];
+    foreach ($lineGeometries as $geometry) {
+        if (!is_array($geometry)) {
+            continue;
+        }
+        $geometryPage = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
+        foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+            $bbox = is_array($segment) ? normalize_debug_word_bbox($segment['bbox'] ?? null) : null;
+            if ($bbox !== null) {
+                $height = max(1.0, (float) $bbox['y1'] - (float) $bbox['y0']);
+                $heights[] = $height;
+                $heightsByPage[$geometryPage][] = $height;
+            }
+        }
+    }
+    sort($heights, SORT_NUMERIC);
+    $normalHeight = $heights === [] ? 1.0 : max(1.0, (float) $heights[(int) floor((count($heights) - 1) / 2)]);
+    $normalHeightByPage = [];
+    foreach ($heightsByPage as $pageNumber => $pageHeights) {
+        sort($pageHeights, SORT_NUMERIC);
+        $normalHeightByPage[$pageNumber] = max(1.0, (float) $pageHeights[(int) floor((count($pageHeights) - 1) / 2)]);
+    }
+    $byPage = [];
+
     foreach ($lineGeometries as $lineIndex => $geometry) {
         if (!is_array($geometry)) {
             continue;
         }
-        $text = normalize_inline_whitespace(is_string($geometry['text'] ?? null) ? (string) $geometry['text'] : '');
-        if ($text === '' || str_starts_with($text, '=== PAGE ')) {
-            continue;
-        }
-        $bbox = system_zone_line_bbox($geometry);
-        if ($bbox === null) {
-            continue;
-        }
         $pageNumber = is_numeric($geometry['pageNumber'] ?? null) ? (int) $geometry['pageNumber'] : 1;
-        $pageWidth = is_numeric($geometry['pageWidth'] ?? null) ? (float) $geometry['pageWidth'] : null;
-        $pageHeight = is_numeric($geometry['pageHeight'] ?? null) ? (float) $geometry['pageHeight'] : null;
-        $linesByPage[$pageNumber][] = [
-            'lineIndex' => (int) $lineIndex,
-            'text' => $text,
-            'bbox' => $bbox,
-            'bboxIndexes' => system_zone_line_bbox_indexes($geometry),
-            'pageNumber' => $pageNumber,
-            'pageWidth' => $pageWidth,
-            'pageHeight' => $pageHeight,
-        ];
-    }
-
-    $matches = [];
-    foreach ($linesByPage as $pageNumber => $pageLines) {
-        usort($pageLines, static function (array $left, array $right): int {
-            $leftBox = normalize_debug_word_bbox($left['bbox'] ?? null) ?? [];
-            $rightBox = normalize_debug_word_bbox($right['bbox'] ?? null) ?? [];
-            $dy = ((float) ($leftBox['y0'] ?? 0.0)) <=> ((float) ($rightBox['y0'] ?? 0.0));
-            if ($dy !== 0) {
-                return $dy;
+        $pageNormalHeight = (float) ($normalHeightByPage[$pageNumber] ?? $normalHeight);
+        $maxGap = max(0.0, $maxHorizontalGapLineHeights) * $pageNormalHeight;
+        $words = [];
+        foreach (is_array($geometry['segments'] ?? null) ? $geometry['segments'] : [] as $segment) {
+            if (!is_array($segment)) {
+                continue;
             }
-            return ((float) ($leftBox['x0'] ?? 0.0)) <=> ((float) ($rightBox['x0'] ?? 0.0));
-        });
-        $normalHeight = system_zone_normal_line_height($pageLines);
-        $minLines = (int) $settings['minLines'];
-        $best = null;
-        $count = count($pageLines);
-        for ($start = 0; $start < $count; $start++) {
-            $block = [];
+            $bbox = normalize_debug_word_bbox($segment['bbox'] ?? null);
+            $text = normalize_inline_whitespace(title_geometry_segment_text($geometry, $segment));
+            if ($bbox === null || $text === '') {
+                continue;
+            }
+            $words[] = [
+                'text' => $text,
+                'bbox' => $bbox,
+                'bboxIndex' => is_numeric($segment['wordIndex'] ?? null) ? ((int) $segment['wordIndex']) + 1 : null,
+            ];
+        }
+        usort($words, static fn(array $a, array $b): int => ((float) $a['bbox']['x0']) <=> ((float) $b['bbox']['x0']));
+        if ($words === []) {
+            continue;
+        }
+        $groups = [];
+        $splitGaps = [];
+        foreach ($words as $word) {
+            $lastIndex = count($groups) - 1;
+            if ($lastIndex < 0) {
+                $groups[] = [$word];
+                continue;
+            }
+            $previous = $groups[$lastIndex][count($groups[$lastIndex]) - 1];
+            $gap = (float) $word['bbox']['x0'] - (float) $previous['bbox']['x1'];
+            if ($gap > $maxGap) {
+                $splitGaps[] = $gap / $pageNormalHeight;
+                $groups[] = [$word];
+            } else {
+                $groups[$lastIndex][] = $word;
+            }
+        }
+        $preparedSegments = [];
+        foreach ($groups as $groupIndex => $group) {
             $bbox = null;
             $bboxIndexes = [];
-            $horizontalChecks = [];
-            for ($end = $start; $end < $count; $end++) {
-                $line = $pageLines[$end];
-                if ($block !== []) {
-                    $previousBox = normalize_debug_word_bbox($block[count($block) - 1]['bbox'] ?? null);
-                    $lineBox = normalize_debug_word_bbox($line['bbox'] ?? null);
-                    if ($previousBox === null || $lineBox === null) {
-                        break;
-                    }
-                    $gap = ((float) $lineBox['y0'] - (float) $previousBox['y1']) / $normalHeight;
-                    if ($gap > (float) $settings['maxLineGap']) {
-                        break;
-                    }
-                    $blockBox = normalize_debug_word_bbox($bbox);
-                    $previousFit = system_zone_sender_block_horizontal_fit($lineBox, $previousBox, $normalHeight);
-                    $blockFit = $blockBox !== null
-                        ? system_zone_sender_block_horizontal_fit($lineBox, $blockBox, $normalHeight)
-                        : $previousFit;
-                    $horizontalChecks[] = [
-                        'lineIndex' => (int) ($line['lineIndex'] ?? -1),
-                        'previousFits' => (bool) $previousFit['fits'],
-                        'blockFits' => (bool) $blockFit['fits'],
-                        'previousOverlapRatio' => round((float) $previousFit['overlapRatio'], 4),
-                        'blockOverlapRatio' => round((float) $blockFit['overlapRatio'], 4),
-                        'previousLeftDistance' => round((float) $previousFit['leftDistance'], 4),
-                        'blockLeftDistance' => round((float) $blockFit['leftDistance'], 4),
-                        'previousCenterDistance' => round((float) $previousFit['centerDistance'], 4),
-                        'blockCenterDistance' => round((float) $blockFit['centerDistance'], 4),
-                    ];
-                    if (!$previousFit['fits'] && !$blockFit['fits']) {
-                        break;
-                    }
+            $texts = [];
+            foreach ($group as $word) {
+                $bbox = union_bboxes($bbox, $word['bbox']);
+                $texts[] = $word['text'];
+                if ($word['bboxIndex'] !== null) {
+                    $bboxIndexes[] = $word['bboxIndex'];
                 }
-                $block[] = $line;
-                $bbox = union_bboxes($bbox, normalize_debug_word_bbox($line['bbox'] ?? null));
-                $bboxIndexes = array_merge($bboxIndexes, is_array($line['bboxIndexes'] ?? null) ? $line['bboxIndexes'] : []);
-                if (count($block) < $minLines || $bbox === null) {
+            }
+            if ($bbox === null) {
+                continue;
+            }
+            $text = normalize_inline_whitespace(implode(' ', $texts));
+            $preparedSegments[] = [
+                'segmentIndex' => $groupIndex,
+                'text' => $text,
+                'bbox' => $bbox,
+                'bboxIndexes' => $bboxIndexes,
+            ];
+        }
+        $segmentDebug = array_map(static fn(array $segment): array => [
+            'text' => $segment['text'],
+            'x0' => round((float) $segment['bbox']['x0'], 3),
+            'x1' => round((float) $segment['bbox']['x1'], 3),
+            'bboxIndexes' => $segment['bboxIndexes'],
+        ], $preparedSegments);
+        $lineSegmentation = [
+            'lineIndex' => (int) $lineIndex,
+            'normalLineHeight' => round($pageNormalHeight, 3),
+            'maxHorizontalGapLineHeights' => $maxHorizontalGapLineHeights,
+            'splitReason' => count($preparedSegments) > 1 ? 'horizontal_gap' : null,
+            'gapLineHeights' => $splitGaps === [] ? null : round(max($splitGaps), 4),
+            'segments' => $segmentDebug,
+        ];
+        foreach ($preparedSegments as $prepared) {
+            $byPage[$pageNumber][] = [
+                'lineIndex' => (int) $lineIndex,
+                'rowSegmentIndex' => $prepared['segmentIndex'],
+                'text' => $prepared['text'],
+                'bbox' => $prepared['bbox'],
+                'bboxIndexes' => $prepared['bboxIndexes'],
+                'pageNumber' => $pageNumber,
+                'pageWidth' => is_numeric($geometry['pageWidth'] ?? null) ? (float) $geometry['pageWidth'] : null,
+                'pageHeight' => is_numeric($geometry['pageHeight'] ?? null) ? (float) $geometry['pageHeight'] : null,
+                'segmentation' => $lineSegmentation,
+            ];
+        }
+    }
+    return ['normalLineHeight' => $normalHeight, 'normalLineHeightByPage' => $normalHeightByPage, 'byPage' => $byPage];
+}
+
+/** Returns maximal geometrically connected blocks; it never searches subblocks. */
+function system_zone_geometric_blocks(array $lineGeometries, float $maxLineGap, float $maxHorizontalGapLineHeights): array
+{
+    $segmented = system_zone_visual_line_segments($lineGeometries, $maxHorizontalGapLineHeights);
+    $defaultNormalHeight = max(1.0, (float) ($segmented['normalLineHeight'] ?? 1.0));
+    $blocks = [];
+    foreach (is_array($segmented['byPage'] ?? null) ? $segmented['byPage'] : [] as $pageNumber => $nodes) {
+        $normalHeight = max(1.0, (float) ($segmented['normalLineHeightByPage'][$pageNumber] ?? $defaultNormalHeight));
+        $count = count($nodes);
+        $parents = range(0, max(0, $count - 1));
+        $find = static function (int $index) use (&$parents, &$find): int {
+            if ($parents[$index] !== $index) {
+                $parents[$index] = $find($parents[$index]);
+            }
+            return $parents[$index];
+        };
+        $union = static function (int $left, int $right) use (&$parents, &$find): void {
+            $leftRoot = $find($left);
+            $rightRoot = $find($right);
+            if ($leftRoot !== $rightRoot) {
+                $parents[$rightRoot] = $leftRoot;
+            }
+        };
+        for ($i = 0; $i < $count; $i++) {
+            for ($j = $i + 1; $j < $count; $j++) {
+                if ((int) $nodes[$i]['lineIndex'] === (int) $nodes[$j]['lineIndex']) {
                     continue;
                 }
-                $texts = array_map(static fn(array $row): string => (string) ($row['text'] ?? ''), $block);
-                $matchedText = normalize_inline_whitespace(implode(' ', $texts));
-                $lineCount = count($block);
-                $pageWidth = is_numeric($line['pageWidth'] ?? null) ? (float) $line['pageWidth'] : null;
-                $pageHeight = is_numeric($line['pageHeight'] ?? null) ? (float) $line['pageHeight'] : null;
-                $topRatio = $pageHeight !== null && $pageHeight > 0.0 ? ((float) $bbox['y0'] / $pageHeight) : 0.0;
-                $blockWidth = max(0.0, (float) $bbox['x1'] - (float) $bbox['x0']);
-                $blockWidthRatio = $pageWidth !== null && $pageWidth > 0.0 ? $blockWidth / $pageWidth : 1.0;
-                $marginX = title_left_margin_x_for_page($layoutAnalysisByPage, (int) $pageNumber);
-                $leftDistance = $marginX !== null ? abs((float) $bbox['x0'] - $marginX) / $normalHeight : 1.0;
-                $signals = [];
-                $topPoints = (int) round(interpolate_primary_date_score_curve($settings['topPositionCurve'], $topRatio));
-                if ($topPoints !== 0) {
-                    $signals[] = [
-                        'code' => 'top_position',
-                        'label' => 'Högt på sidan',
-                        'value' => $topPoints,
-                        'points' => $topPoints,
-                        'group' => 'layout',
-                        'detail' => 'y_ratio:' . round($topRatio, 4),
-                    ];
-                }
-                $leftPoints = (int) round(interpolate_primary_date_score_curve($settings['leftMarginCurve'], $leftDistance));
-                if ($leftPoints !== 0) {
-                    $signals[] = [
-                        'code' => 'left_margin',
-                        'label' => 'Nära vänstermarginal',
-                        'value' => $leftPoints,
-                        'points' => $leftPoints,
-                        'group' => 'layout',
-                        'detail' => 'distance_line_heights:' . round($leftDistance, 4),
-                    ];
-                }
-                $lineCountPoints = (int) round(interpolate_primary_date_score_curve($settings['lineCountCurve'], (float) $lineCount));
-                if ($lineCountPoints !== 0) {
-                    $signals[] = [
-                        'code' => 'line_count',
-                        'label' => 'Antal rader',
-                        'value' => $lineCountPoints,
-                        'points' => $lineCountPoints,
-                        'group' => 'layout',
-                        'detail' => 'lines:' . $lineCount,
-                    ];
-                }
-                $blockWidthPoints = (int) round(interpolate_primary_date_score_curve($settings['blockWidthCurve'], $blockWidthRatio));
-                if ($blockWidthPoints !== 0) {
-                    $signals[] = [
-                        'code' => 'block_width',
-                        'label' => 'Blockbredd',
-                        'value' => $blockWidthPoints,
-                        'points' => $blockWidthPoints,
-                        'group' => 'layout',
-                        'detail' => 'width_ratio:' . round($blockWidthRatio, 4),
-                    ];
-                }
-                $textMatchSignals = system_zone_sender_block_text_match_hits($matchedText, $settings['textMatches'], $replacementMap);
-                $textMatchSignals = array_map(static function (array $signal): array {
-                    $signal['group'] = 'content';
-                    return $signal;
-                }, $textMatchSignals);
-                array_push($signals, ...$textMatchSignals);
-                $placeDateSignal = system_zone_sender_block_place_date_hit($matchedText, (int) $settings['placeDatePoints']);
-                if ($placeDateSignal !== null) {
-                    $placeDateSignal['group'] = 'content';
-                    $signals[] = $placeDateSignal;
-                }
-                $layoutPoints = array_reduce($signals, static fn(int $sum, array $signal): int => $sum + ((string) ($signal['group'] ?? '') === 'layout' ? (int) ($signal['points'] ?? $signal['value'] ?? 0) : 0), 0);
-                $contentPoints = array_reduce($signals, static fn(int $sum, array $signal): int => $sum + ((string) ($signal['group'] ?? '') === 'content' ? (int) ($signal['points'] ?? $signal['value'] ?? 0) : 0), 0);
-                $totalPoints = $layoutPoints + $contentPoints;
-                $rejectionReasons = [];
-                if ($totalPoints < (int) $settings['minTotalPoints']) {
-                    $rejectionReasons[] = 'totalpoäng under tröskel';
-                }
-                if ($layoutPoints < (int) $settings['minLayoutPoints']) {
-                    $rejectionReasons[] = 'layoutpoäng under tröskel';
-                }
-                if ($contentPoints < (int) $settings['minContentPoints']) {
-                    $rejectionReasons[] = 'innehållspoäng under tröskel';
-                }
-                $accepted = $rejectionReasons === [];
-                if (!$accepted) {
+                $upper = (float) $nodes[$i]['bbox']['y0'] <= (float) $nodes[$j]['bbox']['y0'] ? $nodes[$i] : $nodes[$j];
+                $lower = $upper === $nodes[$i] ? $nodes[$j] : $nodes[$i];
+                $gap = ((float) $lower['bbox']['y0'] - (float) $upper['bbox']['y1']) / $normalHeight;
+                if ($gap < -0.75 || $gap > $maxLineGap) {
                     continue;
                 }
-                $confidence = min(
-                    1.0,
-                    $totalPoints / max(1, (int) $settings['minTotalPoints']),
-                    $layoutPoints / max(1, (int) $settings['minLayoutPoints']),
-                    $contentPoints / max(1, (int) $settings['minContentPoints'])
-                );
-                $candidate = [
-                    'confidence' => round($confidence, 4),
-                    'lineCount' => $lineCount,
-                    'zone' => [
-                        'type' => 'systemzone',
-                        'isSystemZone' => true,
-                        'systemZoneType' => 'sender_block',
-                        'zoneId' => 'system_sender_block',
-                        'zoneName' => 'Avsändarblock',
-                        'pageNumber' => (int) $pageNumber,
-                        'bboxIndexes' => array_values(array_unique($bboxIndexes)),
-                        'boundingRect' => $bbox,
-                        'matchedText' => $matchedText,
-                        'relevantText' => $matchedText,
-                        'confidence' => round($confidence, 4),
-                        'signals' => $signals,
-                        'debug' => [
-                            'source' => 'sender_block_system_zone',
-                            'basedOn' => 'line_geometries',
-                            'lineIndexes' => array_map(static fn(array $row): int => (int) ($row['lineIndex'] ?? -1), $block),
-                            'lineTexts' => $texts,
-                            'normalLineHeight' => round($normalHeight, 3),
-                            'topRatio' => round($topRatio, 4),
-                            'marginX' => $marginX !== null ? round($marginX, 3) : null,
-                            'leftDistanceLineHeights' => round($leftDistance, 4),
-                            'blockWidthRatio' => round($blockWidthRatio, 4),
-                            'lineCount' => $lineCount,
-                            'layoutPoints' => $layoutPoints,
-                            'contentPoints' => $contentPoints,
-                            'totalPoints' => $totalPoints,
-                            'minLayoutPoints' => (int) $settings['minLayoutPoints'],
-                            'minContentPoints' => (int) $settings['minContentPoints'],
-                            'minTotalPoints' => (int) $settings['minTotalPoints'],
-                            'accepted' => $accepted,
-                            'rejectionReasons' => $rejectionReasons,
-                            'layoutSignalCodes' => array_values(array_map(
-                                static fn(array $signal): string => (string) ($signal['code'] ?? ''),
-                                array_filter($signals, static fn(array $signal): bool => (string) ($signal['group'] ?? '') === 'layout')
-                            )),
-                            'contentSignalCodes' => array_values(array_map(
-                                static fn(array $signal): string => (string) ($signal['code'] ?? ''),
-                                array_filter($signals, static fn(array $signal): bool => (string) ($signal['group'] ?? '') === 'content')
-                            )),
-                            'horizontalChecks' => $horizontalChecks,
-                        ],
-                    ],
-                ];
-                if ($best === null || $candidate['confidence'] > $best['confidence'] || (
-                    $candidate['confidence'] === $best['confidence'] && $candidate['lineCount'] > $best['lineCount']
-                )) {
-                    $best = $candidate;
+                if (system_zone_sender_block_horizontal_fit($upper['bbox'], $lower['bbox'], $normalHeight)['fits']) {
+                    $union($i, $j);
                 }
             }
         }
-        if (is_array($best['zone'] ?? null)) {
-            $matches[] = $best['zone'];
+        $components = [];
+        foreach ($nodes as $index => $node) {
+            $components[$find($index)][] = $node;
+        }
+        foreach ($components as $component) {
+            usort($component, static function (array $a, array $b): int {
+                $dy = ((float) $a['bbox']['y0']) <=> ((float) $b['bbox']['y0']);
+                return $dy !== 0 ? $dy : (((float) $a['bbox']['x0']) <=> ((float) $b['bbox']['x0']));
+            });
+            $bbox = null;
+            $bboxIndexes = [];
+            $lineIndexes = [];
+            foreach ($component as $node) {
+                $bbox = union_bboxes($bbox, $node['bbox']);
+                $bboxIndexes = array_merge($bboxIndexes, $node['bboxIndexes']);
+                $lineIndexes[] = (int) $node['lineIndex'];
+            }
+            $blocks[] = [
+                'pageNumber' => (int) $pageNumber,
+                'lines' => $component,
+                'bbox' => $bbox,
+                'bboxIndexes' => array_values(array_unique($bboxIndexes)),
+                'lineIndexes' => array_values(array_unique($lineIndexes)),
+                'lineCount' => count(array_unique($lineIndexes)),
+                'normalLineHeight' => $normalHeight,
+            ];
         }
     }
+    return $blocks;
+}
 
-    return $matches;
+function system_zone_sender_block_candidate(array $block, array $settings, array $layoutAnalysisByPage, array $replacementMap): array
+{
+    $lineCount = (int) ($block['lineCount'] ?? 0);
+    $rejectionReasons = [];
+    $bbox = normalize_debug_word_bbox($block['bbox'] ?? null);
+    if ($bbox === null) {
+        $rejectionReasons[] = 'saknar bbox';
+    }
+    $lines = is_array($block['lines'] ?? null) ? $block['lines'] : [];
+    $texts = array_map(static fn(array $line): string => (string) ($line['text'] ?? ''), $lines);
+    $matchedText = normalize_inline_whitespace(implode(' ', $texts));
+    $pageNumber = (int) ($block['pageNumber'] ?? 1);
+    $normalHeight = max(1.0, (float) ($block['normalLineHeight'] ?? 1.0));
+    $pageWidth = is_numeric($lines[0]['pageWidth'] ?? null) ? (float) $lines[0]['pageWidth'] : null;
+    $pageHeight = is_numeric($lines[0]['pageHeight'] ?? null) ? (float) $lines[0]['pageHeight'] : null;
+    $topRatio = $bbox !== null && $pageHeight !== null && $pageHeight > 0 ? (float) $bbox['y0'] / $pageHeight : 0.0;
+    $widthRatio = $bbox !== null && $pageWidth !== null && $pageWidth > 0 ? ((float) $bbox['x1'] - (float) $bbox['x0']) / $pageWidth : 1.0;
+    $marginX = title_left_margin_x_for_page($layoutAnalysisByPage, $pageNumber);
+    $leftDistance = $bbox !== null && $marginX !== null ? abs((float) $bbox['x0'] - $marginX) / $normalHeight : 1.0;
+    $signals = [];
+    foreach ([
+        ['top_position', 'Högt på sidan', 'topPositionCurve', $topRatio, 'y_ratio:' . round($topRatio, 4)],
+        ['left_margin', 'Nära vänstermarginal', 'leftMarginCurve', $leftDistance, 'distance_line_heights:' . round($leftDistance, 4)],
+        ['line_count', 'Antal rader', 'lineCountCurve', (float) $lineCount, 'lines:' . $lineCount],
+        ['block_width', 'Blockbredd', 'blockWidthCurve', $widthRatio, 'width_ratio:' . round($widthRatio, 4)],
+    ] as [$code, $label, $curveKey, $value, $detail]) {
+        $points = (int) round(interpolate_primary_date_score_curve($settings[$curveKey], $value));
+        if ($points !== 0) {
+            $signals[] = compact('code', 'label', 'value', 'points', 'detail') + ['group' => 'layout', 'pointType' => 'layout'];
+        }
+    }
+    $contentMatchSignals = system_zone_sender_block_text_match_hits($matchedText, $settings['contentMatches'], $replacementMap);
+    foreach ($contentMatchSignals as $signal) {
+        $signals[] = $signal;
+    }
+    $placeDate = system_zone_sender_block_place_date_hit($matchedText, (int) $settings['placeDatePoints']);
+    if ($placeDate !== null) {
+        $signals[] = $placeDate + ['group' => 'content', 'pointType' => 'content', 'contentPoints' => (int) ($placeDate['points'] ?? 0)];
+    }
+    $unidentified = system_zone_sender_block_unidentified_text_analysis($matchedText, $texts, $contentMatchSignals);
+    $unidentifiedPoints = (int) round(interpolate_primary_date_score_curve(
+        $settings['unidentifiedTextRatioCurve'],
+        (float) $unidentified['unidentifiedTextRatio']
+    ));
+    $unidentified['contentPoints'] = $unidentifiedPoints;
+    $signals[] = [
+        'code' => 'unidentified_text_ratio', 'label' => 'Oidentifierad textandel',
+        'value' => (float) $unidentified['unidentifiedTextRatio'], 'points' => $unidentifiedPoints,
+        'contentPoints' => $unidentifiedPoints, 'group' => 'content', 'pointType' => 'content',
+        'detail' => 'unidentified_ratio:' . round((float) $unidentified['unidentifiedTextRatio'], 6),
+        'debug' => $unidentified,
+    ];
+    $layoutPoints = array_sum(array_map(static fn(array $signal): int => ($signal['group'] ?? '') === 'layout' ? (int) $signal['points'] : 0, $signals));
+    $contentPoints = array_sum(array_map(static fn(array $signal): int => ($signal['group'] ?? '') === 'content' ? (int) $signal['points'] : 0, $signals));
+    $totalPoints = $layoutPoints + $contentPoints;
+    if ($layoutPoints < (int) $settings['minLayoutPoints']) $rejectionReasons[] = 'För låg layoutpoäng';
+    if ($contentPoints < (int) $settings['minContentPoints']) $rejectionReasons[] = 'För låg innehållspoäng';
+    $accepted = $rejectionReasons === [];
+    $confidence = $accepted ? min(1.0, $layoutPoints / max(1, (int) $settings['minLayoutPoints']), $contentPoints / max(1, (int) $settings['minContentPoints'])) : 0.0;
+    $segmentation = array_values(array_map(static fn(array $line): array => is_array($line['segmentation'] ?? null) ? $line['segmentation'] : [], $lines));
+    $debug = [
+        'source' => 'sender_block_system_zone', 'basedOn' => 'maximal_geometric_block',
+        'lineIndexes' => $block['lineIndexes'] ?? [], 'lineTexts' => $texts, 'lineCount' => $lineCount,
+        'normalLineHeight' => round($normalHeight, 3),
+        'layoutPoints' => $layoutPoints, 'contentPoints' => $contentPoints, 'totalPoints' => $totalPoints,
+        'minLayoutPoints' => (int) $settings['minLayoutPoints'], 'minContentPoints' => (int) $settings['minContentPoints'],
+        'accepted' => $accepted, 'rejectionReasons' => array_values(array_unique($rejectionReasons)),
+        'signals' => $signals,
+        'segmentation' => $segmentation,
+    ];
+    if (!$accepted || $bbox === null) {
+        return ['accepted' => false, 'debug' => $debug];
+    }
+    return ['accepted' => true, 'score' => $totalPoints, 'zone' => [
+        'type' => 'systemzone', 'isSystemZone' => true, 'systemZoneType' => 'sender_block',
+        'zoneId' => 'system_sender_block', 'zoneName' => 'Avsändarblock', 'pageNumber' => $pageNumber,
+        'bboxIndexes' => $block['bboxIndexes'] ?? [], 'boundingRect' => $bbox, 'matchedText' => $matchedText,
+        'relevantText' => $matchedText, 'confidence' => round($confidence, 4), 'signals' => $signals, 'debug' => $debug,
+    ]];
+}
+
+function detect_sender_block_system_zones(array $systemZones, array $lineGeometries, array $layoutAnalysisByPage = [], array $replacementMap = []): array
+{
+    $settings = normalize_sender_block_system_zone($systemZones['senderBlock'] ?? null);
+    if (($settings['enabled'] ?? true) === false) return [];
+    $bestByPage = [];
+    $rejectedByPage = [];
+    foreach (system_zone_geometric_blocks($lineGeometries, (float) $settings['maxLineGap'], (float) $settings['maxHorizontalGapLineHeights']) as $block) {
+        $candidate = system_zone_sender_block_candidate($block, $settings, $layoutAnalysisByPage, $replacementMap);
+        $page = (int) ($block['pageNumber'] ?? 1);
+        if (($candidate['accepted'] ?? false) !== true) {
+            $rejectedByPage[$page][] = $candidate['debug'] ?? [];
+            continue;
+        }
+        if (!isset($bestByPage[$page]) || (int) $candidate['score'] > (int) $bestByPage[$page]['score']) {
+            $bestByPage[$page] = $candidate;
+        }
+    }
+    $zones = [];
+    foreach ($bestByPage as $page => $candidate) {
+        $zone = $candidate['zone'];
+        $zone['debug']['rejectedGeometricBlocks'] = $rejectedByPage[$page] ?? [];
+        $zones[] = $zone;
+    }
+    return $zones;
+}
+
+function detect_recipient_block_system_zones(array $systemZones, array $lineGeometries, array $replacementMap = []): array
+{
+    $settings = normalize_recipient_block_system_zone($systemZones['recipientBlock'] ?? null);
+    if (($settings['enabled'] ?? true) === false) return [];
+    $bestByPage = [];
+    $phonePattern = '';
+    foreach (default_system_zones()['senderBlock']['contentMatches'] as $contentMatch) {
+        if (($contentMatch['name'] ?? '') === 'Telefonnummer') {
+            $phonePattern = (string) ($contentMatch['pattern'] ?? '');
+            break;
+        }
+    }
+    foreach (system_zone_geometric_blocks($lineGeometries, (float) $settings['maxLineGap'], (float) $settings['maxHorizontalGapLineHeights']) as $block) {
+        $lines = is_array($block['lines'] ?? null) ? $block['lines'] : [];
+        $lineCount = (int) ($block['lineCount'] ?? 0);
+        if ($lineCount < (int) $settings['minLines'] || $lineCount > (int) $settings['maxLines']) continue;
+        $texts = array_map(static fn(array $line): string => (string) ($line['text'] ?? ''), $lines);
+        $text = normalize_inline_whitespace(implode(' ', $texts));
+        $signals = [];
+        $patterns = [
+            ['recipient_street', 'Gatuadress', '(?<!\p{L})[\p{L}][\p{L}\s.-]*(?:gatan|vägen|gränd|stigen|allén|gata|väg)\s+\d+[A-Z]?(?!\p{L})', 35],
+            ['recipient_postal', 'Postnummer och ort', '(?<!\d)\d{3}\s?\d{2}\s+[\p{L}]{2,}(?:\s+[\p{L}]{2,})*(?!\d)', 35],
+        ];
+        foreach ($patterns as [$code, $label, $pattern, $points]) {
+            $hits = system_zone_sender_block_text_match_hits($text, [['name' => $label, 'pattern' => $pattern, 'isRegex' => true, 'points' => $points, 'enabled' => true]], $replacementMap);
+            if ($hits !== []) $signals[] = $hits[0] + compact('code', 'label', 'points') + ['group' => 'content'];
+        }
+        $nameText = $texts[0] ?? '';
+        if (preg_match('/^[\p{L}][\p{L}.\'-]+(?:\s+[\p{L}][\p{L}.\'-]+){1,4}$/u', $nameText) === 1) {
+            $signals[] = ['code' => 'recipient_name', 'label' => 'Mottagarnamn', 'value' => 15, 'points' => 15, 'group' => 'content', 'matchedValues' => [$nameText]];
+        }
+        if ($lineCount >= 3) $signals[] = ['code' => 'recipient_lines', 'label' => 'Sammanhängande adressblock', 'value' => $lineCount, 'points' => 10, 'group' => 'layout'];
+        $negativeRules = [
+            ['E-postadress', '[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}', -35],
+            ['Telefonnummer', $phonePattern, -30],
+            ['Betalningsinnehåll', '(?:belopp|kontonummer|bankgiro|plusgiro|transaktionskonto|OCR)', -35],
+        ];
+        foreach ($negativeRules as [$label, $pattern, $points]) {
+            $hits = system_zone_sender_block_text_match_hits($text, [['name' => $label, 'pattern' => $pattern, 'isRegex' => true, 'points' => abs($points), 'enabled' => true]], $replacementMap);
+            if ($hits !== []) {
+                $hit = $hits[0]; $hit['code'] = 'recipient_negative_' . normalize_config_key($label); $hit['label'] = $label; $hit['points'] = $points; $hit['value'] = $points; $hit['group'] = 'content'; $signals[] = $hit;
+            }
+        }
+        $total = array_sum(array_map(static fn(array $signal): int => (int) ($signal['points'] ?? 0), $signals));
+        if ($total < (int) $settings['minTotalPoints']) continue;
+        $confidence = min(1.0, $total / max(1, (int) $settings['minTotalPoints']));
+        $page = (int) ($block['pageNumber'] ?? 1);
+        $zone = [
+            'type' => 'systemzone', 'isSystemZone' => true, 'systemZoneType' => 'recipient_block',
+            'zoneId' => 'system_recipient_block', 'zoneName' => 'Mottagarblock', 'pageNumber' => $page,
+            'bboxIndexes' => $block['bboxIndexes'] ?? [], 'boundingRect' => $block['bbox'], 'matchedText' => $text,
+            'relevantText' => $text, 'confidence' => round($confidence, 4), 'signals' => $signals,
+            'debug' => ['source' => 'recipient_block_system_zone', 'basedOn' => 'maximal_geometric_block', 'lineIndexes' => $block['lineIndexes'] ?? [], 'lineTexts' => $texts, 'lineCount' => $lineCount, 'maxLines' => (int) $settings['maxLines'], 'totalPoints' => $total, 'accepted' => true, 'segmentation' => array_map(static fn(array $line): array => $line['segmentation'] ?? [], $lines)],
+        ];
+        if (!isset($bestByPage[$page]) || $total > $bestByPage[$page]['total']) $bestByPage[$page] = compact('total', 'zone');
+    }
+    return array_values(array_map(static fn(array $candidate): array => $candidate['zone'], $bestByPage));
+}
+
+function resolve_sender_recipient_system_zone_conflicts(array $senderZones, array $recipientZones): array
+{
+    foreach ($senderZones as $senderIndex => $sender) {
+        foreach ($recipientZones as $recipientIndex => $recipient) {
+            if (!isset($senderZones[$senderIndex], $recipientZones[$recipientIndex]) || (int) ($sender['pageNumber'] ?? 0) !== (int) ($recipient['pageNumber'] ?? 0)) continue;
+            $senderIndexes = array_values(array_unique($sender['bboxIndexes'] ?? []));
+            $recipientIndexes = array_values(array_unique($recipient['bboxIndexes'] ?? []));
+            $overlap = count(array_intersect($senderIndexes, $recipientIndexes)) / max(1, min(count($senderIndexes), count($recipientIndexes)));
+            if ($overlap < 0.5) continue;
+            $senderScore = (int) ($sender['debug']['totalPoints'] ?? 0);
+            $recipientScore = (int) ($recipient['debug']['totalPoints'] ?? 0);
+            if ($senderScore >= $recipientScore) {
+                $senderZones[$senderIndex]['debug']['conflictResolution'] = ['rejectedZoneType' => 'recipient_block', 'overlapRatio' => round($overlap, 4), 'winnerScore' => $senderScore, 'rejectedScore' => $recipientScore];
+                unset($recipientZones[$recipientIndex]);
+            } else {
+                $recipientZones[$recipientIndex]['debug']['conflictResolution'] = ['rejectedZoneType' => 'sender_block', 'overlapRatio' => round($overlap, 4), 'winnerScore' => $recipientScore, 'rejectedScore' => $senderScore];
+                unset($senderZones[$senderIndex]);
+            }
+        }
+    }
+    return array_values(array_merge($senderZones, $recipientZones));
 }
 
 function detect_all_zone_matches(array $lines, array $rules, array $replacementMap, array $lineGeometries, array $valuePatterns = [], ?array $matchingPayload = null): array
@@ -15573,12 +15907,19 @@ function detect_all_zone_matches(array $lines, array $rules, array $replacementM
     $config = load_config();
     $layoutAnalysisSettings = normalize_layout_analysis_settings($config['layoutAnalysis'] ?? []);
     $layoutAnalysisByPage = title_layout_analysis_by_page($lineGeometries, $layoutAnalysisSettings);
-    $system = detect_sender_block_system_zones(
-        normalize_system_zones($rules['systemZones'] ?? []),
+    $normalizedSystemZones = normalize_system_zones($rules['systemZones'] ?? []);
+    $senderZones = detect_sender_block_system_zones(
+        $normalizedSystemZones,
         $lineGeometries,
         $layoutAnalysisByPage,
         $replacementMap
     );
+    $recipientZones = detect_recipient_block_system_zones(
+        $normalizedSystemZones,
+        $lineGeometries,
+        $replacementMap
+    );
+    $system = resolve_sender_recipient_system_zone_conflicts($senderZones, $recipientZones);
     return array_values(array_merge($configured, $system));
 }
 
