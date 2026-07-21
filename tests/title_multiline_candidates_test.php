@@ -27,6 +27,35 @@ function title_multiline_test_geometry(string $text, int $wordIndex, array $bbox
     ];
 }
 
+function title_multiline_test_row_geometry(string $line, array $segments, int $firstWordIndex): array
+{
+    $resolvedSegments = [];
+    $cursor = 0;
+    foreach ($segments as $offset => $segment) {
+        $text = (string) ($segment['text'] ?? '');
+        $start = strpos($line, $text, $cursor);
+        if ($text === '' || $start === false) {
+            throw new RuntimeException('Testsegmentet finns inte i OCR-raden: ' . $text);
+        }
+        $end = $start + strlen($text);
+        $resolvedSegments[] = [
+            'text' => $text,
+            'start' => $start,
+            'end' => $end,
+            'wordIndex' => $firstWordIndex + $offset,
+            'bbox' => $segment['bbox'],
+        ];
+        $cursor = $end;
+    }
+    return [
+        'text' => $line,
+        'segments' => $resolvedSegments,
+        'pageNumber' => 1,
+        'pageWidth' => 1240.0,
+        'pageHeight' => 1754.0,
+    ];
+}
+
 function title_multiline_candidate_bbox_overlap(array $left, array $right): bool
 {
     $indexes = [];
@@ -151,6 +180,218 @@ assert_title_multiline_candidates(
         static fn(array $candidate): bool => ($candidate['blockType'] ?? null) === 'multiline'
     )) === 0,
     'Title multiline candidates must use the shared multiline block settings.'
+);
+assert_title_multiline_candidates(
+    in_array('Ansökan om ekonomiskt bistånd', array_column($strictCandidates, 'value'), true),
+    'Geometrically incompatible lines must remain independent standalone title candidates.'
+);
+
+$logicalLines = ['Ansökan om', 'ekonomiskt bistånd'];
+$logicalGeometries = [
+    title_multiline_test_geometry('Ansökan om', 0, ['x0' => 80.0, 'y0' => 80.0, 'x1' => 220.0, 'y1' => 100.0]),
+    title_multiline_test_geometry('ekonomiskt bistånd', 1, ['x0' => 82.0, 'y0' => 104.0, 'x1' => 310.0, 'y1' => 124.0]),
+];
+$logicalResult = extract_title_field_result($logicalLines, $logicalGeometries, [], [], [], null, $blockSettings);
+$logicalCandidates = $logicalResult['candidates'] ?? [];
+$logicalCandidate = array_values(array_filter(
+    $logicalCandidates,
+    static fn(array $candidate): bool => ($candidate['value'] ?? '') === 'Ansökan om ekonomiskt bistånd'
+        && ($candidate['blockType'] ?? '') === 'multiline'
+))[0] ?? null;
+assert_title_multiline_candidates(
+    is_array($logicalCandidate)
+        && ($logicalCandidate['mergeGeometryEligible'] ?? false) === true
+        && ($logicalCandidate['logicalLineBreak'] ?? false) === true,
+    'A geometrically compatible natural line break must create one multiline title candidate.'
+);
+assert_title_multiline_candidates(
+    count($logicalCandidates) === 1,
+    'Accepted multiline title rows must not also reappear through standalone fallback generation.'
+);
+
+$illogicalLines = ['FAKTURA', 'Kundnummer'];
+$illogicalGeometries = [
+    title_multiline_test_geometry('FAKTURA', 0, ['x0' => 80.0, 'y0' => 80.0, 'x1' => 220.0, 'y1' => 100.0]),
+    title_multiline_test_geometry('Kundnummer', 1, ['x0' => 82.0, 'y0' => 104.0, 'x1' => 250.0, 'y1' => 124.0]),
+];
+$illogicalResult = extract_title_field_result($illogicalLines, $illogicalGeometries, [], [], [], null, $blockSettings);
+$illogicalCandidates = $illogicalResult['candidates'] ?? [];
+$illogicalAnalysis = $illogicalResult['multilineCandidateAnalysis'] ?? [];
+assert_title_multiline_candidates(
+    $illogicalCandidates === [],
+    'A geometrically compatible but illogical break must suppress both the merged and standalone title candidates.'
+);
+assert_title_multiline_candidates(
+    ($illogicalAnalysis['blockedStandaloneTitleBBoxRefs'] ?? []) === ['1:1', '1:2']
+        && ($illogicalAnalysis['rejectedGroups'][0]['mergeGeometryEligible'] ?? false) === true
+        && ($illogicalAnalysis['rejectedGroups'][0]['logicalLineBreak'] ?? true) === false,
+    'Rejected merge debug must explicitly expose geometry eligibility, failed logic, and blocked bbox references.'
+);
+
+$separateGeometries = [
+    title_multiline_test_geometry('FAKTURA', 0, ['x0' => 80.0, 'y0' => 80.0, 'x1' => 220.0, 'y1' => 100.0]),
+    title_multiline_test_geometry('Kundnummer', 1, ['x0' => 82.0, 'y0' => 240.0, 'x1' => 250.0, 'y1' => 260.0]),
+];
+$separateResult = extract_title_field_result($illogicalLines, $separateGeometries, [], [], [], null, $blockSettings);
+assert_title_multiline_candidates(
+    in_array('FAKTURA', array_column($separateResult['candidates'] ?? [], 'value'), true)
+        && ($separateResult['multilineCandidateAnalysis']['blockedStandaloneTitleBBoxRefs'] ?? []) === [],
+    'A clearly separate heading and field label must remain independent and must not trigger blocking.'
+);
+
+$selectiveLines = ['Ansökan om', 'ekonomiskt bistånd', 'Kundnummer'];
+$selectiveGeometries = [
+    title_multiline_test_geometry('Ansökan om', 0, ['x0' => 80.0, 'y0' => 80.0, 'x1' => 220.0, 'y1' => 100.0]),
+    title_multiline_test_geometry('ekonomiskt bistånd', 1, ['x0' => 82.0, 'y0' => 104.0, 'x1' => 310.0, 'y1' => 124.0]),
+    title_multiline_test_geometry('Kundnummer', 2, ['x0' => 84.0, 'y0' => 128.0, 'x1' => 252.0, 'y1' => 148.0]),
+];
+$selectiveResult = extract_title_field_result($selectiveLines, $selectiveGeometries, [], [], [], null, $blockSettings);
+$selectiveValues = array_column($selectiveResult['candidates'] ?? [], 'value');
+$selectiveBlockedRefs = $selectiveResult['multilineCandidateAnalysis']['blockedStandaloneTitleBBoxRefs'] ?? [];
+assert_title_multiline_candidates(
+    in_array('Ansökan om ekonomiskt bistånd', $selectiveValues, true)
+        && !in_array('Kundnummer', $selectiveValues, true),
+    'Only the logical two-line grouping should survive when the following compatible break is illogical.'
+);
+assert_title_multiline_candidates(
+    $selectiveBlockedRefs === ['1:2', '1:3'] && !in_array('1:1', $selectiveBlockedRefs, true),
+    'Three-line analysis must block only bbox rows in the adjacent geometrically eligible but illogical break.'
+);
+
+$informationLines = [
+    'Datum                2026 04 01              Wikström, Petter',
+    'Kundservice          0771-111 600            c/o Oscar Jonsson',
+    'Skadeservice         0771-111 500            Norra Ringvägen 17',
+    'Försäkringsnummer    08 600 100 180          681 34 KRISTINEHAMN',
+];
+$informationGeometries = [
+    title_multiline_test_row_geometry($informationLines[0], [
+        ['text' => 'Datum', 'bbox' => ['x0' => 141.0, 'y0' => 267.0, 'x1' => 211.0, 'y1' => 302.0]],
+        ['text' => '2026', 'bbox' => ['x0' => 498.0, 'y0' => 269.0, 'x1' => 553.0, 'y1' => 297.0]],
+        ['text' => '04', 'bbox' => ['x0' => 558.0, 'y0' => 269.0, 'x1' => 585.0, 'y1' => 297.0]],
+        ['text' => '01', 'bbox' => ['x0' => 595.0, 'y0' => 269.0, 'x1' => 622.0, 'y1' => 297.0]],
+        ['text' => 'Wikström,', 'bbox' => ['x0' => 938.0, 'y0' => 269.0, 'x1' => 1051.0, 'y1' => 297.0]],
+        ['text' => 'Petter', 'bbox' => ['x0' => 1058.0, 'y0' => 269.0, 'x1' => 1120.0, 'y1' => 297.0]],
+    ], 3),
+    title_multiline_test_row_geometry($informationLines[1], [
+        ['text' => 'Kundservice', 'bbox' => ['x0' => 137.0, 'y0' => 303.0, 'x1' => 276.0, 'y1' => 331.0]],
+        ['text' => '0771-111', 'bbox' => ['x0' => 496.0, 'y0' => 303.0, 'x1' => 603.0, 'y1' => 331.0]],
+        ['text' => '600', 'bbox' => ['x0' => 613.0, 'y0' => 303.0, 'x1' => 654.0, 'y1' => 331.0]],
+        ['text' => 'c/o', 'bbox' => ['x0' => 934.0, 'y0' => 303.0, 'x1' => 966.0, 'y1' => 331.0]],
+        ['text' => 'Oscar', 'bbox' => ['x0' => 979.0, 'y0' => 303.0, 'x1' => 1041.0, 'y1' => 331.0]],
+        ['text' => 'Jonsson', 'bbox' => ['x0' => 1045.0, 'y0' => 303.0, 'x1' => 1127.0, 'y1' => 331.0]],
+    ], 9),
+    title_multiline_test_row_geometry($informationLines[2], [
+        ['text' => 'Skadeservice', 'bbox' => ['x0' => 137.0, 'y0' => 334.0, 'x1' => 283.0, 'y1' => 364.0]],
+        ['text' => '0771-111', 'bbox' => ['x0' => 496.0, 'y0' => 334.0, 'x1' => 603.0, 'y1' => 364.0]],
+        ['text' => '500', 'bbox' => ['x0' => 612.0, 'y0' => 334.0, 'x1' => 652.0, 'y1' => 364.0]],
+        ['text' => 'Norra', 'bbox' => ['x0' => 939.0, 'y0' => 334.0, 'x1' => 997.0, 'y1' => 364.0]],
+        ['text' => 'Ringvägen', 'bbox' => ['x0' => 1009.0, 'y0' => 334.0, 'x1' => 1114.0, 'y1' => 364.0]],
+        ['text' => '17', 'bbox' => ['x0' => 1126.0, 'y0' => 334.0, 'x1' => 1149.0, 'y1' => 364.0]],
+    ], 15),
+    title_multiline_test_row_geometry($informationLines[3], [
+        ['text' => 'Försäkringsnummer', 'bbox' => ['x0' => 137.0, 'y0' => 366.0, 'x1' => 363.0, 'y1' => 401.0]],
+        ['text' => '08', 'bbox' => ['x0' => 496.0, 'y0' => 366.0, 'x1' => 523.0, 'y1' => 401.0]],
+        ['text' => '600', 'bbox' => ['x0' => 531.0, 'y0' => 366.0, 'x1' => 572.0, 'y1' => 401.0]],
+        ['text' => '100', 'bbox' => ['x0' => 580.0, 'y0' => 366.0, 'x1' => 625.0, 'y1' => 401.0]],
+        ['text' => '180', 'bbox' => ['x0' => 628.0, 'y0' => 366.0, 'x1' => 673.0, 'y1' => 401.0]],
+        ['text' => '681', 'bbox' => ['x0' => 935.0, 'y0' => 366.0, 'x1' => 976.0, 'y1' => 401.0]],
+        ['text' => '34', 'bbox' => ['x0' => 984.0, 'y0' => 366.0, 'x1' => 1012.0, 'y1' => 401.0]],
+        ['text' => 'KRISTINEHAMN', 'bbox' => ['x0' => 1020.0, 'y0' => 366.0, 'x1' => 1200.0, 'y1' => 401.0]],
+    ], 21),
+];
+$strictInformationSettings = normalize_multiline_text_block_settings([
+    ...$blockSettings,
+    'maxTextSizeRatio' => 1.05,
+]);
+$informationResult = extract_title_field_result(
+    $informationLines,
+    $informationGeometries,
+    [],
+    [],
+    [],
+    null,
+    $strictInformationSettings
+);
+$informationCandidateValues = array_column($informationResult['candidates'] ?? [], 'value');
+foreach (['Datum', 'Kundservice', 'Skadeservice', 'Försäkringsnummer'] as $blockedInformationLabel) {
+    assert_title_multiline_candidates(
+        !in_array($blockedInformationLabel, $informationCandidateValues, true),
+        'Repeated information-row label must not become a standalone title: ' . $blockedInformationLabel
+    );
+}
+$structuredRejection = array_values(array_filter(
+    $informationResult['multilineCandidateAnalysis']['rejectedGroups'] ?? [],
+    static fn(array $group): bool => ($group['geometryMode'] ?? null) === 'repeated_multi_column_rows'
+))[0] ?? null;
+assert_title_multiline_candidates(
+    is_array($structuredRejection)
+        && ($structuredRejection['mergeGeometryEligible'] ?? false) === true
+        && ($structuredRejection['logicalLineBreak'] ?? true) === false
+        && ($structuredRejection['lineIndexes'] ?? []) === [0, 1, 2, 3]
+        && ($structuredRejection['geometryPairs'][0]['rawMultilineJoinMetrics']['rejectionReason'] ?? null) === 'text_size_ratio',
+    'Actual multi-column OCR structure must expose both the raw size-ratio failure and the structured-row blocking path.'
+);
+
+$numericGridLines = ['2026      A', '12345     B', '777       C'];
+$numericGridGeometries = [
+    title_multiline_test_row_geometry($numericGridLines[0], [
+        ['text' => '2026', 'bbox' => ['x0' => 80.0, 'y0' => 80.0, 'x1' => 130.0, 'y1' => 100.0]],
+        ['text' => 'A', 'bbox' => ['x0' => 300.0, 'y0' => 80.0, 'x1' => 315.0, 'y1' => 100.0]],
+    ], 0),
+    title_multiline_test_row_geometry($numericGridLines[1], [
+        ['text' => '12345', 'bbox' => ['x0' => 80.0, 'y0' => 104.0, 'x1' => 140.0, 'y1' => 124.0]],
+        ['text' => 'B', 'bbox' => ['x0' => 300.0, 'y0' => 104.0, 'x1' => 315.0, 'y1' => 124.0]],
+    ], 2),
+    title_multiline_test_row_geometry($numericGridLines[2], [
+        ['text' => '777', 'bbox' => ['x0' => 80.0, 'y0' => 128.0, 'x1' => 120.0, 'y1' => 148.0]],
+        ['text' => 'C', 'bbox' => ['x0' => 300.0, 'y0' => 128.0, 'x1' => 315.0, 'y1' => 148.0]],
+    ], 4),
+];
+$numericGridAnalysis = title_structured_information_row_rejections(
+    $numericGridLines,
+    $numericGridGeometries,
+    [],
+    $blockSettings
+);
+assert_title_multiline_candidates(
+    ($numericGridAnalysis['blockedStandaloneTitleBBoxRefs'] ?? []) === [],
+    'Pure date and number rows must not create structured title blocking groups.'
+);
+
+$twoRowInformationLines = [
+    'Försäkringsnummer                       08 600 100 180',
+    'Pris per år                            1 334 kr',
+];
+$twoRowInformationGeometries = [
+    title_multiline_test_row_geometry($twoRowInformationLines[0], [
+        ['text' => 'Försäkringsnummer', 'bbox' => ['x0' => 140.0, 'y0' => 704.0, 'x1' => 352.0, 'y1' => 734.0]],
+        ['text' => '08', 'bbox' => ['x0' => 769.0, 'y0' => 703.0, 'x1' => 796.0, 'y1' => 731.0]],
+        ['text' => '600', 'bbox' => ['x0' => 804.0, 'y0' => 703.0, 'x1' => 845.0, 'y1' => 731.0]],
+        ['text' => '100', 'bbox' => ['x0' => 853.0, 'y0' => 703.0, 'x1' => 898.0, 'y1' => 731.0]],
+        ['text' => '180', 'bbox' => ['x0' => 903.0, 'y0' => 703.0, 'x1' => 944.0, 'y1' => 731.0]],
+    ], 62),
+    title_multiline_test_row_geometry($twoRowInformationLines[1], [
+        ['text' => 'Pris', 'bbox' => ['x0' => 138.0, 'y0' => 742.0, 'x1' => 180.0, 'y1' => 778.0]],
+        ['text' => 'per', 'bbox' => ['x0' => 187.0, 'y0' => 742.0, 'x1' => 217.0, 'y1' => 778.0]],
+        ['text' => 'år', 'bbox' => ['x0' => 224.0, 'y0' => 742.0, 'x1' => 252.0, 'y1' => 778.0]],
+        ['text' => '1', 'bbox' => ['x0' => 768.0, 'y0' => 739.0, 'x1' => 780.0, 'y1' => 775.0]],
+        ['text' => '334', 'bbox' => ['x0' => 788.0, 'y0' => 739.0, 'x1' => 830.0, 'y1' => 775.0]],
+        ['text' => 'kr', 'bbox' => ['x0' => 839.0, 'y0' => 739.0, 'x1' => 863.0, 'y1' => 775.0]],
+    ], 67),
+];
+$twoRowInformationResult = extract_title_field_result(
+    $twoRowInformationLines,
+    $twoRowInformationGeometries,
+    [],
+    [],
+    [],
+    null,
+    $strictInformationSettings
+);
+assert_title_multiline_candidates(
+    !in_array('Försäkringsnummer', array_column($twoRowInformationResult['candidates'] ?? [], 'value'), true),
+    'A two-row aligned label/value table must not reintroduce its first label as a title candidate.'
 );
 
 $sizeRatioSettings = normalize_multiline_text_block_settings([
@@ -381,11 +622,11 @@ assert_title_multiline_candidates(
     'The title sender-name penalty must work for multiline candidates.'
 );
 
-$overlappingLines = ['Tomas Lars-Åke Bäck', 'Kyrkogatan 8 Lgh 1001', '684 30 MUNKFORS'];
+$overlappingLines = ['Ansökan om', 'ekonomiskt bistånd för', 'maj 2026'];
 $overlappingGeometries = [
-    title_multiline_test_geometry('Tomas Lars-Åke Bäck', 0, ['x0' => 40.0, 'y0' => 60.0, 'x1' => 210.0, 'y1' => 80.0]),
-    title_multiline_test_geometry('Kyrkogatan 8 Lgh 1001', 1, ['x0' => 42.0, 'y0' => 84.0, 'x1' => 236.0, 'y1' => 104.0]),
-    title_multiline_test_geometry('684 30 MUNKFORS', 2, ['x0' => 44.0, 'y0' => 108.0, 'x1' => 198.0, 'y1' => 128.0]),
+    title_multiline_test_geometry('Ansökan om', 0, ['x0' => 40.0, 'y0' => 60.0, 'x1' => 210.0, 'y1' => 80.0]),
+    title_multiline_test_geometry('ekonomiskt bistånd för', 1, ['x0' => 42.0, 'y0' => 84.0, 'x1' => 236.0, 'y1' => 104.0]),
+    title_multiline_test_geometry('maj 2026', 2, ['x0' => 44.0, 'y0' => 108.0, 'x1' => 198.0, 'y1' => 128.0]),
 ];
 $overlappingResult = extract_title_field_result($overlappingLines, $overlappingGeometries, [], [], [], null, $blockSettings);
 $overlappingCandidates = is_array($overlappingResult['candidates'] ?? null) ? $overlappingResult['candidates'] : [];

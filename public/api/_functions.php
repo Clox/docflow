@@ -19784,7 +19784,8 @@ function title_candidates_from_lines(
     array $lineGeometries = [],
     array $spanSettings = [],
     array $consumedBBoxIndexes = [],
-    array $consumedLineIndexes = []
+    array $consumedLineIndexes = [],
+    array $blockedStandaloneBBoxRefGroups = []
 ): array
 {
     $settings = normalize_matching_bbox_span_building_settings($spanSettings);
@@ -19802,6 +19803,17 @@ function title_candidates_from_lines(
     foreach ($consumedLineIndexes as $index) {
         if (is_int($index) && $index >= 0) {
             $consumedLines[$index] = true;
+        }
+    }
+    $blockedGroupKeys = [];
+    foreach ($blockedStandaloneBBoxRefGroups as $group) {
+        if (!is_array($group) || $group === []) {
+            continue;
+        }
+        $refs = array_values(array_unique(array_filter($group, static fn($ref): bool => is_string($ref) && $ref !== '')));
+        sort($refs, SORT_NATURAL);
+        if ($refs !== []) {
+            $blockedGroupKeys[implode('|', $refs)] = true;
         }
     }
     $candidates = [];
@@ -19849,15 +19861,21 @@ function title_candidates_from_lines(
                 : [];
             $pageNumber = is_int($lineIndex) ? matching_line_page_number($lineGeometries, $lineIndex) : null;
             $overlapsConsumedBbox = false;
+            $candidateBboxRefs = [];
             foreach ($valueBBoxIndexes as $bboxIndex) {
                 $bboxRef = title_bbox_ref_key($pageNumber, $bboxIndex);
+                $candidateBboxRefs[] = $bboxRef;
                 if (isset($consumedBboxes[$bboxRef]) || isset($consumedBboxes[$bboxIndex])) {
                     $overlapsConsumedBbox = true;
                     break;
                 }
             }
+            sort($candidateBboxRefs, SORT_NATURAL);
+            $matchesBlockedStandaloneGroup = $candidateBboxRefs !== []
+                && isset($blockedGroupKeys[implode('|', array_values(array_unique($candidateBboxRefs)))]);
             if (
                 $overlapsConsumedBbox
+                || $matchesBlockedStandaloneGroup
                 || ($valueBBoxIndexes === [] && is_int($lineIndex) && isset($consumedLines[$lineIndex]))
             ) {
                 continue;
@@ -19979,15 +19997,334 @@ function title_select_non_overlapping_multiline_candidates(array $candidates): a
     return $selected;
 }
 
-function title_candidates_from_multiline_text_blocks(array $lines, array $lineGeometries = [], array $settings = []): array
+function title_multiline_logical_line_break(array $upper, array $lower): array
+{
+    $upperText = normalize_inline_whitespace((string) ($upper['text'] ?? ''));
+    $lowerText = normalize_inline_whitespace((string) ($lower['text'] ?? ''));
+    $logical = false;
+    $reason = 'independent_text_segments';
+
+    if ($upperText !== '' && $lowerText !== '' && preg_match('/^\P{L}*\p{Ll}/u', $lowerText) === 1) {
+        $logical = true;
+        $reason = 'lowercase_continuation';
+    }
+    if (!$logical && preg_match('/(?:^|\s)(?:av|att|den|det|de|en|ett|eller|för|från|genom|i|inom|med|mellan|mot|och|om|på|samt|som|till|under|utan|vid|över)$/iu', $upperText) === 1) {
+        $logical = true;
+        $reason = 'continuation_word';
+    }
+    if (!$logical && preg_match('/[,;\-–—]\s*$/u', $upperText) === 1) {
+        $logical = true;
+        $reason = 'continuation_punctuation';
+    }
+    if (!$logical) {
+        $upperHasLetters = preg_match('/\p{L}/u', $upperText) === 1;
+        $lowerHasLetters = preg_match('/\p{L}/u', $lowerText) === 1;
+        $upperAllCaps = $upperHasLetters && preg_match('/\p{Ll}/u', $upperText) !== 1;
+        $lowerAllCaps = $lowerHasLetters && preg_match('/\p{Ll}/u', $lowerText) !== 1;
+        $upperBbox = normalize_debug_word_bbox($upper['bbox'] ?? null);
+        $lowerBbox = normalize_debug_word_bbox($lower['bbox'] ?? null);
+        $upperWidth = $upperBbox !== null ? max(1.0, (float) $upperBbox['x1'] - (float) $upperBbox['x0']) : 0.0;
+        $lowerWidth = $lowerBbox !== null ? max(1.0, (float) $lowerBbox['x1'] - (float) $lowerBbox['x0']) : 0.0;
+        if ($upperAllCaps && $lowerAllCaps && $upperWidth >= $lowerWidth) {
+            $logical = true;
+            $reason = 'wrapped_uppercase_title';
+        }
+    }
+
+    return [
+        'logicalLineBreak' => $logical,
+        'reason' => $reason,
+        'upperLineIndex' => (int) ($upper['lineIndex'] ?? -1),
+        'lowerLineIndex' => (int) ($lower['lineIndex'] ?? -1),
+        'upperText' => $upperText,
+        'lowerText' => $lowerText,
+    ];
+}
+
+function title_structured_information_row_rejections(
+    array $lines,
+    array $lineGeometries,
+    array $spanSettings,
+    array $multiLineSettings
+): array {
+    $rows = [];
+    foreach ($lines as $lineIndex => $line) {
+        if (!is_int($lineIndex) || !is_string($line) || trim($line) === '') {
+            continue;
+        }
+        $lineGeometry = is_array($lineGeometries[$lineIndex] ?? null) ? $lineGeometries[$lineIndex] : null;
+        if ($lineGeometry === null) {
+            continue;
+        }
+        $parts = [];
+        foreach (extraction_field_layout_value_spans_for_line($line, $lineGeometry, 0, $spanSettings) as $span) {
+            if (!is_array($span)) {
+                continue;
+            }
+            $start = is_int($span['start'] ?? null) ? (int) $span['start'] : -1;
+            $end = is_int($span['end'] ?? null) ? (int) $span['end'] : -1;
+            $text = $start >= 0 && $end > $start
+                ? normalize_inline_whitespace((string) substr($line, $start, $end - $start))
+                : '';
+            $bbox = $start >= 0 && $end > $start ? line_geometry_span_bbox($lineGeometry, $start, $end) : null;
+            if ($text === '' || $bbox === null) {
+                continue;
+            }
+            $parts[] = [
+                'text' => $text,
+                'lineIndex' => $lineIndex,
+                'start' => $start,
+                'end' => $end,
+                'bbox' => $bbox,
+                'bboxIndexes' => line_geometry_span_word_bbox_indexes($lineGeometry, $start, $end),
+                'pageNumber' => matching_line_page_number($lineGeometries, $lineIndex),
+            ];
+        }
+        if (count($parts) < 2) {
+            continue;
+        }
+        $label = $parts[0];
+        $labelText = (string) ($label['text'] ?? '');
+        if (
+            count_pattern_matches('/\p{L}/u', $labelText) < 2
+            || title_candidate_word_count($labelText) > 16
+            || preg_match('/^\W*[\d\s:.,;\/-]+\W*$/u', $labelText) === 1
+        ) {
+            continue;
+        }
+        $rows[] = [
+            'label' => $label,
+            'parts' => $parts,
+            'lineIndex' => $lineIndex,
+            'pageNumber' => $label['pageNumber'] ?? null,
+        ];
+    }
+
+    $settings = normalize_multiline_text_block_settings($multiLineSettings);
+    $runs = [];
+    $currentRun = [];
+    $pairDebug = [];
+    $flushRun = static function () use (&$runs, &$currentRun, &$pairDebug): void {
+        if (count($currentRun) >= 2) {
+            $runs[] = ['rows' => $currentRun, 'pairs' => $pairDebug];
+        }
+        $currentRun = [];
+        $pairDebug = [];
+    };
+    foreach ($rows as $row) {
+        if ($currentRun === []) {
+            $currentRun[] = $row;
+            continue;
+        }
+        $previous = $currentRun[count($currentRun) - 1];
+        $upper = $previous['label'];
+        $lower = $row['label'];
+        $rawMetrics = multiline_text_block_fragment_join_metrics($upper, $lower, $settings);
+        $upperSecondBbox = normalize_debug_word_bbox($previous['parts'][1]['bbox'] ?? null);
+        $lowerSecondBbox = normalize_debug_word_bbox($row['parts'][1]['bbox'] ?? null);
+        $upperLabelBbox = normalize_debug_word_bbox($upper['bbox'] ?? null);
+        $lowerLabelBbox = normalize_debug_word_bbox($lower['bbox'] ?? null);
+        $averageHeight = $upperLabelBbox !== null && $lowerLabelBbox !== null
+            ? max(1.0, (($upperLabelBbox['y1'] - $upperLabelBbox['y0']) + ($lowerLabelBbox['y1'] - $lowerLabelBbox['y0'])) / 2.0)
+            : 1.0;
+        $secondColumnOffsetRatio = $upperSecondBbox !== null && $lowerSecondBbox !== null
+            ? abs($upperSecondBbox['x0'] - $lowerSecondBbox['x0']) / $averageHeight
+            : INF;
+        $geometryEligible = ($row['pageNumber'] ?? null) === ($previous['pageNumber'] ?? null)
+            && (int) ($row['lineIndex'] ?? -1) === (int) ($previous['lineIndex'] ?? -1) + 1
+            && is_array($rawMetrics)
+            && (float) ($rawMetrics['verticalGapRatio'] ?? INF) <= (float) $settings['maxLineDistanceLineHeights']
+            && (float) ($rawMetrics['xOverlapRatio'] ?? 0.0) >= (float) $settings['minXOverlapRatio']
+            && (float) ($rawMetrics['horizontalOffsetRatio'] ?? INF) <= (float) $settings['maxHorizontalOffsetLineHeights']
+            && $secondColumnOffsetRatio <= (float) $settings['maxHorizontalOffsetLineHeights'];
+        $currentPairDebug = [
+            'upperLineIndex' => (int) ($previous['lineIndex'] ?? -1),
+            'lowerLineIndex' => (int) ($row['lineIndex'] ?? -1),
+            'mergeGeometryEligible' => $geometryEligible,
+            'geometryMode' => 'repeated_multi_column_rows',
+            'rawMultilineJoinMetrics' => $rawMetrics,
+            'secondColumnOffsetRatio' => $secondColumnOffsetRatio,
+        ];
+        if (!$geometryEligible) {
+            $flushRun();
+            $currentRun[] = $row;
+            continue;
+        }
+        $pairDebug[] = $currentPairDebug;
+        $currentRun[] = $row;
+    }
+    $flushRun();
+
+    $blockedRefs = [];
+    $blockedGroups = [];
+    $rejectedGroups = [];
+    foreach ($runs as $run) {
+        $runRows = is_array($run['rows'] ?? null) ? $run['rows'] : [];
+        $logicalBreaks = [];
+        $invalidIndexes = [];
+        for ($index = 1; $index < count($runRows); $index++) {
+            $logical = title_multiline_logical_line_break($runRows[$index - 1]['label'], $runRows[$index]['label']);
+            $logicalBreaks[] = $logical;
+            if (($logical['logicalLineBreak'] ?? false) !== true) {
+                $invalidIndexes[$index - 1] = true;
+                $invalidIndexes[$index] = true;
+            }
+        }
+        if ($invalidIndexes === []) {
+            continue;
+        }
+        $groupLineIndexes = [];
+        $groupBboxIndexes = [];
+        $texts = [];
+        foreach (array_keys($invalidIndexes) as $index) {
+            $label = $runRows[$index]['label'];
+            $texts[] = (string) ($label['text'] ?? '');
+            $groupLineIndexes[] = (int) ($label['lineIndex'] ?? -1);
+            $pageNumber = is_int($label['pageNumber'] ?? null) ? (int) $label['pageNumber'] : null;
+            $refs = [];
+            foreach (is_array($label['bboxIndexes'] ?? null) ? $label['bboxIndexes'] : [] as $bboxIndex) {
+                if (!is_int($bboxIndex) || $bboxIndex < 1) {
+                    continue;
+                }
+                $groupBboxIndexes[] = $bboxIndex;
+                $ref = title_bbox_ref_key($pageNumber, $bboxIndex);
+                $refs[] = $ref;
+                $blockedRefs[$ref] = true;
+            }
+            sort($refs, SORT_NATURAL);
+            if ($refs !== []) {
+                $blockedGroups[implode('|', $refs)] = $refs;
+            }
+        }
+        $rejectedGroups[] = [
+            'mergeGeometryEligible' => true,
+            'logicalLineBreak' => false,
+            'geometryMode' => 'repeated_multi_column_rows',
+            'text' => normalize_inline_whitespace(implode(' ', $texts)),
+            'lineIndexes' => $groupLineIndexes,
+            'bboxIndexes' => array_values(array_unique($groupBboxIndexes)),
+            'logicalLineBreaks' => $logicalBreaks,
+            'geometryPairs' => $run['pairs'] ?? [],
+        ];
+    }
+    $resolvedRefs = array_keys($blockedRefs);
+    sort($resolvedRefs, SORT_NATURAL);
+    return [
+        'blockedStandaloneTitleBBoxRefs' => $resolvedRefs,
+        'blockedStandaloneTitleBBoxRefGroups' => array_values($blockedGroups),
+        'rejectedGroups' => $rejectedGroups,
+    ];
+}
+
+function title_candidates_from_multiline_text_blocks(
+    array $lines,
+    array $lineGeometries = [],
+    array $settings = [],
+    ?array &$generationAnalysis = null
+): array
 {
     $candidates = [];
+    $blockedBboxRefs = [];
+    $blockedBboxRefGroups = [];
+    $blockedLineIndexes = [];
+    $rejectedGroups = [];
+    $fragmentLineRanks = [];
+    foreach (multiline_text_block_fragments_for_lines($lines, $lineGeometries) as $fragment) {
+        $fragmentLineIndex = (int) ($fragment['lineIndex'] ?? -1);
+        if ($fragmentLineIndex >= 0 && !array_key_exists($fragmentLineIndex, $fragmentLineRanks)) {
+            $fragmentLineRanks[$fragmentLineIndex] = count($fragmentLineRanks);
+        }
+    }
     foreach (build_multiline_text_blocks($lines, $lineGeometries, $settings) as $block) {
         if (!is_array($block)) {
             continue;
         }
         $blockType = is_string($block['blockType'] ?? null) ? (string) $block['blockType'] : 'single_line';
         if ($blockType !== 'multiline') {
+            continue;
+        }
+        $parts = is_array($block['parts'] ?? null) ? array_values($block['parts']) : [];
+        $allPartsTitleEligible = $parts !== [];
+        foreach ($parts as $part) {
+            $partText = normalize_inline_whitespace((string) ($part['text'] ?? ''));
+            if (
+                $partText === ''
+                || count_pattern_matches('/\p{L}/u', $partText) < 2
+                || title_candidate_word_count($partText) > 16
+                || preg_match('/^\W*[\d\s:.,;\/-]+\W*$/u', $partText) === 1
+            ) {
+                $allPartsTitleEligible = false;
+                break;
+            }
+        }
+        if (!$allPartsTitleEligible) {
+            continue;
+        }
+        $hasConsecutiveLines = true;
+        for ($partIndex = 1; $partIndex < count($parts); $partIndex++) {
+            $upperLineRank = $fragmentLineRanks[(int) ($parts[$partIndex - 1]['lineIndex'] ?? -1)] ?? -1;
+            $lowerLineRank = $fragmentLineRanks[(int) ($parts[$partIndex]['lineIndex'] ?? -1)] ?? -1;
+            if ($upperLineRank < 0 || $lowerLineRank !== $upperLineRank + 1) {
+                $hasConsecutiveLines = false;
+                break;
+            }
+        }
+        if (!$hasConsecutiveLines) {
+            continue;
+        }
+        $logicalBreaks = [];
+        $invalidBreakParts = [];
+        for ($partIndex = 1; $partIndex < count($parts); $partIndex++) {
+            $breakAnalysis = title_multiline_logical_line_break($parts[$partIndex - 1], $parts[$partIndex]);
+            $logicalBreaks[] = $breakAnalysis;
+            if (($breakAnalysis['logicalLineBreak'] ?? false) !== true) {
+                $upperLineIndex = (int) ($parts[$partIndex - 1]['lineIndex'] ?? -1);
+                $lowerLineIndex = (int) ($parts[$partIndex]['lineIndex'] ?? -1);
+                $upperLineRank = $fragmentLineRanks[$upperLineIndex] ?? -1;
+                $lowerLineRank = $fragmentLineRanks[$lowerLineIndex] ?? -1;
+                if ($upperLineRank >= 0 && $lowerLineRank === $upperLineRank + 1) {
+                    $invalidBreakParts[$partIndex - 1] = $parts[$partIndex - 1];
+                    $invalidBreakParts[$partIndex] = $parts[$partIndex];
+                }
+            }
+        }
+        $hasInvalidLogicalBreak = count(array_filter(
+            $logicalBreaks,
+            static fn(array $analysis): bool => ($analysis['logicalLineBreak'] ?? false) !== true
+        )) > 0;
+        if ($hasInvalidLogicalBreak) {
+            foreach ($invalidBreakParts as $part) {
+                $pageNumber = is_int($part['pageNumber'] ?? null) ? (int) $part['pageNumber'] : null;
+                $partBboxIndexes = is_array($part['bboxIndexes'] ?? null) ? $part['bboxIndexes'] : [];
+                if ($partBboxIndexes === []) {
+                    $lineIndex = is_int($part['lineIndex'] ?? null) ? (int) $part['lineIndex'] : -1;
+                    if ($lineIndex >= 0) {
+                        $blockedLineIndexes[$lineIndex] = true;
+                    }
+                    continue;
+                }
+                $partBboxRefs = [];
+                foreach ($partBboxIndexes as $bboxIndex) {
+                    if (is_int($bboxIndex) && $bboxIndex > 0) {
+                        $bboxRef = title_bbox_ref_key($pageNumber, $bboxIndex);
+                        $blockedBboxRefs[$bboxRef] = true;
+                        $partBboxRefs[] = $bboxRef;
+                    }
+                }
+                if ($partBboxRefs !== []) {
+                    $partBboxRefs = array_values(array_unique($partBboxRefs));
+                    sort($partBboxRefs, SORT_NATURAL);
+                    $blockedBboxRefGroups[implode('|', $partBboxRefs)] = $partBboxRefs;
+                }
+            }
+            $rejectedGroups[] = [
+                'mergeGeometryEligible' => true,
+                'logicalLineBreak' => false,
+                'text' => is_string($block['text'] ?? null) ? normalize_inline_whitespace((string) $block['text']) : '',
+                'lineIndexes' => is_array($block['lineIndexes'] ?? null) ? $block['lineIndexes'] : [],
+                'bboxIndexes' => is_array($block['bboxIndexes'] ?? null) ? $block['bboxIndexes'] : [],
+                'logicalLineBreaks' => $logicalBreaks,
+            ];
             continue;
         }
         $text = is_string($block['text'] ?? null) ? normalize_inline_whitespace((string) $block['text']) : '';
@@ -20020,8 +20357,22 @@ function title_candidates_from_multiline_text_blocks(array $lines, array $lineGe
             'lineIndexes' => is_array($block['lineIndexes'] ?? null) ? $block['lineIndexes'] : [$lineIndex],
             'blockParts' => is_array($block['parts'] ?? null) ? $block['parts'] : [],
             'blockJoinMetrics' => is_array($block['joinMetrics'] ?? null) ? $block['joinMetrics'] : [],
+            'mergeGeometryEligible' => true,
+            'logicalLineBreak' => true,
+            'logicalLineBreaks' => $logicalBreaks,
         ];
     }
+
+    $resolvedBlockedBboxRefs = array_keys($blockedBboxRefs);
+    $resolvedBlockedLineIndexes = array_keys($blockedLineIndexes);
+    sort($resolvedBlockedBboxRefs, SORT_NATURAL);
+    sort($resolvedBlockedLineIndexes, SORT_NUMERIC);
+    $generationAnalysis = [
+        'blockedStandaloneTitleBBoxRefs' => $resolvedBlockedBboxRefs,
+        'blockedStandaloneTitleBBoxRefGroups' => array_values($blockedBboxRefGroups),
+        'blockedStandaloneTitleLineIndexes' => $resolvedBlockedLineIndexes,
+        'rejectedGroups' => $rejectedGroups,
+    ];
 
     return $candidates;
 }
@@ -20722,8 +21073,53 @@ function extract_title_field_result(
         $layoutAnalysisByPage,
         $structureSources
     );
-    $multilineCandidates = title_candidates_from_multiline_text_blocks($lines, $lineGeometries, $resolvedBlockSettings);
+    $multilineGenerationAnalysis = [];
+    $multilineCandidates = title_candidates_from_multiline_text_blocks(
+        $lines,
+        $lineGeometries,
+        $resolvedBlockSettings,
+        $multilineGenerationAnalysis
+    );
+    $structuredRowAnalysis = title_structured_information_row_rejections(
+        $lines,
+        $lineGeometries,
+        $spanSettings,
+        $resolvedBlockSettings
+    );
+    foreach (is_array($structuredRowAnalysis['blockedStandaloneTitleBBoxRefs'] ?? null) ? $structuredRowAnalysis['blockedStandaloneTitleBBoxRefs'] : [] as $ref) {
+        if (is_string($ref) && $ref !== '') {
+            $multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefs'][] = $ref;
+        }
+    }
+    $multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefs'] = array_values(array_unique(
+        is_array($multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefs'] ?? null)
+            ? $multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefs']
+            : []
+    ));
+    sort($multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefs'], SORT_NATURAL);
+    $multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefGroups'] = array_values(array_merge(
+        is_array($multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefGroups'] ?? null)
+            ? $multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefGroups']
+            : [],
+        is_array($structuredRowAnalysis['blockedStandaloneTitleBBoxRefGroups'] ?? null)
+            ? $structuredRowAnalysis['blockedStandaloneTitleBBoxRefGroups']
+            : []
+    ));
+    $multilineGenerationAnalysis['rejectedGroups'] = array_values(array_merge(
+        is_array($multilineGenerationAnalysis['rejectedGroups'] ?? null)
+            ? $multilineGenerationAnalysis['rejectedGroups']
+            : [],
+        is_array($structuredRowAnalysis['rejectedGroups'] ?? null)
+            ? $structuredRowAnalysis['rejectedGroups']
+            : []
+    ));
     $consumedRefs = title_multiline_candidate_consumed_refs($multilineCandidates);
+    $blockedStandaloneBboxRefGroups = is_array($multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefGroups'] ?? null)
+        ? $multilineGenerationAnalysis['blockedStandaloneTitleBBoxRefGroups']
+        : [];
+    $blockedStandaloneLineIndexes = is_array($multilineGenerationAnalysis['blockedStandaloneTitleLineIndexes'] ?? null)
+        ? $multilineGenerationAnalysis['blockedStandaloneTitleLineIndexes']
+        : [];
     $scoredMultilineCandidates = array_map(
         static fn(array $candidate): array => score_title_candidate(
             $candidate,
@@ -20753,7 +21149,11 @@ function extract_title_field_result(
             $lineGeometries,
             $spanSettings,
             is_array($consumedRefs['bboxRefs'] ?? null) ? $consumedRefs['bboxRefs'] : [],
-            is_array($consumedRefs['lineIndexes'] ?? null) ? $consumedRefs['lineIndexes'] : []
+            array_values(array_unique(array_merge(
+                is_array($consumedRefs['lineIndexes'] ?? null) ? $consumedRefs['lineIndexes'] : [],
+                $blockedStandaloneLineIndexes
+            ))),
+            $blockedStandaloneBboxRefGroups
         )
     );
     $candidates = [
@@ -20797,6 +21197,7 @@ function extract_title_field_result(
             'selectedCandidate' => null,
             'fullConfidenceScore' => title_full_confidence_score($heuristics),
             'bodyTextLineAnalysis' => array_values($bodyTextLineAnalysis),
+            'multilineCandidateAnalysis' => $multilineGenerationAnalysis,
             'candidates' => $candidates,
         ];
     }
@@ -20811,6 +21212,7 @@ function extract_title_field_result(
         'selectedCandidate' => $selected,
         'fullConfidenceScore' => title_full_confidence_score($heuristics),
         'bodyTextLineAnalysis' => array_values($bodyTextLineAnalysis),
+        'multilineCandidateAnalysis' => $multilineGenerationAnalysis,
         'candidates' => $candidates,
     ];
 }
