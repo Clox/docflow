@@ -394,6 +394,69 @@ assert_title_multiline_candidates(
     'A two-row aligned label/value table must not reintroduce its first label as a title candidate.'
 );
 
+$autogiroLines = array_fill(0, 13, '');
+$autogiroLines[] = 'Fakturabeloppet kommer att dras via autogiro';
+$autogiroLines[] = 'från ditt konto på förfallodatumet';
+$autogiroGeometries = array_fill(0, 13, []);
+$autogiroGeometries[] = title_multiline_test_row_geometry($autogiroLines[13], [
+    ['text' => 'Fakturabeloppet', 'bbox' => ['x0' => 157.0, 'y0' => 592.0, 'x1' => 499.0, 'y1' => 644.0]],
+    ['text' => 'kommer', 'bbox' => ['x0' => 503.0, 'y0' => 592.0, 'x1' => 676.0, 'y1' => 644.0]],
+    ['text' => 'att', 'bbox' => ['x0' => 688.0, 'y0' => 592.0, 'x1' => 745.0, 'y1' => 644.0]],
+    ['text' => 'dras', 'bbox' => ['x0' => 756.0, 'y0' => 592.0, 'x1' => 837.0, 'y1' => 644.0]],
+    ['text' => 'via', 'bbox' => ['x0' => 849.0, 'y0' => 592.0, 'x1' => 913.0, 'y1' => 644.0]],
+    ['text' => 'autogiro', 'bbox' => ['x0' => 925.0, 'y0' => 592.0, 'x1' => 1090.0, 'y1' => 644.0]],
+], 26);
+$autogiroGeometries[] = title_multiline_test_row_geometry($autogiroLines[14], [
+    ['text' => 'från', 'bbox' => ['x0' => 157.0, 'y0' => 650.0, 'x1' => 232.0, 'y1' => 698.0]],
+    ['text' => 'ditt', 'bbox' => ['x0' => 251.0, 'y0' => 650.0, 'x1' => 318.0, 'y1' => 698.0]],
+    ['text' => 'konto', 'bbox' => ['x0' => 329.0, 'y0' => 650.0, 'x1' => 443.0, 'y1' => 698.0]],
+    ['text' => 'på', 'bbox' => ['x0' => 461.0, 'y0' => 651.0, 'x1' => 505.0, 'y1' => 698.0]],
+    ['text' => 'förfallodatumet', 'bbox' => ['x0' => 516.0, 'y0' => 651.0, 'x1' => 840.0, 'y1' => 699.0]],
+], 35);
+$autogiroSettings = normalize_multiline_text_block_settings([
+    ...$blockSettings,
+    'maxTextSizeRatio' => 1.05,
+]);
+$autogiroResult = extract_title_field_result(
+    $autogiroLines,
+    $autogiroGeometries,
+    [],
+    [],
+    [],
+    null,
+    $autogiroSettings
+);
+$autogiroExpectedText = 'Fakturabeloppet kommer att dras via autogiro från ditt konto på förfallodatumet';
+$autogiroCandidate = array_values(array_filter(
+    $autogiroResult['candidates'] ?? [],
+    static fn(array $candidate): bool => ($candidate['value'] ?? null) === $autogiroExpectedText
+))[0] ?? null;
+assert_title_multiline_candidates(
+    is_array($autogiroCandidate),
+    'The real autogiro sentence must create one multiline title candidate.'
+);
+assert_title_multiline_candidates(
+    ($autogiroCandidate['valueBBoxIndexes'] ?? null) === [27, 28, 29, 30, 31, 32, 36, 37, 38, 39, 40]
+        && ($autogiroCandidate['blockType'] ?? null) === 'multiline'
+        && ($autogiroCandidate['lineCount'] ?? null) === 2
+        && ($autogiroCandidate['lineIndexes'] ?? null) === [13, 14],
+    'The merged autogiro candidate must preserve all bbox indexes and multiline metadata.'
+);
+assert_title_multiline_candidates(
+    ($autogiroCandidate['mergeGeometryEligible'] ?? false) === true
+        && ($autogiroCandidate['logicalLineBreak'] ?? false) === true
+        && ($autogiroCandidate['logicalLineBreaks'][0]['reason'] ?? null) === 'lowercase_continuation'
+        && ($autogiroCandidate['blockJoinMetrics'][0]['accepted'] ?? false) === true
+        && abs((float) ($autogiroCandidate['blockJoinMetrics'][0]['textSizeRatio'] ?? 0.0) - (52.0 / 49.0)) < 0.000001,
+    'Autogiro merge debug must expose accepted geometry and a logical lowercase continuation.'
+);
+$autogiroCandidateValues = array_column($autogiroResult['candidates'] ?? [], 'value');
+assert_title_multiline_candidates(
+    !in_array($autogiroLines[13], $autogiroCandidateValues, true)
+        && !in_array($autogiroLines[14], $autogiroCandidateValues, true),
+    'The merged autogiro rows must not return through standalone or fallback candidate generation.'
+);
+
 $sizeRatioSettings = normalize_multiline_text_block_settings([
     ...$blockSettings,
     'maxTextSizeRatio' => 1.2,

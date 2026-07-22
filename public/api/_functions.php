@@ -21997,6 +21997,8 @@ function multiline_text_block_fragment_join_metrics(array $upper, array $lower, 
     $lowerHeight = max(1.0, (float) $lowerBbox['y1'] - (float) $lowerBbox['y0']);
     $sizeRatio = max($upperHeight, $lowerHeight) / min($upperHeight, $lowerHeight);
     $maxTextSizeRatio = (float) $settings['maxTextSizeRatio'];
+    $textSizeRatioOcrTolerance = 0.015;
+    $effectiveMaxTextSizeRatio = $maxTextSizeRatio + $textSizeRatioOcrTolerance;
 
     $averageHeight = max(1.0, ($upperHeight + $lowerHeight) / 2.0);
     $verticalGap = max(0.0, (float) $lowerBbox['y0'] - (float) $upperBbox['y1']);
@@ -22017,7 +22019,7 @@ function multiline_text_block_fragment_join_metrics(array $upper, array $lower, 
     $horizontalOffsetRatio = $horizontalOffset / $averageHeight;
     $maxHorizontalOffset = (float) $settings['maxHorizontalOffsetLineHeights'];
     $rejectionReason = '';
-    if ($sizeRatio > $maxTextSizeRatio) {
+    if ($sizeRatio > $effectiveMaxTextSizeRatio) {
         $rejectionReason = 'text_size_ratio';
     } elseif ($verticalGapRatio > $maxLineDistance) {
         $rejectionReason = 'line_distance';
@@ -22036,6 +22038,8 @@ function multiline_text_block_fragment_join_metrics(array $upper, array $lower, 
         'lowerHeight' => $lowerHeight,
         'textSizeRatio' => $sizeRatio,
         'maxAllowedTextSizeRatio' => $maxTextSizeRatio,
+        'textSizeRatioOcrTolerance' => $textSizeRatioOcrTolerance,
+        'effectiveMaxTextSizeRatio' => $effectiveMaxTextSizeRatio,
         'verticalGapRatio' => $verticalGapRatio,
         'maxAllowedVerticalGapRatio' => $maxLineDistance,
         'xOverlapRatio' => $xOverlapRatio,
