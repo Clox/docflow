@@ -3262,7 +3262,7 @@ function default_title_heuristics(): array
             'sender_name' => [
                 'enabled' => true,
                 'points' => -60.0,
-                'description' => 'Ger minuspoäng när en Rubrik-kandidat är identisk med en träff från systemfälten Avsändarnamn i dokument eller Avsändarmärke i dokument.',
+                'description' => 'Ger minuspoäng när Rubrik-kandidatens hela ordsekvens förekommer sammanhängande i ett kanoniskt eller alternativt avsändarnamn eller i en träff från Avsändarnamn i dokument eller Avsändarmärke i dokument.',
             ],
         ],
     ];
@@ -19757,9 +19757,57 @@ function title_candidate_short_line_before_long_line_ratio(array $candidate): ?f
     return $worstRatio !== null ? max(0.0, $worstRatio) : null;
 }
 
-function title_sender_name_lookup_from_document_matches(array $matches): array
+function title_sender_name_normalize_for_signal(string $value): string
 {
-    $lookup = [];
+    $lowercase = \Docflow\Senders\NameNormalizer::normalize($value);
+    $withWordBoundaries = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $lowercase);
+    if (!is_string($withWordBoundaries)) {
+        return '';
+    }
+    return trim((string) preg_replace('/\s+/u', ' ', $withWordBoundaries));
+}
+
+function title_sender_name_tokens_for_signal(string $value): array
+{
+    $normalized = title_sender_name_normalize_for_signal($value);
+    return $normalized === ''
+        ? []
+        : array_values(preg_split('/\s+/u', $normalized, -1, PREG_SPLIT_NO_EMPTY) ?: []);
+}
+
+function title_sender_name_contiguous_token_start(array $candidateTokens, array $nameTokens): ?int
+{
+    $candidateCount = count($candidateTokens);
+    $nameCount = count($nameTokens);
+    if ($candidateCount === 0 || $nameCount === 0 || $candidateCount > $nameCount) {
+        return null;
+    }
+    for ($start = 0; $start <= $nameCount - $candidateCount; $start++) {
+        if (array_slice($nameTokens, $start, $candidateCount) === $candidateTokens) {
+            return $start;
+        }
+    }
+    return null;
+}
+
+function title_sender_name_lookup_from_document_matches(array $matches, array $registeredNames = []): array
+{
+    $names = [];
+    foreach ($registeredNames as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $name = is_string($entry['name'] ?? null) ? normalize_inline_whitespace((string) $entry['name']) : '';
+        $source = is_string($entry['source'] ?? null) ? trim((string) $entry['source']) : 'canonical';
+        if ($name === '' || !in_array($source, ['canonical', 'alternativeName'], true)) {
+            continue;
+        }
+        $names[] = [
+            'name' => $name,
+            'source' => $source,
+            'senderId' => isset($entry['senderId']) ? (int) $entry['senderId'] : null,
+        ];
+    }
     foreach ($matches as $match) {
         if (!is_array($match)) {
             continue;
@@ -19770,13 +19818,84 @@ function title_sender_name_lookup_from_document_matches(array $matches): array
         $name = !$isSenderMark && is_string($match['matchedName'] ?? null) && trim((string) $match['matchedName']) !== ''
             ? normalize_inline_whitespace((string) $match['matchedName'])
             : normalize_inline_whitespace((string) ($match['value'] ?? $match['matchText'] ?? ''));
-        $normalizedName = $name !== '' ? \Docflow\Senders\NameNormalizer::normalize($name) : '';
-        if ($name === '' || $normalizedName === '' || isset($lookup[$normalizedName])) {
+        if ($name === '') {
             continue;
         }
-        $lookup[$normalizedName] = $name;
+        $names[] = [
+            'name' => $name,
+            'source' => $isSenderMark ? 'senderMark' : 'detectedSenderName',
+            'senderId' => isset($match['senderId']) ? (int) $match['senderId'] : null,
+            'matchIndex' => isset($match['matchIndex']) ? (int) $match['matchIndex'] : null,
+        ];
     }
-    return $lookup;
+    return array_values($names);
+}
+
+function title_sender_name_signal_analysis(string $candidate, array $names): array
+{
+    $normalizedCandidate = title_sender_name_normalize_for_signal($candidate);
+    $candidateTokens = title_sender_name_tokens_for_signal($candidate);
+    $comparisons = [];
+    $bestMatch = null;
+    foreach ($names as $index => $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $name = is_string($entry['name'] ?? null) ? normalize_inline_whitespace((string) $entry['name']) : '';
+        $source = is_string($entry['source'] ?? null) ? trim((string) $entry['source']) : 'detectedSenderName';
+        $normalizedName = title_sender_name_normalize_for_signal($name);
+        $nameTokens = title_sender_name_tokens_for_signal($name);
+        $startPosition = title_sender_name_contiguous_token_start($candidateTokens, $nameTokens);
+        $matched = $startPosition !== null;
+        $comparison = [
+            'name' => $name,
+            'source' => $source,
+            'normalizedName' => $normalizedName,
+            'nameTokens' => $nameTokens,
+            'candidateTokens' => $candidateTokens,
+            'matched' => $matched,
+            'matchStartToken' => $startPosition,
+            'matchType' => 'contiguous_whole_word_sequence',
+            'reason' => $matched
+                ? 'contiguous_whole_word_sequence'
+                : (count($candidateTokens) > count($nameTokens)
+                    ? 'candidate_has_more_tokens_than_name'
+                    : 'contiguous_whole_word_sequence_not_found'),
+            'senderId' => isset($entry['senderId']) ? (int) $entry['senderId'] : null,
+        ];
+        $comparisons[] = $comparison;
+        if (!$matched) {
+            continue;
+        }
+        $ranking = [
+            count($nameTokens) === count($candidateTokens) ? 0 : 1,
+            max(0, count($nameTokens) - count($candidateTokens)),
+            $startPosition,
+            match ($source) {
+                'canonical' => 0,
+                'alternativeName' => 1,
+                'detectedSenderName' => 2,
+                'senderMark' => 3,
+                default => 4,
+            },
+            (int) $index,
+        ];
+        if ($bestMatch === null || $ranking < $bestMatch['_ranking']) {
+            $bestMatch = [...$comparison, '_ranking' => $ranking];
+        }
+    }
+    if (is_array($bestMatch)) {
+        unset($bestMatch['_ranking']);
+    }
+    return [
+        'candidate' => $candidate,
+        'normalizedCandidate' => $normalizedCandidate,
+        'candidateTokens' => $candidateTokens,
+        'matchType' => 'contiguous_whole_word_sequence',
+        'matched' => $bestMatch !== null,
+        'bestMatch' => $bestMatch,
+        'comparisons' => $comparisons,
+    ];
 }
 
 function title_candidates_from_lines(
@@ -20691,7 +20810,7 @@ function score_title_candidate(
     array $lines,
     array $lineGeometries = [],
     array $heuristics = [],
-    array $senderNameLookup = [],
+    array $senderNames = [],
     array $layoutAnalysisByPage = [],
     array $bodyTextLineAnalysis = [],
     array $zoneMatches = []
@@ -21010,17 +21129,26 @@ function score_title_candidate(
         );
     }
 
-    $normalizedTitleText = normalize_inline_whitespace($text);
-    $normalizedTitle = \Docflow\Senders\NameNormalizer::normalize($normalizedTitleText);
-    $matchedSenderName = $normalizedTitle !== '' && is_string($senderNameLookup[$normalizedTitle] ?? null)
-        ? normalize_inline_whitespace((string) $senderNameLookup[$normalizedTitle])
+    $senderNameAnalysis = title_sender_name_signal_analysis($text, $senderNames);
+    $result['senderNameAnalysis'] = $senderNameAnalysis;
+    $bestSenderNameMatch = is_array($senderNameAnalysis['bestMatch'] ?? null)
+        ? $senderNameAnalysis['bestMatch']
+        : null;
+    $matchedSenderName = is_array($bestSenderNameMatch) && is_string($bestSenderNameMatch['name'] ?? null)
+        ? normalize_inline_whitespace((string) $bestSenderNameMatch['name'])
         : '';
     $senderNameSignal = is_array($signals['sender_name'] ?? null) ? $signals['sender_name'] : [];
     $senderNamePoints = min(0.0, (float) ($senderNameSignal['points'] ?? -60.0));
     if ($matchedSenderName !== '' && ($senderNameSignal['enabled'] ?? true) === true && $senderNamePoints < 0.0) {
         $score += $senderNamePoints;
         $result['matchedSenderName'] = $matchedSenderName;
-        $appendSignal('negative', 'sender_name', $senderNamePoints, 'name:' . $matchedSenderName);
+        $appendSignal(
+            'negative',
+            'sender_name',
+            $senderNamePoints,
+            'name:' . $matchedSenderName,
+            $senderNameAnalysis
+        );
     }
 
     $result['score'] = $score;
@@ -21056,11 +21184,12 @@ function extract_title_field_result(
     } else {
         $senderNameInDocumentResult = ['matches' => $senderNameInDocumentMatches];
     }
-    $senderNameLookup = title_sender_name_lookup_from_document_matches(
+    $senderNames = title_sender_name_lookup_from_document_matches(
         array_merge(
             is_array($senderNameInDocumentResult['matches'] ?? null) ? $senderNameInDocumentResult['matches'] : [],
             is_array($senderMarkInDocumentMatches) ? $senderMarkInDocumentMatches : []
-        )
+        ),
+        cached_title_sender_name_entries_for_analysis()
     );
     $structureSources = title_body_text_structure_sources(
         is_array($positionSettings['zoneMatches'] ?? null) ? $positionSettings['zoneMatches'] : [],
@@ -21126,7 +21255,7 @@ function extract_title_field_result(
             $lines,
             $lineGeometries,
             $heuristics,
-            $senderNameLookup,
+            $senderNames,
             $layoutAnalysisByPage,
             $bodyTextLineAnalysis,
             is_array($positionSettings['zoneMatches'] ?? null) ? $positionSettings['zoneMatches'] : []
@@ -21139,7 +21268,7 @@ function extract_title_field_result(
             $lines,
             $lineGeometries,
             $heuristics,
-            $senderNameLookup,
+            $senderNames,
             $layoutAnalysisByPage,
             $bodyTextLineAnalysis,
             is_array($positionSettings['zoneMatches'] ?? null) ? $positionSettings['zoneMatches'] : []
@@ -24356,6 +24485,9 @@ function title_result_matches(array $result, array $lineGeometries = []): array
         if (isset($matchesByKey[$matchKey]) && is_array($candidate['zoneOverlap'] ?? null)) {
             $matchesByKey[$matchKey]['zoneOverlap'] = $candidate['zoneOverlap'];
         }
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['senderNameAnalysis'] ?? null)) {
+            $matchesByKey[$matchKey]['senderNameAnalysis'] = $candidate['senderNameAnalysis'];
+        }
         foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'centerDistancePixels', 'leftAlignmentDistance', 'leftAlignmentDistanceLineHeights', 'horizontalPositionDistance', 'horizontalPositionScore', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforePreviousPagesAmount', 'bodyTextBeforeCurrentPageAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate'] as $numericKey) {
             if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$numericKey] ?? null)) {
                 $matchesByKey[$matchKey][$numericKey] = (float) $candidate[$numericKey];
@@ -25477,6 +25609,7 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'zoneOverlapEffective' => is_numeric($match['zoneOverlapEffective'] ?? null) ? (float) $match['zoneOverlapEffective'] : null,
                         'zoneOverlapCandidate' => is_numeric($match['zoneOverlapCandidate'] ?? null) ? (float) $match['zoneOverlapCandidate'] : null,
                         'zoneOverlap' => is_array($match['zoneOverlap'] ?? null) ? $match['zoneOverlap'] : null,
+                        'senderNameAnalysis' => is_array($match['senderNameAnalysis'] ?? null) ? $match['senderNameAnalysis'] : null,
                         'wordCount' => is_int($match['wordCount'] ?? null) ? (int) $match['wordCount'] : null,
                         'signals' => is_array($match['signals'] ?? null) ? array_values(array_filter(
                             $match['signals'],
@@ -29280,6 +29413,25 @@ function cached_sender_name_entries_for_analysis(): array
         $cache = [];
     }
 
+    return $cache;
+}
+
+function cached_title_sender_name_entries_for_analysis(): array
+{
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
+    $repository = sender_repository_instance();
+    if ($repository === null) {
+        $cache = [];
+        return $cache;
+    }
+    try {
+        $cache = $repository->listTitleSignalNameEntries();
+    } catch (Throwable $e) {
+        $cache = [];
+    }
     return $cache;
 }
 

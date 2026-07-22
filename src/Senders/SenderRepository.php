@@ -397,6 +397,62 @@ final class SenderRepository
         return $items;
     }
 
+    public function listTitleSignalNameEntries(): array
+    {
+        $items = [];
+        $senderRows = $this->pdo->query(
+            'SELECT id AS sender_id, name
+            FROM senders
+            WHERE trim(name) <> \'\'
+            ORDER BY id ASC'
+        )->fetchAll();
+        if (is_array($senderRows)) {
+            foreach ($senderRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
+                $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
+                if ($senderId < 1 || $name === '') {
+                    continue;
+                }
+                $items[] = [
+                    'senderId' => $senderId,
+                    'name' => $name,
+                    'source' => 'canonical',
+                ];
+            }
+        }
+
+        $alternativeRows = $this->pdo->query(
+            'SELECT o.sender_id, a.name
+            FROM sender_alternative_names a
+            INNER JOIN sender_organization_numbers o ON o.id = a.sender_organization_number_id
+            WHERE o.sender_id IS NOT NULL
+              AND trim(a.name) <> \'\'
+            ORDER BY o.sender_id ASC, a.id ASC'
+        )->fetchAll();
+        if (is_array($alternativeRows)) {
+            foreach ($alternativeRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $senderId = isset($row['sender_id']) ? (int) $row['sender_id'] : 0;
+                $name = is_string($row['name'] ?? null) ? trim((string) $row['name']) : '';
+                if ($senderId < 1 || $name === '') {
+                    continue;
+                }
+                $items[] = [
+                    'senderId' => $senderId,
+                    'name' => $name,
+                    'source' => 'alternativeName',
+                ];
+            }
+        }
+
+        return $items;
+    }
+
     public function listUnlinkedIdentifierRows(): array
     {
         $this->canonicalizeSenderIdentifierRows();

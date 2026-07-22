@@ -138,20 +138,111 @@ foreach (['Beslut från Karlstads kommun', 'Information från Karlstads kommun']
     );
 }
 
-$titleWithoutSenderFieldMatch = extract_title_field_result(
-    ['Karlstads kommun'],
-    [],
-    [],
-    [],
-    []
-);
-$titleWithoutSenderSignals = array_values(array_filter(
-    $titleWithoutSenderFieldMatch['selectedCandidate']['signals'] ?? [],
-    static fn (mixed $signal): bool => is_array($signal) && ($signal['code'] ?? null) === 'sender_name'
-));
+$scoreWithNames = static function (string $value, array $names, array $heuristics = []): array {
+    return score_title_candidate(
+        [
+            'value' => $value,
+            'raw' => $value,
+            'line' => $value,
+            'lineIndex' => 0,
+            'start' => 0,
+            'end' => strlen($value),
+            'bbox' => null,
+        ],
+        [$value],
+        [],
+        $heuristics,
+        $names
+    );
+};
+$senderSignal = static function (array $result): ?array {
+    return array_values(array_filter(
+        $result['signals'] ?? [],
+        static fn(mixed $signal): bool => is_array($signal) && ($signal['code'] ?? null) === 'sender_name'
+    ))[0] ?? null;
+};
+
+$canonicalNames = title_sender_name_lookup_from_document_matches([], [[
+    'senderId' => 279,
+    'name' => 'Trygg-Hansa Försäkring filial',
+    'source' => 'canonical',
+]]);
+$tryggHansaResult = $scoreWithNames('TRYGG HANSA', $canonicalNames);
+$tryggHansaSignal = $senderSignal($tryggHansaResult);
 assert_title_sender_name_signal(
-    $titleWithoutSenderSignals === [],
-    'Title sender-name penalty must depend on the sender_name_in_document matches, not the sender registry directly.'
+    is_array($tryggHansaSignal) && (float) ($tryggHansaSignal['score'] ?? 0.0) === -60.0,
+    'TRYGG HANSA must match the canonical name Trygg-Hansa Försäkring filial without changing the penalty.'
+);
+assert_title_sender_name_signal(
+    ($tryggHansaSignal['debug']['normalizedCandidate'] ?? null) === 'trygg hansa'
+        && ($tryggHansaSignal['debug']['bestMatch']['normalizedName'] ?? null) === 'trygg hansa försäkring filial'
+        && ($tryggHansaSignal['debug']['bestMatch']['source'] ?? null) === 'canonical'
+        && ($tryggHansaSignal['debug']['bestMatch']['matchStartToken'] ?? null) === 0
+        && ($tryggHansaSignal['debug']['bestMatch']['matchType'] ?? null) === 'contiguous_whole_word_sequence',
+    'Matched sender-name debug must expose normalized values, source, token start, and match type.'
+);
+
+$alternativeNames = title_sender_name_lookup_from_document_matches([], [[
+    'senderId' => 279,
+    'name' => 'Trygg-Hansa',
+    'source' => 'alternativeName',
+]]);
+$alternativeResult = $scoreWithNames('TRYGG HANSA', $alternativeNames);
+assert_title_sender_name_signal(
+    ($senderSignal($alternativeResult)['debug']['bestMatch']['source'] ?? null) === 'alternativeName',
+    'TRYGG HANSA must match when the corresponding name exists only as an alternative name.'
+);
+
+foreach ([
+    ['candidate' => 'bil', 'name' => 'bil försäkring', 'matches' => true],
+    ['candidate' => 'bil', 'name' => 'bilförsäkring', 'matches' => false],
+    ['candidate' => 'bil försäkring', 'name' => 'bil försäkring ab', 'matches' => true],
+    ['candidate' => 'försäkring', 'name' => 'bil försäkring ab', 'matches' => true],
+    ['candidate' => 'trygg hansa', 'name' => 'trygg skade hansa', 'matches' => false],
+] as $case) {
+    $caseResult = $scoreWithNames((string) $case['candidate'], [[
+        'name' => (string) $case['name'],
+        'source' => 'canonical',
+    ]]);
+    assert_title_sender_name_signal(
+        is_array($senderSignal($caseResult)) === (bool) $case['matches'],
+        sprintf('Unexpected whole-word sequence result for "%s" against "%s".', $case['candidate'], $case['name'])
+    );
+}
+
+assert_title_sender_name_signal(
+    title_sender_name_normalize_for_signal("  Alfa-Beta.Gamma/Delta   AB  ") === 'alfa beta gamma delta ab',
+    'Hyphens, periods, slashes, and repeated whitespace must become normalized word boundaries.'
+);
+$punctuationResult = $scoreWithNames('ALFA / BETA.GAMMA', [[
+    'name' => 'Alfa-Beta / Gamma Delta AB',
+    'source' => 'alternativeName',
+]]);
+assert_title_sender_name_signal(
+    is_array($senderSignal($punctuationResult)),
+    'Punctuation-separated words must match the same contiguous normalized word sequence.'
+);
+
+$nonMatchResult = $scoreWithNames('trygg hansa', [[
+    'name' => 'Trygg skade Hansa',
+    'source' => 'canonical',
+]]);
+assert_title_sender_name_signal(
+    ($nonMatchResult['senderNameAnalysis']['matched'] ?? true) === false
+        && ($nonMatchResult['senderNameAnalysis']['candidateTokens'] ?? null) === ['trygg', 'hansa']
+        && ($nonMatchResult['senderNameAnalysis']['comparisons'][0]['nameTokens'] ?? null) === ['trygg', 'skade', 'hansa']
+        && ($nonMatchResult['senderNameAnalysis']['comparisons'][0]['reason'] ?? null) === 'contiguous_whole_word_sequence_not_found',
+    'Non-match debug must show the compared names, token sequences, and rejection reason.'
+);
+
+$exactResult = $scoreWithNames('Exakt Avsändare AB', [[
+    'name' => 'Exakt Avsändare AB',
+    'source' => 'detectedSenderName',
+]]);
+assert_title_sender_name_signal(
+    is_array($senderSignal($exactResult))
+        && ($senderSignal($exactResult)['debug']['bestMatch']['matchStartToken'] ?? null) === 0,
+    'Existing exact sender-name matches must continue to work.'
 );
 
 fwrite(STDOUT, "title sender name signal tests passed\n");
