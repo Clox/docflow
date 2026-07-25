@@ -1011,6 +1011,7 @@ function renderSenderSelect(senders) {
     options
   });
   if (signature === senderOptionsSignature) {
+    syncSenderSelectTitle();
     return;
   }
 
@@ -1038,6 +1039,7 @@ function renderSenderSelect(senders) {
     const option = document.createElement('option');
     option.value = `sender:${item.value}`;
     option.textContent = item.label;
+    option.title = item.label;
     option.className = 'sender-select-option sender-select-option--sender';
     senderSelectEl.appendChild(option);
 
@@ -1051,6 +1053,7 @@ function renderSenderSelect(senders) {
       const unitOption = document.createElement('option');
       unitOption.value = `unit:${item.value}:${unit.id}`;
       unitOption.textContent = unit.name;
+      unitOption.title = unit.name;
       unitOption.className = 'sender-select-option sender-select-option--unit';
       unitOption.setAttribute('aria-label', `Underenhet till ${item.label}: ${unit.name}`);
       unitsGroup.appendChild(unitOption);
@@ -1060,7 +1063,26 @@ function renderSenderSelect(senders) {
 
   const hasCurrentValue = Array.from(senderSelectEl.options).some((option) => option.value === currentValue);
   senderSelectEl.value = hasCurrentValue ? currentValue : '';
+  syncSenderSelectTitle();
   senderOptionsSignature = signature;
+}
+
+function syncSenderSelectTitle() {
+  if (!(senderSelectEl instanceof HTMLSelectElement)) {
+    return;
+  }
+  const selectedOption = senderSelectEl.selectedOptions[0];
+  const selectedValue = selectedOption instanceof HTMLOptionElement
+    ? selectedOption.value.trim()
+    : '';
+  const title = /^(?:sender|unit):/.test(selectedValue)
+    ? selectedOption.textContent.trim()
+    : '';
+  if (title !== '') {
+    senderSelectEl.title = title;
+  } else {
+    senderSelectEl.removeAttribute('title');
+  }
 }
 
 function parseSenderSelectValue(value) {
@@ -1360,6 +1382,7 @@ function setSenderForJob(job) {
 
   if (!job) {
     senderSelectEl.value = '';
+    syncSenderSelectTitle();
     return;
   }
 
@@ -1371,10 +1394,12 @@ function setSenderForJob(job) {
     );
     if (hasManualOption) {
       senderSelectEl.value = selectValue;
+      syncSenderSelectTitle();
       return;
     }
   }
   senderSelectEl.value = '';
+  syncSenderSelectTitle();
 }
 
 function setFolderForJob(job) {
@@ -13331,6 +13356,7 @@ function applySelectedSenderValue(value, senderUnitId = '') {
   if (senderSelectEl instanceof HTMLSelectElement && senderSelectEl.value !== selectValue) {
     senderSelectEl.value = selectValue;
   }
+  syncSenderSelectTitle();
 
   const currentJob = findJobById(selectedJobId);
   updateArchivedReviewDraftFromSidebar(currentJob);
@@ -39567,6 +39593,7 @@ clientSelectEl.addEventListener('change', () => {
 });
 
 senderSelectEl.addEventListener('change', () => {
+  syncSenderSelectTitle();
   if (senderSelectEl.value === EDIT_SENDERS_OPTION_VALUE) {
     const selectedJob = findJobById(selectedJobId);
     openSendersSettingsDirect().finally(() => {
