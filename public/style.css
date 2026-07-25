@@ -2674,7 +2674,10 @@ body.is-resizing-sidebar {
 
 .job-labels-combobox-option {
   width: 100%;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 7px 8px;
   border: 0;
   border-radius: 6px;
@@ -2693,6 +2696,10 @@ body.is-resizing-sidebar {
 .job-labels-combobox-option-create {
   color: #1d4ed8;
   font-weight: 600;
+}
+
+.job-labels-combobox-option.is-system {
+  background: #faf7ff;
 }
 
 .job-labels-combobox-empty {
@@ -2752,10 +2759,37 @@ body.is-resizing-sidebar {
   gap: 4px;
 }
 
+.job-extraction-field-item.is-system {
+  padding: 6px 8px;
+  border: 1px solid #e4d8f4;
+  border-radius: 8px;
+  background: #faf7ff;
+}
+
 .job-extraction-field-item-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   font-weight: 700;
   color: #1f2937;
+}
+
+.job-editor-system-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 16px;
+  padding: 0 5px;
+  border: 1px solid #d8c7ed;
+  border-radius: 999px;
+  background: #f2eafa;
+  color: #6b3f8f;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .job-extraction-field-item-values {
@@ -2982,6 +3016,11 @@ body.is-resizing-sidebar {
 .job-labels-selected-chip {
   gap: 6px;
   max-width: 100%;
+}
+
+.job-labels-selected-chip.is-system {
+  border-color: #d8c7ed;
+  background: #faf7ff;
 }
 
 .job-labels-selected-chip-remove {

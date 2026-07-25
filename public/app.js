@@ -1878,6 +1878,7 @@ function currentSelectedJobLabelOptions() {
     .map((option) => ({
       value: typeof option.value === 'string' ? option.value.trim() : '',
       label: typeof option.label === 'string' ? option.label.trim() : '',
+      isSystemLabel: option.isSystemLabel === true,
     }))
     .filter((option) => option.value !== '' && option.label !== '')
     .sort((left, right) => left.label.localeCompare(right.label, 'sv'));
@@ -2199,6 +2200,7 @@ function selectedJobLabelDropdownOptions(job = findJobById(selectedJobId)) {
     type: 'label',
     value: option.value,
     label: option.label,
+    isSystemLabel: option.isSystemLabel === true,
   }));
 
   if (createLabelName !== '' && createLabelId !== '' && !hasExactMatch) {
@@ -2218,10 +2220,14 @@ function renderSelectedJobLabelsChips(job = findJobById(selectedJobId)) {
   }
 
   const labelIds = effectiveSelectedLabelIds(job);
+  const labelOptionsById = new Map(
+    currentSelectedJobLabelOptions().map((option) => [option.value, option])
+  );
   const selectedLabels = labelIds
     .map((labelId) => ({
       id: labelId,
       name: labelDisplayName(labelId),
+      isSystemLabel: labelOptionsById.get(labelId)?.isSystemLabel === true,
     }))
     .filter((label) => label.name !== '');
 
@@ -2236,10 +2242,21 @@ function renderSelectedJobLabelsChips(job = findJobById(selectedJobId)) {
   selectedLabels.forEach((label) => {
     const chipEl = document.createElement('span');
     chipEl.className = 'job-labels-selected-chip';
+    chipEl.classList.toggle('is-system', label.isSystemLabel);
 
     const textEl = document.createElement('span');
     textEl.className = 'job-labels-selected-chip-text';
     textEl.textContent = label.name;
+
+    if (label.isSystemLabel) {
+      const badge = document.createElement('span');
+      badge.className = 'job-editor-system-badge';
+      badge.textContent = 'system';
+      badge.title = 'Systemetikett';
+      chipEl.append(textEl, badge);
+    } else {
+      chipEl.appendChild(textEl);
+    }
 
     const removeButton = document.createElement('button');
     removeButton.type = 'button';
@@ -2260,9 +2277,34 @@ function renderSelectedJobLabelsChips(job = findJobById(selectedJobId)) {
       }
     });
 
-    chipEl.append(textEl, removeButton);
+    chipEl.appendChild(removeButton);
     jobLabelsSelectedEl.appendChild(chipEl);
   });
+}
+
+function jobEditorDataFieldOptions() {
+  const options = [];
+  const seenKeys = new Set();
+  const appendFields = (fields, isSystemField) => {
+    sanitizeExtractionFields(fields).forEach((field, index) => {
+      const normalized = sanitizeExtractionField(field, index);
+      const key = typeof normalized.key === 'string' ? normalized.key.trim() : '';
+      const name = typeof normalized.name === 'string' ? normalized.name.trim() : '';
+      if (!key || !name || seenKeys.has(key)) {
+        return;
+      }
+      seenKeys.add(key);
+      options.push({
+        key,
+        label: name,
+        isSystemField,
+      });
+    });
+  };
+
+  appendFields([...predefinedExtractionFieldsDraft, ...extractionFieldsDraft], false);
+  appendFields(systemExtractionFieldsDraft, true);
+  return options;
 }
 
 function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobId)) {
@@ -2281,7 +2323,8 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
     ? job.analysis.extractionFieldMeta
     : {};
   const selectionKeys = Object.keys(effectiveSelectedExtractionFieldValues(job));
-  const dataFieldOptions = filenameTemplateDataFieldOptions();
+  const dataFieldOptions = jobEditorDataFieldOptions();
+  const dataFieldOptionsByKey = new Map(dataFieldOptions.map((option) => [option.key, option]));
   const knownDataFieldKeys = new Set(dataFieldOptions.map((option) => option.key));
   const restrictToKnownDataFields = knownDataFieldKeys.size > 0;
   const fieldKeys = Array.from(new Set([
@@ -2309,6 +2352,7 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
         name,
         rows,
         required,
+        isSystemField: dataFieldOptionsByKey.get(key)?.isSystemField === true,
       };
     })
     .filter(Boolean)
@@ -2375,6 +2419,7 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
     line.className = 'job-extraction-field-line';
     line.classList.toggle('is-primary', row.primary === true);
     line.classList.toggle('is-manual', row.manual === true);
+    line.classList.toggle('is-system', card.isSystemField === true);
 
     if (options.showRadio === true) {
       const radio = document.createElement('input');
@@ -2413,6 +2458,14 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
       prefix.className = 'job-extraction-field-line-prefix';
       prefix.textContent = `${options.prefixText}:`;
       line.appendChild(prefix);
+    }
+
+    if (card.isSystemField && options.prefixText) {
+      const systemBadge = document.createElement('span');
+      systemBadge.className = 'job-editor-system-badge';
+      systemBadge.textContent = 'system';
+      systemBadge.title = 'Systemdatafält';
+      line.appendChild(systemBadge);
     }
 
     const valueIsEditing = inlineEditState
@@ -2547,12 +2600,22 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
   cards.forEach((card) => {
     const item = document.createElement('div');
     item.className = 'job-extraction-field-item';
+    item.classList.toggle('is-system', card.isSystemField === true);
     item.dataset.fieldKey = card.key;
 
     if (card.rows.length > 1) {
       const title = document.createElement('div');
       title.className = 'job-extraction-field-item-title';
-      title.textContent = card.name;
+      const titleText = document.createElement('span');
+      titleText.textContent = card.name;
+      title.appendChild(titleText);
+      if (card.isSystemField) {
+        const systemBadge = document.createElement('span');
+        systemBadge.className = 'job-editor-system-badge';
+        systemBadge.textContent = 'system';
+        systemBadge.title = 'Systemdatafält';
+        title.appendChild(systemBadge);
+      }
       item.appendChild(title);
     }
 
@@ -2567,6 +2630,14 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
       prefix.className = 'job-extraction-field-line-prefix';
       prefix.textContent = `${card.name}:`;
       missingRow.appendChild(prefix);
+
+      if (card.isSystemField) {
+        const systemBadge = document.createElement('span');
+        systemBadge.className = 'job-editor-system-badge';
+        systemBadge.textContent = 'system';
+        systemBadge.title = 'Systemdatafält';
+        missingRow.appendChild(systemBadge);
+      }
 
       const missingText = document.createElement('span');
       missingText.className = 'job-extraction-field-line-value is-missing';
@@ -2626,14 +2697,31 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
   addFieldPlaceholder.textContent = 'Välj datafält...';
   addFieldSelect.appendChild(addFieldPlaceholder);
 
-  const addFieldOptions = extractionFieldAddOptions();
+  const addFieldOptions = jobEditorDataFieldOptions()
+    .slice()
+    .sort((left, right) => {
+      if (left.isSystemField !== right.isSystemField) {
+        return left.isSystemField ? 1 : -1;
+      }
+      return left.label.localeCompare(right.label, 'sv');
+    });
+  const regularOptionGroup = document.createElement('optgroup');
+  regularOptionGroup.label = 'Datafält';
+  const systemOptionGroup = document.createElement('optgroup');
+  systemOptionGroup.label = 'Systemdatafält';
   addFieldOptions.forEach((optionData) => {
     const option = document.createElement('option');
     option.value = optionData.key;
     option.textContent = optionData.label;
     option.title = optionData.title || optionData.label;
-    addFieldSelect.appendChild(option);
+    (optionData.isSystemField ? systemOptionGroup : regularOptionGroup).appendChild(option);
   });
+  if (regularOptionGroup.children.length > 0) {
+    addFieldSelect.appendChild(regularOptionGroup);
+  }
+  if (systemOptionGroup.children.length > 0) {
+    addFieldSelect.appendChild(systemOptionGroup);
+  }
   addFieldSelect.disabled = addFieldOptions.length < 1;
   addFieldSelect.value = '';
 
@@ -2752,7 +2840,17 @@ function renderJobLabelsComboboxOptions(job = findJobById(selectedJobId)) {
       optionButton.classList.add('job-labels-combobox-option-create');
       optionButton.textContent = `Skapa etikett: "${option.label}"`;
     } else {
-      optionButton.textContent = option.label;
+      const optionText = document.createElement('span');
+      optionText.textContent = option.label;
+      optionButton.appendChild(optionText);
+      if (option.isSystemLabel) {
+        optionButton.classList.add('is-system');
+        const badge = document.createElement('span');
+        badge.className = 'job-editor-system-badge';
+        badge.textContent = 'system';
+        badge.title = 'Systemetikett';
+        optionButton.appendChild(badge);
+      }
     }
     optionButton.setAttribute('role', 'option');
     optionButton.id = `job-labels-option-${index}`;
@@ -26078,6 +26176,7 @@ function systemLabelOptions() {
       value: typeof label.id === 'string' ? label.id.trim() : '',
       label: typeof label.name === 'string' ? label.name.trim() : '',
       description: typeof label.description === 'string' ? label.description.trim() : '',
+      isSystemLabel: true,
     }))
     .filter((label) => label.value !== '' && label.label !== '');
 }
@@ -26088,6 +26187,7 @@ function archiveRuleLabelOptionsList() {
       value: typeof label.id === 'string' ? label.id.trim() : '',
       label: typeof label.name === 'string' ? label.name.trim() : '',
       description: typeof label.description === 'string' ? label.description.trim() : '',
+      isSystemLabel: false,
     }))
     .filter((label) => label.value !== '' && label.label !== '')];
 
