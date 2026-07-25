@@ -1041,14 +1041,21 @@ function renderSenderSelect(senders) {
     option.className = 'sender-select-option sender-select-option--sender';
     senderSelectEl.appendChild(option);
 
-    item.units.forEach((unit, unitIndex) => {
+    if (item.units.length < 1) {
+      return;
+    }
+
+    const unitsGroup = document.createElement('optgroup');
+    unitsGroup.label = '(Underenheter)';
+    item.units.forEach((unit) => {
       const unitOption = document.createElement('option');
       unitOption.value = `unit:${item.value}:${unit.id}`;
-      unitOption.textContent = `${unitIndex === item.units.length - 1 ? '└─' : '├─'} ${unit.name}`;
+      unitOption.textContent = unit.name;
       unitOption.className = 'sender-select-option sender-select-option--unit';
       unitOption.setAttribute('aria-label', `Underenhet till ${item.label}: ${unit.name}`);
-      senderSelectEl.appendChild(unitOption);
+      unitsGroup.appendChild(unitOption);
     });
+    senderSelectEl.appendChild(unitsGroup);
   });
 
   const hasCurrentValue = Array.from(senderSelectEl.options).some((option) => option.value === currentValue);
