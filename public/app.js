@@ -29178,6 +29178,7 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
   const emptyText = typeof options.emptyText === 'string' && options.emptyText.trim() !== ''
     ? options.emptyText.trim()
     : 'Inga etiketter – gäller alla dokument';
+  const showEmptyText = options.showEmptyText !== false;
 
   const wrapper = document.createElement('div');
   wrapper.className = 'filename-template-label-picker';
@@ -29300,11 +29301,14 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
 
     selected.replaceChildren();
     selected.classList.toggle('is-empty', state.selectedIds.length < 1);
+    selected.classList.toggle('hidden', state.selectedIds.length < 1 && !showEmptyText);
     if (state.selectedIds.length < 1) {
-      const emptyEl = document.createElement('span');
-      emptyEl.className = 'filename-template-label-picker-empty';
-      emptyEl.textContent = emptyText;
-      selected.appendChild(emptyEl);
+      if (showEmptyText) {
+        const emptyEl = document.createElement('span');
+        emptyEl.className = 'filename-template-label-picker-empty';
+        emptyEl.textContent = emptyText;
+        selected.appendChild(emptyEl);
+      }
     } else {
       state.selectedIds.forEach((labelId) => {
         const chipEl = document.createElement('span');
@@ -37893,7 +37897,7 @@ function renderArchiveStructureEditor() {
 
     const templatesLabel = document.createElement('div');
     templatesLabel.className = 'archive-level-label';
-    templatesLabel.textContent = 'Filnamn';
+    templatesLabel.textContent = 'Filnamnsregler';
     body.appendChild(templatesLabel);
 
     const templatesList = createTreeChildren({ markerless: true });
@@ -37968,9 +37972,7 @@ function renderArchiveStructureEditor() {
       templateBody.appendChild(templateConditionsLabel);
       const templateConditionsHelp = document.createElement('div');
       templateConditionsHelp.className = 'archive-level-help';
-      templateConditionsHelp.textContent = templateDraft.labelIds.length > 0
-        ? 'Alla måste matcha'
-        : 'Inga etiketter – gäller alla dokument';
+      templateConditionsHelp.textContent = 'Alla måste matcha';
       templateBody.appendChild(templateConditionsHelp);
       templateBody.appendChild(
         createFilenameTemplateLabelPicker(
@@ -37981,7 +37983,7 @@ function renderArchiveStructureEditor() {
         },
         {
           placeholder: 'Lägg till etikett...',
-          emptyText: 'Inga etiketter – gäller alla dokument',
+          showEmptyText: false,
         }
       ));
 
@@ -38009,7 +38011,7 @@ function renderArchiveStructureEditor() {
     const addTemplateButton = document.createElement('button');
     addTemplateButton.type = 'button';
     addTemplateButton.className = 'archive-add-button';
-    addTemplateButton.textContent = 'Lägg till filnamn';
+    addTemplateButton.textContent = 'Lägg till filnamnsregel';
     addTemplateButton.addEventListener('click', () => {
       const createdTemplateIndex = archiveFoldersDraft[folderIndex].filenameTemplates.length;
       archiveFoldersDraft[folderIndex].filenameTemplates.push(defaultFilenameTemplateDraft());
