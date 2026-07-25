@@ -624,6 +624,7 @@ let matchesFieldHitFilterMode = normalizeMatchesFieldHitFilterMode(
   window.localStorage.getItem(MATCHES_FIELD_HIT_FILTER_STORAGE_KEY)
 );
 let settingsHighlightTimer = null;
+let settingsHighlightedElement = null;
 let metaRequestSeq = 0;
 let preferredJobIdFromHash = '';
 let archiveFoldersDraft = [];
@@ -22330,12 +22331,41 @@ function highlightSettingsElement(element) {
     window.clearTimeout(settingsHighlightTimer);
     settingsHighlightTimer = null;
   }
+  if (settingsHighlightedElement instanceof HTMLElement) {
+    settingsHighlightedElement.classList.remove('settings-highlight-target');
+  }
 
+  element.classList.remove('settings-highlight-target');
+  void element.offsetWidth;
   element.classList.add('settings-highlight-target');
+  settingsHighlightedElement = element;
   settingsHighlightTimer = window.setTimeout(() => {
     element.classList.remove('settings-highlight-target');
+    if (settingsHighlightedElement === element) {
+      settingsHighlightedElement = null;
+    }
     settingsHighlightTimer = null;
   }, 1800);
+}
+
+function revealCreatedSettingsElement(resolveTarget) {
+  window.requestAnimationFrame(() => {
+    const target = typeof resolveTarget === 'function' ? resolveTarget() : resolveTarget;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    const visibleSurface = target.querySelector(':scope > .tree-row > .tree-body');
+    highlightSettingsElement(visibleSurface instanceof HTMLElement ? visibleSurface : target);
+  });
+}
+
+function lastMatchingSettingsElement(container, selector) {
+  if (!(container instanceof HTMLElement) || typeof selector !== 'string' || selector.trim() === '') {
+    return null;
+  }
+  const matches = container.querySelectorAll(selector);
+  return matches.length > 0 ? matches[matches.length - 1] : null;
 }
 
 async function openMatchingThresholdSettings() {
@@ -22556,9 +22586,13 @@ function bindSettingsPanelRefs(tabId) {
     clientsCancelEl = document.getElementById('clients-cancel');
     clientsApplyEl = document.getElementById('clients-apply');
     clientsAddRowEl.addEventListener('click', () => {
-      clientsDraft.push(defaultClientDraft());
+      const createdClient = defaultClientDraft();
+      clientsDraft.push(createdClient);
       renderClientsEditor();
       updateSettingsActionButtons();
+      revealCreatedSettingsElement(() => clientsListEl?.querySelector(
+        `[data-client-ui-key="${escapeCssAttributeValue(clientUiKey(createdClient))}"]`
+      ));
     });
     clientsCancelEl.addEventListener('click', () => {
       let parsed = [];
@@ -22632,9 +22666,13 @@ function bindSettingsPanelRefs(tabId) {
       }
     });
     sendersAddRowEl.addEventListener('click', () => {
-      sendersDraft.push(defaultSenderDraft());
+      const createdSender = defaultSenderDraft();
+      sendersDraft.push(createdSender);
       renderSendersEditor();
       updateSettingsActionButtons();
+      revealCreatedSettingsElement(() => sendersListEl?.querySelector(
+        `[data-sender-ui-key="${escapeCssAttributeValue(senderUiKey(createdSender))}"]`
+      ));
     });
     sendersSortOrderEl.addEventListener('change', () => {
       const previousSortOrder = sendersSortOrder;
@@ -23037,9 +23075,13 @@ function bindSettingsPanelRefs(tabId) {
       });
     }
     archiveStructureAddFolderEl.addEventListener('click', () => {
+      const createdFolderIndex = archiveFoldersDraft.length;
       archiveFoldersDraft.push(defaultArchiveFolder());
       renderArchiveStructureEditor();
       updateSettingsActionButtons();
+      revealCreatedSettingsElement(() => archiveStructureListEl?.querySelector(
+        `[data-archive-folder-index="${createdFolderIndex}"]`
+      ));
     });
     archiveStructureImportEl.addEventListener('click', async () => {
       try {
@@ -23084,9 +23126,14 @@ function bindSettingsPanelRefs(tabId) {
     bindMatchPatternInspectorGroupButton(labelsMatchPatternInspectorToggleEl, 'labels');
     labelsAddRowEl.addEventListener('click', () => {
       closeLabelsAddMenu();
+      labelsCustomCollapsed = false;
       labelsDraft.push(defaultLabel());
       renderLabelsEditor();
       updateSettingsActionButtons();
+      revealCreatedSettingsElement(() => lastMatchingSettingsElement(
+        labelsListEl,
+        '#labels-custom-section .labels-editor-group-content > .tree-node'
+      ));
     });
     labelsAddMenuToggleEl.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -23139,6 +23186,10 @@ function bindSettingsPanelRefs(tabId) {
       valuePatternsDraft.push(defaultValuePattern());
       renderValuePatternsEditor();
       updateSettingsActionButtons();
+      revealCreatedSettingsElement(() => lastMatchingSettingsElement(
+        valuePatternsListEl,
+        ':scope > .value-pattern-node'
+      ));
     });
     valuePatternsAddMenuToggleEl.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -23207,6 +23258,10 @@ function bindSettingsPanelRefs(tabId) {
       renderExtractionFieldsEditor();
       renderSystemExtractionFieldsEditor();
       updateSettingsActionButtons();
+      revealCreatedSettingsElement(() => lastMatchingSettingsElement(
+        extractionFieldsEditorEl,
+        ':scope > .tree-node'
+      ));
     });
     extractionFieldsAddMenuToggleEl.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -23282,6 +23337,10 @@ function bindSettingsPanelRefs(tabId) {
       extractionZonesDraft.push(defaultExtractionZone());
       renderExtractionZonesEditor();
       updateSettingsActionButtons();
+      revealCreatedSettingsElement(() => lastMatchingSettingsElement(
+        extractionZonesEditorEl,
+        ':scope > .extraction-zone-node'
+      ));
     });
     zonesCancelEl.addEventListener('click', () => {
       let parsed = {};
@@ -37757,6 +37816,7 @@ function renderArchiveStructureEditor() {
 
     const node = document.createElement('div');
     node.className = 'tree-node tree-folder';
+    node.dataset.archiveFolderIndex = String(folderIndex);
     const row = createTreeRow({ markerless: true });
     const body = document.createElement('div');
     body.className = 'tree-body folder-body';
@@ -37850,6 +37910,7 @@ function renderArchiveStructureEditor() {
 
       const templateNode = document.createElement('div');
       templateNode.className = 'tree-node tree-category has-parent';
+      templateNode.dataset.filenameTemplateIndex = String(templateIndex);
       const templateRow = createTreeRow({ markerless: true });
       const templateBody = document.createElement('div');
       templateBody.className = 'tree-body category-body';
@@ -37950,9 +38011,13 @@ function renderArchiveStructureEditor() {
     addTemplateButton.className = 'archive-add-button';
     addTemplateButton.textContent = 'Lägg till filnamn';
     addTemplateButton.addEventListener('click', () => {
+      const createdTemplateIndex = archiveFoldersDraft[folderIndex].filenameTemplates.length;
       archiveFoldersDraft[folderIndex].filenameTemplates.push(defaultFilenameTemplateDraft());
       renderArchiveStructureEditor();
       updateSettingsActionButtons();
+      revealCreatedSettingsElement(() => archiveStructureListEl?.querySelector(
+        `[data-archive-folder-index="${folderIndex}"] [data-filename-template-index="${createdTemplateIndex}"]`
+      ));
     });
     templatesList.appendChild(addTemplateButton);
     body.appendChild(templatesList);
