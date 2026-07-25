@@ -6287,7 +6287,7 @@ function filename_template_review_label(array $template, array $nameMaps): strin
 {
     $parts = is_array($template['parts'] ?? null) ? $template['parts'] : [];
     $rendered = trim(preg_replace('/\s+/u', ' ', filename_template_parts_review_label($parts, $nameMaps)) ?? '');
-    return $rendered !== '' ? $rendered : 'Tom filnamnsmall';
+    return $rendered !== '' ? $rendered : 'Tomt filnamn';
 }
 
 function filename_template_review_name_maps(array $activeRules, array $draftRules): array
@@ -6404,7 +6404,7 @@ function archiving_rules_filename_template_changes(array $activeRules, array $dr
                 break;
             }
         }
-        $templateName = trim(($folderName !== '' ? $folderName . ' / ' : '') . 'Filnamnsmall ' . ($templateIndex + 1));
+        $templateName = trim(($folderName !== '' ? $folderName . ' / ' : '') . 'Filnamn ' . ($templateIndex + 1));
 
         $changes[] = [
             'filenameTemplateId' => $templateId,
@@ -10321,7 +10321,7 @@ function debug_export_document_metadata_for_job(string $jobId, string $jobDir): 
     $appendScalarMetadata('clientId', 'Huvudman', $clientId !== '' ? archiving_review_display_value('clientId', $clientId, $displayMaps) : '');
     $appendScalarMetadata('senderId', 'Avsändare', $senderId !== '' ? archiving_review_display_value('senderId', $senderId, $displayMaps) : '');
     $appendScalarMetadata('folderId', 'Mapp', $folderId !== '' ? archiving_review_display_value('folderId', $folderId, $displayMaps) : '');
-    $appendScalarMetadata('filenameTemplateId', 'Filnamnsmall', $filenameTemplateId !== '' ? archiving_review_display_value('filenameTemplateId', $filenameTemplateId, $displayMaps) : '');
+    $appendScalarMetadata('filenameTemplateId', 'Filnamn', $filenameTemplateId !== '' ? archiving_review_display_value('filenameTemplateId', $filenameTemplateId, $displayMaps) : '');
     $appendScalarMetadata('archiveFolderPath', 'Föreslagen arkivsökväg', $autoResult['archiveFolderPath'] ?? '');
     $appendScalarMetadata('proposedFilename', 'Föreslaget arkivnamn', $autoResult['filename'] ?? '');
 
@@ -26933,7 +26933,7 @@ function archiving_review_display_maps(array $activeRules, array $draftRules): a
         $templateId = is_string($template['templateId'] ?? null) ? trim((string) $template['templateId']) : '';
         $folderName = is_string($template['folderName'] ?? null) ? trim((string) $template['folderName']) : '';
         $templateIndex = is_int($template['templateIndex'] ?? null) ? (int) $template['templateIndex'] : 0;
-        $templateName = trim(($folderName !== '' ? $folderName . ' / ' : '') . 'Filnamnsmall ' . ($templateIndex + 1));
+        $templateName = trim(($folderName !== '' ? $folderName . ' / ' : '') . 'Filnamn ' . ($templateIndex + 1));
         if ($templateId !== '' && $templateName !== '' && !isset($filenameTemplateNames[$templateId])) {
             $filenameTemplateNames[$templateId] = $templateName;
         }
@@ -27122,7 +27122,7 @@ function archiving_review_change_items(array $approved, array $activeResult, arr
         'clientId' => 'Huvudman',
         'senderId' => 'Avsändare',
         'folderId' => 'Mapp',
-        'filenameTemplateId' => 'Filnamnsregel',
+        'filenameTemplateId' => 'Filnamn',
     ] as $key => $label) {
         if (!isset($changes[$key]) || !is_array($changes[$key])) {
             continue;

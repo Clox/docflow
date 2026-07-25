@@ -666,7 +666,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <span>%</span>
         </div>
       </div>
-      <p>Matchningar under denna tröskel visas fortfarande i matchningsvyer men används inte som accepterade värden i fakturadetaljer, filnamnsmallar eller arkiveringslogik.</p>
+      <p>Matchningar under denna tröskel visas fortfarande i matchningsvyer men används inte som accepterade värden i fakturadetaljer, filnamn eller arkiveringslogik.</p>
     </div>
     <div id="matching-bbox-span-section" class="matching-settings-section matching-bbox-span-section">
       <h4>Bbox-sammanslagning</h4>
@@ -894,7 +894,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-archive-structure">
     <h3>Arkivstruktur</h3>
-    <p>Hantera mappar och filnamnsregler. Varje mapp har en sökvägsmall, en matchningsprioritet och egna filnamnsregler som väljs inom mappen.</p>
+    <p>Varje mapp har ett namn och bestämmer dokumentets sökväg och filnamn. Matchningsprioriteten avgör vilken mapp som väljs.</p>
     <div id="archive-structure-toolbar-section" class="archive-structure-toolbar">
       <label class="archive-structure-sort" for="archive-structure-folder-sort">
         <span>Sortera mappar i vyn</span>

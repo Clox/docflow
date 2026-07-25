@@ -11634,13 +11634,13 @@ function renderArchivingRuleReview(force = false) {
     templateChanges.forEach((change) => {
       const item = document.createElement('div');
       item.className = 'archiving-review-template-change';
-      const templateName = change.filenameTemplateName || change.archiveFolderName || change.archiveFolderId || 'okänd filnamnsmall';
+      const templateName = change.filenameTemplateName || change.archiveFolderName || change.archiveFolderId || 'okänt filnamn';
       const title = document.createElement('div');
       title.className = 'archiving-review-template-change-title';
       title.textContent = `${templateName} har ändrats.`;
       const detail = document.createElement('div');
       detail.className = 'archiving-review-template-change-detail';
-      detail.textContent = `Från: ${change.before || 'Tom filnamnsmall'}  Till: ${change.after || 'Tom filnamnsmall'}`;
+      detail.textContent = `Från: ${change.before || 'Tomt filnamn'}  Till: ${change.after || 'Tomt filnamn'}`;
       item.append(title, detail);
       archivingReviewTemplateChangesEl.appendChild(item);
     });
@@ -26044,7 +26044,7 @@ function parseArchiveStructureImportJson(text, mode = 'folder') {
 
   const rows = Array.isArray(parsed) ? parsed : [parsed];
   if (rows.length < 1 || rows.some((row) => !row || typeof row !== 'object' || Array.isArray(row))) {
-    return { error: mode === 'folder' ? 'Importen måste vara ett mappobjekt eller en array med mappobjekt.' : 'Importen måste vara ett filnamnsmallobjekt eller en array med filnamnsmallar.' };
+    return { error: mode === 'folder' ? 'Importen måste vara ett mappobjekt eller en array med mappobjekt.' : 'Importen måste vara ett filnamnsobjekt eller en array med filnamn.' };
   }
 
   const warnings = [];
@@ -26067,7 +26067,7 @@ function parseArchiveStructureImportJson(text, mode = 'folder') {
 
   const wrongType = rows.find((row) => typeof row.type === 'string' && row.type.trim() !== '' && row.type !== 'filename_template');
   if (wrongType) {
-    return { error: 'Vald flik är Filnamnsmall, men JSON innehåller annan type än "filename_template".' };
+    return { error: 'Vald flik är Filnamn, men JSON innehåller annan type än "filename_template".' };
   }
   const templates = rows.map((row) => normalizeImportedFilenameTemplateObject(row, warnings));
   const folderIds = new Set(archiveFoldersDraft.map((folder, index) => sanitizeArchiveFolder(folder, index).id));
@@ -26084,7 +26084,7 @@ function parseArchiveStructureImportJson(text, mode = 'folder') {
     return folderId !== '' && !folderIds.has(folderId);
   }).length;
   if (explicitMissingCount > 0) {
-    warnings.push(`${explicitMissingCount} filnamnsmall ${explicitMissingCount === 1 ? 'anger' : 'anger'} okänd folderId och behöver fallback-mapp.`);
+    warnings.push(`${explicitMissingCount} filnamn ${explicitMissingCount === 1 ? 'anger' : 'anger'} okänd folderId och behöver fallback-mapp.`);
   }
   return {
     mode: 'filename_template',
@@ -26093,7 +26093,7 @@ function parseArchiveStructureImportJson(text, mode = 'folder') {
     fallbackFolderCount,
     missingFolderCount: fallbackFolderCount,
     warnings,
-    status: `${templates.length} ${templates.length === 1 ? 'filnamnsmall' : 'filnamnsmallar'} upptäckta`,
+    status: `${templates.length} filnamn upptäckta`,
   };
 }
 
@@ -27076,7 +27076,7 @@ function showArchiveStructureImportDialog() {
     body.className = 'label-import-dialog-body';
 
     const description = document.createElement('p');
-    description.textContent = 'Klistra in JSON för en eller flera mappar eller filnamnsmallar. Importen ändrar bara lokala inställningar tills du klickar Spara.';
+    description.textContent = 'Klistra in JSON för en eller flera mappar eller filnamn. Importen ändrar bara lokala inställningar tills du klickar Spara.';
 
     const tabs = document.createElement('div');
     tabs.className = 'archive-structure-import-tabs sliding-tabs';
@@ -27093,7 +27093,7 @@ function showArchiveStructureImportDialog() {
     templateTab.className = 'archive-structure-import-tab sliding-tab';
     templateTab.setAttribute('role', 'tab');
     templateTab.setAttribute('aria-selected', 'false');
-    templateTab.textContent = 'Filnamnsmall';
+    templateTab.textContent = 'Filnamn';
     const tabIndicator = document.createElement('span');
     tabIndicator.className = 'sliding-tab-indicator';
     tabIndicator.setAttribute('aria-hidden', 'true');
@@ -27152,7 +27152,7 @@ function showArchiveStructureImportDialog() {
     clearFolderIdsButton.type = 'button';
     clearFolderIdsButton.className = 'archive-structure-import-clear-folder-ids';
     clearFolderIdsButton.textContent = 'Rensa explicit angivna mappar';
-    clearFolderIdsButton.title = 'Tar bort folderId från importerade filnamnsmallar så att mappvalet används för alla.';
+    clearFolderIdsButton.title = 'Tar bort folderId från importerade filnamn så att mappvalet används för alla.';
     footerOptions.append(fallbackNote, fallbackSelect, clearFolderIdsButton);
 
     const cancelButton = document.createElement('button');
@@ -27198,11 +27198,11 @@ function showArchiveStructureImportDialog() {
         fallbackSelect.disabled = fallbackCount < 1;
         clearFolderIdsButton.disabled = explicitCount < 1;
         if (fallbackCount < 1) {
-          fallbackNote.textContent = 'Alla filnamnsmallar anger mapp i JSON.';
+          fallbackNote.textContent = 'Alla filnamn anger mapp i JSON.';
         } else if (explicitCount < 1) {
-          fallbackNote.textContent = 'Mappvalet används för alla filnamnsmallar.';
+          fallbackNote.textContent = 'Mappvalet används för alla filnamn.';
         } else {
-          fallbackNote.textContent = `Mappvalet används för ${fallbackCount} ${fallbackCount === 1 ? 'filnamnsmall' : 'filnamnsmallar'} som saknar folderId. ${explicitCount} ${explicitCount === 1 ? 'filnamnsmall anger' : 'filnamnsmallar anger'} redan mapp i JSON.`;
+          fallbackNote.textContent = `Mappvalet används för ${fallbackCount} filnamn som saknar folderId. ${explicitCount} filnamn anger redan mapp i JSON.`;
         }
         if (fallbackCount > 0 && fallbackSelect.value === '') {
           importButton.disabled = true;
@@ -27240,7 +27240,7 @@ function showArchiveStructureImportDialog() {
         return;
       }
       if (mode === 'filename_template' && Number(parsedResult.fallbackFolderCount || 0) > 0 && fallbackSelect.value === '') {
-        error.textContent = 'Välj mapp för filnamnsmallar som saknar folderId.';
+        error.textContent = 'Välj mapp för filnamn som saknar folderId.';
         fallbackSelect.focus();
         return;
       }
@@ -36129,7 +36129,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
       return {
         label: 'Mapp (legacy)',
         tone: 'folder',
-        title: 'Legacy-chip från äldre mallar. Använd inte detta i nya mallar.',
+        title: 'Legacy-chip från äldre konfigurationer. Använd inte detta i nya konfigurationer.',
       };
     }
     if (part.type === 'dataField') {
@@ -37627,7 +37627,14 @@ let activeEditable = null;
     const scrollShell = document.createElement('div');
     scrollShell.className = 'filename-template-inline-scroll';
     scrollShell.appendChild(sequence);
-    wrapper.appendChild(scrollShell);
+    const fieldLabel = options && typeof options.fieldLabel === 'string'
+      ? options.fieldLabel.trim()
+      : '';
+    wrapper.appendChild(
+      fieldLabel !== ''
+        ? createFloatingField(fieldLabel, scrollShell, 'filename-template-floating-field')
+        : scrollShell
+    );
   } else {
     wrapper.appendChild(sequence);
   }
@@ -37812,11 +37819,6 @@ function renderArchiveStructureEditor() {
     body.appendChild(folderActions);
     body.appendChild(fields);
 
-    const templateLabel = document.createElement('div');
-    templateLabel.className = 'archive-level-label';
-    templateLabel.textContent = 'Sökvägsmall';
-    body.appendChild(templateLabel);
-
     body.appendChild(
       createFilenameTemplatePartsEditor(
         folderDraft.pathTemplate.parts,
@@ -37825,20 +37827,20 @@ function renderArchiveStructureEditor() {
         },
         0,
         null,
-        { focusToolbar: true, autoFocus: false }
+        { focusToolbar: true, autoFocus: false, fieldLabel: 'Sökväg' }
       )
     );
 
     const templatesLabel = document.createElement('div');
     templatesLabel.className = 'archive-level-label';
-    templatesLabel.textContent = 'Filnamnsregler';
+    templatesLabel.textContent = 'Filnamn';
     body.appendChild(templatesLabel);
 
     const templatesList = createTreeChildren({ markerless: true });
     if (folderDraft.filenameTemplates.length < 1) {
       const empty = document.createElement('div');
       empty.className = 'categories-empty';
-      empty.textContent = 'Inga filnamnsregler i mappen ännu.';
+      empty.textContent = 'Inga filnamn i mappen ännu.';
       templatesList.appendChild(empty);
     }
 
@@ -37880,7 +37882,7 @@ function renderArchiveStructureEditor() {
 
       const removeTemplateButton = createTrashButton({
         variant: 'node',
-        title: 'Ta bort filnamnsmall',
+        title: 'Ta bort filnamn',
         onClick: () => {
           archiveFoldersDraft[folderIndex].filenameTemplates.splice(templateIndex, 1);
           renderArchiveStructureEditor();
@@ -37888,7 +37890,7 @@ function renderArchiveStructureEditor() {
         },
       });
       const copyTemplateButton = createJsonCopyButton({
-        title: 'Kopiera filnamnsmall som JSON',
+        title: 'Kopiera filnamn som JSON',
         getValue: () => serializeFilenameTemplateDraftForClipboard(
           archiveFoldersDraft[folderIndex].filenameTemplates[templateIndex],
           archiveFoldersDraft[folderIndex].id
@@ -37924,7 +37926,7 @@ function renderArchiveStructureEditor() {
 
       const templateLabel = document.createElement('div');
       templateLabel.className = 'archive-level-label';
-      templateLabel.textContent = 'Filnamnsmall';
+      templateLabel.textContent = 'Filnamn';
       templateBody.appendChild(templateLabel);
       templateBody.appendChild(
         createFilenameTemplatePartsEditor(
@@ -37946,7 +37948,7 @@ function renderArchiveStructureEditor() {
     const addTemplateButton = document.createElement('button');
     addTemplateButton.type = 'button';
     addTemplateButton.className = 'archive-add-button';
-    addTemplateButton.textContent = 'Lägg till filnamnsmall';
+    addTemplateButton.textContent = 'Lägg till filnamn';
     addTemplateButton.addEventListener('click', () => {
       archiveFoldersDraft[folderIndex].filenameTemplates.push(defaultFilenameTemplateDraft());
       renderArchiveStructureEditor();
