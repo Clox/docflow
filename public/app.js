@@ -89,6 +89,7 @@ const folderSelectEl = document.getElementById('folder-select');
 const resetClientActionEl = document.getElementById('reset-client-action');
 const resetSenderActionEl = document.getElementById('reset-sender-action');
 const resetFolderActionEl = document.getElementById('reset-folder-action');
+const openAppliedFilenameRuleFromFolderEl = document.getElementById('open-applied-filename-rule-from-folder');
 const jobLabelsFieldEl = document.getElementById('job-labels-field');
 const jobLabelsSummaryEl = document.getElementById('job-labels-summary');
 const jobLabelsOverlayEl = document.getElementById('job-labels-overlay');
@@ -102,6 +103,7 @@ const resetLabelsActionEl = document.getElementById('reset-labels-action');
 const filenameInputEl = document.getElementById('filename-input');
 const filenameControlRowEl = filenameInputEl ? filenameInputEl.closest('.field-group-control-row') : null;
 const resetFilenameActionEl = document.getElementById('reset-filename-action');
+const openAppliedFilenameRuleFromFilenameEl = document.getElementById('open-applied-filename-rule-from-filename');
 const archiveActionEl = document.getElementById('archive-action');
 const appNoticesEl = document.getElementById('app-notices');
 const topbarEl = document.querySelector('.topbar');
@@ -2330,6 +2332,7 @@ function jobEditorDataFieldOptions() {
       options.push({
         key,
         label: name,
+        description: typeof normalized.description === 'string' ? normalized.description.trim() : '',
         isSystemField,
       });
     });
@@ -2746,7 +2749,7 @@ function renderSelectedJobExtractionFieldsSection(job = findJobById(selectedJobI
     const option = document.createElement('option');
     option.value = optionData.key;
     option.textContent = optionData.label;
-    option.title = optionData.title || optionData.label;
+    option.title = optionData.description || optionData.title || optionData.label;
     (optionData.isSystemField ? systemOptionGroup : regularOptionGroup).appendChild(option);
   });
   if (regularOptionGroup.children.length > 0) {
@@ -7466,6 +7469,24 @@ function collectAppNoticeDescriptors() {
       }
     });
   }
+  const missingLabelReferences = Array.isArray(state.archivingRules?.missingLabelReferences)
+    ? state.archivingRules.missingLabelReferences
+    : [];
+  if (missingLabelReferences.length > 0) {
+    const missingIds = Array.from(new Set(missingLabelReferences.map((reference) => reference.labelId).filter(Boolean)));
+    notices.push({
+      kind: 'error',
+      text: missingIds.length === 1
+        ? `Arkivstrukturen refererar till en etikett som saknas: ${missingIds[0]}.`
+        : `Arkivstrukturen refererar till ${missingIds.length} etiketter som saknas.`,
+      action: {
+        label: 'Visa regel',
+        onClick: () => {
+          openArchiveStructureLabelReference(missingLabelReferences[0]);
+        }
+      }
+    });
+  }
 
   if (chromeExtensionRuntime.status === 'missing' && chromeExtensionSuppressMissingNotice !== true) {
     notices.push({
@@ -10914,6 +10935,17 @@ function normalizeArchivingRulesStatePayload(payload, fallback = state.archiving
     hasPendingArchivedUpdates: next.hasPendingArchivedUpdates === true,
     pendingArchivedUpdateCount: Number.parseInt(String(next.pendingArchivedUpdateCount || 0), 10) || 0,
     updateReview: normalizeArchivingReviewPayload(next.updateReview),
+    missingLabelReferences: Array.isArray(next.missingLabelReferences)
+      ? next.missingLabelReferences
+        .filter((reference) => reference && typeof reference === 'object' && typeof reference.labelId === 'string')
+        .map((reference) => ({
+          labelId: reference.labelId.trim(),
+          folderId: typeof reference.folderId === 'string' ? reference.folderId.trim() : '',
+          filenameTemplateId: typeof reference.filenameTemplateId === 'string' ? reference.filenameTemplateId.trim() : '',
+          source: typeof reference.source === 'string' ? reference.source.trim() : '',
+        }))
+        .filter((reference) => reference.labelId !== '')
+      : (Array.isArray(fallback.missingLabelReferences) ? fallback.missingLabelReferences : []),
     signature: typeof next.signature === 'string' ? next.signature : '',
   };
 }
@@ -14478,6 +14510,134 @@ function effectiveFilenameTemplateId(job) {
   return '';
 }
 
+function appliedFilenameRuleReferenceForJob(job) {
+  if (!job) {
+    return null;
+  }
+
+  const reviewPayload = archivedReviewModeActiveForJob(job)
+    ? selectedArchivedReviewPayload(job)
+    : null;
+  const result = reviewPayload
+    && reviewPayload.currentAutoResult
+    && typeof reviewPayload.currentAutoResult === 'object'
+    ? reviewPayload.currentAutoResult
+    : autoArchivingResultForJob(job);
+  const filenameTemplateId = result && typeof result.filenameTemplateId === 'string'
+    ? result.filenameTemplateId.trim()
+    : '';
+  if (filenameTemplateId === '') {
+    return null;
+  }
+
+  const template = findFilenameTemplateById(filenameTemplateId);
+  if (!template) {
+    return null;
+  }
+  const resultFolderId = result && typeof result.folderId === 'string'
+    ? result.folderId.trim()
+    : '';
+  const folderId = typeof template.folderId === 'string' ? template.folderId.trim() : '';
+  if (folderId === '' || (resultFolderId !== '' && resultFolderId !== folderId)) {
+    return null;
+  }
+
+  return {
+    folderId,
+    filenameTemplateId,
+  };
+}
+
+function syncAppliedFilenameRuleNavigation(job) {
+  const reference = appliedFilenameRuleReferenceForJob(job);
+  [
+    openAppliedFilenameRuleFromFolderEl,
+    openAppliedFilenameRuleFromFilenameEl,
+  ].forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+    button.hidden = reference === null;
+    button.disabled = reference === null;
+  });
+}
+
+async function openAppliedFilenameRuleForSelectedJob() {
+  const job = findJobById(selectedJobId);
+  const reference = appliedFilenameRuleReferenceForJob(job);
+  if (!reference) {
+    return;
+  }
+
+  const opened = await openArchiveStructureSettingsDirect();
+  if (opened === false) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    if (!(archiveStructureListEl instanceof HTMLElement)) {
+      return;
+    }
+    const folderNode = archiveStructureListEl.querySelector(
+      `[data-archive-folder-id="${escapeCssAttributeValue(reference.folderId)}"]`
+    );
+    const templateNode = folderNode instanceof HTMLElement
+      ? folderNode.querySelector(
+        `[data-filename-template-id="${escapeCssAttributeValue(reference.filenameTemplateId)}"]`
+      )
+      : null;
+    if (!(templateNode instanceof HTMLElement)) {
+      return;
+    }
+
+    templateNode.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    const visibleSurface = templateNode.querySelector(':scope > .tree-row > .tree-body');
+    highlightSettingsElement(visibleSurface instanceof HTMLElement ? visibleSurface : templateNode);
+  });
+}
+
+async function openArchiveStructureLabelReference(reference) {
+  if (!reference || typeof reference !== 'object') {
+    return;
+  }
+  const folderId = typeof reference.folderId === 'string' ? reference.folderId.trim() : '';
+  const filenameTemplateId = typeof reference.filenameTemplateId === 'string'
+    ? reference.filenameTemplateId.trim()
+    : '';
+  const opened = await openArchiveStructureSettingsDirect();
+  if (opened === false) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    if (!(archiveStructureListEl instanceof HTMLElement)) {
+      return;
+    }
+    const folderNode = folderId !== ''
+      ? archiveStructureListEl.querySelector(
+        `[data-archive-folder-id="${escapeCssAttributeValue(folderId)}"]`
+      )
+      : null;
+    const templateNode = filenameTemplateId !== ''
+      ? (folderNode instanceof HTMLElement ? folderNode : archiveStructureListEl).querySelector(
+        `[data-filename-template-id="${escapeCssAttributeValue(filenameTemplateId)}"]`
+      )
+      : folderNode;
+    const target = templateNode instanceof HTMLElement ? templateNode : folderNode;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    const missingChip = target.querySelector('.job-labels-selected-chip.is-missing-reference');
+    const visibleSurface = target.querySelector(':scope > .tree-row > .tree-body');
+    highlightSettingsElement(
+      missingChip instanceof HTMLElement
+        ? missingChip
+        : (visibleSurface instanceof HTMLElement ? visibleSurface : target)
+    );
+  });
+}
+
 function formatFilenameAmount(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) {
@@ -15103,6 +15263,7 @@ function filenameTooltipForJob(job, explicitFilename = null) {
 }
 
 function syncFilenameField(job) {
+  syncAppliedFilenameRuleNavigation(job);
   if (!filenameInputEl) {
     return;
   }
@@ -26208,10 +26369,11 @@ function sanitizeLabel(label) {
   const input = label && typeof label === 'object' ? label : {};
   const name = typeof input.name === 'string' ? input.name : '';
   const description = typeof input.description === 'string' ? input.description : '';
+  const storedId = typeof input.id === 'string' ? input.id.trim() : '';
   const rawRules = Array.isArray(input.rules) ? input.rules : [];
   const rules = rawRules.map(sanitizeLabelRule);
   return {
-    id: slugifyText(name, '-', ''),
+    id: storedId || slugifyText(name, '-', ''),
     name,
     description,
     minScore: sanitizePositiveInt(input.minScore, 1),
@@ -26234,8 +26396,11 @@ function sanitizeSystemLabelByKey(key, label) {
   const description = typeof input.description === 'string'
     ? input.description
     : (typeof defaults.description === 'string' ? defaults.description : '');
+  const storedId = typeof input.id === 'string' && input.id.trim() !== ''
+    ? input.id.trim()
+    : (typeof defaults.id === 'string' ? defaults.id.trim() : '');
   return {
-    id: slugifyText(name, '-', 'label'),
+    id: storedId || slugifyText(name, '-', 'label'),
     systemLabelKey: key,
     isSystemLabel: true,
     name,
@@ -26360,11 +26525,12 @@ function labelRuleFieldOptions() {
     const normalized = sanitizeExtractionField(field, index);
     const value = typeof normalized.key === 'string' ? normalized.key.trim() : '';
     const label = typeof normalized.name === 'string' ? normalized.name.trim() : '';
+    const description = typeof normalized.description === 'string' ? normalized.description.trim() : '';
     if (!value || !label || seen.has(value)) {
       return;
     }
     seen.add(value);
-    options.push({ value, label });
+    options.push({ value, label, description });
   });
   return options.sort((left, right) => left.label.localeCompare(right.label, 'sv', { sensitivity: 'base', numeric: true }));
 }
@@ -26399,6 +26565,11 @@ function archiveStructureValidationError() {
   const duplicateRealIds = Array.from(duplicateIds).filter((value) => !value.startsWith('__'));
   if (duplicateRealIds.length > 0) {
     return `Id krockar i arkivstrukturen: ${duplicateRealIds.join(', ')}`;
+  }
+  const missingReferences = missingArchiveStructureLabelReferences();
+  if (missingReferences.length > 0) {
+    const missingIds = Array.from(new Set(missingReferences.map((reference) => reference.labelId)));
+    return `Arkivstrukturen refererar till etiketter som inte längre finns: ${missingIds.join(', ')}.`;
   }
 
   return '';
@@ -27577,6 +27748,7 @@ function defaultExtractionField() {
   return {
     key: '',
     name: '',
+    description: '',
     valueType: 'text',
     normalizationType: 'none',
     normalizationChars: '',
@@ -27589,6 +27761,7 @@ function defaultExtractionZone() {
   return {
     id: '',
     name: '',
+    description: '',
     enabled: true,
     pattern: '',
     isRegex: false,
@@ -27608,6 +27781,7 @@ function sanitizeExtractionZone(zone, fallbackIndex = 0) {
   return {
     id,
     name,
+    description: typeof input.description === 'string' ? input.description : '',
     enabled: input.enabled !== false,
     pattern,
     isRegex: true,
@@ -28726,6 +28900,7 @@ function sanitizeSenderMarkHeuristics(input) {
 function sanitizeExtractionField(field, fallbackIndex = 0) {
   const input = field && typeof field === 'object' ? field : {};
   const name = typeof input.name === 'string' ? input.name : '';
+  const description = typeof input.description === 'string' ? input.description : '';
   const extractor = typeof input.extractor === 'string' && input.extractor.trim() !== ''
     ? input.extractor.trim()
     : 'generic_label';
@@ -28760,6 +28935,7 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
     return {
       key: normalizedKey,
       name,
+      description,
       type: legacyExtractionFieldTypeForValueType(valueType),
       valueType,
       aliases,
@@ -28810,6 +28986,7 @@ function sanitizeExtractionField(field, fallbackIndex = 0) {
   return {
     key: normalizedKey,
     name,
+    description,
     type: legacyExtractionFieldTypeForValueType(valueType),
     valueType,
     ...fieldNormalization,
@@ -29111,9 +29288,12 @@ function filenameTemplateDataFieldOptions() {
     options.push({
       key,
       label: name,
+      description: typeof normalized.description === 'string' ? normalized.description.trim() : '',
       valueType: sanitizeExtractionFieldValueType(normalized.valueType, normalized, Array.isArray(normalized.ruleSets) ? normalized.ruleSets[0] : null),
       tone: 'data',
-      title: `Lägger till värdet för datafältet "${name}" i filnamnet.`,
+      title: typeof normalized.description === 'string' && normalized.description.trim() !== ''
+        ? normalized.description.trim()
+        : `Lägger till värdet för datafältet "${name}" i filnamnet.`,
     });
   });
   return options;
@@ -29159,6 +29339,65 @@ function filenameTemplateLabelNameById(labelId) {
   }
   const match = filenameTemplateLabelDefinitions().find((label) => label.id === normalizedId);
   return match ? match.name : normalizedId;
+}
+
+function collectFilenameTemplateLabelReferences(parts, context, references, depth = 0) {
+  if (!Array.isArray(parts) || depth > 8) {
+    return;
+  }
+  parts.forEach((part) => {
+    if (!part || typeof part !== 'object') {
+      return;
+    }
+    if (part.type === 'ifLabels') {
+      normalizeLabelIdList(part.labelIds).forEach((labelId) => {
+        references.push({
+          ...context,
+          labelId,
+          source: 'ifLabels',
+        });
+      });
+    }
+    ['prefixParts', 'suffixParts', 'parts', 'thenParts', 'elseParts'].forEach((childKey) => {
+      collectFilenameTemplateLabelReferences(part[childKey], context, references, depth + 1);
+    });
+  });
+}
+
+function archiveStructureLabelReferences(folders = archiveFoldersDraft) {
+  const references = [];
+  (Array.isArray(folders) ? folders : []).map((folder, folderIndex) => sanitizeArchiveFolder(folder, folderIndex)).forEach((folder) => {
+    folder.filenameTemplates.forEach((template) => {
+      const context = {
+        folderId: folder.id,
+        filenameTemplateId: template.id,
+      };
+      normalizeLabelIdList(template.labelIds).forEach((labelId) => {
+        references.push({
+          ...context,
+          labelId,
+          source: 'filenameTemplate',
+        });
+      });
+      collectFilenameTemplateLabelReferences(template.template?.parts, context, references);
+    });
+  });
+  const deduped = new Map();
+  references.forEach((reference) => {
+    const key = [
+      reference.labelId,
+      reference.folderId,
+      reference.filenameTemplateId,
+      reference.source,
+    ].join('|');
+    deduped.set(key, reference);
+  });
+  return Array.from(deduped.values());
+}
+
+function missingArchiveStructureLabelReferences() {
+  const knownLabelIds = new Set(filenameTemplateLabelDefinitions().map((label) => label.id));
+  return archiveStructureLabelReferences().filter((reference) => !knownLabelIds.has(reference.labelId));
 }
 
 let filenameTemplateLabelPickerCounter = 0;
@@ -29311,12 +29550,19 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
       }
     } else {
       state.selectedIds.forEach((labelId) => {
+        const labelExists = filenameTemplateLabelDefinitions().some((label) => label.id === labelId);
         const chipEl = document.createElement('span');
         chipEl.className = 'job-labels-selected-chip';
+        chipEl.classList.toggle('is-missing-reference', !labelExists);
+        if (!labelExists) {
+          chipEl.title = `Saknad etikett: ${labelId}`;
+        }
 
         const textEl = document.createElement('span');
         textEl.className = 'job-labels-selected-chip-text';
-        textEl.textContent = filenameTemplateLabelNameById(labelId);
+        textEl.textContent = labelExists
+          ? filenameTemplateLabelNameById(labelId)
+          : `Saknad: ${labelId}`;
 
         const removeButton = document.createElement('button');
         removeButton.type = 'button';
@@ -32369,6 +32615,19 @@ function renderSingleExtractionFieldEditor(container, collection, index, options
 
   fields.appendChild(createFloatingField('Namn', nameInput));
 
+  const descriptionInput = document.createElement('textarea');
+  descriptionInput.rows = 2;
+  descriptionInput.placeholder = 'Beskriv datafältets syfte och vilken typ av värde det är avsett att representera.';
+  descriptionInput.value = field.description;
+  descriptionInput.disabled = readOnly;
+  if (!readOnly) {
+    descriptionInput.addEventListener('input', () => {
+      collection[index].description = descriptionInput.value;
+      updateSettingsActionButtons();
+    });
+  }
+  fields.appendChild(createFloatingField('Beskrivning', descriptionInput, 'extraction-field-description-field'));
+
   const fieldValueTypeSelect = document.createElement('select');
   fieldValueTypeSelect.className = 'extraction-field-type-select';
   [
@@ -34745,6 +35004,11 @@ function renderExtractionZonesEditor() {
     nameInput.placeholder = 'Ex: Bankgiro maskinrad';
     nameInput.value = currentZone.name;
 
+    const descriptionInput = document.createElement('textarea');
+    descriptionInput.rows = 2;
+    descriptionInput.placeholder = 'Beskriv zonens syfte och vilket innehåll den är avsedd att avgränsa.';
+    descriptionInput.value = currentZone.description;
+
     const patternInput = document.createElement('input');
     patternInput.type = 'text';
     patternInput.placeholder = 'Ex: Du kan också skanna nedan med din bankapp';
@@ -34823,6 +35087,7 @@ function renderExtractionZonesEditor() {
       extractionZonesDraft[index] = sanitizeExtractionZone({
         ...extractionZonesDraft[index],
         name: nameInput.value,
+        description: descriptionInput.value,
         enabled: enabledCheckbox.checked,
         patternSource: nextSource,
         valuePatternId: nextSource === 'reference' ? valuePatternReferenceSelect.value : '',
@@ -34833,6 +35098,7 @@ function renderExtractionZonesEditor() {
     };
     enabledCheckbox.addEventListener('change', syncZone);
     nameInput.addEventListener('input', syncZone);
+    descriptionInput.addEventListener('input', syncZone);
     patternInput.addEventListener('input', syncZone);
     patternSourceSelect.addEventListener('change', syncZone);
     valuePatternReferenceSelect.addEventListener('change', syncZone);
@@ -34840,6 +35106,7 @@ function renderExtractionZonesEditor() {
     const fields = document.createElement('div');
     fields.className = 'extraction-field-header-fields extraction-zone-header-fields';
     fields.appendChild(createFloatingField('Namn', nameInput));
+    fields.appendChild(createFloatingField('Beskrivning', descriptionInput, 'extraction-zone-description-field'));
     fields.appendChild(patternSourceField);
     fields.appendChild(valuePatternReferenceField);
     fields.appendChild(patternField);
@@ -35826,6 +36093,9 @@ function renderSingleLabelEditor(container, options = {}) {
         const option = document.createElement('option');
         option.value = optionData.value;
         option.textContent = optionData.label;
+        if (optionData.description) {
+          option.title = optionData.description;
+        }
         fieldSelect.appendChild(option);
       });
       const currentField = typeof rule.field === 'string' ? rule.field.trim() : '';
@@ -37821,6 +38091,7 @@ function renderArchiveStructureEditor() {
     const node = document.createElement('div');
     node.className = 'tree-node tree-folder';
     node.dataset.archiveFolderIndex = String(folderIndex);
+    node.dataset.archiveFolderId = folderDraft.id;
     const row = createTreeRow({ markerless: true });
     const body = document.createElement('div');
     body.className = 'tree-body folder-body';
@@ -37915,6 +38186,7 @@ function renderArchiveStructureEditor() {
       const templateNode = document.createElement('div');
       templateNode.className = 'tree-node tree-category has-parent';
       templateNode.dataset.filenameTemplateIndex = String(templateIndex);
+      templateNode.dataset.filenameTemplateId = templateDraft.id;
       const templateRow = createTreeRow({ markerless: true });
       const templateBody = document.createElement('div');
       templateBody.className = 'tree-body category-body';
@@ -39706,6 +39978,18 @@ folderSelectEl.addEventListener('change', () => {
   }
 
   applySelectedFolderValue(folderSelectEl.value);
+});
+
+[
+  openAppliedFilenameRuleFromFolderEl,
+  openAppliedFilenameRuleFromFilenameEl,
+].forEach((button) => {
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
+  }
+  button.addEventListener('click', () => {
+    void openAppliedFilenameRuleForSelectedJob();
+  });
 });
 
 if (resetClientActionEl instanceof HTMLButtonElement) {

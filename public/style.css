@@ -2380,6 +2380,39 @@ body.is-resizing-sidebar {
   z-index: 30;
 }
 
+.floating-label-with-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 2px;
+}
+
+.floating-label-with-action > label {
+  line-height: inherit;
+}
+
+.field-title-navigation-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.field-title-navigation-button:hover,
+.field-title-navigation-button:focus-visible {
+  color: #0f172a;
+}
+
 #client-select,
 #sender-select,
 #folder-select {
@@ -3022,6 +3055,16 @@ body.is-resizing-sidebar {
 .job-labels-selected-chip.is-system {
   border-color: #d8c7ed;
   background: #faf7ff;
+}
+
+.job-labels-selected-chip.is-missing-reference {
+  border-color: #dc2626;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.job-labels-selected-chip.is-missing-reference .job-labels-selected-chip-remove {
+  color: #b91c1c;
 }
 
 .job-labels-selected-chip-remove {
@@ -7791,6 +7834,17 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   grid-column: 1 / -1;
 }
 
+.extraction-field-description-field,
+.extraction-zone-description-field {
+  grid-column: 1 / -1;
+}
+
+.extraction-field-description-field textarea,
+.extraction-zone-description-field textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+
 .extraction-field-header-fields {
   display: grid;
   grid-template-columns: minmax(220px, 1fr);
@@ -7873,6 +7927,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .label-fields textarea,
 .extraction-field-header-fields input,
 .extraction-field-header-fields select,
+.extraction-field-header-fields textarea,
 .category-fields select,
 .rule-fields select,
 .rule-fields input[type="text"],
@@ -7931,6 +7986,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .label-fields textarea:disabled,
 .extraction-field-header-fields input:disabled,
 .extraction-field-header-fields select:disabled,
+.extraction-field-header-fields textarea:disabled,
 .extraction-field-normalization-group input:disabled,
 .extraction-field-normalization-group select:disabled,
 .category-fields input:disabled {

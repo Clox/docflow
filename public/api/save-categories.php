@@ -29,6 +29,32 @@ try {
     $archiveStructure = normalize_archive_structure_data($payload);
     $state = load_archiving_rules_state();
     $nextRules = normalize_archiving_rules_set($state['activeArchivingRules'] ?? []);
+    $knownLabelIds = [];
+    foreach (array_merge(
+        is_array($nextRules['systemLabels'] ?? null) ? array_values($nextRules['systemLabels']) : [],
+        is_array($nextRules['labels'] ?? null) ? $nextRules['labels'] : []
+    ) as $label) {
+        if (!is_array($label)) {
+            continue;
+        }
+        $labelId = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+        if ($labelId !== '') {
+            $knownLabelIds[] = $labelId;
+        }
+    }
+    $missingReferences = missing_archive_structure_label_references(
+        $archiveStructure['archiveFolders'],
+        $knownLabelIds
+    );
+    if ($missingReferences !== []) {
+        $missingIds = array_values(array_unique(array_map(
+            static fn (array $reference): string => (string) ($reference['labelId'] ?? ''),
+            $missingReferences
+        )));
+        throw new RuntimeException(
+            'Arkivstrukturen refererar till etiketter som inte längre finns: ' . implode(', ', $missingIds) . '.'
+        );
+    }
     $nextRules['archiveFolders'] = $archiveStructure['archiveFolders'];
     $result = persist_active_archiving_rules_change($config, $nextRules, [
         'reason' => 'rules',

@@ -25,7 +25,7 @@ final class ZoneRepository
     {
         $resolvedScope = $this->normalizeScope($scope);
         $statement = $this->pdo->prepare(
-            'SELECT zone_key, name, enabled, pattern, is_regex, pattern_source, value_pattern_id
+            'SELECT zone_key, name, description, enabled, pattern, is_regex, pattern_source, value_pattern_id
             FROM archiving_zones
             WHERE rules_scope = :rules_scope
             ORDER BY sort_order ASC, id ASC'
@@ -48,6 +48,7 @@ final class ZoneRepository
             $zones[] = [
                 'id' => $id,
                 'name' => $name,
+                'description' => is_string($row['description'] ?? null) ? (string) $row['description'] : '',
                 'enabled' => ((int) ($row['enabled'] ?? 1)) === 1,
                 'pattern' => $pattern,
                 'isRegex' => true,
@@ -86,6 +87,7 @@ final class ZoneRepository
                 rules_scope,
                 zone_key,
                 name,
+                description,
                 enabled,
                 pattern,
                 is_regex,
@@ -98,6 +100,7 @@ final class ZoneRepository
                 :rules_scope,
                 :zone_key,
                 :name,
+                :description,
                 :enabled,
                 :pattern,
                 :is_regex,
@@ -126,6 +129,7 @@ final class ZoneRepository
                 ':rules_scope' => $resolvedScope,
                 ':zone_key' => $id,
                 ':name' => $name,
+                ':description' => is_string($zone['description'] ?? null) ? (string) $zone['description'] : '',
                 ':enabled' => ($zone['enabled'] ?? true) ? 1 : 0,
                 ':pattern' => $pattern,
                 ':is_regex' => ($zone['isRegex'] ?? false) ? 1 : 0,

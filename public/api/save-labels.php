@@ -82,6 +82,29 @@ try {
         static fn (string $labelId): bool => !isset($nextLabelIds[$labelId])
     ));
     if ($removedLabelIds !== []) {
+        $archiveReferences = archive_structure_label_references($currentRules['archiveFolders'] ?? []);
+        foreach ($removedLabelIds as $labelId) {
+            $referencingRules = array_values(array_filter(
+                $archiveReferences,
+                static fn (array $reference): bool => (string) ($reference['labelId'] ?? '') === $labelId
+            ));
+            if ($referencingRules === []) {
+                continue;
+            }
+            $referencingRuleKeys = array_values(array_unique(array_map(
+                static fn (array $reference): string =>
+                    (string) ($reference['folderId'] ?? '') . '|' . (string) ($reference['filenameTemplateId'] ?? ''),
+                $referencingRules
+            )));
+            $referencingRuleCount = count($referencingRuleKeys);
+            $labelName = $currentLabelNamesById[$labelId] ?? $labelId;
+            throw new RuntimeException(sprintf(
+                'Går inte att ta bort etiketten "%s" eftersom den används i %d filnamnsregel%s.',
+                $labelName,
+                $referencingRuleCount,
+                $referencingRuleCount === 1 ? '' : 'er'
+            ));
+        }
         $usageCounts = count_archived_documents_using_label_ids($config, $removedLabelIds);
         foreach ($removedLabelIds as $labelId) {
             $usageCount = (int) ($usageCounts[$labelId] ?? 0);

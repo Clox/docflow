@@ -159,7 +159,17 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
               </div>
             </div>
             <div class="field-group">
-              <label class="floating-label" for="folder-select">Mapp</label>
+              <div class="floating-label floating-label-with-action">
+                <label for="folder-select">Mapp</label>
+                <button
+                  id="open-applied-filename-rule-from-folder"
+                  class="field-title-navigation-button"
+                  type="button"
+                  hidden
+                  title="Öppna applicerad filnamnsregel"
+                  aria-label="Öppna applicerad filnamnsregel"
+                >↗</button>
+              </div>
               <div class="field-group-control-row">
                 <select id="folder-select">
                   <option value="" hidden>Välj mapp</option>
@@ -213,7 +223,17 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
               </div>
             </div>
             <div class="field-group field-group-filename">
-              <label class="floating-label" for="filename-input">Filnamn</label>
+              <div class="floating-label floating-label-with-action">
+                <label for="filename-input">Filnamn</label>
+                <button
+                  id="open-applied-filename-rule-from-filename"
+                  class="field-title-navigation-button"
+                  type="button"
+                  hidden
+                  title="Öppna applicerad filnamnsregel"
+                  aria-label="Öppna applicerad filnamnsregel"
+                >↗</button>
+              </div>
               <div class="field-group-control-row">
                 <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">
                 <button id="reset-filename-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ filnamn">↺</button>

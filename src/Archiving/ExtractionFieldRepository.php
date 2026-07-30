@@ -31,6 +31,7 @@ final class ExtractionFieldRepository
                 field_type,
                 field_key,
                 name,
+                description,
                 value_type,
                 normalization_type,
                 normalization_chars,
@@ -83,6 +84,7 @@ final class ExtractionFieldRepository
             $field = [
                 'key' => $fieldKey,
                 'name' => $name,
+                'description' => is_string($row['description'] ?? null) ? (string) $row['description'] : '',
                 'type' => $this->legacyRuleTypeForValueType($valueType),
                 'valueType' => $valueType,
                 'normalizationType' => $this->normalizeNormalizationType($row['normalization_type'] ?? null),
@@ -141,6 +143,7 @@ final class ExtractionFieldRepository
                 field_type,
                 field_key,
                 name,
+                description,
                 value_type,
                 normalization_type,
                 normalization_chars,
@@ -153,6 +156,7 @@ final class ExtractionFieldRepository
                 :field_type,
                 :field_key,
                 :name,
+                :description,
                 :value_type,
                 :normalization_type,
                 :normalization_chars,
@@ -165,6 +169,7 @@ final class ExtractionFieldRepository
         $updateField = $this->pdo->prepare(
             'UPDATE archiving_data_fields
             SET name = :name,
+                description = :description,
                 value_type = :value_type,
                 normalization_type = :normalization_type,
                 normalization_chars = :normalization_chars,
@@ -262,6 +267,7 @@ final class ExtractionFieldRepository
                     $updateField->execute([
                         ':id' => $fieldId,
                         ':name' => $name,
+                        ':description' => is_string($field['description'] ?? null) ? (string) $field['description'] : '',
                         ':value_type' => $valueType,
                         ':normalization_type' => $this->normalizeNormalizationType($field['normalizationType'] ?? null),
                         ':normalization_chars' => is_string($field['normalizationChars'] ?? null) ? (string) $field['normalizationChars'] : '',
@@ -275,6 +281,7 @@ final class ExtractionFieldRepository
                         ':field_type' => $fieldType,
                         ':field_key' => $fieldKey,
                         ':name' => $name,
+                        ':description' => is_string($field['description'] ?? null) ? (string) $field['description'] : '',
                         ':value_type' => $valueType,
                         ':normalization_type' => $this->normalizeNormalizationType($field['normalizationType'] ?? null),
                         ':normalization_chars' => is_string($field['normalizationChars'] ?? null) ? (string) $field['normalizationChars'] : '',

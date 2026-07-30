@@ -56,6 +56,24 @@ try {
             $usageCount
         ));
     }
+    $archiveReferences = array_values(array_filter(
+        archive_structure_label_references($activeRules['archiveFolders'] ?? []),
+        static fn (array $reference): bool => (string) ($reference['labelId'] ?? '') === $labelId
+    ));
+    if ($archiveReferences !== []) {
+        $referencingRuleKeys = array_values(array_unique(array_map(
+            static fn (array $reference): string =>
+                (string) ($reference['folderId'] ?? '') . '|' . (string) ($reference['filenameTemplateId'] ?? ''),
+            $archiveReferences
+        )));
+        $referencingRuleCount = count($referencingRuleKeys);
+        throw new RuntimeException(sprintf(
+            'Går inte att ta bort etiketten "%s" eftersom den används i %d filnamnsregel%s.',
+            $labelName,
+            $referencingRuleCount,
+            $referencingRuleCount === 1 ? '' : 'er'
+        ));
+    }
 
     json_response([
         'ok' => true,

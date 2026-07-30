@@ -4477,6 +4477,7 @@ function normalize_extraction_fields(mixed $input): array
         $fields[] = [
             'key' => $key,
             'name' => $name,
+            'description' => is_string($row['description'] ?? null) ? trim((string) $row['description']) : '',
             'type' => legacy_extraction_field_type_for_value_type($valueType),
             'valueType' => $valueType,
             'normalizationType' => $valueType === 'text' ? normalize_extraction_field_normalization_type($row['normalizationType'] ?? null) : 'none',
@@ -4542,6 +4543,9 @@ function normalize_predefined_extraction_field_with_defaults(string $key, mixed 
     return [
         'key' => $key,
         'name' => $name,
+        'description' => is_string($field['description'] ?? null)
+            ? trim((string) $field['description'])
+            : (is_string($defaults['description'] ?? null) ? trim((string) $defaults['description']) : ''),
         'type' => legacy_extraction_field_type_for_value_type($valueType),
         'valueType' => $valueType,
         'normalizationType' => $normalizationType,
@@ -4653,6 +4657,9 @@ function normalize_system_extraction_field_with_defaults(string $key, mixed $inp
     $normalized = [
         'key' => $key,
         'name' => $name,
+        'description' => is_string($field['description'] ?? null)
+            ? trim((string) $field['description'])
+            : (is_string($defaults['description'] ?? null) ? trim((string) $defaults['description']) : ''),
         'type' => legacy_extraction_field_type_for_value_type($valueType),
         'valueType' => $valueType,
         'aliases' => $aliases,
@@ -4759,9 +4766,15 @@ function normalize_system_label_with_defaults(string $key, mixed $input, array $
             return $text === '' || lowercase_text($text) !== 'autogiro';
         }));
     }
+    $storedId = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+    if ($storedId === '') {
+        $storedId = is_string($defaults['id'] ?? null) ? trim((string) $defaults['id']) : '';
+    }
 
     return [
-        'id' => slugify_text($name, '-', 'label'),
+        'id' => $storedId !== ''
+            ? slugify_text($storedId, '-', 'label')
+            : slugify_text($name, '-', 'label'),
         'systemLabelKey' => $key,
         'name' => $name,
         'description' => $description,
@@ -4811,14 +4824,117 @@ function normalize_label_definition(array $input): ?array
     if (count($rules) === 0) {
         $rules[] = normalize_editable_label_rule([]);
     }
+    $storedId = is_string($input['id'] ?? null) ? trim((string) $input['id']) : '';
 
     return [
-        'id' => slugify_text($name, '-', 'label'),
+        'id' => $storedId !== ''
+            ? slugify_text($storedId, '-', 'label')
+            : slugify_text($name, '-', 'label'),
         'name' => $name,
         'description' => $description,
         'minScore' => positive_int($input['minScore'] ?? 1, 1),
         'rules' => $rules,
     ];
+}
+
+function collect_filename_template_label_references(
+    mixed $parts,
+    string $folderId,
+    string $filenameTemplateId,
+    array &$references,
+    int $depth = 0
+): void {
+    if (!is_array($parts) || $depth > 8) {
+        return;
+    }
+
+    foreach ($parts as $part) {
+        if (!is_array($part)) {
+            continue;
+        }
+        if (($part['type'] ?? '') === 'ifLabels') {
+            foreach (normalize_label_id_list($part['labelIds'] ?? null) as $labelId) {
+                $references[] = [
+                    'labelId' => $labelId,
+                    'folderId' => $folderId,
+                    'filenameTemplateId' => $filenameTemplateId,
+                    'source' => 'ifLabels',
+                ];
+            }
+        }
+        foreach (['prefixParts', 'suffixParts', 'parts', 'thenParts', 'elseParts'] as $childKey) {
+            collect_filename_template_label_references(
+                $part[$childKey] ?? null,
+                $folderId,
+                $filenameTemplateId,
+                $references,
+                $depth + 1
+            );
+        }
+    }
+}
+
+function archive_structure_label_references(mixed $archiveFolders): array
+{
+    if (!is_array($archiveFolders)) {
+        return [];
+    }
+
+    $references = [];
+    foreach ($archiveFolders as $folder) {
+        if (!is_array($folder)) {
+            continue;
+        }
+        $folderId = is_string($folder['id'] ?? null) ? trim((string) $folder['id']) : '';
+        foreach (is_array($folder['filenameTemplates'] ?? null) ? $folder['filenameTemplates'] : [] as $template) {
+            if (!is_array($template)) {
+                continue;
+            }
+            $filenameTemplateId = is_string($template['id'] ?? null) ? trim((string) $template['id']) : '';
+            foreach (normalize_label_id_list($template['labelIds'] ?? null) as $labelId) {
+                $references[] = [
+                    'labelId' => $labelId,
+                    'folderId' => $folderId,
+                    'filenameTemplateId' => $filenameTemplateId,
+                    'source' => 'filenameTemplate',
+                ];
+            }
+            $normalizedTemplate = normalize_filename_template($template['template'] ?? null);
+            collect_filename_template_label_references(
+                $normalizedTemplate['parts'] ?? [],
+                $folderId,
+                $filenameTemplateId,
+                $references
+            );
+        }
+    }
+
+    $deduped = [];
+    foreach ($references as $reference) {
+        $key = implode('|', [
+            (string) ($reference['labelId'] ?? ''),
+            (string) ($reference['folderId'] ?? ''),
+            (string) ($reference['filenameTemplateId'] ?? ''),
+            (string) ($reference['source'] ?? ''),
+        ]);
+        $deduped[$key] = $reference;
+    }
+    return array_values($deduped);
+}
+
+function missing_archive_structure_label_references(mixed $archiveFolders, array $knownLabelIds): array
+{
+    $known = [];
+    foreach ($knownLabelIds as $labelId) {
+        $normalized = is_string($labelId) ? trim($labelId) : '';
+        if ($normalized !== '') {
+            $known[$normalized] = true;
+        }
+    }
+    return array_values(array_filter(
+        archive_structure_label_references($archiveFolders),
+        static fn (array $reference): bool => !isset($known[(string) ($reference['labelId'] ?? '')])
+    ));
 }
 
 function normalize_labels(mixed $input): array
@@ -5308,6 +5424,7 @@ function normalize_archiving_zone(mixed $input, int $fallbackIndex = 0): ?array
     return [
         'id' => $id,
         'name' => $name,
+        'description' => is_string($input['description'] ?? null) ? trim((string) $input['description']) : '',
         'enabled' => ($input['enabled'] ?? true) !== false,
         'pattern' => $pattern,
         'isRegex' => true,
@@ -6437,19 +6554,33 @@ function build_archiving_rules_state_payload(array $config, ?int $pendingArchive
             is_array($updateSession)
             && (string) ($updateSession['status'] ?? 'idle') === 'running'
         );
+    $knownLabelIds = [];
+    foreach (array_merge(
+        is_array($activeRules['systemLabels'] ?? null) ? array_values($activeRules['systemLabels']) : [],
+        is_array($activeRules['labels'] ?? null) ? $activeRules['labels'] : []
+    ) as $label) {
+        if (!is_array($label)) {
+            continue;
+        }
+        $labelId = is_string($label['id'] ?? null) ? trim((string) $label['id']) : '';
+        if ($labelId !== '') {
+            $knownLabelIds[] = $labelId;
+        }
+    }
+    $missingLabelReferences = missing_archive_structure_label_references(
+        $activeRules['archiveFolders'] ?? [],
+        $knownLabelIds
+    );
 
-    return [
+    $payload = [
         'activeVersion' => $activeVersion,
         'hasPendingArchivedUpdates' => $hasPendingArchivedUpdates,
         'pendingArchivedUpdateCount' => $resolvedPendingArchivedUpdateCount,
         'updateReview' => $updateReview,
-        'signature' => archiving_rules_state_payload_hash([
-            'activeVersion' => $activeVersion,
-            'hasPendingArchivedUpdates' => $hasPendingArchivedUpdates,
-            'pendingArchivedUpdateCount' => $resolvedPendingArchivedUpdateCount,
-            'updateReview' => $updateReview,
-        ]),
+        'missingLabelReferences' => $missingLabelReferences,
     ];
+    $payload['signature'] = archiving_rules_state_payload_hash($payload);
+    return $payload;
 }
 
 function count_pending_archiving_update_jobs_in_session(array $session): int
