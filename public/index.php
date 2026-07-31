@@ -235,7 +235,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
                 >↗</button>
               </div>
               <div class="field-group-control-row">
-                <input id="filename-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off">
+                <input id="filename-input" type="text" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
                 <button id="reset-filename-action" class="field-reset-button" type="button" hidden title="Återställ till automatiskt föreslaget värde" aria-label="Återställ filnamn">↺</button>
               </div>
             </div>
