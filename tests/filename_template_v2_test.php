@@ -300,5 +300,45 @@ assert_filename_v2(
     && !str_contains($css, 'filename-template-visible-caret'),
     'Den fokuserade textpositionen ska lägga webbläsarens egen caret ovanpå chippen utan en separat ritad caret.'
 );
+assert_filename_v2(
+    is_string($css)
+    && str_contains(
+        $css,
+        '.filename-template-dom-token.is-affix-linked:not(.is-affix-group-start) > .filename-template-inline-token-shell > .filename-template-inline-token-center'
+    )
+    && str_contains(
+        $css,
+        '.filename-template-dom-token.is-affix-linked:not(.is-affix-group-end) > .filename-template-inline-token-shell > .filename-template-inline-token-center'
+    ),
+    'Mittdelen och den yttre ringen ska använda samma raka hörn i skarven mellan ett värdechip och dess affix.'
+);
+assert_filename_v2(
+    is_string($css)
+    && str_contains($css, '--filename-template-affix-background: #fff;')
+    && str_contains($css, '--filename-template-affix-border: #cbd5e1;')
+    && preg_match(
+        '/\.filename-template-chip--affix\s*\{[^}]*background:\s*var\(--filename-template-affix-background\);[^}]*border-color:\s*var\(--filename-template-affix-border\);/s',
+        $css
+    ) === 1
+    && preg_match(
+        '/\.filename-template-inline-token-center--affix\s*\{[^}]*background:\s*var\(--filename-template-affix-background\);/s',
+        $css
+    ) === 1,
+    'Prefix och Suffix ska använda samma färger i verktygsraden och som infogade chip.'
+);
+assert_filename_v2(
+    is_string($css)
+    && str_contains($css, '--filename-template-system-background: #e6efff;')
+    && str_contains($css, '--filename-template-system-border: #8eafe0;')
+    && preg_match(
+        '/\.filename-template-chip--system\s*\{[^}]*background:\s*var\(--filename-template-system-background\);[^}]*border-color:\s*var\(--filename-template-system-border\);/s',
+        $css
+    ) === 1
+    && preg_match(
+        '/\.filename-template-inline-token-center--system\s*\{[^}]*background:\s*var\(--filename-template-system-background\);/s',
+        $css
+    ) === 1,
+    'Systemdatafält ska ha samma tydligt blå färg i verktygsraden och som infogade chip.'
+);
 
 fwrite(STDOUT, "filename template v2 tests passed\n");

@@ -8843,6 +8843,10 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .filename-template-editor {
+  --filename-template-affix-background: #fff;
+  --filename-template-affix-border: #cbd5e1;
+  --filename-template-system-background: #e6efff;
+  --filename-template-system-border: #8eafe0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -9028,7 +9032,13 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .filename-template-inline-token-shell:has(> .filename-template-inline-token-center--system) {
-  --filename-template-chip-fill-ring: #f1f5f9;
+  --filename-template-chip-fill-ring: var(--filename-template-system-background);
+  --filename-template-chip-line-ring: var(--filename-template-system-border);
+}
+
+.filename-template-inline-token-shell:has(> .filename-template-inline-token-center--affix) {
+  --filename-template-chip-fill-ring: var(--filename-template-affix-background);
+  --filename-template-chip-line-ring: var(--filename-template-affix-border);
 }
 
 .filename-template-inline-token-shell:has(> .filename-template-inline-token-center--folder) {
@@ -9122,8 +9132,10 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .filename-template-inline-token-center--affix {
-  background: #f8fafc;
-  box-shadow: inset 1px 0 0 #cbd5e1, inset -1px 0 0 #cbd5e1;
+  background: var(--filename-template-affix-background);
+  box-shadow:
+    inset 1px 0 0 var(--filename-template-affix-border),
+    inset -1px 0 0 var(--filename-template-affix-border);
 }
 
 .filename-template-inline-token-input--value {
@@ -9156,14 +9168,16 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 
 .filename-template-dom-token.is-affix-linked:not(.is-affix-group-start) > .filename-template-inline-token-shell,
 .filename-template-dom-token.is-affix-linked:not(.is-affix-group-start) > .filename-template-inline-token-shell::before,
-.filename-template-dom-token.is-affix-linked:not(.is-affix-group-start) > .filename-template-inline-token-shell::after {
+.filename-template-dom-token.is-affix-linked:not(.is-affix-group-start) > .filename-template-inline-token-shell::after,
+.filename-template-dom-token.is-affix-linked:not(.is-affix-group-start) > .filename-template-inline-token-shell > .filename-template-inline-token-center {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
 
 .filename-template-dom-token.is-affix-linked:not(.is-affix-group-end) > .filename-template-inline-token-shell,
 .filename-template-dom-token.is-affix-linked:not(.is-affix-group-end) > .filename-template-inline-token-shell::before,
-.filename-template-dom-token.is-affix-linked:not(.is-affix-group-end) > .filename-template-inline-token-shell::after {
+.filename-template-dom-token.is-affix-linked:not(.is-affix-group-end) > .filename-template-inline-token-shell::after,
+.filename-template-dom-token.is-affix-linked:not(.is-affix-group-end) > .filename-template-inline-token-shell > .filename-template-inline-token-center {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
@@ -9206,8 +9220,10 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .filename-template-inline-token-center--system {
-  background: #f1f5f9;
-  box-shadow: inset 1px 0 0 #cbd5e1, inset -1px 0 0 #cbd5e1;
+  background: var(--filename-template-system-background);
+  box-shadow:
+    inset 1px 0 0 var(--filename-template-system-border),
+    inset -1px 0 0 var(--filename-template-system-border);
 }
 
 .filename-template-inline-token-center--folder {
@@ -9423,9 +9439,14 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   border-color: #9dbbf7;
 }
 
+.filename-template-chip--affix {
+  background: var(--filename-template-affix-background);
+  border-color: var(--filename-template-affix-border);
+}
+
 .filename-template-chip--system {
-  background: #f1f5f9;
-  border-color: #b7c1cf;
+  background: var(--filename-template-system-background);
+  border-color: var(--filename-template-system-border);
 }
 
 .filename-template-chip--folder {
