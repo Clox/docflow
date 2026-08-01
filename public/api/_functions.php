@@ -2923,6 +2923,156 @@ function ensure_unique_config_key(string $baseKey, array &$usedKeys): string
     return $candidate;
 }
 
+function filename_template_v2_affix_node(string $type, array $parts): ?array
+{
+    if ($parts === []) {
+        return null;
+    }
+    $onlyText = true;
+    $value = '';
+    foreach ($parts as $part) {
+        if (!is_array($part) || ($part['type'] ?? 'text') !== 'text') {
+            $onlyText = false;
+            break;
+        }
+        $value .= is_string($part['value'] ?? null) ? (string) $part['value'] : '';
+    }
+    if ($onlyText) {
+        return $value === '' ? null : ['type' => $type, 'value' => $value];
+    }
+    return ['type' => $type, 'parts' => $parts];
+}
+
+function migrate_filename_template_sequence_to_v2(mixed $input, int $depth = 0, ?array &$stats = null): array
+{
+    if (!is_array($input) || $depth > 12) {
+        return [];
+    }
+    $result = [];
+    foreach ($input as $rawPart) {
+        if (!is_array($rawPart)) {
+            continue;
+        }
+        $part = $rawPart;
+        $type = is_string($part['type'] ?? null) ? trim((string) $part['type']) : 'text';
+        if ($type === 'text' && (!is_string($part['value'] ?? null) || (string) $part['value'] === '')) {
+            continue;
+        }
+        if ($type === 'ifLabels') {
+            $part['thenParts'] = migrate_filename_template_sequence_to_v2($part['thenParts'] ?? [], $depth + 1, $stats);
+            $part['elseParts'] = migrate_filename_template_sequence_to_v2($part['elseParts'] ?? [], $depth + 1, $stats);
+        } elseif ($type === 'firstAvailable') {
+            $candidates = [];
+            foreach (is_array($part['parts'] ?? null) ? $part['parts'] : [] as $candidate) {
+                $candidateSequence = migrate_filename_template_sequence_to_v2([$candidate], $depth + 1, $stats);
+                if (count($candidateSequence) === 1) {
+                    $candidates[] = $candidateSequence[0];
+                } elseif ($candidateSequence !== []) {
+                    $candidates[] = ['type' => 'sequence', 'parts' => $candidateSequence];
+                }
+            }
+            $part['parts'] = $candidates;
+        } elseif ($type === 'sequence') {
+            $part['parts'] = migrate_filename_template_sequence_to_v2($part['parts'] ?? [], $depth + 1, $stats);
+        } elseif ($type === 'prefix' || $type === 'suffix') {
+            if (array_key_exists('parts', $part)) {
+                $part['parts'] = migrate_filename_template_sequence_to_v2($part['parts'], $depth + 1, $stats);
+            }
+            unset($part['prefixParts'], $part['suffixParts']);
+            $result[] = $part;
+            continue;
+        }
+
+        $legacyPrefix = migrate_filename_template_sequence_to_v2($part['prefixParts'] ?? [], $depth + 1, $stats);
+        $legacySuffix = migrate_filename_template_sequence_to_v2($part['suffixParts'] ?? [], $depth + 1, $stats);
+        unset($part['prefixParts'], $part['suffixParts']);
+        $prefixNode = filename_template_v2_affix_node('prefix', $legacyPrefix);
+        $suffixNode = filename_template_v2_affix_node('suffix', $legacySuffix);
+        if ($prefixNode !== null) {
+            $result[] = $prefixNode;
+            if (is_array($stats)) {
+                $stats['createdPrefixNodes'] = (int) ($stats['createdPrefixNodes'] ?? 0) + 1;
+            }
+        }
+        $result[] = $part;
+        if ($type !== 'text' && is_array($stats)) {
+            $stats['migratedMainNodes'] = (int) ($stats['migratedMainNodes'] ?? 0) + 1;
+        }
+        if ($suffixNode !== null) {
+            $result[] = $suffixNode;
+            if (is_array($stats)) {
+                $stats['createdSuffixNodes'] = (int) ($stats['createdSuffixNodes'] ?? 0) + 1;
+            }
+        }
+    }
+    return $result;
+}
+
+function migrate_filename_template_to_v2(mixed $input, ?array &$stats = null): array
+{
+    if (is_string($input)) {
+        return [
+            'version' => 2,
+            'parts' => $input === '' ? [] : [['type' => 'text', 'value' => $input]],
+        ];
+    }
+    $source = is_array($input) ? $input : [];
+    $parts = migrate_filename_template_sequence_to_v2($source['parts'] ?? [], 0, $stats);
+    $source['version'] = 2;
+    $source['parts'] = $parts;
+    return $source;
+}
+
+function migrate_archiving_rules_filename_templates_to_v2(array $rules, ?array &$stats = null): array
+{
+    $stats ??= [
+        'migratedTemplates' => 0,
+        'migratedPathTemplates' => 0,
+        'migratedMainNodes' => 0,
+        'createdPrefixNodes' => 0,
+        'createdSuffixNodes' => 0,
+    ];
+    if (!is_array($rules['archiveFolders'] ?? null)) {
+        $rules['archiveFolders'] = [];
+        return $rules;
+    }
+    foreach ($rules['archiveFolders'] as &$folder) {
+        if (!is_array($folder)) {
+            continue;
+        }
+        if (array_key_exists('pathTemplate', $folder)) {
+            $wasV2 = is_array($folder['pathTemplate']) && (int) ($folder['pathTemplate']['version'] ?? 0) >= 2;
+            $folder['pathTemplate'] = $wasV2
+                ? migrate_filename_template_to_v2($folder['pathTemplate'])
+                : migrate_filename_template_to_v2($folder['pathTemplate'], $stats);
+            if (!$wasV2) {
+                $stats['migratedPathTemplates']++;
+            }
+        }
+        if (!is_array($folder['filenameTemplates'] ?? null)) {
+            $folder['filenameTemplates'] = [];
+        }
+        foreach ($folder['filenameTemplates'] as &$templateDefinition) {
+            if (!is_array($templateDefinition)) {
+                continue;
+            }
+            $sourceKey = array_key_exists('template', $templateDefinition) ? 'template' : 'filenameTemplate';
+            $source = $templateDefinition[$sourceKey] ?? null;
+            $wasV2 = is_array($source) && (int) ($source['version'] ?? 0) >= 2;
+            $templateDefinition['template'] = $wasV2
+                ? migrate_filename_template_to_v2($source)
+                : migrate_filename_template_to_v2($source, $stats);
+            unset($templateDefinition['filenameTemplate']);
+            if (!$wasV2) {
+                $stats['migratedTemplates']++;
+            }
+        }
+        unset($templateDefinition);
+    }
+    unset($folder);
+    return $rules;
+}
+
 function normalize_filename_template_parts(mixed $input, int $depth = 0): array
 {
     if (!is_array($input) || $depth > 6) {
@@ -2981,8 +3131,21 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
     }
 
     $type = is_string($input['type'] ?? null) ? trim((string) $input['type']) : 'text';
-    $prefixParts = normalize_filename_template_parts($input['prefixParts'] ?? [], $depth + 1);
-    $suffixParts = normalize_filename_template_parts($input['suffixParts'] ?? [], $depth + 1);
+    if ($type === 'prefix' || $type === 'suffix') {
+        $normalized = ['type' => $type];
+        if (array_key_exists('parts', $input)) {
+            $normalized['parts'] = normalize_filename_template_parts($input['parts'], $depth + 1);
+        } else {
+            $normalized['value'] = is_string($input['value'] ?? null) ? (string) $input['value'] : '';
+        }
+        return $normalized;
+    }
+    if ($type === 'sequence') {
+        return [
+            'type' => 'sequence',
+            'parts' => normalize_filename_template_parts($input['parts'] ?? [], $depth + 1),
+        ];
+    }
     if ($type === 'dataField' || $type === 'systemField') {
         $key = is_string($input['key'] ?? null)
             ? trim((string) $input['key'])
@@ -2996,8 +3159,6 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
         $normalized = [
             'type' => $type,
             'key' => $key,
-            'prefixParts' => $prefixParts,
-            'suffixParts' => $suffixParts,
         ];
         $dateFormat = normalize_filename_template_date_format($input['dateFormat'] ?? null);
         if ($dateFormat !== '') {
@@ -3007,19 +3168,13 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
     }
 
     if ($type === 'folder') {
-        return [
-            'type' => 'folder',
-            'prefixParts' => $prefixParts,
-            'suffixParts' => $suffixParts,
-        ];
+        return ['type' => 'folder'];
     }
 
     if ($type === 'labels') {
         return [
             'type' => 'labels',
             'separator' => is_string($input['separator'] ?? null) ? (string) $input['separator'] : ', ',
-            'prefixParts' => $prefixParts,
-            'suffixParts' => $suffixParts,
         ];
     }
 
@@ -3027,8 +3182,6 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
         return [
             'type' => 'firstAvailable',
             'parts' => normalize_filename_template_candidate_parts($input['parts'] ?? [], $depth + 1),
-            'prefixParts' => $prefixParts,
-            'suffixParts' => $suffixParts,
         ];
     }
 
@@ -3039,8 +3192,6 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
             'labelIds' => normalize_label_id_list($input['labelIds'] ?? null),
             'thenParts' => normalize_filename_template_parts($input['thenParts'] ?? [], $depth + 1),
             'elseParts' => normalize_filename_template_parts($input['elseParts'] ?? [], $depth + 1),
-            'prefixParts' => $prefixParts,
-            'suffixParts' => $suffixParts,
         ];
     }
 
@@ -3053,24 +3204,10 @@ function normalize_filename_template_part(mixed $input, int $depth = 0): ?array
 
 function normalize_filename_template(mixed $input): array
 {
-    if (is_string($input)) {
-        $trimmed = trim($input);
-        return [
-            'parts' => $trimmed === ''
-                ? []
-                : [[
-                    'type' => 'text',
-                    'value' => $trimmed,
-                ]],
-        ];
-    }
-
-    if (!is_array($input)) {
-        return ['parts' => []];
-    }
-
+    $migrated = migrate_filename_template_to_v2($input);
     return [
-        'parts' => normalize_filename_template_parts($input['parts'] ?? [], 0),
+        'version' => 2,
+        'parts' => normalize_filename_template_parts($migrated['parts'] ?? [], 0),
     ];
 }
 
@@ -3382,6 +3519,14 @@ function default_title_heuristics(): array
                     ['x' => 1.0, 'y' => -35.0],
                 ],
                 'description' => 'Poängkurva baserad på viktad visuell textyta bredvid eller ovanför rubrikkandidaten. Text under kandidaten ignoreras.',
+            ],
+            'ocr_confidence' => [
+                'enabled' => true,
+                'curve' => [
+                    ['x' => 0.58, 'y' => -40.0],
+                    ['x' => 0.80, 'y' => 0.0],
+                ],
+                'description' => 'Ger minuspoäng när OCR-motorn är osäker på kandidatens text. Confidence 0,58 eller lägre ger −40 poäng och 0,80 eller högre är neutralt; däremellan interpoleras kurvan linjärt.',
             ],
             'body_text_before_candidate' => [
                 'enabled' => true,
@@ -6477,9 +6622,19 @@ function filename_template_part_review_label(array $part, array $nameMaps): stri
     if ($type === 'text') {
         return is_string($part['value'] ?? null) ? (string) $part['value'] : '';
     }
+    if ($type === 'prefix' || $type === 'suffix') {
+        $value = is_array($part['parts'] ?? null)
+            ? filename_template_parts_review_label($part['parts'], $nameMaps)
+            : (is_string($part['value'] ?? null) ? (string) $part['value'] : '');
+        return '[' . ($type === 'prefix' ? 'Prefix' : 'Suffix') . ': ' . $value . ']';
+    }
+    if ($type === 'sequence') {
+        return filename_template_parts_review_label(
+            is_array($part['parts'] ?? null) ? $part['parts'] : [],
+            $nameMaps
+        );
+    }
 
-    $prefix = filename_template_parts_review_label(is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [], $nameMaps);
-    $suffix = filename_template_parts_review_label(is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [], $nameMaps);
     $label = '';
 
     if ($type === 'systemField' || $type === 'dataField') {
@@ -6539,10 +6694,10 @@ function filename_template_part_review_label(array $part, array $nameMaps): stri
     }
 
     if ($label === '') {
-        return $prefix . $suffix;
+        return '';
     }
 
-    return $prefix . '[' . $label . ']' . $suffix;
+    return '[' . $label . ']';
 }
 
 function filename_template_parts_review_label(array $parts, array $nameMaps): string
@@ -10326,6 +10481,7 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
         'pageMedianCharacterWidth',
         'uppercaseRatio',
         'textDensityRatio',
+        'candidateOcrConfidence',
         'sameLineTextWeightedCharacters',
         'bodyTextBeforeWeightedAmount',
         'bodyTextBeforeCurrentPageAmount',
@@ -10344,7 +10500,7 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     ] as $key) {
         $number = debug_export_float_or_null($match[$key] ?? null);
         if ($number !== null) {
-            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'sameLineTextWeightedCharacters', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+            $candidate[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'candidateOcrConfidence', 'sameLineTextWeightedCharacters', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                 ? $number
                 : clamp_confidence($number);
         }
@@ -10381,6 +10537,9 @@ function debug_export_accepted_candidate(array $match, int $matchIndex, ?array $
     }
     if (is_array($match['bodyTextBeforeCandidate'] ?? null)) {
         $candidate['bodyTextBeforeCandidate'] = $match['bodyTextBeforeCandidate'];
+    }
+    if (is_array($match['ocrConfidenceAnalysis'] ?? null)) {
+        $candidate['ocrConfidenceAnalysis'] = $match['ocrConfidenceAnalysis'];
     }
     if (is_array($match['zoneOverlap'] ?? null)) {
         $candidate['zoneOverlap'] = $match['zoneOverlap'];
@@ -10842,6 +11001,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
             'pageMedianCharacterWidth',
             'uppercaseRatio',
             'textDensityRatio',
+            'candidateOcrConfidence',
             'sameLineTextWeightedCharacters',
             'bodyTextBeforeWeightedAmount',
             'bodyTextBeforeCurrentPageAmount',
@@ -10860,7 +11020,7 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         ] as $key) {
             $number = debug_export_float_or_null($candidate[$key] ?? null);
             if ($number !== null) {
-                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'sameLineTextWeightedCharacters', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
+                $normalized[$key] = in_array($key, ['score', 'fullConfidenceScore', 'yRatio', 'centerDistance', 'leftAlignmentRatio', 'horizontalPositionScore', 'orientationWidth', 'orientationHeight', 'orientationRatio', 'senderNameConfidence', 'distanceToSenderNameLineHeights', 'relativeTextSizeToSenderName', 'letterRatio', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'candidateOcrConfidence', 'sameLineTextWeightedCharacters', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforeCurrentPageAmount', 'bodyTextBeforePreviousPagesAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate', 'verticalDistance', 'verticalNormalizedDistance', 'positionDiff', 'positionNormalizedDiff'], true)
                     ? $number
                     : clamp_confidence($number);
             }
@@ -10891,6 +11051,9 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
         }
         if (is_array($candidate['bodyTextBeforeCandidate'] ?? null)) {
             $normalized['bodyTextBeforeCandidate'] = $candidate['bodyTextBeforeCandidate'];
+        }
+        if (is_array($candidate['ocrConfidenceAnalysis'] ?? null)) {
+            $normalized['ocrConfidenceAnalysis'] = $candidate['ocrConfidenceAnalysis'];
         }
         if (is_array($candidate['zoneOverlap'] ?? null)) {
             $normalized['zoneOverlap'] = $candidate['zoneOverlap'];
@@ -10996,8 +11159,10 @@ function debug_export_data_field_diff(array $leftFields, array $rightFields): ar
                 'labelText' => function_exists('mb_strtolower') ? mb_strtolower($labelText, 'UTF-8') : strtolower($labelText),
                 'selected' => ($candidate['selected'] ?? false) === true,
                 'score' => debug_export_float_or_null($candidate['score'] ?? null),
+                'candidateOcrConfidence' => debug_export_float_or_null($candidate['candidateOcrConfidence'] ?? null),
                 'signals' => is_array($candidate['signals'] ?? null) ? $candidate['signals'] : [],
                 'bodyTextBeforeCandidate' => is_array($candidate['bodyTextBeforeCandidate'] ?? null) ? $candidate['bodyTextBeforeCandidate'] : [],
+                'ocrConfidenceAnalysis' => is_array($candidate['ocrConfidenceAnalysis'] ?? null) ? $candidate['ocrConfidenceAnalysis'] : [],
                 'zoneOverlap' => is_array($candidate['zoneOverlap'] ?? null) ? $candidate['zoneOverlap'] : [],
             ];
         }, $candidates);
@@ -12337,6 +12502,7 @@ function build_grid_text_lines_from_debug_words(array $words): array
         $normalized[] = [
             'text' => $text,
             'wordIndex' => is_numeric($word['index'] ?? null) ? (int) $word['index'] : (is_int($wordIndex) ? $wordIndex : count($normalized)),
+            'ocrConfidence' => layout_analysis_word_confidence($word),
             'x0' => $bbox['x0'],
             'y0' => $bbox['y0'],
             'x1' => $bbox['x1'],
@@ -12407,6 +12573,9 @@ function build_grid_text_lines_from_debug_words(array $words): array
                 'end' => strlen($buffer),
                 'text' => $text,
                 'wordIndex' => is_numeric($word['wordIndex'] ?? null) ? (int) $word['wordIndex'] : null,
+                'ocrConfidence' => is_numeric($word['ocrConfidence'] ?? null)
+                    ? clamp_confidence((float) $word['ocrConfidence'])
+                    : null,
                 'bbox' => [
                     'x0' => (float) ($word['x0'] ?? 0.0),
                     'y0' => (float) ($word['y0'] ?? 0.0),
@@ -19645,6 +19814,7 @@ function title_candidate_character_width_measurements(
             }
             $measurement['lineIndex'] = $lineIndex;
             $measurement['bboxIndex'] = $bboxIndex;
+            $measurement['ocrConfidence'] = layout_analysis_word_confidence($segment);
             $measurements[] = $measurement;
         }
     }
@@ -19663,6 +19833,7 @@ function title_candidate_character_width_measurements(
         if ($measurement !== null) {
             $measurement['lineIndex'] = is_int($part['lineIndex'] ?? null) ? (int) $part['lineIndex'] : null;
             $measurement['bboxIndex'] = null;
+            $measurement['ocrConfidence'] = layout_analysis_word_confidence($part);
             $measurements[] = $measurement;
         }
     }
@@ -19673,7 +19844,90 @@ function title_candidate_character_width_measurements(
         is_string($candidate['value'] ?? null) ? (string) $candidate['value'] : '',
         $candidateBbox ?? ($candidate['bbox'] ?? null)
     );
+    if ($measurement !== null) {
+        $measurement['lineIndex'] = is_int($candidate['lineIndex'] ?? null) ? (int) $candidate['lineIndex'] : null;
+        $measurement['bboxIndex'] = is_array($candidate['valueBBoxIndexes'] ?? null)
+            && count($candidate['valueBBoxIndexes']) === 1
+            && is_int($candidate['valueBBoxIndexes'][0] ?? null)
+                ? (int) $candidate['valueBBoxIndexes'][0]
+                : null;
+        $measurement['ocrConfidence'] = is_numeric($candidate['ocrConfidence'] ?? null)
+            ? clamp_confidence((float) $candidate['ocrConfidence'])
+            : null;
+    }
     return $measurement !== null ? [$measurement] : [];
+}
+
+function title_candidate_ocr_confidence_analysis(
+    array $candidate,
+    array $lineGeometries,
+    ?array $candidateBbox = null
+): array {
+    $measurements = title_candidate_character_width_measurements($candidate, $lineGeometries, $candidateBbox);
+    $candidateBboxes = [];
+    $totalWeight = 0.0;
+    $weightedConfidenceSum = 0.0;
+    $validConfidenceCount = 0;
+    $usedCharacterCountFallback = false;
+
+    foreach ($measurements as $measurement) {
+        if (!is_array($measurement)) {
+            continue;
+        }
+        $text = is_string($measurement['text'] ?? null) ? (string) $measurement['text'] : '';
+        $weight = is_numeric($measurement['characterWeightSum'] ?? null)
+            ? max(0.0, (float) $measurement['characterWeightSum'])
+            : 0.0;
+        if ($weight <= 0.0) {
+            $weight = (float) max(0, count_pattern_matches('/[\p{L}\p{N}]/u', title_normalize_unicode_nfc($text)));
+            $usedCharacterCountFallback = $weight > 0.0;
+        }
+        $ocrConfidence = is_numeric($measurement['ocrConfidence'] ?? null)
+            ? clamp_confidence((float) $measurement['ocrConfidence'])
+            : null;
+        $row = [
+            'bboxIndex' => is_int($measurement['bboxIndex'] ?? null) ? (int) $measurement['bboxIndex'] : null,
+            'lineIndex' => is_int($measurement['lineIndex'] ?? null) ? (int) $measurement['lineIndex'] : null,
+            'text' => $text,
+            'ocrConfidence' => $ocrConfidence,
+            'characterWeight' => $weight,
+            'weightRatio' => 0.0,
+            'weightedContribution' => null,
+        ];
+        if ($ocrConfidence !== null && $weight > 0.0) {
+            $totalWeight += $weight;
+            $weightedConfidenceSum += $ocrConfidence * $weight;
+            $validConfidenceCount++;
+            $row['weightedContribution'] = $ocrConfidence * $weight;
+        }
+        $candidateBboxes[] = $row;
+    }
+
+    if ($validConfidenceCount < 1 || $totalWeight <= 0.0) {
+        return [
+            'available' => false,
+            'candidateOcrConfidence' => null,
+            'aggregationMethod' => 'missing_ocr_confidence',
+            'characterWeightSum' => 0.0,
+            'candidateBboxes' => $candidateBboxes,
+        ];
+    }
+    foreach ($candidateBboxes as &$bbox) {
+        if (($bbox['ocrConfidence'] ?? null) !== null && (float) ($bbox['characterWeight'] ?? 0.0) > 0.0) {
+            $bbox['weightRatio'] = (float) $bbox['characterWeight'] / $totalWeight;
+        }
+    }
+    unset($bbox);
+
+    return [
+        'available' => true,
+        'candidateOcrConfidence' => $weightedConfidenceSum / $totalWeight,
+        'aggregationMethod' => $validConfidenceCount === 1
+            ? 'single_bbox_direct'
+            : ($usedCharacterCountFallback ? 'normalized_character_count_weighted_mean' : 'character_weighted_mean'),
+        'characterWeightSum' => $totalWeight,
+        'candidateBboxes' => $candidateBboxes,
+    ];
 }
 
 function title_candidate_character_width_ratio(
@@ -21315,6 +21569,62 @@ function score_title_candidate(
                 );
             }
         }
+    }
+
+    $ocrConfidenceAnalysis = title_candidate_ocr_confidence_analysis($candidate, $lineGeometries, $bbox);
+    $result['ocrConfidenceAnalysis'] = $ocrConfidenceAnalysis;
+    $result['candidateOcrConfidence'] = is_numeric($ocrConfidenceAnalysis['candidateOcrConfidence'] ?? null)
+        ? (float) $ocrConfidenceAnalysis['candidateOcrConfidence']
+        : null;
+    $ocrConfidenceSettings = is_array($signals['ocr_confidence'] ?? null) ? $signals['ocr_confidence'] : [];
+    if (($ocrConfidenceSettings['enabled'] ?? true) === true) {
+        $curve = normalize_primary_date_score_curve(
+            is_array($ocrConfidenceSettings['curve'] ?? null) ? $ocrConfidenceSettings['curve'] : [],
+            []
+        );
+        $curveXValues = array_values(array_map(
+            static fn(array $point): float => (float) ($point['x'] ?? 0.0),
+            $curve
+        ));
+        $curveYValues = array_values(array_map(
+            static fn(array $point): float => (float) ($point['y'] ?? 0.0),
+            $curve
+        ));
+        $lowerThreshold = $curveXValues !== [] ? min($curveXValues) : null;
+        $upperThreshold = $curveXValues !== [] ? max($curveXValues) : null;
+        $minimumScore = $curveYValues !== [] ? min($curveYValues) : 0.0;
+        $maximumScore = $curveYValues !== [] ? max($curveYValues) : 0.0;
+        $candidateOcrConfidence = is_numeric($ocrConfidenceAnalysis['candidateOcrConfidence'] ?? null)
+            ? (float) $ocrConfidenceAnalysis['candidateOcrConfidence']
+            : null;
+        $points = $candidateOcrConfidence !== null
+            ? interpolate_primary_date_score_curve($curve, $candidateOcrConfidence)
+            : 0.0;
+        $score += $points;
+        $ocrDebug = array_merge($ocrConfidenceAnalysis, [
+            'curveInput' => $candidateOcrConfidence,
+            'curveScore' => $points,
+            'lowerThreshold' => $lowerThreshold,
+            'upperThreshold' => $upperThreshold,
+            'minimumScore' => $minimumScore,
+            'maximumScore' => $maximumScore,
+            'curve' => [
+                'lowerThreshold' => $lowerThreshold,
+                'upperThreshold' => $upperThreshold,
+                'minimumScore' => $minimumScore,
+                'maximumScore' => $maximumScore,
+                'points' => $curve,
+            ],
+        ]);
+        $appendSignal(
+            $points < 0.0 ? 'negative' : 'neutral',
+            'ocr_confidence',
+            $points,
+            $candidateOcrConfidence !== null
+                ? 'ocr_confidence:' . round($candidateOcrConfidence, 6) . ',curve:' . round($points, 6)
+                : 'missing_ocr_confidence,curve:0',
+            $ocrDebug
+        );
     }
 
     $uppercaseRatio = title_candidate_uppercase_ratio($text);
@@ -24778,10 +25088,13 @@ function title_result_matches(array $result, array $lineGeometries = []): array
         if (isset($matchesByKey[$matchKey]) && is_array($candidate['zoneOverlap'] ?? null)) {
             $matchesByKey[$matchKey]['zoneOverlap'] = $candidate['zoneOverlap'];
         }
+        if (isset($matchesByKey[$matchKey]) && is_array($candidate['ocrConfidenceAnalysis'] ?? null)) {
+            $matchesByKey[$matchKey]['ocrConfidenceAnalysis'] = $candidate['ocrConfidenceAnalysis'];
+        }
         if (isset($matchesByKey[$matchKey]) && is_array($candidate['senderNameAnalysis'] ?? null)) {
             $matchesByKey[$matchKey]['senderNameAnalysis'] = $candidate['senderNameAnalysis'];
         }
-        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'centerDistancePixels', 'leftAlignmentDistance', 'leftAlignmentDistanceLineHeights', 'horizontalPositionDistance', 'horizontalPositionScore', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforePreviousPagesAmount', 'bodyTextBeforeCurrentPageAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate'] as $numericKey) {
+        foreach (['fullConfidenceScore', 'yRatio', 'centerDistance', 'centerDistancePixels', 'leftAlignmentDistance', 'leftAlignmentDistanceLineHeights', 'horizontalPositionDistance', 'horizontalPositionScore', 'relativeTextHeight', 'relativeCharacterWidth', 'relativeTextSize', 'visualTextSizeRatio', 'pageMedianTextHeight', 'pageMedianCharacterWidth', 'uppercaseRatio', 'textDensityRatio', 'candidateOcrConfidence', 'bodyTextBeforeWeightedAmount', 'bodyTextBeforePreviousPagesAmount', 'bodyTextBeforeCurrentPageAmount', 'zoneOverlapEffective', 'zoneOverlapCandidate'] as $numericKey) {
             if (isset($matchesByKey[$matchKey]) && is_numeric($candidate[$numericKey] ?? null)) {
                 $matchesByKey[$matchKey][$numericKey] = (float) $candidate[$numericKey];
             }
@@ -25890,6 +26203,8 @@ function simplify_extraction_field_meta(array $results, float $acceptanceThresho
                         'textSizeBboxes' => is_array($match['textSizeBboxes'] ?? null) ? array_values($match['textSizeBboxes']) : [],
                         'uppercaseRatio' => is_numeric($match['uppercaseRatio'] ?? null) ? (float) $match['uppercaseRatio'] : null,
                         'textDensityRatio' => is_numeric($match['textDensityRatio'] ?? null) ? (float) $match['textDensityRatio'] : null,
+                        'candidateOcrConfidence' => is_numeric($match['candidateOcrConfidence'] ?? null) ? (float) $match['candidateOcrConfidence'] : null,
+                        'ocrConfidenceAnalysis' => is_array($match['ocrConfidenceAnalysis'] ?? null) ? $match['ocrConfidenceAnalysis'] : null,
                         'sameLineTextWeightedCharacters' => is_numeric($match['sameLineTextWeightedCharacters'] ?? null) ? (float) $match['sameLineTextWeightedCharacters'] : null,
                         'sameLineTextUnweightedCharacters' => is_numeric($match['sameLineTextUnweightedCharacters'] ?? null) ? (int) $match['sameLineTextUnweightedCharacters'] : null,
                         'sameLineText' => is_array($match['sameLineText'] ?? null) ? $match['sameLineText'] : null,
@@ -26151,146 +26466,144 @@ function format_filename_template_date_value(mixed $value, mixed $format = null)
     return $day !== null ? ($yearText . '-' . $monthText . '-' . $dayText) : ($yearText . '-' . $monthText);
 }
 
+function filename_template_has_renderable_value(mixed $value): bool
+{
+    return is_string($value) ? $value !== '' : ($value !== null && (string) $value !== '');
+}
+
+function evaluate_filename_template_main_node_backend(array $part, array $fieldValues): string
+{
+    $type = is_string($part['type'] ?? null) ? trim((string) $part['type']) : 'text';
+    if ($type === 'prefix' || $type === 'suffix') {
+        return '';
+    }
+    if ($type === 'sequence') {
+        return evaluate_filename_template_parts_backend(
+            is_array($part['parts'] ?? null) ? $part['parts'] : [],
+            $fieldValues
+        );
+    }
+    if ($type === 'dataField' || $type === 'systemField') {
+        $key = is_string($part['key'] ?? null) ? trim((string) $part['key']) : '';
+        $rawValue = $key !== '' && array_key_exists($key, $fieldValues) ? $fieldValues[$key] : null;
+        $firstValue = first_auto_archiving_field_value($rawValue);
+        $value = is_scalar($firstValue) || $firstValue === null ? trim((string) $firstValue) : '';
+        $fieldTypes = is_array($fieldValues['__fieldTypes'] ?? null) ? $fieldValues['__fieldTypes'] : [];
+        $valueType = is_string($fieldTypes[$key] ?? null) ? trim((string) $fieldTypes[$key]) : '';
+        return $value !== '' && $valueType === 'date'
+            ? format_filename_template_date_value($value, $part['dateFormat'] ?? null)
+            : $value;
+    }
+    if ($type === 'folder') {
+        return array_key_exists('folder', $fieldValues) ? trim((string) $fieldValues['folder']) : '';
+    }
+    if ($type === 'labels') {
+        $rawLabels = $fieldValues['__labels'] ?? null;
+        $labelNames = is_array($rawLabels)
+            ? array_values(array_filter(array_map(static fn($value): string => is_scalar($value) ? trim((string) $value) : '', $rawLabels), static fn(string $value): bool => $value !== ''))
+            : [];
+        $separator = is_string($part['separator'] ?? null) ? (string) $part['separator'] : ', ';
+        return $labelNames !== [] ? implode($separator, $labelNames) : '';
+    }
+    if ($type === 'ifLabels') {
+        $selectedLabelIds = array_values(array_unique(array_filter(array_map(
+            static fn($value): string => is_scalar($value) ? trim((string) $value) : '',
+            is_array($fieldValues['__labelIds'] ?? null) ? $fieldValues['__labelIds'] : []
+        ), static fn(string $value): bool => $value !== '')));
+        $conditionLabelIds = normalize_label_id_list($part['labelIds'] ?? null);
+        $mode = normalize_if_labels_mode($part['mode'] ?? null);
+        $matched = $conditionLabelIds !== [] && ($mode === 'all'
+            ? count(array_diff($conditionLabelIds, $selectedLabelIds)) === 0
+            : count(array_intersect($conditionLabelIds, $selectedLabelIds)) > 0);
+        return evaluate_filename_template_parts_backend(
+            $matched
+                ? (is_array($part['thenParts'] ?? null) ? $part['thenParts'] : [])
+                : (is_array($part['elseParts'] ?? null) ? $part['elseParts'] : []),
+            $fieldValues
+        );
+    }
+    if ($type === 'firstAvailable') {
+        foreach (is_array($part['parts'] ?? null) ? $part['parts'] : [] as $candidatePart) {
+            if (!is_array($candidatePart)) {
+                continue;
+            }
+            $resolved = evaluate_filename_template_parts_backend([$candidatePart], $fieldValues);
+            if (filename_template_has_renderable_value($resolved)) {
+                return $resolved;
+            }
+        }
+        return '';
+    }
+    return is_string($part['value'] ?? null) ? (string) $part['value'] : '';
+}
+
+function filename_template_affix_value_backend(array $part, array $fieldValues): string
+{
+    if (is_array($part['parts'] ?? null)) {
+        return evaluate_filename_template_parts_backend($part['parts'], $fieldValues);
+    }
+    return is_string($part['value'] ?? null) ? (string) $part['value'] : '';
+}
+
+function filename_template_affix_analysis(array $parts): array
+{
+    $analysis = [];
+    foreach (array_values($parts) as $index => $part) {
+        $type = is_array($part) && is_string($part['type'] ?? null) ? (string) $part['type'] : 'text';
+        if ($type !== 'prefix' && $type !== 'suffix') {
+            continue;
+        }
+        $step = $type === 'prefix' ? 1 : -1;
+        $cursor = $index + $step;
+        $targetIndex = null;
+        while ($cursor >= 0 && $cursor < count($parts)) {
+            $candidateType = is_array($parts[$cursor] ?? null) && is_string($parts[$cursor]['type'] ?? null)
+                ? (string) $parts[$cursor]['type']
+                : 'text';
+            if ($candidateType !== 'prefix' && $candidateType !== 'suffix') {
+                $targetIndex = $cursor;
+                break;
+            }
+            $cursor += $step;
+        }
+        $analysis[$index] = [
+            'type' => $type,
+            'valid' => $targetIndex !== null,
+            'targetIndex' => $targetIndex,
+        ];
+    }
+    return $analysis;
+}
+
 function evaluate_filename_template_parts_backend(array $parts, array $fieldValues): string
 {
     if ($parts === []) {
         return '';
     }
-
+    $parts = array_values($parts);
+    $mainValues = [];
+    foreach ($parts as $index => $part) {
+        $mainValues[$index] = is_array($part)
+            ? evaluate_filename_template_main_node_backend($part, $fieldValues)
+            : '';
+    }
+    $affixes = filename_template_affix_analysis($parts);
     $result = '';
-    foreach ($parts as $part) {
+    foreach ($parts as $index => $part) {
         if (!is_array($part)) {
             continue;
         }
-
         $type = is_string($part['type'] ?? null) ? trim((string) $part['type']) : 'text';
-        if ($type === 'dataField' || $type === 'systemField') {
-            $key = is_string($part['key'] ?? null) ? trim((string) $part['key']) : '';
-            $rawValue = $key !== '' && array_key_exists($key, $fieldValues)
-                ? $fieldValues[$key]
-                : null;
-            $firstValue = first_auto_archiving_field_value($rawValue);
-            $value = is_scalar($firstValue) || $firstValue === null
-                ? trim((string) $firstValue)
-                : '';
-            $fieldTypes = is_array($fieldValues['__fieldTypes'] ?? null) ? $fieldValues['__fieldTypes'] : [];
-            $valueType = is_string($fieldTypes[$key] ?? null) ? trim((string) $fieldTypes[$key]) : '';
-            if ($value !== '' && $valueType === 'date') {
-                $value = format_filename_template_date_value($value, $part['dateFormat'] ?? null);
+        if ($type === 'prefix' || $type === 'suffix') {
+            $targetIndex = $affixes[$index]['targetIndex'] ?? null;
+            if (is_int($targetIndex) && filename_template_has_renderable_value($mainValues[$targetIndex] ?? '')) {
+                $result .= filename_template_affix_value_backend($part, $fieldValues);
             }
-            if ($value === '') {
-                continue;
-            }
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [],
-                $fieldValues
-            );
-            $result .= $value;
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [],
-                $fieldValues
-            );
             continue;
         }
-
-        if ($type === 'folder') {
-            $value = array_key_exists('folder', $fieldValues) ? trim((string) $fieldValues['folder']) : '';
-            if ($value === '') {
-                continue;
-            }
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [],
-                $fieldValues
-            );
-            $result .= $value;
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [],
-                $fieldValues
-            );
-            continue;
-        }
-
-        if ($type === 'labels') {
-            $rawLabels = $fieldValues['__labels'] ?? null;
-            $labelNames = is_array($rawLabels)
-                ? array_values(array_filter(array_map(static function ($value): string {
-                    return is_scalar($value) ? trim((string) $value) : '';
-                }, $rawLabels), static fn (string $value): bool => $value !== ''))
-                : [];
-            $separator = is_string($part['separator'] ?? null) ? (string) $part['separator'] : ', ';
-            $value = $labelNames !== [] ? implode($separator, $labelNames) : '';
-            if ($value === '') {
-                continue;
-            }
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [],
-                $fieldValues
-            );
-            $result .= $value;
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [],
-                $fieldValues
-            );
-            continue;
-        }
-
-        if ($type === 'ifLabels') {
-            $selectedLabelIds = array_values(array_filter(array_map(
-                static fn ($value): string => is_scalar($value) ? trim((string) $value) : '',
-                is_array($fieldValues['__labelIds'] ?? null) ? $fieldValues['__labelIds'] : []
-            ), static fn (string $value): bool => $value !== ''));
-            $selectedLabelIds = array_values(array_unique($selectedLabelIds));
-            $conditionLabelIds = normalize_label_id_list($part['labelIds'] ?? null);
-            $mode = normalize_if_labels_mode($part['mode'] ?? null);
-            $conditionMatched = $conditionLabelIds !== []
-                && ($mode === 'all'
-                    ? count(array_diff($conditionLabelIds, $selectedLabelIds)) === 0
-                    : count(array_intersect($conditionLabelIds, $selectedLabelIds)) > 0);
-            $branchParts = $conditionMatched
-                ? (is_array($part['thenParts'] ?? null) ? $part['thenParts'] : [])
-                : (is_array($part['elseParts'] ?? null) ? $part['elseParts'] : []);
-            $resolved = evaluate_filename_template_parts_backend($branchParts, $fieldValues);
-            if ($resolved === '') {
-                continue;
-            }
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [],
-                $fieldValues
-            );
-            $result .= $resolved;
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [],
-                $fieldValues
-            );
-            continue;
-        }
-
-        if ($type === 'firstAvailable') {
-            $resolved = '';
-            foreach (is_array($part['parts'] ?? null) ? $part['parts'] : [] as $candidatePart) {
-                $resolved = evaluate_filename_template_parts_backend([$candidatePart], $fieldValues);
-                if ($resolved !== '') {
-                    break;
-                }
-            }
-            if ($resolved === '') {
-                continue;
-            }
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['prefixParts'] ?? null) ? $part['prefixParts'] : [],
-                $fieldValues
-            );
-            $result .= $resolved;
-            $result .= evaluate_filename_template_parts_backend(
-                is_array($part['suffixParts'] ?? null) ? $part['suffixParts'] : [],
-                $fieldValues
-            );
-            continue;
-        }
-
-        $result .= is_string($part['value'] ?? null) ? (string) $part['value'] : '';
+        $result .= $mainValues[$index] ?? '';
+        continue;
     }
-
     return $result;
 }
 

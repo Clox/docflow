@@ -8459,6 +8459,7 @@ function formatPrimaryDateSignalLabel(code) {
     date_word_nearby: 'Ordet datum i närheten',
     page_in_document: 'Sida i dokument',
     text_density: 'Texttäthet',
+    ocr_confidence: 'OCR-säkerhet',
     running_text: 'Texttäthet',
     same_line_text: 'Text på samma rad',
     body_text_before_candidate: 'Brödtext före kandidaten',
@@ -8660,6 +8661,16 @@ function formatPrimaryDateSignalDetail(signal) {
       return `${zoneName}, ${formatPrimaryDateScoreNumber(overlap * 100)} % ${isSystemZone ? 'effektiv överlappning' : 'överlappning'}`;
     }
     return zoneName;
+  }
+  if (signal?.code === 'ocr_confidence') {
+    const debug = signal.debug && typeof signal.debug === 'object' ? signal.debug : {};
+    const confidence = Number(debug.candidateOcrConfidence ?? detail.match(/\bocr_confidence:([-0-9.]+)/u)?.[1]);
+    if (Number.isFinite(confidence)) {
+      return `${formatPrimaryDateScoreNumber(confidence * 100)} % OCR-confidence`;
+    }
+    if (detail.includes('missing_ocr_confidence') || debug.aggregationMethod === 'missing_ocr_confidence') {
+      return 'OCR-confidence saknas';
+    }
   }
   if (signal?.code === 'top_position') {
     const yRatioMatch = detail.match(/\by_ratio:([-0-9.]+)/u);
@@ -15001,10 +15012,40 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
     return '';
   }
 
+  const normalizedParts = parts.filter((part) => part && typeof part === 'object');
+  const mainValues = normalizedParts.map((part) => evaluateFilenameTemplateMainPart(part, fieldValues));
+  const findTarget = (index, direction) => {
+    for (let cursor = index + direction; cursor >= 0 && cursor < normalizedParts.length; cursor += direction) {
+      if (normalizedParts[cursor].type !== 'prefix' && normalizedParts[cursor].type !== 'suffix') {
+        return cursor;
+      }
+    }
+    return -1;
+  };
   let result = '';
-  parts.forEach((part) => {
-    if (!part || typeof part !== 'object') {
+  normalizedParts.forEach((part, index) => {
+    if (part.type === 'prefix' || part.type === 'suffix') {
+      const targetIndex = findTarget(index, part.type === 'prefix' ? 1 : -1);
+      if (targetIndex >= 0 && mainValues[targetIndex] !== '') {
+        result += Array.isArray(part.parts)
+          ? evaluateFilenameTemplateParts(part.parts, fieldValues)
+          : (typeof part.value === 'string' ? part.value : '');
+      }
       return;
+    }
+    result += mainValues[index];
+  });
+
+  return result;
+}
+
+function evaluateFilenameTemplateMainPart(part, fieldValues) {
+    if (!part || typeof part !== 'object' || part.type === 'prefix' || part.type === 'suffix') {
+      return '';
+    }
+
+    if (part.type === 'sequence') {
+      return evaluateFilenameTemplateParts(part.parts || [], fieldValues);
     }
 
     if (part.type === 'dataField' || part.type === 'systemField') {
@@ -15017,23 +15058,17 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
         value = formatFilenameTemplateDateValue(value, part.dateFormat);
       }
       if (value === '') {
-        return;
+        return '';
       }
-      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
-      result += value;
-      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
-      return;
+      return value;
     }
 
     if (part.type === 'folder') {
       const value = String(fieldValues.get('folder') || '').trim();
       if (value === '') {
-        return;
+        return '';
       }
-      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
-      result += value;
-      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
-      return;
+      return value;
     }
 
     if (part.type === 'labels') {
@@ -15043,12 +15078,9 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
         ? labelNames.map((item) => String(item || '').trim()).filter((item) => item !== '').join(separator)
         : '';
       if (value === '') {
-        return;
+        return '';
       }
-      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
-      result += value;
-      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
-      return;
+      return value;
     }
 
     if (part.type === 'ifLabels') {
@@ -15063,14 +15095,7 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
           ? conditionLabelIds.every((labelId) => selectedLabelIds.includes(labelId))
           : conditionLabelIds.some((labelId) => selectedLabelIds.includes(labelId)));
       const branchParts = isTrue ? (part.thenParts || []) : (part.elseParts || []);
-      const resolved = evaluateFilenameTemplateParts(branchParts, fieldValues);
-      if (resolved === '') {
-        return;
-      }
-      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
-      result += resolved;
-      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
-      return;
+      return evaluateFilenameTemplateParts(branchParts, fieldValues);
     }
 
     if (part.type === 'firstAvailable') {
@@ -15082,19 +15107,10 @@ function evaluateFilenameTemplateParts(parts, fieldValues) {
           break;
         }
       }
-      if (resolved === '') {
-        return;
-      }
-      result += evaluateFilenameTemplateParts(part.prefixParts || [], fieldValues);
-      result += resolved;
-      result += evaluateFilenameTemplateParts(part.suffixParts || [], fieldValues);
-      return;
+      return resolved;
     }
 
-    result += typeof part.value === 'string' ? part.value : '';
-  });
-
-  return result;
+    return typeof part.value === 'string' ? part.value : '';
 }
 
 function generateFilenameForJob(job, options = {}) {
@@ -24562,7 +24578,8 @@ function defaultArchiveFolder() {
     name: '',
     priority: 1,
     pathTemplate: {
-      parts: [defaultFilenameTemplatePart('text')]
+      version: 2,
+      parts: []
     },
     filenameTemplates: [defaultFilenameTemplateDraft()],
   };
@@ -24572,7 +24589,8 @@ function defaultFilenameTemplateDraft() {
   return {
     id: '',
     template: {
-      parts: [defaultFilenameTemplatePart('text')]
+      version: 2,
+      parts: []
     },
     labelIds: [],
   };
@@ -27616,6 +27634,60 @@ function sanitizeFilenameTemplateParts(parts, depth = 0) {
     .filter((part) => part !== null);
 }
 
+function migrateFilenameTemplateSequenceToV2(parts, depth = 0) {
+  if (!Array.isArray(parts) || depth > 12) {
+    return [];
+  }
+  const affixNode = (type, childParts) => {
+    if (!Array.isArray(childParts) || childParts.length === 0) {
+      return null;
+    }
+    if (childParts.every((part) => part && part.type === 'text')) {
+      const value = childParts.map((part) => String(part.value ?? '')).join('');
+      return value === '' ? null : { type, value };
+    }
+    return { type, parts: childParts };
+  };
+  const result = [];
+  parts.forEach((rawPart) => {
+    if (!rawPart || typeof rawPart !== 'object') {
+      return;
+    }
+    const part = { ...rawPart };
+    const type = typeof part.type === 'string' ? part.type.trim() : 'text';
+    if (type === 'text' && (typeof part.value !== 'string' || part.value === '')) {
+      return;
+    }
+    if (type === 'ifLabels') {
+      part.thenParts = migrateFilenameTemplateSequenceToV2(part.thenParts, depth + 1);
+      part.elseParts = migrateFilenameTemplateSequenceToV2(part.elseParts, depth + 1);
+    } else if (type === 'firstAvailable') {
+      part.parts = (Array.isArray(part.parts) ? part.parts : []).map((candidate) => {
+        const sequence = migrateFilenameTemplateSequenceToV2([candidate], depth + 1);
+        return sequence.length === 1 ? sequence[0] : { type: 'sequence', parts: sequence };
+      }).filter(Boolean);
+    } else if (type === 'sequence') {
+      part.parts = migrateFilenameTemplateSequenceToV2(part.parts, depth + 1);
+    } else if (type === 'prefix' || type === 'suffix') {
+      if (Array.isArray(part.parts)) {
+        part.parts = migrateFilenameTemplateSequenceToV2(part.parts, depth + 1);
+      }
+      delete part.prefixParts;
+      delete part.suffixParts;
+      result.push(part);
+      return;
+    }
+    const prefix = affixNode('prefix', migrateFilenameTemplateSequenceToV2(part.prefixParts, depth + 1));
+    const suffix = affixNode('suffix', migrateFilenameTemplateSequenceToV2(part.suffixParts, depth + 1));
+    delete part.prefixParts;
+    delete part.suffixParts;
+    if (prefix) result.push(prefix);
+    result.push(part);
+    if (suffix) result.push(suffix);
+  });
+  return result;
+}
+
 function sanitizeFilenameTemplateCandidateParts(parts, depth = 0) {
   return sanitizeFilenameTemplateParts(parts, depth)
     .filter((part) => part && typeof part === 'object' && part.type !== 'text');
@@ -27650,8 +27722,14 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
   }
 
   const type = typeof input.type === 'string' ? input.type.trim() : 'text';
-  const prefixParts = sanitizeFilenameTemplateParts(input.prefixParts, depth + 1);
-  const suffixParts = sanitizeFilenameTemplateParts(input.suffixParts, depth + 1);
+  if (type === 'prefix' || type === 'suffix') {
+    return Array.isArray(input.parts)
+      ? { type, parts: sanitizeFilenameTemplateParts(input.parts, depth + 1) }
+      : { type, value: typeof input.value === 'string' ? input.value : '' };
+  }
+  if (type === 'sequence') {
+    return { type: 'sequence', parts: sanitizeFilenameTemplateParts(input.parts, depth + 1) };
+  }
   if (type === 'dataField' || type === 'systemField') {
     const key = typeof input.key === 'string'
       ? input.key.trim()
@@ -27664,8 +27742,6 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
     const normalized = {
       type,
       key,
-      prefixParts,
-      suffixParts,
     };
     const dateFormat = sanitizeFilenameTemplateDateFormat(input.dateFormat, '');
     if (dateFormat !== '') {
@@ -27674,26 +27750,18 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
     return normalized;
   }
   if (type === 'folder') {
-    return {
-      type: 'folder',
-      prefixParts,
-      suffixParts,
-    };
+    return { type: 'folder' };
   }
   if (type === 'labels') {
     return {
       type: 'labels',
       separator: typeof input.separator === 'string' ? input.separator : DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR,
-      prefixParts,
-      suffixParts,
     };
   }
   if (type === 'firstAvailable') {
     return {
       type: 'firstAvailable',
       parts: sanitizeFilenameTemplateCandidateParts(input.parts, depth + 1),
-      prefixParts,
-      suffixParts,
     };
   }
   if (type === 'ifLabels') {
@@ -27703,8 +27771,6 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
       labelIds: normalizeLabelIdList(input.labelIds),
       thenParts: sanitizeFilenameTemplateParts(input.thenParts, depth + 1),
       elseParts: sanitizeFilenameTemplateParts(input.elseParts, depth + 1),
-      prefixParts,
-      suffixParts,
     };
   }
   return {
@@ -27714,58 +27780,42 @@ function sanitizeFilenameTemplatePart(part, depth = 0) {
 }
 
 function sanitizeFilenameTemplate(template) {
-  if (typeof template === 'string') {
-    return {
-      parts: [{
-        type: 'text',
-        value: template,
-      }],
-    };
-  }
-  const input = template && typeof template === 'object' ? template : {};
+  const input = typeof template === 'string'
+    ? { parts: template === '' ? [] : [{ type: 'text', value: template }] }
+    : (template && typeof template === 'object' ? template : {});
   return {
-    parts: sanitizeFilenameTemplateParts(input.parts)
+    ...input,
+    version: 2,
+    parts: sanitizeFilenameTemplateParts(migrateFilenameTemplateSequenceToV2(input.parts))
   };
 }
 
 function defaultFilenameTemplatePart(type = 'text') {
   if (type === 'folder') {
-    return {
-      type: 'folder',
-      prefixParts: [],
-      suffixParts: [],
-    };
+    return { type: 'folder' };
   }
   if (type === 'dataField') {
     return {
       type: 'dataField',
       key: filenameTemplateDataFieldOptions()[0]?.key || 'amount',
-      prefixParts: [],
-      suffixParts: [],
     };
   }
   if (type === 'systemField') {
     return {
       type: 'systemField',
       key: filenameTemplateSystemFieldOptions()[0]?.key || 'primary_date',
-      prefixParts: [],
-      suffixParts: [],
     };
   }
   if (type === 'labels') {
     return {
       type: 'labels',
       separator: DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR,
-      prefixParts: [],
-      suffixParts: [],
     };
   }
   if (type === 'firstAvailable') {
     return {
       type: 'firstAvailable',
       parts: [],
-      prefixParts: [],
-      suffixParts: [],
     };
   }
   if (type === 'ifLabels') {
@@ -27775,9 +27825,10 @@ function defaultFilenameTemplatePart(type = 'text') {
       labelIds: [],
       thenParts: [],
       elseParts: [],
-      prefixParts: [],
-      suffixParts: [],
     };
+  }
+  if (type === 'prefix' || type === 'suffix') {
+    return { type, value: '' };
   }
   return {
     type: 'text',
@@ -28747,6 +28798,14 @@ function defaultTitleHeuristics() {
           { x: 1, y: -35 },
         ],
         description: 'Poängkurva baserad på viktad visuell textyta bredvid eller ovanför rubrikkandidaten. Text under kandidaten ignoreras.',
+      },
+      ocr_confidence: {
+        enabled: true,
+        curve: [
+          { x: 0.58, y: -40 },
+          { x: 0.80, y: 0 },
+        ],
+        description: 'Ger minuspoäng när OCR-motorn är osäker på kandidatens text. Confidence 0,58 eller lägre ger −40 poäng och 0,80 eller högre är neutralt; däremellan interpoleras kurvan linjärt.',
       },
       body_text_before_candidate: {
         enabled: true,
@@ -29749,6 +29808,18 @@ function createFilenameTemplateLabelPicker(selectedLabelIds, onChange, options =
 
 function filenameTemplateInsertOptions() {
   return [
+    {
+      type: 'prefix',
+      label: 'Prefix',
+      tone: 'affix',
+      title: 'Visas endast när närmaste efterföljande värde i samma sekvens inte är tomt.',
+    },
+    {
+      type: 'suffix',
+      label: 'Suffix',
+      tone: 'affix',
+      title: 'Visas endast när närmaste föregående värde i samma sekvens inte är tomt.',
+    },
     ...filenameTemplateSystemFieldOptions().map((field) => ({
       type: 'systemField',
       key: field.key,
@@ -34131,6 +34202,7 @@ const titleHeuristicLabels = {
   uppercase_ratio: 'Versalgrad',
   brevity: 'Korthet',
   text_density: 'Texttäthet',
+  ocr_confidence: 'OCR-säkerhet',
   body_text_before_candidate: 'Brödtext före kandidaten',
   zone_overlap: 'Överlapp med zon',
   short_line_before_long_line: 'Kort rad före lång rad',
@@ -34208,6 +34280,18 @@ const titleHeuristicCurveCharts = {
     yPointLabel: 'Poäng',
     yMin: -80,
     yMax: 80,
+    xAsPercent: true,
+    yAsPercent: false,
+    xStep: 0.01,
+    yStep: 1,
+  },
+  ocr_confidence: {
+    xAxisTitle: 'OCR-confidence (%)',
+    yAxisTitle: 'Poäng',
+    xPointLabel: 'OCR-confidence',
+    yPointLabel: 'Poäng',
+    yMin: -60,
+    yMax: 20,
     xAsPercent: true,
     yAsPercent: false,
     xStep: 0.01,
@@ -36623,38 +36707,7 @@ function renderLabelsEditor() {
 
 function normalizeEditableFilenameTemplateParts(parts) {
   const sanitized = sanitizeFilenameTemplateParts(parts);
-  if (sanitized.length === 0) {
-    return [defaultFilenameTemplatePart('text')];
-  }
-
-  const normalized = [];
-  const appendTextPart = (value = '') => {
-    const textValue = typeof value === 'string' ? value : '';
-    const previous = normalized[normalized.length - 1] || null;
-    if (previous && previous.type === 'text') {
-      previous.value = String(previous.value || '') + textValue;
-      return;
-    }
-    normalized.push({
-      type: 'text',
-      value: textValue,
-    });
-  };
-
-  sanitized.forEach((part) => {
-    if (part.type === 'text') {
-      appendTextPart(part.value || '');
-      return;
-    }
-
-    if (normalized.length === 0) {
-      appendTextPart('');
-    }
-    normalized.push(part);
-    appendTextPart('');
-  });
-
-  return normalized.length > 0 ? normalized : [defaultFilenameTemplatePart('text')];
+  return sanitized;
 }
 
 function createFilenameTemplateToolbar(context) {
@@ -36694,6 +36747,33 @@ function createFilenameTemplateToolbar(context) {
   });
 
   return toolbar;
+}
+
+function syncFilenameTemplateSelectWidth(select) {
+  if (!(select instanceof HTMLSelectElement)) {
+    return;
+  }
+  const selected = select.options[select.selectedIndex] || null;
+  const text = selected ? selected.textContent || '' : '';
+  const canvas = syncFilenameTemplateSelectWidth.canvas
+    || (syncFilenameTemplateSelectWidth.canvas = document.createElement('canvas'));
+  const context = canvas.getContext('2d');
+  const computed = window.getComputedStyle(select);
+  if (context) {
+    context.font = computed.font;
+  }
+  const textWidth = context ? context.measureText(text).width : text.length * 7;
+  const width = Math.max(68, Math.min(220, Math.ceil(textWidth + 42)));
+  select.style.width = `${width}px`;
+  select.title = text;
+}
+
+function bindFilenameTemplateSelectWidth(select) {
+  syncFilenameTemplateSelectWidth(select);
+  select.addEventListener('change', () => syncFilenameTemplateSelectWidth(select));
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => syncFilenameTemplateSelectWidth(select)).catch(() => {});
+  }
 }
 
 function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context = null, options = {}) {
@@ -36740,6 +36820,29 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
         title: 'Legacy-chip från äldre konfigurationer. Använd inte detta i nya konfigurationer.',
       };
     }
+    if (part.type === 'text') {
+      return {
+        label: 'Fast text',
+        tone: 'text',
+        title: 'Fast text som alltid skrivs in i filnamnet.',
+      };
+    }
+    if (part.type === 'prefix' || part.type === 'suffix') {
+      return {
+        label: part.type === 'prefix' ? 'Prefix' : 'Suffix',
+        tone: 'affix',
+        title: part.type === 'prefix'
+          ? 'Visas när närmaste efterföljande huvudvärde i samma sekvens inte är tomt.'
+          : 'Visas när närmaste föregående huvudvärde i samma sekvens inte är tomt.',
+      };
+    }
+    if (part.type === 'sequence') {
+      return {
+        label: 'Sekvens',
+        tone: 'special',
+        title: 'En sammanhållen nästlad sekvens.',
+      };
+    }
     if (part.type === 'dataField') {
       const field = filenameTemplateDataFieldOptions().find((candidate) => candidate.key === part.key) || null;
       return {
@@ -36753,7 +36856,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     if (part.type === 'systemField') {
       const field = filenameTemplateSystemFieldOptions().find((candidate) => candidate.key === part.key) || null;
       return {
-        label: field ? field.label : (part.key || 'Systemdatafält'),
+        label: field && field.valueType === 'date' ? 'Datum' : 'Systemdatafält',
         tone: 'system',
         title: filenameTemplateSystemFieldTitle(part.key, field ? field.label : part.key),
       };
@@ -37216,9 +37319,8 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		) || null;
 
 	return [
-		ownEditable('.filename-template-inline-token-slot--prefix.filename-template-editable'),
 		ownEditable('.filename-template-inline-token-slot--candidates.filename-template-editable'),
-		ownEditable('.filename-template-inline-token-slot--suffix.filename-template-editable'),
+		ownEditable('.filename-template-inline-token-slot--branch.filename-template-editable'),
 	].filter((editable) => editable instanceof HTMLElement);
 	};
 
@@ -37424,14 +37526,6 @@ const isCaretAtEditableBoundary = (editable, direction) => {
     if (!(slot instanceof HTMLElement)) {
       return;
     }
-    if (slot.classList.contains('filename-template-inline-token-slot--prefix')) {
-      liveOwnerPart.prefixParts = editable._filenameTemplateTargetParts;
-      return;
-    }
-    if (slot.classList.contains('filename-template-inline-token-slot--suffix')) {
-      liveOwnerPart.suffixParts = editable._filenameTemplateTargetParts;
-      return;
-    }
     if (slot.classList.contains('filename-template-inline-token-slot--candidates')) {
       liveOwnerPart.parts = editable._filenameTemplateTargetParts;
     }
@@ -37558,6 +37652,39 @@ let activeEditable = null;
     replaceParts(rootSequence._filenameTemplateTargetParts, nextParts, false);
     onChange();
   };
+
+  const sequenceDomEntries = (container) => {
+    if (!(container instanceof HTMLElement)) {
+      return [];
+    }
+    const entries = [];
+    Array.from(container.childNodes).forEach((child) => {
+      if (isRootTextSlot(child)) {
+        const value = readTextValueFromEditable(child);
+        if (value !== '') {
+          entries.push({ part: { type: 'text', value }, token: null });
+        }
+        return;
+      }
+      if (child.nodeType === Node.TEXT_NODE) {
+        const value = editableTextToModelText(child.nodeValue || '');
+        if (value !== '') {
+          entries.push({ part: { type: 'text', value }, token: null });
+        }
+        return;
+      }
+      if (isTokenNode(child)) {
+        const part = readTokenPartState(child);
+        if (part) {
+          entries.push({ part, token: child });
+        }
+      }
+    });
+    return entries;
+  };
+
+  const sequencePartIndexForToken = (container, targetToken) =>
+    sequenceDomEntries(container).findIndex((entry) => entry.token === targetToken);
 
   const rootSlotAdjacentToken = (editable, direction) => {
     if (!isRootTextSlot(editable)) {
@@ -37751,18 +37878,20 @@ let activeEditable = null;
   const renderEditorParts = (editable, targetParts) => {
     editable.replaceChildren();
     targetParts.forEach((part) => {
-      if (part.type === 'text') {
-        editable.appendChild(document.createTextNode(modelTextToEditableText(part.value || '')));
-        return;
+      if (part && part.type === 'text') {
+        editable.appendChild(document.createTextNode(modelTextToEditableText(String(part.value || ''))));
+      } else {
+        editable.appendChild(createTokenNode(part, editable));
       }
-      editable.appendChild(createTokenNode(part, editable));
     });
+    if (targetParts.length === 0) {
+      editable.appendChild(document.createTextNode(''));
+    }
+    queueMicrotask(() => decorateAffixSequence(editable));
   };
 
   const buildSlotEditor = (targetParts, placeholder, slotClassName = '') => {
     const chipsOnly = slotClassName.includes('filename-template-inline-token-slot--candidates');
-    const wrappedEdgeSlot = slotClassName.includes('filename-template-inline-token-slot--prefix')
-      || slotClassName.includes('filename-template-inline-token-slot--suffix');
     targetParts.splice(
       0,
       targetParts.length,
@@ -37779,16 +37908,7 @@ let activeEditable = null;
     slotEditable._filenameTemplateChipsOnly = chipsOnly;
     attachEditableHandlers(slotEditable);
     renderEditorParts(slotEditable, targetParts);
-    if (!wrappedEdgeSlot) {
-      return slotEditable;
-    }
-    const slotWrap = document.createElement('span');
-    const wrapRoleClass = slotClassName.includes('filename-template-inline-token-slot--prefix')
-      ? 'filename-template-inline-token-slot-wrap--prefix'
-      : 'filename-template-inline-token-slot-wrap--suffix';
-    slotWrap.className = `filename-template-inline-token-slot-wrap ${wrapRoleClass}`;
-    slotWrap.appendChild(slotEditable);
-    return slotWrap;
+    return slotEditable;
   };
 
   const buildRootTextSlot = (textValue, rootSequence) => {
@@ -37798,7 +37918,7 @@ let activeEditable = null;
     slotEditable._filenameTemplateChipsOnly = false;
     slotEditable._filenameTemplateRootOwner = rootSequence;
     attachEditableHandlers(slotEditable);
-    renderEditorParts(slotEditable, slotEditable._filenameTemplateTargetParts);
+    slotEditable.appendChild(document.createTextNode(modelTextToEditableText(String(textValue || ''))));
     return slotEditable;
   };
 
@@ -37807,6 +37927,8 @@ let activeEditable = null;
     const token = document.createElement('span');
     token.className = 'filename-template-dom-token';
     token.setAttribute('contenteditable', 'false');
+    token.tabIndex = 0;
+    token.draggable = true;
     writeTokenPartState(token, normalizedPart);
     const tokenPart = sanitizeFilenameTemplatePart(token._filenameTemplatePart) || normalizedPart;
     writeTokenPartState(token, tokenPart);
@@ -37817,7 +37939,6 @@ let activeEditable = null;
 
     const shell = document.createElement('span');
     shell.className = 'filename-template-inline-token-shell';
-    shell.appendChild(buildSlotEditor(tokenPart.prefixParts, '', 'filename-template-inline-token-slot--prefix'));
 
     const center = document.createElement('span');
     center.className = `filename-template-inline-token-center filename-template-inline-token-center--${meta.tone || 'data'}`;
@@ -37848,17 +37969,41 @@ let activeEditable = null;
       }
     };
 
-    if (tokenPart.type === 'dataField') {
+    if (tokenPart.type === 'text' || tokenPart.type === 'prefix' || tokenPart.type === 'suffix') {
+      center.appendChild(label);
+      if ((tokenPart.type === 'prefix' || tokenPart.type === 'suffix') && Array.isArray(tokenPart.parts)) {
+        center.classList.add('filename-template-inline-token-center--stacked');
+        center.appendChild(buildSlotEditor(
+          tokenPart.parts,
+          '',
+          'filename-template-inline-token-slot--branch'
+        ));
+      } else {
+        const valueInput = document.createElement('input');
+        valueInput.type = 'text';
+        valueInput.className = 'filename-template-inline-token-input filename-template-inline-token-input--value';
+        valueInput.value = typeof tokenPart.value === 'string' ? tokenPart.value : '';
+        valueInput.setAttribute('aria-label', meta.label);
+        valueInput.title = meta.title;
+        valueInput.addEventListener('input', () => {
+          tokenPart.value = valueInput.value;
+          syncPartControlChange();
+        });
+        center.appendChild(valueInput);
+      }
+    } else if (tokenPart.type === 'dataField' || tokenPart.type === 'systemField') {
       center.appendChild(label);
       const select = document.createElement('select');
       select.className = 'filename-template-inline-token-select';
-      const options = filenameTemplateDataFieldOptions();
+      const options = tokenPart.type === 'systemField'
+        ? filenameTemplateSystemFieldOptions()
+        : filenameTemplateDataFieldOptions();
       let dateFormatField = null;
       let dateFormatSelect = null;
       if (options.length === 0) {
         const option = document.createElement('option');
         option.value = '';
-        option.textContent = 'Inga datafält';
+        option.textContent = tokenPart.type === 'systemField' ? 'Inga systemdatafält' : 'Inga datafält';
         select.appendChild(option);
         select.disabled = true;
       } else {
@@ -37895,6 +38040,7 @@ let activeEditable = null;
         syncPartControlChange();
       });
       center.appendChild(select);
+      bindFilenameTemplateSelectWidth(select);
       dateFormatSelect = document.createElement('select');
       dateFormatSelect.className = 'filename-template-inline-token-select';
       filenameTemplateDateFormatOptions().forEach((formatOption) => {
@@ -37911,6 +38057,7 @@ let activeEditable = null;
       });
       dateFormatField = createFloatingField('Datumformat', dateFormatSelect, 'filename-template-inline-token-floating-field');
       center.appendChild(dateFormatField);
+      bindFilenameTemplateSelectWidth(dateFormatSelect);
       syncDateFormatControl();
     } else if (tokenPart.type === 'labels') {
       center.appendChild(label);
@@ -37951,6 +38098,7 @@ let activeEditable = null;
         tokenPart.mode = sanitizeIfLabelsMode(modeSelect.value);
         syncPartControlChange();
       });
+      bindFilenameTemplateSelectWidth(modeSelect);
       headerRow.appendChild(createFloatingField('Matcha', modeSelect, 'filename-template-inline-token-floating-field filename-template-inline-token-floating-field--header'));
       center.appendChild(headerRow);
 
@@ -37988,47 +38136,165 @@ let activeEditable = null;
         'Kandidater',
         'filename-template-inline-token-slot--candidates'
       ));
+    } else if (tokenPart.type === 'sequence') {
+      center.appendChild(label);
+      center.appendChild(buildSlotEditor(
+        tokenPart.parts,
+        '',
+        'filename-template-inline-token-slot--branch'
+      ));
     } else {
       center.appendChild(label);
     }
 
     shell.appendChild(center);
 
-    shell.appendChild(buildSlotEditor(tokenPart.suffixParts, '', 'filename-template-inline-token-slot--suffix'));
     token.appendChild(shell);
+    const mutateOwnerSequence = (mutator) => {
+      const sequenceOwner = token.parentElement;
+      if (!(sequenceOwner instanceof HTMLElement) || !Array.isArray(sequenceOwner._filenameTemplateTargetParts)) {
+        return;
+      }
+      const nextParts = sequenceOwner.classList.contains('is-root')
+        ? buildRootSequencePartsFromDom(sequenceOwner)
+        : sequenceDomEntries(sequenceOwner).map((entry) => entry.part);
+      const ownPartIndex = sequencePartIndexForToken(sequenceOwner, token);
+      mutator(nextParts, ownPartIndex);
+      replaceParts(sequenceOwner._filenameTemplateTargetParts, nextParts, sequenceOwner._filenameTemplateChipsOnly === true);
+      if (sequenceOwner.classList.contains('is-root')) {
+        renderRootSequence(sequenceOwner, sequenceOwner._filenameTemplateTargetParts);
+      } else {
+        renderEditorParts(sequenceOwner, sequenceOwner._filenameTemplateTargetParts);
+      }
+      onChange();
+    };
+    token.addEventListener('focus', () => {
+      token.classList.add('is-active');
+      sharedContext.insertPart = (insertedPart) => mutateOwnerSequence((nextParts, ownPartIndex) => {
+        nextParts.splice(Math.max(0, ownPartIndex + 1), 0, createPartObject(insertedPart));
+      });
+    });
+    token.addEventListener('blur', () => token.classList.remove('is-active'));
+    token.addEventListener('keydown', (event) => {
+      if (event.target !== token) {
+        return;
+      }
+      const siblings = Array.from(token.parentElement?.children || []).filter((child) => isTokenNode(child));
+      const index = siblings.indexOf(token);
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        const next = siblings[index + (event.key === 'ArrowLeft' ? -1 : 1)] || null;
+        if (next instanceof HTMLElement) {
+          event.preventDefault();
+          next.focus();
+        }
+      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        mutateOwnerSequence((nextParts, ownPartIndex) => nextParts.splice(ownPartIndex, 1));
+      }
+    });
+    token.addEventListener('dragstart', (event) => {
+      const siblings = Array.from(token.parentElement?.children || []).filter((child) => isTokenNode(child));
+      event.dataTransfer?.setData('text/x-filename-template-index', String(siblings.indexOf(token)));
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+    });
+    token.addEventListener('dragover', (event) => event.preventDefault());
+    token.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const from = Number.parseInt(event.dataTransfer?.getData('text/x-filename-template-index') || '', 10);
+      const siblings = Array.from(token.parentElement?.children || []).filter((child) => isTokenNode(child));
+      const to = siblings.indexOf(token);
+      if (!Number.isInteger(from) || from < 0 || to < 0 || from === to) {
+        return;
+      }
+      const sequenceOwner = token.parentElement;
+      const fromToken = siblings[from] || null;
+      const fromPartIndex = sequencePartIndexForToken(sequenceOwner, fromToken);
+      const toPartIndex = sequencePartIndexForToken(sequenceOwner, token);
+      mutateOwnerSequence((nextParts) => {
+        if (fromPartIndex < 0 || toPartIndex < 0) {
+          return;
+        }
+        const [moved] = nextParts.splice(fromPartIndex, 1);
+        nextParts.splice(Math.min(toPartIndex, nextParts.length), 0, moved);
+      });
+    });
     return token;
+  };
+
+  const decorateAffixSequence = (container) => {
+    if (!(container instanceof HTMLElement)) {
+      return;
+    }
+    const entries = sequenceDomEntries(container);
+    const tokens = entries.map((entry) => entry.token).filter((token) => token instanceof HTMLElement);
+    const linkedEdges = Array(Math.max(0, tokens.length - 1)).fill(false);
+    tokens.forEach((token) => {
+      token.classList.remove('is-affix-invalid', 'is-affix-linked', 'is-affix-group-start', 'is-affix-group-end');
+    });
+    entries.forEach((entry, index) => {
+      const token = entry.token;
+      const type = entry.part?.type;
+      if (!(token instanceof HTMLElement)) {
+        return;
+      }
+      if (type !== 'prefix' && type !== 'suffix') {
+        return;
+      }
+      const direction = type === 'prefix' ? 1 : -1;
+      let targetIndex = index + direction;
+      while (targetIndex >= 0 && targetIndex < entries.length
+        && (entries[targetIndex].part?.type === 'prefix' || entries[targetIndex].part?.type === 'suffix')) {
+        targetIndex += direction;
+      }
+      if (targetIndex < 0 || targetIndex >= entries.length) {
+        token.classList.add('is-affix-invalid');
+        token.title = type === 'prefix'
+          ? 'Prefixet saknar ett efterföljande värde.'
+          : 'Suffixet saknar ett föregående värde.';
+        return;
+      }
+      const targetToken = entries[targetIndex].token;
+      if (!(targetToken instanceof HTMLElement)) {
+        return;
+      }
+      const tokenIndex = tokens.indexOf(token);
+      const targetTokenIndex = tokens.indexOf(targetToken);
+      const from = Math.min(tokenIndex, targetTokenIndex);
+      const to = Math.max(tokenIndex, targetTokenIndex);
+      for (let edgeIndex = from; edgeIndex < to; edgeIndex += 1) {
+        linkedEdges[edgeIndex] = true;
+      }
+    });
+    tokens.forEach((token, index) => {
+      const linkedBefore = index > 0 && linkedEdges[index - 1] === true;
+      const linkedAfter = index < linkedEdges.length && linkedEdges[index] === true;
+      if (!linkedBefore && !linkedAfter) {
+        return;
+      }
+      token.classList.add('is-affix-linked');
+      if (!linkedBefore) token.classList.add('is-affix-group-start');
+      if (!linkedAfter) token.classList.add('is-affix-group-end');
+    });
   };
 
   const renderRootSequence = (rootSequence, targetParts) => {
     if (!(rootSequence instanceof HTMLElement)) {
       return;
     }
-    const normalizedParts = normalizeEditableFilenameTemplateParts(collapseTextParts(targetParts));
-    const entries = [{ type: 'text', value: '' }];
-    normalizedParts.forEach((part) => {
-      if (!part || typeof part !== 'object') {
-        return;
-      }
-      if (part.type === 'text') {
-        entries[entries.length - 1].value = String(entries[entries.length - 1].value || '') + String(part.value || '');
-        return;
-      }
-      const normalized = sanitizeFilenameTemplatePart(part);
-      if (!normalized || normalized.type === 'text') {
-        return;
-      }
-      entries.push(normalized);
-      entries.push({ type: 'text', value: '' });
-    });
-
+    const normalizedParts = sanitizeFilenameTemplateParts(collapseTextParts(targetParts));
     rootSequence.replaceChildren();
-    entries.forEach((entry) => {
-      if (entry.type === 'text') {
-        rootSequence.appendChild(buildRootTextSlot(entry.value || '', rootSequence));
+    let pendingText = '';
+    normalizedParts.forEach((part) => {
+      if (part.type === 'text') {
+        pendingText += String(part.value || '');
         return;
       }
-      rootSequence.appendChild(createTokenNode(entry, rootSequence));
+      rootSequence.appendChild(buildRootTextSlot(pendingText, rootSequence));
+      rootSequence.appendChild(createTokenNode(part, rootSequence));
+      pendingText = '';
     });
+    rootSequence.appendChild(buildRootTextSlot(pendingText, rootSequence));
+    decorateAffixSequence(rootSequence);
   };
 
   const buildInsertedPartsFromEditable = (editable, part) => {
