@@ -265,5 +265,19 @@ assert_filename_v2(
 );
 assert_filename_v2(is_string($css) && str_contains($css, 'flex-wrap: nowrap') && str_contains($css, 'margin: 8px 0 10px;'), 'Rotsekvensen ska ligga på en rad och linjera utan gammalt vänsterindrag.');
 assert_filename_v2(is_string($css) && str_contains($css, '.filename-template-dom-token.is-affix-invalid'), 'Ogiltiga affix ska ha en visuell varningsstatus.');
+assert_filename_v2(
+    is_string($css)
+    && preg_match('/\.filename-template-root-slot\.is-slot\s*\{[^}]*min-width:\s*8px;/s', $css) === 1
+    && str_contains(
+        $css,
+        '.filename-template-dom-token.is-affix-linked:not(.is-affix-group-end) + .filename-template-root-slot'
+    ),
+    'Separata chip ska ha luft emellan medan tomrummet endast kollapsar inne i en prefix-/suffixgrupp.'
+);
+assert_filename_v2(
+    is_string($css)
+    && preg_match('/\.filename-template-inline-token-center\s*\{[^}]*margin:\s*-1px 0;/s', $css) === 1,
+    'Chipets synliga mittdel får inte sträcka sig utanför den horisontella plats som reserveras i textflödet.'
+);
 
 fwrite(STDOUT, "filename template v2 tests passed\n");

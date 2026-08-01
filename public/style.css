@@ -8907,7 +8907,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 
 .filename-template-root-slot.is-slot {
   display: inline-block;
-  min-width: 4px;
+  min-width: 8px;
   min-height: 1.7em;
   padding: 0;
   line-height: 1.7;
@@ -9085,7 +9085,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   align-self: stretch;
   gap: 4px;
   min-height: var(--filename-template-chip-inner-height);
-  margin: -1px -2px;
+  margin: -1px 0;
   padding: 0 10px;
   border-radius: var(--filename-template-chip-corner-radius);
   box-shadow: inset 1px 0 0 rgba(148, 163, 184, .45), inset -1px 0 0 rgba(148, 163, 184, .45);
@@ -9162,7 +9162,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   border-bottom-right-radius: 0;
 }
 
-.filename-template-dom-token.is-affix-linked + .filename-template-root-slot,
+.filename-template-dom-token.is-affix-linked:not(.is-affix-group-end) + .filename-template-root-slot,
 .filename-template-root-slot:has(+ .filename-template-dom-token.is-affix-linked:not(.is-affix-group-start)) {
   width: 0;
   min-width: 0;
