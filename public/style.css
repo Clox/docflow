@@ -8907,11 +8907,17 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 
 .filename-template-root-slot.is-slot {
   display: inline-block;
+  position: relative;
   min-width: 8px;
   min-height: 1.7em;
   padding: 0;
   line-height: 1.7;
   vertical-align: middle;
+}
+
+.filename-template-root-slot.is-slot.is-active {
+  z-index: 10;
+  caret-color: currentColor;
 }
 
 

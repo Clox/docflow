@@ -291,5 +291,14 @@ assert_filename_v2(
     && str_contains($app, "event.stopPropagation();"),
     'Piltangenter ska gå in i redigerbara chipytor och hoppa över chip utan redigerbar kontroll.'
 );
+assert_filename_v2(
+    is_string($css)
+    && preg_match(
+        '/\.filename-template-root-slot\.is-slot\.is-active\s*\{[^}]*z-index:\s*10;[^}]*caret-color:\s*currentColor;/s',
+        $css
+    ) === 1
+    && !str_contains($css, 'filename-template-visible-caret'),
+    'Den fokuserade textpositionen ska lägga webbläsarens egen caret ovanpå chippen utan en separat ritad caret.'
+);
 
 fwrite(STDOUT, "filename template v2 tests passed\n");
