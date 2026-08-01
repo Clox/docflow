@@ -9091,21 +9091,26 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 /* Version 2: every value and affix is its own compact, vertically labelled node. */
-.filename-template-inline-token-center:not(.filename-template-inline-token-center--stacked) {
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
+.filename-template-inline-token-center:not(.filename-template-inline-token-center--stacked),
+.filename-template-inline-token-center--date {
   gap: 1px;
   padding: 4px 8px 5px;
   border-radius: 10px;
 }
 
-.filename-template-inline-token-center:not(.filename-template-inline-token-center--stacked) > .filename-template-inline-token {
-  min-height: 13px;
+.filename-template-inline-token-center:not(.filename-template-inline-token-center--stacked) {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.filename-template-inline-token-center > .filename-template-inline-token,
+.filename-template-inline-token-header-row > .filename-template-inline-token {
+  min-height: 16px;
   justify-content: flex-start;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.1;
-  color: #64748b;
+  color: #0f172a;
 }
 
 .filename-template-inline-token-center--affix {
@@ -9171,6 +9176,17 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   padding-top: 4px;
   padding-bottom: 6px;
   border-radius: 18px;
+}
+
+.filename-template-inline-token-center--stacked.filename-template-inline-token-center--date {
+  gap: 1px;
+  min-width: 0;
+  padding-bottom: 5px;
+  border-radius: 10px;
+}
+
+.filename-template-inline-token-center--date > .filename-template-inline-token-floating-field {
+  margin-top: 3px;
 }
 
 .filename-template-inline-token-center--system {

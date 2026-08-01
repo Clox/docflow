@@ -193,6 +193,14 @@ $app = file_get_contents(__DIR__ . '/../public/app.js');
 $css = file_get_contents(__DIR__ . '/../public/style.css');
 assert_filename_v2(is_string($app) && str_contains($app, "type: 'prefix'") && str_contains($app, "type: 'suffix'"), 'UI ska kunna lägga till separata affixchip.');
 assert_filename_v2(is_string($app) && str_contains($app, 'syncFilenameTemplateSelectWidth'), 'Chipselecter ska använda gemensam dynamisk breddmätning.');
+assert_filename_v2(
+    is_string($app)
+    && str_contains($app, 'option.textContent = formatOption.label;')
+    && str_contains($app, "dateFormatSelect.setAttribute('aria-label', 'Datumformat');")
+    && is_string($css)
+    && str_contains($css, '.filename-template-inline-token-center--stacked.filename-template-inline-token-center--date'),
+    'Datumchip ska visa korta formatnamn och inte ärva sammansatta chips fasta minimibredd.'
+);
 $insertOptionsStart = is_string($app) ? strpos($app, 'function filenameTemplateInsertOptions()') : false;
 $insertOptionsEnd = $insertOptionsStart !== false ? strpos($app, 'function createFilenameTemplateLabelPicker', $insertOptionsStart) : false;
 $insertOptionsSource = $insertOptionsStart !== false && $insertOptionsEnd !== false
@@ -202,8 +210,9 @@ assert_filename_v2(!str_contains($insertOptionsSource, "type: 'text'"), 'Fast te
 assert_filename_v2(
     is_string($app)
     && str_contains($app, "new Set(['sender_name_in_document', 'sender_mark_in_document'])")
-    && str_contains($app, '(inte valbart)'),
-    'Interna avsändarträffar ska inte kunna väljas som nya filnamnschip, men äldre referenser ska visas utan att skrivas om.'
+    && str_contains($app, 'function filenameTemplateSystemFieldDefinition(fieldKey)')
+    && str_contains($app, "} else if (tokenPart.type === 'systemField')"),
+    'Systemdatafält ska vara fasta chip per fält, samtidigt som interna avsändarträffar inte erbjuds som nya chip.'
 );
 assert_filename_v2(
     is_string($app)

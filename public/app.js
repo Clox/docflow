@@ -29375,6 +29375,30 @@ function filenameTemplateSystemFieldOptions() {
   return options;
 }
 
+function filenameTemplateSystemFieldDefinition(fieldKey) {
+  const key = typeof fieldKey === 'string' ? fieldKey.trim() : '';
+  const available = filenameTemplateSystemFieldOptions().find((field) => field.key === key) || null;
+  if (available) {
+    return available;
+  }
+  const stored = sanitizeExtractionFields(systemExtractionFieldsDraft)
+    .find((field) => String(field.key || '').trim() === key) || null;
+  if (!stored) {
+    return key ? { key, label: key, valueType: '', tone: 'system', title: filenameTemplateSystemFieldTitle(key, key) } : null;
+  }
+  return {
+    key,
+    label: stored.name || key,
+    valueType: sanitizeExtractionFieldValueType(
+      stored.valueType,
+      stored,
+      Array.isArray(stored.ruleSets) ? stored.ruleSets[0] : null
+    ),
+    tone: 'system',
+    title: filenameTemplateSystemFieldTitle(key, stored.name || key),
+  };
+}
+
 function filenameTemplateDataFieldOptions() {
   const options = [];
   const seenKeys = new Set();
@@ -36855,9 +36879,9 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
       };
     }
     if (part.type === 'systemField') {
-      const field = filenameTemplateSystemFieldOptions().find((candidate) => candidate.key === part.key) || null;
+      const field = filenameTemplateSystemFieldDefinition(part.key);
       return {
-        label: field && field.valueType === 'date' ? 'Datum' : 'Systemdatafält',
+        label: field?.label || part.key || 'Systemdatafält',
         tone: 'system',
         title: filenameTemplateSystemFieldTitle(part.key, field ? field.label : part.key),
       };
@@ -37992,36 +38016,48 @@ let activeEditable = null;
         });
         center.appendChild(valueInput);
       }
-    } else if (tokenPart.type === 'dataField' || tokenPart.type === 'systemField') {
+    } else if (tokenPart.type === 'systemField') {
+      center.appendChild(label);
+      const field = filenameTemplateSystemFieldDefinition(tokenPart.key);
+      const isDateField = field?.valueType === 'date';
+      if (isDateField) {
+        center.classList.add('filename-template-inline-token-center--stacked', 'filename-template-inline-token-center--date');
+        const dateFormatSelect = document.createElement('select');
+        dateFormatSelect.className = 'filename-template-inline-token-select';
+        filenameTemplateDateFormatOptions().forEach((formatOption) => {
+          const option = document.createElement('option');
+          option.value = formatOption.value;
+          option.textContent = formatOption.label;
+          option.title = formatOption.example;
+          dateFormatSelect.appendChild(option);
+        });
+        tokenPart.dateFormat = sanitizeFilenameTemplateDateFormat(tokenPart.dateFormat);
+        dateFormatSelect.value = tokenPart.dateFormat;
+        dateFormatSelect.setAttribute('aria-label', 'Datumformat');
+        dateFormatSelect.title = 'Välj hur datumvärdet ska formatteras i filnamn eller sökväg.';
+        dateFormatSelect.addEventListener('change', () => {
+          tokenPart.dateFormat = sanitizeFilenameTemplateDateFormat(dateFormatSelect.value);
+          syncPartControlChange();
+        });
+        center.appendChild(dateFormatSelect);
+        bindFilenameTemplateSelectWidth(dateFormatSelect);
+      } else {
+        delete tokenPart.dateFormat;
+      }
+    } else if (tokenPart.type === 'dataField') {
       center.appendChild(label);
       const select = document.createElement('select');
       select.className = 'filename-template-inline-token-select';
-      const options = tokenPart.type === 'systemField'
-        ? filenameTemplateSystemFieldOptions()
-        : filenameTemplateDataFieldOptions();
-      const unavailableSystemField = tokenPart.type === 'systemField'
-        && typeof tokenPart.key === 'string'
-        && tokenPart.key.trim() !== ''
-        && !options.some((option) => option.key === tokenPart.key)
-          ? sanitizeExtractionFields(systemExtractionFieldsDraft)
-            .find((field) => String(field.key || '').trim() === tokenPart.key) || null
-          : null;
+      const options = filenameTemplateDataFieldOptions();
       let dateFormatField = null;
       let dateFormatSelect = null;
       if (options.length === 0) {
         const option = document.createElement('option');
         option.value = '';
-        option.textContent = tokenPart.type === 'systemField' ? 'Inga systemdatafält' : 'Inga datafält';
+        option.textContent = 'Inga datafält';
         select.appendChild(option);
         select.disabled = true;
       } else {
-        if (unavailableSystemField) {
-          const unavailableOption = document.createElement('option');
-          unavailableOption.value = tokenPart.key;
-          unavailableOption.textContent = `${unavailableSystemField.name || tokenPart.key} (inte valbart)`;
-          unavailableOption.disabled = true;
-          select.appendChild(unavailableOption);
-        }
         options.forEach((optionData) => {
           const option = document.createElement('option');
           option.value = optionData.key;
@@ -38029,7 +38065,7 @@ let activeEditable = null;
           select.appendChild(option);
         });
         const fallbackKey = options[0]?.key || '';
-        select.value = unavailableSystemField || options.some((option) => option.key === tokenPart.key)
+        select.value = options.some((option) => option.key === tokenPart.key)
           ? tokenPart.key
           : fallbackKey;
         tokenPart.key = select.value;
@@ -38039,6 +38075,7 @@ let activeEditable = null;
         const selectedOption = options.find((option) => option.key === tokenPart.key) || null;
         const isDateField = selectedOption && selectedOption.valueType === 'date';
         center.classList.toggle('filename-template-inline-token-center--stacked', !!isDateField);
+        center.classList.toggle('filename-template-inline-token-center--date', !!isDateField);
         if (dateFormatField instanceof HTMLElement) {
           dateFormatField.hidden = !isDateField;
         }
@@ -38061,7 +38098,8 @@ let activeEditable = null;
       filenameTemplateDateFormatOptions().forEach((formatOption) => {
         const option = document.createElement('option');
         option.value = formatOption.value;
-        option.textContent = `${formatOption.label} (${formatOption.example})`;
+        option.textContent = formatOption.label;
+        option.title = formatOption.example;
         dateFormatSelect.appendChild(option);
       });
       dateFormatSelect.value = sanitizeFilenameTemplateDateFormat(tokenPart.dateFormat);
