@@ -29336,13 +29336,14 @@ function filenameTemplateSystemFieldTitle(fieldKey, fieldName) {
 }
 
 function filenameTemplateSystemFieldOptions() {
+  const excludedKeys = new Set(['sender_name_in_document', 'sender_mark_in_document']);
   const seenKeys = new Set();
   const options = sanitizeExtractionFields(systemExtractionFieldsDraft)
     .map((field, index) => sanitizeExtractionField(field, index))
     .filter((field) => {
       const key = typeof field.key === 'string' ? field.key.trim() : '';
       const name = typeof field.name === 'string' ? field.name.trim() : '';
-      if (!key || !name || seenKeys.has(key)) {
+      if (!key || !name || seenKeys.has(key) || excludedKeys.has(key)) {
         return false;
       }
       seenKeys.add(key);
@@ -37998,6 +37999,13 @@ let activeEditable = null;
       const options = tokenPart.type === 'systemField'
         ? filenameTemplateSystemFieldOptions()
         : filenameTemplateDataFieldOptions();
+      const unavailableSystemField = tokenPart.type === 'systemField'
+        && typeof tokenPart.key === 'string'
+        && tokenPart.key.trim() !== ''
+        && !options.some((option) => option.key === tokenPart.key)
+          ? sanitizeExtractionFields(systemExtractionFieldsDraft)
+            .find((field) => String(field.key || '').trim() === tokenPart.key) || null
+          : null;
       let dateFormatField = null;
       let dateFormatSelect = null;
       if (options.length === 0) {
@@ -38007,6 +38015,13 @@ let activeEditable = null;
         select.appendChild(option);
         select.disabled = true;
       } else {
+        if (unavailableSystemField) {
+          const unavailableOption = document.createElement('option');
+          unavailableOption.value = tokenPart.key;
+          unavailableOption.textContent = `${unavailableSystemField.name || tokenPart.key} (inte valbart)`;
+          unavailableOption.disabled = true;
+          select.appendChild(unavailableOption);
+        }
         options.forEach((optionData) => {
           const option = document.createElement('option');
           option.value = optionData.key;
@@ -38014,7 +38029,7 @@ let activeEditable = null;
           select.appendChild(option);
         });
         const fallbackKey = options[0]?.key || '';
-        select.value = options.some((option) => option.key === tokenPart.key)
+        select.value = unavailableSystemField || options.some((option) => option.key === tokenPart.key)
           ? tokenPart.key
           : fallbackKey;
         tokenPart.key = select.value;

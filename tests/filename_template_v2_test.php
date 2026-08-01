@@ -201,6 +201,12 @@ $insertOptionsSource = $insertOptionsStart !== false && $insertOptionsEnd !== fa
 assert_filename_v2(!str_contains($insertOptionsSource, "type: 'text'"), 'Fast text ska skrivas direkt och får inte erbjudas som chiptyp.');
 assert_filename_v2(
     is_string($app)
+    && str_contains($app, "new Set(['sender_name_in_document', 'sender_mark_in_document'])")
+    && str_contains($app, '(inte valbart)'),
+    'Interna avsändarträffar ska inte kunna väljas som nya filnamnschip, men äldre referenser ska visas utan att skrivas om.'
+);
+assert_filename_v2(
+    is_string($app)
     && str_contains($app, "if (part && part.type === 'text')")
     && str_contains($app, 'buildRootTextSlot(pendingText, rootSequence)'),
     'Sparade textdelar ska återladdas som direkt redigerbar text, inte som chip.'
