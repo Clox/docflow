@@ -136,6 +136,7 @@ const selectedJobActionsWarningReprocessEl = document.getElementById('selected-j
 const settingsPanelTemplateIds = {
   clients: 'settings-template-clients',
   senders: 'settings-template-senders',
+  accounts: 'settings-template-accounts',
   matching: 'settings-template-matching',
   'ocr-processing': 'settings-template-ocr-processing',
   'archive-structure': 'settings-template-archive-structure',
@@ -223,6 +224,14 @@ let sendersViewSendersEl = null;
 let sendersViewUnlinkedEl = null;
 let sendersTabSendersEl = null;
 let sendersTabUnlinkedEl = null;
+let accountsListEl = null;
+let accountsStatusEl = null;
+let accountLinkOverlayEl = null;
+let accountLinkDescriptionEl = null;
+let accountLinkSuggestionEl = null;
+let accountLinkPrincipalEl = null;
+let accountLinkCancelEl = null;
+let accountLinkApplyEl = null;
 let sendersUnlinkedFooterActionsEl = null;
 let sendersUnlinkedLinkButtonEl = null;
 let sendersUnlinkedLinkMenuEl = null;
@@ -660,6 +669,9 @@ let activeLabelsTabId = 'labels';
 let clientsDraft = [];
 let clientsBaselineJson = '[]';
 let clientDraftUiKeySeq = 1;
+let bankAccounts = [];
+let bankAccountPrincipals = [];
+let accountLinkDraftAccountId = null;
 let sendersBaselineJson = '[]';
 let sendersSortOrder = 'name';
 let senderDraftUiKeySeq = 1;
@@ -22777,6 +22789,23 @@ function bindSettingsPanelRefs(tabId) {
         endAnalysisAffectingSettingsSave('clients');
       }
     });
+  } else if (tabId === 'accounts') {
+    accountsListEl = document.getElementById('accounts-list');
+    accountsStatusEl = document.getElementById('accounts-status');
+    accountLinkOverlayEl = document.getElementById('account-link-overlay');
+    accountLinkDescriptionEl = document.getElementById('account-link-description');
+    accountLinkSuggestionEl = document.getElementById('account-link-suggestion');
+    accountLinkPrincipalEl = document.getElementById('account-link-principal');
+    accountLinkCancelEl = document.getElementById('account-link-cancel');
+    accountLinkApplyEl = document.getElementById('account-link-apply');
+
+    accountLinkCancelEl?.addEventListener('click', closeAccountLinkDialog);
+    accountLinkApplyEl?.addEventListener('click', applyAccountPrincipalLink);
+    accountLinkOverlayEl?.addEventListener('click', (event) => {
+      if (event.target === accountLinkOverlayEl) {
+        closeAccountLinkDialog();
+      }
+    });
   } else if (tabId === 'senders') {
     sendersListEl = document.getElementById('senders-list');
     sendersUnlinkedListEl = document.getElementById('senders-unlinked-list');
@@ -23757,6 +23786,8 @@ async function ensureSettingsPanelReady(tabId, options = {}) {
   const loadPromise = (async () => {
     if (tabId === 'clients') {
       await loadClientsSettings();
+    } else if (tabId === 'accounts') {
+      await loadBankAccountsSettings();
     } else if (tabId === 'senders') {
       await loadSendersSettings();
     } else if (tabId === 'matching') {
@@ -23989,6 +24020,7 @@ function closeSettingsModal(force = false) {
   activeSettingsFooterPanelId = '';
   activeSettingsSectionFooterPanelId = '';
   closeSenderMergeOverlay();
+  closeAccountLinkDialog();
   stopRapidocrInstallPolling();
   stopSpyllsInstallPolling();
   pendingUnlinkedSenderIdentifierKey = '';
@@ -24003,6 +24035,9 @@ function setSettingsTab(tabId) {
   }
   if (tabId !== 'senders') {
     closeSenderMergeOverlay();
+  }
+  if (tabId !== 'accounts') {
+    closeAccountLinkDialog();
   }
   if (tabId !== 'labels') {
     closeLabelsAddMenu();
@@ -24022,7 +24057,7 @@ function setSettingsTab(tabId) {
     tabButton.classList.toggle('active', isActive);
   });
 
-  const panelIds = ['clients', 'senders', 'matching', 'ocr-processing', 'archive-structure', 'labels', 'value-patterns', 'data-fields', 'zones', 'archiving-review', 'paths', 'system', 'extensions', 'backup'];
+  const panelIds = ['clients', 'senders', 'accounts', 'matching', 'ocr-processing', 'archive-structure', 'labels', 'value-patterns', 'data-fields', 'zones', 'archiving-review', 'paths', 'system', 'extensions', 'backup'];
   panelIds.forEach((id) => {
     const panel = document.getElementById('settings-panel-' + id);
     if (!panel) {
@@ -24643,6 +24678,10 @@ async function saveChromeExtensionSuppressMissingSetting(nextValue) {
 }
 
 function clientUiKey(row) {
+  const stableId = Number.parseInt(String(row && row.id ? row.id : ''), 10);
+  if (Number.isInteger(stableId) && stableId > 0) {
+    return `client-${stableId}`;
+  }
   if (row && typeof row.uiKey === 'string' && row.uiKey.trim() !== '') {
     return row.uiKey.trim();
   }
@@ -24703,6 +24742,7 @@ function sanitizeClientDraft(row) {
   );
 
   return {
+    id: Number.isInteger(Number(input.id)) && Number(input.id) > 0 ? Number(input.id) : null,
     uiKey,
     firstName,
     lastName,
@@ -24715,6 +24755,7 @@ function sanitizeClientDraft(row) {
 function serializeClientDraft(row) {
   const client = sanitizeClientDraft(row);
   return {
+    ...(Number.isInteger(client.id) && client.id > 0 ? { id: client.id } : {}),
     firstName: client.firstName.trim(),
     lastName: client.lastName.trim(),
     folderName: client.folderName.trim(),
@@ -30789,7 +30830,7 @@ function renderClientsEditor() {
       fields.appendChild(createFloatingField('Förnamn', firstNameInput));
       fields.appendChild(createFloatingField('Tilltalsnamn', preferredFirstNameSelect));
       fields.appendChild(createFloatingField('Efternamn', lastNameInput));
-      fields.appendChild(createFloatingField('Personnummer', pinInput));
+      fields.appendChild(createFloatingField('Personnummer (valfritt)', pinInput));
 
       clientActions.appendChild(removeButton);
       clientBody.appendChild(clientActions);
@@ -30833,6 +30874,240 @@ function focusClientDraftRow(clientUiKeyValue) {
     }
     clientNode.scrollIntoView({ block: 'nearest' });
   });
+}
+
+function bankAccountPrincipalName(principalId) {
+  const id = Number(principalId);
+  const principal = bankAccountPrincipals.find((row) => Number(row?.id) === id);
+  return principal && typeof principal.name === 'string' ? principal.name : '';
+}
+
+function bankAccountDisplayDate(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return 'Saknas';
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('sv-SE');
+}
+
+function bankAccountBankName(value) {
+  const bankKey = typeof value === 'string' ? value.trim().toLocaleLowerCase('sv-SE') : '';
+  const knownNames = {
+    handelsbanken: 'Handelsbanken',
+    swedbank: 'Swedbank',
+    nordea: 'Nordea',
+    seb: 'SEB',
+  };
+  if (knownNames[bankKey]) {
+    return knownNames[bankKey];
+  }
+  return bankKey === '' ? 'Okänd bank' : bankKey.charAt(0).toLocaleUpperCase('sv-SE') + bankKey.slice(1);
+}
+
+function bankAccountStatusText(account) {
+  if (account?.isClosed === true) {
+    return 'Stängt';
+  }
+  return account?.isActive === false ? 'Inaktivt' : 'Aktivt';
+}
+
+function bankAccountPaymentText(value) {
+  if (value === true) {
+    return 'Ja';
+  }
+  if (value === false) {
+    return 'Nej';
+  }
+  return 'Okänt';
+}
+
+function appendBankAccountCell(rowEl, text, className = '') {
+  const cell = document.createElement('td');
+  if (className !== '') {
+    cell.className = className;
+  }
+  cell.textContent = text;
+  rowEl.appendChild(cell);
+  return cell;
+}
+
+function renderBankAccountsEditor() {
+  if (!(accountsListEl instanceof HTMLElement)) {
+    return;
+  }
+  accountsListEl.replaceChildren();
+  if (bankAccounts.length === 0) {
+    const row = document.createElement('tr');
+    const cell = appendBankAccountCell(row, 'Inga bankkonton har lästs in ännu.', 'accounts-empty');
+    cell.colSpan = 11;
+    accountsListEl.appendChild(row);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  bankAccounts.forEach((account) => {
+    const row = document.createElement('tr');
+    row.dataset.bankAccountId = String(account.id || '');
+    appendBankAccountCell(row, bankAccountBankName(account.bankKey));
+    appendBankAccountCell(row, account.accountName || account.accountType || 'Namnlöst konto');
+    appendBankAccountCell(row, account.maskedAccountNumber || '••••', 'accounts-masked-value');
+    appendBankAccountCell(row, account.accountHolderName || 'Saknas');
+    appendBankAccountCell(row, account.maskedAccountHolderPersonalIdentityNumber || 'Saknas', 'accounts-masked-value');
+
+    const principalCell = appendBankAccountCell(row, account.principal?.name || 'Ej kopplat');
+    if (!account.principal && Number.isInteger(Number(account.suggestedPrincipalId))) {
+      const suggestionName = bankAccountPrincipalName(account.suggestedPrincipalId);
+      if (suggestionName !== '') {
+        const suggestion = document.createElement('small');
+        suggestion.className = 'account-name-suggestion';
+        suggestion.textContent = `Förslag: ${suggestionName}`;
+        principalCell.appendChild(suggestion);
+      }
+    }
+
+    const linkageCell = appendBankAccountCell(row, account.linkageLabel || 'Ej kopplat');
+    if (typeof account.unlinkedReason === 'string' && account.unlinkedReason !== '') {
+      const reason = document.createElement('small');
+      reason.className = 'account-link-reason';
+      reason.textContent = account.unlinkedReason;
+      linkageCell.appendChild(reason);
+    }
+    appendBankAccountCell(row, bankAccountPaymentText(account.canRegisterPayments));
+    appendBankAccountCell(row, bankAccountDisplayDate(account.lastSyncedAt));
+    appendBankAccountCell(row, bankAccountStatusText(account));
+
+    const actions = document.createElement('td');
+    actions.className = 'accounts-actions';
+    if (account.hasAccountHolderPersonalIdentityNumber !== true) {
+      const linkButton = document.createElement('button');
+      linkButton.type = 'button';
+      linkButton.className = 'button-compact';
+      linkButton.textContent = account.principal ? 'Ändra koppling' : 'Koppla till huvudman';
+      linkButton.addEventListener('click', () => openAccountLinkDialog(account.id));
+      actions.appendChild(linkButton);
+
+      if (account.principal && ['manual', 'name_suggestion_confirmed'].includes(account.linkageMethod)) {
+        const unlinkButton = document.createElement('button');
+        unlinkButton.type = 'button';
+        unlinkButton.className = 'button-compact button-danger';
+        unlinkButton.textContent = 'Ta bort koppling';
+        unlinkButton.addEventListener('click', () => unlinkBankAccount(account.id));
+        actions.appendChild(unlinkButton);
+      }
+    }
+    row.appendChild(actions);
+    fragment.appendChild(row);
+  });
+  accountsListEl.appendChild(fragment);
+}
+
+function closeAccountLinkDialog() {
+  accountLinkDraftAccountId = null;
+  accountLinkOverlayEl?.classList.add('hidden');
+}
+
+function openAccountLinkDialog(accountId) {
+  const account = bankAccounts.find((row) => Number(row?.id) === Number(accountId));
+  if (!account || account.hasAccountHolderPersonalIdentityNumber === true || !(accountLinkPrincipalEl instanceof HTMLSelectElement)) {
+    return;
+  }
+  accountLinkDraftAccountId = Number(account.id);
+  accountLinkDescriptionEl.textContent = `${account.accountName || 'Bankkonto'} · ${account.maskedAccountNumber || '••••'} · ${account.accountHolderName || 'Okänd kontoinnehavare'}`;
+  accountLinkPrincipalEl.replaceChildren();
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Välj huvudman';
+  accountLinkPrincipalEl.appendChild(placeholder);
+
+  const suggestedId = Number(account.suggestedPrincipalId);
+  const suggested = bankAccountPrincipals.find((row) => Number(row?.id) === suggestedId) || null;
+  if (suggested) {
+    const group = document.createElement('optgroup');
+    group.label = 'Föreslagen huvudman';
+    const option = document.createElement('option');
+    option.value = String(suggested.id);
+    option.textContent = suggested.name;
+    group.appendChild(option);
+    accountLinkPrincipalEl.appendChild(group);
+    accountLinkSuggestionEl.textContent = `${account.suggestionReason || 'Namnförslag'} (${Math.round(Number(account.suggestionScore || 0) * 100)} %): ${suggested.name}`;
+    accountLinkSuggestionEl.classList.remove('hidden');
+  } else {
+    accountLinkSuggestionEl.textContent = '';
+    accountLinkSuggestionEl.classList.add('hidden');
+  }
+
+  const remaining = bankAccountPrincipals.filter((row) => Number(row?.id) !== suggestedId);
+  if (remaining.length > 0) {
+    const group = document.createElement('optgroup');
+    group.label = suggested ? 'Övriga huvudmän' : 'Huvudmän';
+    remaining.forEach((principal) => {
+      const option = document.createElement('option');
+      option.value = String(principal.id);
+      option.textContent = principal.name;
+      group.appendChild(option);
+    });
+    accountLinkPrincipalEl.appendChild(group);
+  }
+
+  if (account.principal?.id) {
+    accountLinkPrincipalEl.value = String(account.principal.id);
+  } else if (suggested) {
+    accountLinkPrincipalEl.value = String(suggested.id);
+  }
+  accountLinkOverlayEl?.classList.remove('hidden');
+  accountLinkPrincipalEl.focus();
+}
+
+async function applyAccountPrincipalLink() {
+  const account = bankAccounts.find((row) => Number(row?.id) === accountLinkDraftAccountId);
+  const principalId = Number.parseInt(accountLinkPrincipalEl?.value || '', 10);
+  if (!account || !Number.isInteger(principalId) || principalId < 1) {
+    alert('Välj en huvudman.');
+    return;
+  }
+  accountLinkApplyEl.disabled = true;
+  try {
+    const response = await fetch('/api/link-bank-account.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId: account.id,
+        principalId,
+        suggestionConfirmed: Number(account.suggestedPrincipalId) === principalId,
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || 'Kunde inte koppla kontot.');
+    }
+    closeAccountLinkDialog();
+    await loadBankAccountsSettings();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : 'Kunde inte koppla kontot.');
+  } finally {
+    accountLinkApplyEl.disabled = false;
+  }
+}
+
+async function unlinkBankAccount(accountId) {
+  if (!window.confirm('Ta bort kopplingen mellan kontot och huvudmannen?')) {
+    return;
+  }
+  try {
+    const response = await fetch('/api/unlink-bank-account.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || 'Kunde inte ta bort kontokopplingen.');
+    }
+    await loadBankAccountsSettings();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : 'Kunde inte ta bort kontokopplingen.');
+  }
 }
 
 function renderMatchingEditor() {
@@ -38896,6 +39171,36 @@ async function loadClientsSettings() {
   updateSettingsActionButtons();
 }
 
+async function loadBankAccountsSettings() {
+  if (accountsStatusEl instanceof HTMLElement) {
+    accountsStatusEl.textContent = 'Laddar konton…';
+    accountsStatusEl.classList.remove('hidden');
+  }
+  try {
+    const response = await fetch('/api/get-bank-accounts.php', { cache: 'no-store' });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || !Array.isArray(payload.accounts) || !Array.isArray(payload.principals)) {
+      throw new Error(payload?.error || 'Kunde inte ladda konton.');
+    }
+    bankAccounts = payload.accounts;
+    bankAccountPrincipals = payload.principals;
+    renderBankAccountsEditor();
+    if (accountsStatusEl instanceof HTMLElement) {
+      accountsStatusEl.textContent = '';
+      accountsStatusEl.classList.add('hidden');
+    }
+  } catch (error) {
+    bankAccounts = [];
+    bankAccountPrincipals = [];
+    renderBankAccountsEditor();
+    if (accountsStatusEl instanceof HTMLElement) {
+      accountsStatusEl.textContent = error instanceof Error ? error.message : 'Kunde inte ladda konton.';
+      accountsStatusEl.classList.remove('hidden');
+    }
+    throw error;
+  }
+}
+
 async function loadMatchingSettings() {
   const response = await fetch('/api/get-matching-settings.php', { cache: 'no-store' });
   if (!response.ok) {
@@ -40879,6 +41184,12 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && jobLabelsOverlayOpen) {
     event.preventDefault();
     closeJobLabelsOverlay({ restoreFocus: true });
+    return;
+  }
+
+  if (event.key === 'Escape' && accountLinkOverlayEl instanceof HTMLElement && !accountLinkOverlayEl.classList.contains('hidden')) {
+    event.preventDefault();
+    closeAccountLinkDialog();
     return;
   }
 

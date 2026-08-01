@@ -582,11 +582,12 @@ function load_clients(): array
             $preferredFirstNameIndex
         );
 
-        if ($dirName === '' || $pin === '') {
+        if ($dirName === '') {
             continue;
         }
 
         $clients[] = [
+            'id' => isset($row['id']) ? (int) $row['id'] : null,
             'name' => $name,
             'dirName' => $dirName,
             'firstName' => $firstName,
@@ -1603,6 +1604,163 @@ function client_repository_instance(): ?\Docflow\Clients\ClientRepository
     }
 
     return $repository;
+}
+
+function bank_account_repository_instance(
+    string $workspaceKey = \Docflow\Banking\BankAccountRepository::DEFAULT_WORKSPACE_KEY
+): ?\Docflow\Banking\BankAccountRepository {
+    static $repositories = [];
+    $normalizedWorkspaceKey = trim($workspaceKey);
+    if ($normalizedWorkspaceKey === '') {
+        return null;
+    }
+    if (array_key_exists($normalizedWorkspaceKey, $repositories)) {
+        return $repositories[$normalizedWorkspaceKey];
+    }
+    try {
+        $pdo = \Docflow\Database\Connection::make();
+        $repositories[$normalizedWorkspaceKey] = new \Docflow\Banking\BankAccountRepository(
+            $pdo,
+            $normalizedWorkspaceKey
+        );
+    } catch (Throwable $e) {
+        $repositories[$normalizedWorkspaceKey] = null;
+    }
+    return $repositories[$normalizedWorkspaceKey];
+}
+
+function current_bank_workspace_key(): string
+{
+    // Docflow currently runs one local workspace per installation. Keeping this
+    // explicit in every bank query prevents account data from becoming global
+    // when multi-workspace authentication is introduced later.
+    return \Docflow\Banking\BankAccountRepository::DEFAULT_WORKSPACE_KEY;
+}
+
+function mask_bank_account_number(mixed $value): string
+{
+    $text = is_string($value) || is_int($value) ? trim((string) $value) : '';
+    if ($text === '') {
+        return 'Saknas';
+    }
+    $characters = preg_replace('/[^\p{L}\p{N}]+/u', '', $text);
+    $characters = is_string($characters) ? $characters : '';
+    $suffix = function_exists('mb_substr') ? mb_substr($characters, -4, null, 'UTF-8') : substr($characters, -4);
+    return $suffix !== '' ? ('•••• ' . $suffix) : '••••';
+}
+
+function mask_personal_identity_number(mixed $value): string
+{
+    $digits = preg_replace('/\D+/u', '', is_string($value) || is_int($value) ? (string) $value : '');
+    if (!is_string($digits) || $digits === '') {
+        return 'Saknas';
+    }
+    return '••••••••-' . substr($digits, -4);
+}
+
+function bank_account_principal_payload(array $row): ?array
+{
+    $principalId = isset($row['principal_id']) && is_numeric($row['principal_id'])
+        ? (int) $row['principal_id']
+        : null;
+    if ($principalId === null || $principalId < 1) {
+        return null;
+    }
+    $name = trim(
+        (string) ($row['principal_first_name'] ?? '') . ' ' . (string) ($row['principal_last_name'] ?? '')
+    );
+    $folderName = is_string($row['principal_folder_name'] ?? null)
+        ? trim((string) $row['principal_folder_name'])
+        : '';
+    return [
+        'id' => $principalId,
+        'name' => $name !== '' ? $name : ($folderName !== '' ? $folderName : ('Huvudman ' . $principalId)),
+        'folderName' => $folderName,
+    ];
+}
+
+function bank_account_linkage_label(array $row): string
+{
+    return match ((string) ($row['linkage_method'] ?? '')) {
+        'personal_identity_number_auto' => 'Automatiskt via personnummer',
+        'name_suggestion_confirmed' => 'Bekräftat namnförslag',
+        'manual' => 'Manuellt kopplat',
+        default => (($row['linkage_status'] ?? 'unlinked') === 'conflict' ? 'Kopplingskonflikt' : 'Ej kopplat'),
+    };
+}
+
+function bank_account_api_payload(
+    \Docflow\Banking\BankAccountRepository $repository,
+    array $row,
+    bool $includeSensitiveDetails = false
+): array {
+    $holderPin = is_string($row['account_holder_personal_identity_number'] ?? null)
+        ? trim((string) $row['account_holder_personal_identity_number'])
+        : '';
+    $suggestion = $repository->principalSuggestionForAccount($row);
+    $principal = bank_account_principal_payload($row);
+    $canRegisterPayments = !array_key_exists('can_register_payments', $row) || $row['can_register_payments'] === null
+        ? null
+        : ((int) $row['can_register_payments'] === 1);
+    $unlinkedReason = null;
+    if ($principal === null && $holderPin !== '') {
+        $unlinkedReason = 'Ingen huvudman har kontots personnummer';
+    }
+
+    $payload = [
+        'id' => (int) ($row['id'] ?? 0),
+        'bankKey' => (string) ($row['bank_key'] ?? ''),
+        'bankConnectionId' => isset($row['bank_connection_id']) ? (int) $row['bank_connection_id'] : null,
+        'connectionLabel' => is_string($row['bank_connection_label'] ?? null) ? (string) $row['bank_connection_label'] : null,
+        'accountName' => is_string($row['account_name'] ?? null) ? (string) $row['account_name'] : '',
+        'accountType' => is_string($row['account_type'] ?? null) ? (string) $row['account_type'] : '',
+        'currency' => is_string($row['currency'] ?? null) ? (string) $row['currency'] : '',
+        'maskedAccountNumber' => mask_bank_account_number($row['account_number'] ?? null),
+        'accountHolderName' => is_string($row['account_holder_name'] ?? null) ? (string) $row['account_holder_name'] : '',
+        'maskedAccountHolderPersonalIdentityNumber' => mask_personal_identity_number($holderPin),
+        'hasAccountHolderPersonalIdentityNumber' => $holderPin !== '',
+        'principal' => $principal,
+        'linkageMethod' => is_string($row['linkage_method'] ?? null) ? (string) $row['linkage_method'] : null,
+        'linkageStatus' => is_string($row['linkage_status'] ?? null) ? (string) $row['linkage_status'] : 'unlinked',
+        'linkageLabel' => bank_account_linkage_label($row),
+        'unlinkedReason' => $unlinkedReason,
+        'canRegisterPayments' => $canRegisterPayments,
+        'lastSyncedAt' => is_string($row['last_synced_at'] ?? null) ? (string) $row['last_synced_at'] : null,
+        'isActive' => (int) ($row['is_active'] ?? 1) === 1,
+        'isClosed' => (int) ($row['is_closed'] ?? 0) === 1,
+        'suggestedPrincipalId' => $suggestion['suggestedPrincipalId'] ?? null,
+        'suggestionScore' => $suggestion['suggestionScore'] ?? null,
+        'suggestionReason' => $suggestion['suggestionReason'] ?? null,
+    ];
+    if ($includeSensitiveDetails) {
+        $payload['accountNumber'] = is_string($row['account_number'] ?? null) ? (string) $row['account_number'] : null;
+        $payload['clearingNumber'] = is_string($row['clearing_number'] ?? null) ? (string) $row['clearing_number'] : null;
+        $payload['iban'] = is_string($row['iban'] ?? null) ? (string) $row['iban'] : null;
+        $payload['bic'] = is_string($row['bic'] ?? null) ? (string) $row['bic'] : null;
+    }
+    return $payload;
+}
+
+function bank_account_principal_options(\Docflow\Banking\BankAccountRepository $repository): array
+{
+    $options = [];
+    foreach ($repository->listPrincipals() as $principal) {
+        if (!is_array($principal)) {
+            continue;
+        }
+        $id = isset($principal['id']) ? (int) $principal['id'] : 0;
+        if ($id < 1) {
+            continue;
+        }
+        $name = trim((string) ($principal['first_name'] ?? '') . ' ' . (string) ($principal['last_name'] ?? ''));
+        $folderName = is_string($principal['folder_name'] ?? null) ? trim((string) $principal['folder_name']) : '';
+        $options[] = [
+            'id' => $id,
+            'name' => $name !== '' ? $name : ($folderName !== '' ? $folderName : ('Huvudman ' . $id)),
+            'folderName' => $folderName,
+        ];
+    }
+    return $options;
 }
 
 function sender_repository_instance(): ?\Docflow\Senders\SenderRepository
@@ -13934,7 +14092,7 @@ function find_client_matches(string $ocrText, array $clients): array
         $dirName = is_string($client['dirName'] ?? null) ? trim((string) $client['dirName']) : '';
         $pin = is_string($client['personalIdentityNumber'] ?? null) ? trim((string) $client['personalIdentityNumber']) : '';
         $lastName = is_string($client['lastName'] ?? null) ? trim((string) $client['lastName']) : '';
-        if ($dirName === '' || $pin === '') {
+        if ($dirName === '') {
             continue;
         }
 

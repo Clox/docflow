@@ -16,6 +16,7 @@ try {
             continue;
         }
         $clients[] = [
+            'id' => isset($row['id']) ? (int) $row['id'] : null,
             'firstName' => is_string($row['first_name'] ?? null) ? (string) $row['first_name'] : '',
             'lastName' => is_string($row['last_name'] ?? null) ? (string) $row['last_name'] : '',
             'folderName' => is_string($row['folder_name'] ?? null) ? (string) $row['folder_name'] : '',

@@ -443,6 +443,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <div class="settings-nav-group-title">Register</div>
           <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
           <button class="settings-tab" data-settings-tab="senders" type="button">Avsändare</button>
+          <button class="settings-tab" data-settings-tab="accounts" type="button">Konton</button>
         </div>
         <div id="settings-nav-document-interpretation-section" class="settings-nav-section">
           <div class="settings-nav-group-title">Dokumenttolkning</div>
@@ -472,6 +473,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
         <section class="settings-content">
         <div id="settings-panel-clients" class="settings-panel active"></div>
         <div id="settings-panel-senders" class="settings-panel hidden"></div>
+        <div id="settings-panel-accounts" class="settings-panel hidden"></div>
         <div id="settings-panel-matching" class="settings-panel hidden"></div>
         <div id="settings-panel-ocr-processing" class="settings-panel hidden"></div>
         <div id="settings-panel-archive-structure" class="settings-panel hidden"></div>
@@ -500,7 +502,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
 
   <template id="settings-template-clients">
     <h3>Huvudmän</h3>
-    <p>Redigera huvudmän som lagras i databasen.</p>
+    <p>Redigera huvudmän som lagras i databasen. Personnummer är valfritt, men används när bankkonton ska kopplas automatiskt.</p>
     <div id="clients-list" class="categories-list"></div>
     <div id="clients-actions-section" class="categories-actions settings-section-actions">
       <button id="clients-add-row" type="button">Lägg till huvudman</button>
@@ -587,6 +589,49 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
     <div class="panel-actions">
       <button id="senders-cancel" class="button-danger" type="button">Avbryt</button>
       <button id="senders-apply" class="button-success" type="button">Spara</button>
+    </div>
+  </template>
+
+  <template id="settings-template-accounts">
+    <h3>Konton</h3>
+    <p>Bankkonton som har lästs in från en bankanslutning. Bankuppgifterna är skrivskyddade; här kan du endast hantera huvudmannakopplingen för konton som saknar personnummer.</p>
+    <div id="accounts-status" class="settings-inline-notice hidden"></div>
+    <div class="accounts-table-wrap">
+      <table class="accounts-table">
+        <thead>
+          <tr>
+            <th>Bank</th>
+            <th>Kontonamn</th>
+            <th>Kontonummer</th>
+            <th>Kontoinnehavare</th>
+            <th>Personnummer</th>
+            <th>Huvudman</th>
+            <th>Koppling</th>
+            <th>Betalningar</th>
+            <th>Senast synkroniserat</th>
+            <th>Status</th>
+            <th><span class="sr-only">Åtgärder</span></th>
+          </tr>
+        </thead>
+        <tbody id="accounts-list"></tbody>
+      </table>
+    </div>
+    <div id="account-link-overlay" class="modal-overlay hidden">
+      <div class="settings-dialog account-link-dialog" role="dialog" aria-modal="true" aria-labelledby="account-link-title">
+        <section class="settings-content">
+          <div class="settings-panel active">
+            <h3 id="account-link-title">Koppla konto till huvudman</h3>
+            <p id="account-link-description"></p>
+            <div id="account-link-suggestion" class="account-link-suggestion hidden"></div>
+            <label class="settings-label" for="account-link-principal">Huvudman</label>
+            <select id="account-link-principal" class="settings-select"></select>
+            <div class="panel-actions">
+              <button id="account-link-cancel" class="button-danger" type="button">Avbryt</button>
+              <button id="account-link-apply" class="button-success" type="button">Koppla</button>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
   </template>
 

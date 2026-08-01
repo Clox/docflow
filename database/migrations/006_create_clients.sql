@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS clients (
     last_name TEXT NOT NULL,
     folder_name TEXT NOT NULL,
     personal_identity_number TEXT NOT NULL UNIQUE,
+    preferred_first_name_index INTEGER NULL,
     sort_order INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
