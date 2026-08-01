@@ -443,7 +443,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
           <div class="settings-nav-group-title">Register</div>
           <button class="settings-tab active" data-settings-tab="clients" type="button">Huvudmän</button>
           <button class="settings-tab" data-settings-tab="senders" type="button">Avsändare</button>
-          <button class="settings-tab" data-settings-tab="accounts" type="button">Konton</button>
+          <button class="settings-tab" data-settings-tab="accounts" type="button">Bankkonton</button>
         </div>
         <div id="settings-nav-document-interpretation-section" class="settings-nav-section">
           <div class="settings-nav-group-title">Dokumenttolkning</div>
@@ -593,7 +593,7 @@ $appVersion = @filemtime(__DIR__ . '/app.js') ?: time();
   </template>
 
   <template id="settings-template-accounts">
-    <h3>Konton</h3>
+    <h3>Bankkonton</h3>
     <p>Bankkonton som har lästs in från en bankanslutning. Bankuppgifterna är skrivskyddade; här kan du endast hantera huvudmannakopplingen för konton som saknar personnummer.</p>
     <div id="accounts-status" class="settings-inline-notice hidden"></div>
     <div class="accounts-table-wrap">
