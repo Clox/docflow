@@ -207,6 +207,7 @@ $insertOptionsSource = $insertOptionsStart !== false && $insertOptionsEnd !== fa
     ? substr($app, $insertOptionsStart, $insertOptionsEnd - $insertOptionsStart)
     : '';
 assert_filename_v2(!str_contains($insertOptionsSource, "type: 'text'"), 'Fast text ska skrivas direkt och får inte erbjudas som chiptyp.');
+assert_filename_v2(!str_contains($insertOptionsSource, "type: 'labels'"), 'Etiketter ska inte erbjudas som chiptyp i filnamnseditorn.');
 assert_filename_v2(
     is_string($app)
     && str_contains($app, "new Set(['sender_name_in_document', 'sender_mark_in_document'])")

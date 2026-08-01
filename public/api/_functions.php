@@ -6666,7 +6666,7 @@ function filename_template_part_review_label(array $part, array $nameMaps): stri
             is_array($part['elseParts'] ?? null) ? $part['elseParts'] : [],
             $nameMaps
         ));
-        $label = 'Om etikett (' . $modeLabel . ')';
+        $label = 'Har etikett (' . $modeLabel . ')';
         if ($resolvedLabelNames !== []) {
             $label .= ': ' . implode(' / ', array_filter($resolvedLabelNames, static fn ($value): bool => is_string($value) && trim($value) !== ''));
         }

@@ -27806,12 +27806,6 @@ function defaultFilenameTemplatePart(type = 'text') {
       key: filenameTemplateSystemFieldOptions()[0]?.key || 'primary_date',
     };
   }
-  if (type === 'labels') {
-    return {
-      type: 'labels',
-      separator: DEFAULT_FILENAME_TEMPLATE_LABEL_SEPARATOR,
-    };
-  }
   if (type === 'firstAvailable') {
     return {
       type: 'firstAvailable',
@@ -29859,12 +29853,6 @@ function filenameTemplateInsertOptions() {
       title: 'Lägger till värdet från valt datafält i filnamnet.',
     },
     {
-      type: 'labels',
-      label: 'Etiketter',
-      tone: 'labels',
-      title: 'Lägger till dokumentets etiketter i filnamnet.',
-    },
-    {
       type: 'firstAvailable',
       label: 'Första tillgängliga',
       tone: 'special',
@@ -29872,7 +29860,7 @@ function filenameTemplateInsertOptions() {
     },
     {
       type: 'ifLabels',
-      label: 'Om etikett',
+      label: 'Har etikett',
       tone: 'special',
       title: 'Renderar olika innehåll beroende på om någon av de valda etiketterna finns.',
     },
@@ -36903,7 +36891,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
     if (part.type === 'ifLabels') {
       const conditionMode = sanitizeIfLabelsMode(part.mode);
       return {
-        label: 'Om etikett',
+        label: 'Har etikett',
         tone: 'special',
         title: conditionMode === 'all'
           ? 'Renderar innehåll när alla valda etiketterna finns, annars valfritt alternativt innehåll.'
