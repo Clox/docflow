@@ -195,6 +195,48 @@ assert_filename_v2(is_string($app) && str_contains($app, "type: 'prefix'") && st
 assert_filename_v2(is_string($app) && str_contains($app, 'syncFilenameTemplateSelectWidth'), 'Chipselecter ska använda gemensam dynamisk breddmätning.');
 assert_filename_v2(
     is_string($app)
+    && str_contains($app, 'filenameTemplateControlHorizontalChrome')
+    && is_string($css)
+    && preg_match(
+        '/\.filename-template-inline-token-select,\s*\.filename-template-inline-token-input\s*\{[^}]*padding:\s*0;/s',
+        $css
+    ) === 1
+    && preg_match(
+        '/\.filename-template-inline-token-input\s*\{[^}]*padding:\s*0 2px;/s',
+        $css
+    ) === 1,
+    'Chipselecter ska sakna sidpadding medan textkontroller ska ha två pixlar; breddmätningen ska använda deras verkliga kanter.'
+);
+assert_filename_v2(
+    is_string($app)
+    && str_contains($app, 'syncFilenameTemplateTextInputWidth')
+    && str_contains($app, 'measureFilenameTemplateControlText'),
+    'Prefix- och suffixfält ska mäta innehållet dynamiskt med samma textmätning som chipselecter.'
+);
+assert_filename_v2(
+    is_string($css)
+    && str_contains($css, '--filename-template-chip-corner-radius: 10px;')
+    && str_contains($css, '--filename-template-chip-corner-radius: 18px;')
+    && preg_match(
+        '/\.filename-template-inline-token-select,\s*\.filename-template-inline-token-input\s*\{[^}]*border-radius:\s*var\(--filename-template-chip-corner-radius\);/s',
+        $css
+    ) === 1
+    && preg_match(
+        '/\.filename-template-inline-token-center \.filename-template-inline-token-slot--(?:candidates|branch)\.is-slot\s*\{[^}]*border-radius:\s*var\(--filename-template-chip-corner-radius\);/s',
+        $css
+    ) === 1,
+    'Fält och interna ytor ska använda samma hörnradie som sitt yttre chip.'
+);
+assert_filename_v2(
+    is_string($css)
+    && preg_match(
+        '/\.filename-template-inline-token-center--stacked\s*> \.filename-template-inline-token-select\s*\+ \.filename-template-inline-token-floating-field\s*\{[^}]*margin-top:\s*9px;/s',
+        $css
+    ) === 1,
+    'Ett sekundärt selectfält ska lämna plats för sin flytande etikett under föregående kontroll.'
+);
+assert_filename_v2(
+    is_string($app)
     && str_contains($app, 'option.textContent = formatOption.label;')
     && str_contains($app, "dateFormatSelect.setAttribute('aria-label', 'Datumformat');")
     && is_string($css)

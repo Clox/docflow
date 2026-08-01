@@ -9075,6 +9075,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .filename-template-inline-token-center {
+  --filename-template-chip-corner-radius: 999px;
   position: relative;
   z-index: 2;
   border-top: 1px solid #8f98a8;
@@ -9086,16 +9087,17 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   min-height: var(--filename-template-chip-inner-height);
   margin: -1px -2px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: var(--filename-template-chip-corner-radius);
   box-shadow: inset 1px 0 0 rgba(148, 163, 184, .45), inset -1px 0 0 rgba(148, 163, 184, .45);
 }
 
 /* Version 2: every value and affix is its own compact, vertically labelled node. */
 .filename-template-inline-token-center:not(.filename-template-inline-token-center--stacked),
 .filename-template-inline-token-center--date {
+  --filename-template-chip-corner-radius: 10px;
   gap: 1px;
   padding: 4px 8px 5px;
-  border-radius: 10px;
+  border-radius: var(--filename-template-chip-corner-radius);
 }
 
 .filename-template-inline-token-center:not(.filename-template-inline-token-center--stacked) {
@@ -9119,14 +9121,13 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .filename-template-inline-token-input--value {
-  width: 8ch;
-  min-width: 48px;
-  max-width: 180px;
-  border-radius: 6px;
+  width: 32px;
+  min-width: 32px;
+  max-width: 320px;
 }
 
 .filename-template-inline-token-select {
-  min-width: 68px;
+  min-width: 48px;
   max-width: 220px;
   text-overflow: ellipsis;
 }
@@ -9168,6 +9169,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 .filename-template-inline-token-center--stacked {
+  --filename-template-chip-corner-radius: 18px;
   display: inline-flex;
   flex-direction: column;
   align-items: stretch;
@@ -9175,18 +9177,26 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   min-width: 260px;
   padding-top: 4px;
   padding-bottom: 6px;
-  border-radius: 18px;
+  border-radius: var(--filename-template-chip-corner-radius);
 }
 
 .filename-template-inline-token-center--stacked.filename-template-inline-token-center--date {
+  --filename-template-chip-corner-radius: 10px;
   gap: 1px;
   min-width: 0;
   padding-bottom: 5px;
-  border-radius: 10px;
+  border-radius: var(--filename-template-chip-corner-radius);
 }
 
 .filename-template-inline-token-center--date > .filename-template-inline-token-floating-field {
   margin-top: 3px;
+}
+
+/* Leave room for the floating label when a secondary select follows another control. */
+.filename-template-inline-token-center--stacked
+  > .filename-template-inline-token-select
+  + .filename-template-inline-token-floating-field {
+  margin-top: 9px;
 }
 
 .filename-template-inline-token-center--system {
@@ -9220,21 +9230,22 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   font: inherit;
   font-size: 12px;
   border: 1px solid rgba(100, 116, 139, .7);
-  border-radius: 999px;
+  border-radius: var(--filename-template-chip-corner-radius);
   background: rgba(255, 255, 255, .78);
   color: #0f172a;
-  padding: 0 8px;
+  padding: 0;
   outline: none;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .filename-template-inline-token-select {
-  max-width: 180px;
+  max-width: 220px;
   cursor: pointer;
 }
 
 .filename-template-inline-token-input {
   width: 58px;
+  padding: 0 2px;
 }
 
 .filename-template-inline-token-center .filename-template-inline-token-slot--candidates.is-slot {
@@ -9242,7 +9253,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   margin: 3px 0;
   padding: 2px 8px;
   border: 1px solid rgba(100, 116, 139, .7);
-  border-radius: 999px;
+  border-radius: var(--filename-template-chip-corner-radius);
   background: rgba(255, 255, 255, 0.88);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
@@ -9253,13 +9264,9 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   margin: 0;
   padding: 4px 8px;
   border: 1px solid rgba(100, 116, 139, .7);
-  border-radius: 12px;
+  border-radius: var(--filename-template-chip-corner-radius);
   background: rgba(255, 255, 255, 0.88);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
-}
-
-.filename-template-inline-token-select--mode {
-  min-width: 96px;
 }
 
 .filename-template-inline-token-header-row {

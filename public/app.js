@@ -36762,21 +36762,35 @@ function createFilenameTemplateToolbar(context) {
   return toolbar;
 }
 
+function measureFilenameTemplateControlText(control, text) {
+  const canvas = measureFilenameTemplateControlText.canvas
+    || (measureFilenameTemplateControlText.canvas = document.createElement('canvas'));
+  const context = canvas.getContext('2d');
+  const computed = window.getComputedStyle(control);
+  if (context) {
+    context.font = computed.font;
+  }
+  return context ? context.measureText(text).width : text.length * 7;
+}
+
+function filenameTemplateControlHorizontalChrome(control) {
+  const computed = window.getComputedStyle(control);
+  return (Number.parseFloat(computed.paddingLeft) || 0)
+    + (Number.parseFloat(computed.paddingRight) || 0)
+    + (Number.parseFloat(computed.borderLeftWidth) || 0)
+    + (Number.parseFloat(computed.borderRightWidth) || 0);
+}
+
 function syncFilenameTemplateSelectWidth(select) {
   if (!(select instanceof HTMLSelectElement)) {
     return;
   }
   const selected = select.options[select.selectedIndex] || null;
   const text = selected ? selected.textContent || '' : '';
-  const canvas = syncFilenameTemplateSelectWidth.canvas
-    || (syncFilenameTemplateSelectWidth.canvas = document.createElement('canvas'));
-  const context = canvas.getContext('2d');
-  const computed = window.getComputedStyle(select);
-  if (context) {
-    context.font = computed.font;
-  }
-  const textWidth = context ? context.measureText(text).width : text.length * 7;
-  const width = Math.max(68, Math.min(220, Math.ceil(textWidth + 42)));
+  const textWidth = measureFilenameTemplateControlText(select, text);
+  const nativeIndicatorWidth = Math.max(20, select.getBoundingClientRect().height || 22);
+  const desiredWidth = Math.ceil(textWidth + filenameTemplateControlHorizontalChrome(select) + nativeIndicatorWidth);
+  const width = Math.max(48, Math.min(220, desiredWidth));
   select.style.width = `${width}px`;
   select.title = text;
 }
@@ -36786,6 +36800,33 @@ function bindFilenameTemplateSelectWidth(select) {
   select.addEventListener('change', () => syncFilenameTemplateSelectWidth(select));
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(() => syncFilenameTemplateSelectWidth(select)).catch(() => {});
+  }
+}
+
+function syncFilenameTemplateTextInputWidth(input) {
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+  const text = input.value || '';
+  const horizontalChrome = filenameTemplateControlHorizontalChrome(input);
+  const desiredWidth = Math.ceil(measureFilenameTemplateControlText(input, text || ' ') + horizontalChrome + 2);
+  const minWidth = 32;
+  const maxWidth = 320;
+  input.style.width = `${Math.max(minWidth, Math.min(maxWidth, desiredWidth))}px`;
+  input.title = desiredWidth > maxWidth
+    ? text
+    : (input.dataset.filenameTemplateHelpTitle || '');
+}
+
+function bindFilenameTemplateTextInputWidth(input) {
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+  input.dataset.filenameTemplateHelpTitle = input.title || '';
+  syncFilenameTemplateTextInputWidth(input);
+  input.addEventListener('input', () => syncFilenameTemplateTextInputWidth(input));
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => syncFilenameTemplateTextInputWidth(input)).catch(() => {});
   }
 }
 
@@ -38003,6 +38044,7 @@ let activeEditable = null;
           syncPartControlChange();
         });
         center.appendChild(valueInput);
+        bindFilenameTemplateTextInputWidth(valueInput);
       }
     } else if (tokenPart.type === 'systemField') {
       center.appendChild(label);
