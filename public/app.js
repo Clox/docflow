@@ -37366,17 +37366,50 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		return [];
 	}
 
-	const ownEditable = (selector) =>
-		Array.from(token.querySelectorAll(selector)).find(
-			(editable) => editable instanceof HTMLElement
-				&& editable.closest('.filename-template-dom-token') === token
-		) || null;
-
-	return [
-		ownEditable('.filename-template-inline-token-slot--candidates.filename-template-editable'),
-		ownEditable('.filename-template-inline-token-slot--branch.filename-template-editable'),
-	].filter((editable) => editable instanceof HTMLElement);
+	return Array.from(token.querySelectorAll(
+		'.filename-template-inline-token-slot--candidates.filename-template-editable, '
+		+ '.filename-template-inline-token-slot--branch.filename-template-editable'
+	)).filter(
+		(editable) => editable instanceof HTMLElement
+			&& editable.closest('.filename-template-dom-token') === token
+	);
 	};
+
+  const isTokenTextInput = (node) =>
+    node instanceof HTMLInputElement
+    && node.classList.contains('filename-template-inline-token-input')
+    && !node.disabled;
+
+  const tokenNavigationTargets = (token) => {
+    if (!(token instanceof HTMLElement)) {
+      return [];
+    }
+    return Array.from(token.querySelectorAll(
+      '.filename-template-inline-token-input, .filename-template-editable'
+    )).filter((target) => {
+      if (!(target instanceof HTMLElement)
+        || target.closest('.filename-template-dom-token') !== token
+        || target.closest('[hidden]')) {
+        return false;
+      }
+      return isTokenTextInput(target)
+        || target.classList.contains('filename-template-editable');
+    });
+  };
+
+  const focusTokenNavigationTarget = (target, direction) => {
+    if (isTokenTextInput(target)) {
+      target.focus();
+      const offset = direction === 'back' ? target.value.length : 0;
+      target.setSelectionRange(offset, offset);
+      return true;
+    }
+    if (target instanceof HTMLElement && target.classList.contains('filename-template-editable')) {
+      setActiveEditable(target);
+      return setCaretAtEditableBoundary(target, direction === 'back' ? 'fwd' : 'back');
+    }
+    return false;
+  };
 
   const focusSiblingEditable = (editable, direction) => {
     if (!(editable instanceof HTMLElement)) {
@@ -37408,15 +37441,50 @@ const isCaretAtEditableBoundary = (editable, direction) => {
   };
 
   const focusTokenBoundaryEditable = (token, direction) => {
-    const editables = tokenEditables(token);
-    if (editables.length === 0) {
+    const targets = tokenNavigationTargets(token);
+    if (targets.length === 0) {
       return false;
     }
-    const targetEditable = direction === 'back'
-      ? editables[editables.length - 1]
-      : editables[0];
-    setActiveEditable(targetEditable);
-    return setCaretAtEditableBoundary(targetEditable, direction === 'back' ? 'fwd' : 'back');
+    const target = direction === 'back'
+      ? targets[targets.length - 1]
+      : targets[0];
+    return focusTokenNavigationTarget(target, direction);
+  };
+
+  const moveCaretAcrossTextInputBoundary = (input, direction) => {
+    if (!isTokenTextInput(input)
+      || input.selectionStart === null
+      || input.selectionEnd === null
+      || input.selectionStart !== input.selectionEnd) {
+      return false;
+    }
+    const atBoundary = direction === 'back'
+      ? input.selectionStart === 0
+      : input.selectionEnd === input.value.length;
+    if (!atBoundary) {
+      return false;
+    }
+    const currentToken = input.closest('.filename-template-dom-token');
+    if (!(currentToken instanceof HTMLElement)) {
+      return false;
+    }
+    const targets = tokenNavigationTargets(currentToken);
+    const currentIndex = targets.indexOf(input);
+    const nextIndex = direction === 'back' ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex >= 0 && nextIndex >= 0 && nextIndex < targets.length) {
+      return focusTokenNavigationTarget(targets[nextIndex], direction);
+    }
+    if (focusRootSlotAdjacentToToken(currentToken, direction)) {
+      return true;
+    }
+    const ownerEditable = currentToken.parentElement instanceof HTMLElement
+      ? currentToken.parentElement.closest('.filename-template-editable')
+      : null;
+    if (!(ownerEditable instanceof HTMLElement)) {
+      return false;
+    }
+    setActiveEditable(ownerEditable);
+    return setCaretAdjacentToNode(ownerEditable, currentToken, direction);
   };
 
 	const moveCaretAcrossTokenBoundary = (editable, direction) => {
@@ -37439,7 +37507,20 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 				  || nearbyToken.querySelector('.filename-template-inline-token')?.textContent?.trim()
 				  || 'token',
 			});
-			return focusTokenBoundaryEditable(nearbyToken, direction);
+			if (focusTokenBoundaryEditable(nearbyToken, direction)) {
+				return true;
+			}
+			if (focusRootSlotAdjacentToToken(nearbyToken, direction)) {
+				return true;
+			}
+			const nearbyOwnerEditable = nearbyToken.parentElement instanceof HTMLElement
+				? nearbyToken.parentElement.closest('.filename-template-editable')
+				: null;
+			if (nearbyOwnerEditable instanceof HTMLElement) {
+				setActiveEditable(nearbyOwnerEditable);
+				return setCaretAdjacentToNode(nearbyOwnerEditable, nearbyToken, direction);
+			}
+			return false;
 		}
 	}
 
@@ -38259,12 +38340,25 @@ let activeEditable = null;
     });
     token.addEventListener('blur', () => token.classList.remove('is-active'));
     token.addEventListener('keydown', (event) => {
+      if (isTokenTextInput(event.target)) {
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          if (moveCaretAcrossTextInputBoundary(event.target, event.key === 'ArrowLeft' ? 'back' : 'fwd')) {
+            event.preventDefault();
+          }
+          event.stopPropagation();
+        }
+        return;
+      }
       if (event.target !== token) {
         return;
       }
       const siblings = Array.from(token.parentElement?.children || []).filter((child) => isTokenNode(child));
       const index = siblings.indexOf(token);
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        if (focusTokenBoundaryEditable(token, event.key === 'ArrowLeft' ? 'back' : 'fwd')) {
+          event.preventDefault();
+          return;
+        }
         const next = siblings[index + (event.key === 'ArrowLeft' ? -1 : 1)] || null;
         if (next instanceof HTMLElement) {
           event.preventDefault();

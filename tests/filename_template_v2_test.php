@@ -279,5 +279,17 @@ assert_filename_v2(
     && preg_match('/\.filename-template-inline-token-center\s*\{[^}]*margin:\s*-1px 0;/s', $css) === 1,
     'Chipets synliga mittdel får inte sträcka sig utanför den horisontella plats som reserveras i textflödet.'
 );
+assert_filename_v2(
+    is_string($app)
+    && str_contains($app, 'const tokenNavigationTargets = (token) =>')
+    && str_contains($app, 'const focusTokenNavigationTarget = (target, direction) =>')
+    && str_contains($app, 'const moveCaretAcrossTextInputBoundary = (input, direction) =>')
+    && str_contains($app, "target.setSelectionRange(offset, offset);")
+    && str_contains($app, "'.filename-template-inline-token-input, .filename-template-editable'")
+    && str_contains($app, 'focusRootSlotAdjacentToToken(nearbyToken, direction)')
+    && str_contains($app, 'setCaretAdjacentToNode(nearbyOwnerEditable, nearbyToken, direction)')
+    && str_contains($app, "event.stopPropagation();"),
+    'Piltangenter ska gå in i redigerbara chipytor och hoppa över chip utan redigerbar kontroll.'
+);
 
 fwrite(STDOUT, "filename template v2 tests passed\n");
