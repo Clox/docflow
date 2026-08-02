@@ -260,7 +260,9 @@ assert_filename_v2(
 assert_filename_v2(
     is_string($app)
     && str_contains($app, "if (part && part.type === 'text')")
-    && str_contains($app, 'buildRootTextSlot(pendingText, rootSequence)'),
+    && str_contains($app, 'buildRootTextSlot(')
+    && str_contains($app, 'pendingText,')
+    && str_contains($app, 'rootSequence,'),
     'Sparade textdelar ska återladdas som direkt redigerbar text, inte som chip.'
 );
 assert_filename_v2(is_string($css) && str_contains($css, 'flex-wrap: nowrap') && str_contains($css, 'margin: 8px 0 10px;'), 'Rotsekvensen ska ligga på en rad och linjera utan gammalt vänsterindrag.');
@@ -290,6 +292,24 @@ assert_filename_v2(
     && str_contains($app, 'setCaretAdjacentToNode(nearbyOwnerEditable, nearbyToken, direction)')
     && str_contains($app, "event.stopPropagation();"),
     'Piltangenter ska gå in i redigerbara chipytor och hoppa över chip utan redigerbar kontroll.'
+);
+assert_filename_v2(
+    is_string($app)
+    && str_contains($app, 'filename-template-segmented-sequence')
+    && str_contains($app, 'renderRootSequence(slotEditable, targetParts, placeholder);')
+    && str_contains($app, 'syncRootSequenceFromDom(parentSequence);')
+    && str_contains($app, 'rootSequence._filenameTemplateChipsOnly === true')
+    && is_string($css)
+    && preg_match(
+        '/\.filename-template-root-slot\.is-slot\s*\{[^}]*outline:\s*1px solid transparent;/s',
+        $css
+    ) === 1
+    && str_contains(
+        $css,
+        '.filename-template-editable[data-placeholder]:not([data-placeholder=""]):empty:not(:focus)::before'
+    )
+    && !str_contains($css, '.filename-template-inline-flow.is-slot:empty::before'),
+    'Nästlade sekvenser ska använda separata redigerbara positioner och låta native caret målas ovanpå chippen.'
 );
 assert_filename_v2(
     is_string($css)

@@ -36966,7 +36966,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
 
   const isRootEditor = depth === 0 && !isSlotEditor;
   const sequence = document.createElement(isRootEditor ? 'div' : 'span');
-  sequence.className = 'filename-template-inline-flow';
+  sequence.className = 'filename-template-inline-flow filename-template-segmented-sequence';
   if (isRootEditor) {
     sequence.classList.add('is-root');
   }
@@ -37361,20 +37361,6 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 	return null;
 	};
 
-	const tokenEditables = (token) => {
-	if (!(token instanceof HTMLElement)) {
-		return [];
-	}
-
-	return Array.from(token.querySelectorAll(
-		'.filename-template-inline-token-slot--candidates.filename-template-editable, '
-		+ '.filename-template-inline-token-slot--branch.filename-template-editable'
-	)).filter(
-		(editable) => editable instanceof HTMLElement
-			&& editable.closest('.filename-template-dom-token') === token
-	);
-	};
-
   const isTokenTextInput = (node) =>
     node instanceof HTMLInputElement
     && node.classList.contains('filename-template-inline-token-input')
@@ -37542,7 +37528,7 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 		return false;
 	}
 
-	const editables = tokenEditables(currentToken);
+	const editables = tokenNavigationTargets(currentToken);
 	const currentIndex = editables.indexOf(editable);
 	debugFilenameTemplateNav('token-editables', {
 		direction,
@@ -37559,8 +37545,7 @@ const isCaretAtEditableBoundary = (editable, direction) => {
 			from: describeEditable(editable),
 			to: describeEditable(siblingEditable),
 		});
-		setActiveEditable(siblingEditable);
-		return setCaretAtEditableBoundary(siblingEditable, direction === 'back' ? 'fwd' : 'back');
+		return focusTokenNavigationTarget(siblingEditable, direction);
 		}
 		if (focusSiblingEditable(editable, direction)) {
 			debugFilenameTemplateNav('owner-sibling-editable', {
@@ -37784,7 +37769,32 @@ let activeEditable = null;
       return;
     }
     const nextParts = buildRootSequencePartsFromDom(rootSequence, slotOverride);
-    replaceParts(rootSequence._filenameTemplateTargetParts, nextParts, false);
+    replaceParts(
+      rootSequence._filenameTemplateTargetParts,
+      nextParts,
+      rootSequence._filenameTemplateChipsOnly === true
+    );
+    const ownerToken = rootSequence.closest('.filename-template-dom-token');
+    if (ownerToken instanceof HTMLElement) {
+      syncOwnerTokenLivePart(ownerToken, rootSequence);
+      const ownerPart = tokenLivePartState(ownerToken) || readTokenPartState(ownerToken);
+      if (ownerPart) {
+        writeTokenPartState(ownerToken, ownerPart);
+      }
+      const parentSequence = ownerToken.parentElement;
+      if (parentSequence instanceof HTMLElement
+        && parentSequence.classList.contains('filename-template-segmented-sequence')) {
+        syncRootSequenceFromDom(parentSequence);
+        return;
+      }
+      const ownerEditable = parentSequence instanceof HTMLElement
+        ? parentSequence.closest('.filename-template-editable')
+        : null;
+      if (ownerEditable instanceof HTMLElement && ownerEditable !== rootSequence) {
+        syncEditableFromDom(ownerEditable);
+        return;
+      }
+    }
     onChange();
   };
 
@@ -38025,6 +38035,20 @@ let activeEditable = null;
     queueMicrotask(() => decorateAffixSequence(editable));
   };
 
+  const buildRootTextSlot = (textValue, rootSequence, placeholder = '') => {
+    const slotEditable = document.createElement('span');
+    slotEditable.className = 'filename-template-root-slot filename-template-inline-flow is-slot';
+    slotEditable._filenameTemplateTargetParts = [{ type: 'text', value: String(textValue || '') }];
+    slotEditable._filenameTemplateChipsOnly = rootSequence._filenameTemplateChipsOnly === true;
+    slotEditable._filenameTemplateRootOwner = rootSequence;
+    if (placeholder) {
+      slotEditable.dataset.placeholder = placeholder;
+    }
+    attachEditableHandlers(slotEditable);
+    slotEditable.appendChild(document.createTextNode(modelTextToEditableText(String(textValue || ''))));
+    return slotEditable;
+  };
+
   const buildSlotEditor = (targetParts, placeholder, slotClassName = '') => {
     const chipsOnly = slotClassName.includes('filename-template-inline-token-slot--candidates');
     targetParts.splice(
@@ -38035,25 +38059,23 @@ let activeEditable = null;
         : normalizeEditableFilenameTemplateParts(targetParts))
     );
     const slotEditable = document.createElement('span');
-    slotEditable.className = `filename-template-inline-token-slot ${slotClassName} filename-template-inline-flow is-slot`.trim();
+    slotEditable.className = `filename-template-inline-token-slot ${slotClassName} filename-template-inline-flow is-slot filename-template-segmented-sequence`.trim();
+    slotEditable._filenameTemplateTargetParts = targetParts;
+    slotEditable._filenameTemplateChipsOnly = chipsOnly;
     if (placeholder) {
       slotEditable.dataset.placeholder = placeholder;
     }
-    slotEditable._filenameTemplateTargetParts = targetParts;
-    slotEditable._filenameTemplateChipsOnly = chipsOnly;
-    attachEditableHandlers(slotEditable);
-    renderEditorParts(slotEditable, targetParts);
-    return slotEditable;
-  };
-
-  const buildRootTextSlot = (textValue, rootSequence) => {
-    const slotEditable = document.createElement('span');
-    slotEditable.className = 'filename-template-root-slot filename-template-inline-flow is-slot';
-    slotEditable._filenameTemplateTargetParts = [{ type: 'text', value: String(textValue || '') }];
-    slotEditable._filenameTemplateChipsOnly = false;
-    slotEditable._filenameTemplateRootOwner = rootSequence;
-    attachEditableHandlers(slotEditable);
-    slotEditable.appendChild(document.createTextNode(modelTextToEditableText(String(textValue || ''))));
+    slotEditable.addEventListener('click', (event) => {
+      if (event.target !== slotEditable) {
+        return;
+      }
+      const trailingSlot = Array.from(slotEditable.childNodes).reverse().find((child) => isRootTextSlot(child)) || null;
+      if (trailingSlot instanceof HTMLElement) {
+        setActiveEditable(trailingSlot);
+        setCaretToEnd(trailingSlot);
+      }
+    });
+    renderRootSequence(slotEditable, targetParts, placeholder);
     return slotEditable;
   };
 
@@ -38319,18 +38341,24 @@ let activeEditable = null;
       if (!(sequenceOwner instanceof HTMLElement) || !Array.isArray(sequenceOwner._filenameTemplateTargetParts)) {
         return;
       }
-      const nextParts = sequenceOwner.classList.contains('is-root')
+      const isSegmentedSequence = sequenceOwner.classList.contains('filename-template-segmented-sequence');
+      const nextParts = isSegmentedSequence
         ? buildRootSequencePartsFromDom(sequenceOwner)
         : sequenceDomEntries(sequenceOwner).map((entry) => entry.part);
       const ownPartIndex = sequencePartIndexForToken(sequenceOwner, token);
       mutator(nextParts, ownPartIndex);
       replaceParts(sequenceOwner._filenameTemplateTargetParts, nextParts, sequenceOwner._filenameTemplateChipsOnly === true);
-      if (sequenceOwner.classList.contains('is-root')) {
-        renderRootSequence(sequenceOwner, sequenceOwner._filenameTemplateTargetParts);
+      if (isSegmentedSequence) {
+        renderRootSequence(
+          sequenceOwner,
+          sequenceOwner._filenameTemplateTargetParts,
+          sequenceOwner.dataset.placeholder || ''
+        );
+        syncRootSequenceFromDom(sequenceOwner);
       } else {
         renderEditorParts(sequenceOwner, sequenceOwner._filenameTemplateTargetParts);
+        onChange();
       }
-      onChange();
     };
     token.addEventListener('focus', () => {
       token.classList.add('is-active');
@@ -38454,11 +38482,14 @@ let activeEditable = null;
     });
   };
 
-  const renderRootSequence = (rootSequence, targetParts) => {
+  const renderRootSequence = (rootSequence, targetParts, placeholder = '') => {
     if (!(rootSequence instanceof HTMLElement)) {
       return;
     }
-    const normalizedParts = sanitizeFilenameTemplateParts(collapseTextParts(targetParts));
+    const collapsedParts = collapseTextParts(targetParts);
+    const normalizedParts = rootSequence._filenameTemplateChipsOnly === true
+      ? sanitizeFilenameTemplateCandidateParts(collapsedParts)
+      : sanitizeFilenameTemplateParts(collapsedParts);
     rootSequence.replaceChildren();
     let pendingText = '';
     normalizedParts.forEach((part) => {
@@ -38470,7 +38501,11 @@ let activeEditable = null;
       rootSequence.appendChild(createTokenNode(part, rootSequence));
       pendingText = '';
     });
-    rootSequence.appendChild(buildRootTextSlot(pendingText, rootSequence));
+    rootSequence.appendChild(buildRootTextSlot(
+      pendingText,
+      rootSequence,
+      normalizedParts.length === 0 ? placeholder : ''
+    ));
     decorateAffixSequence(rootSequence);
   };
 
@@ -38615,9 +38650,17 @@ let activeEditable = null;
         }
       });
 
-      replaceParts(rootOwner._filenameTemplateTargetParts, nextRootParts, false);
-      renderRootSequence(rootOwner, rootOwner._filenameTemplateTargetParts);
-      onChange();
+      replaceParts(
+        rootOwner._filenameTemplateTargetParts,
+        nextRootParts,
+        rootOwner._filenameTemplateChipsOnly === true
+      );
+      renderRootSequence(
+        rootOwner,
+        rootOwner._filenameTemplateTargetParts,
+        rootOwner.dataset.placeholder || ''
+      );
+      syncRootSequenceFromDom(rootOwner);
 
       if (insertedTokenGlobalIndex >= 0) {
         const tokenNodes = Array.from(rootOwner.querySelectorAll(':scope > .filename-template-dom-token'));
@@ -38667,10 +38710,12 @@ let activeEditable = null;
   };
 
   sequence._filenameTemplateTargetParts = parts;
+  sequence._filenameTemplateChipsOnly = chipsOnlyEditor;
   if (!isRootEditor) {
-    attachEditableHandlers(sequence);
-    sequence.dataset.placeholder = inlinePlaceholder;
-    renderEditorParts(sequence, parts);
+    if (inlinePlaceholder) {
+      sequence.dataset.placeholder = inlinePlaceholder;
+    }
+    renderRootSequence(sequence, parts, inlinePlaceholder);
   } else {
     renderRootSequence(sequence, parts);
   }
@@ -38689,13 +38734,11 @@ let activeEditable = null;
   } else {
     wrapper.appendChild(sequence);
   }
-  if (autoFocus && !context && isRootEditor) {
+  if (autoFocus && !context) {
     const trailingSlot = Array.from(sequence.childNodes).reverse().find((child) => isRootTextSlot(child)) || null;
     if (trailingSlot instanceof HTMLElement) {
       setActiveEditable(trailingSlot);
     }
-  } else if (autoFocus && !context && !isSlotEditor) {
-    setActiveEditable(sequence);
   }
 
   return wrapper;

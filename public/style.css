@@ -8917,6 +8917,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   padding: 0;
   line-height: 1.7;
   vertical-align: middle;
+  outline: 1px solid transparent;
 }
 
 .filename-template-root-slot.is-slot.is-active {
@@ -8931,7 +8932,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 }
 
 
-.filename-template-editable:empty::before {
+.filename-template-editable[data-placeholder]:not([data-placeholder=""]):empty:not(:focus)::before {
   content: attr(data-placeholder);
   color: #94a3b8;
   pointer-events: none;
@@ -9476,12 +9477,6 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .filename-template-chip--special {
   background: #fff4e7;
   border-color: #e2bc88;
-}
-
-.filename-template-inline-flow.is-slot:empty::before {
-  content: attr(data-placeholder);
-  color: #94a3b8;
-  pointer-events: none;
 }
 
 .categories-actions {
