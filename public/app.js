@@ -39026,15 +39026,21 @@ function renderArchiveStructureEditor() {
       const templateRow = createTreeRow({ markerless: true });
       const templateBody = document.createElement('div');
       templateBody.className = 'tree-body category-body';
-      appendTreeBodyIcon(templateBody, 'tree-body-icon tree-body-icon-filename-template');
+
+      const templateHeader = document.createElement('div');
+      templateHeader.className = 'filename-template-rule-header';
+      appendTreeBodyIcon(
+        templateHeader,
+        'tree-body-icon tree-body-icon-filename-template tree-body-icon--inline'
+      );
+
+      const templateMoveActions = document.createElement('div');
+      templateMoveActions.className = 'filename-template-rule-move-actions';
 
       const templateActions = document.createElement('div');
       templateActions.className = 'tree-node-actions';
 
-      const templateFields = document.createElement('div');
-      templateFields.className = 'category-fields category-fields--wide';
-
-      templateFields.appendChild(createMoveButton('↑', 'Flytta upp', templateIndex < 1, () => {
+      templateMoveActions.appendChild(createMoveButton('↑', 'Flytta upp', templateIndex < 1, () => {
         archiveFoldersDraft[folderIndex].filenameTemplates = moveArrayItem(
           archiveFoldersDraft[folderIndex].filenameTemplates,
           templateIndex,
@@ -39043,7 +39049,7 @@ function renderArchiveStructureEditor() {
         renderArchiveStructureEditor();
         updateSettingsActionButtons();
       }));
-      templateFields.appendChild(createMoveButton('↓', 'Flytta ner', templateIndex >= folderDraft.filenameTemplates.length - 1, () => {
+      templateMoveActions.appendChild(createMoveButton('↓', 'Flytta ner', templateIndex >= folderDraft.filenameTemplates.length - 1, () => {
         archiveFoldersDraft[folderIndex].filenameTemplates = moveArrayItem(
           archiveFoldersDraft[folderIndex].filenameTemplates,
           templateIndex,
@@ -39071,8 +39077,9 @@ function renderArchiveStructureEditor() {
       });
       templateActions.appendChild(copyTemplateButton);
       templateActions.appendChild(removeTemplateButton);
-      templateBody.appendChild(templateActions);
-      templateBody.appendChild(templateFields);
+      templateHeader.appendChild(templateMoveActions);
+      templateHeader.appendChild(templateActions);
+      templateBody.appendChild(templateHeader);
 
       const templateConditionsLabel = document.createElement('div');
       templateConditionsLabel.className = 'archive-level-label';

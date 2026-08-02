@@ -323,13 +323,20 @@ assert_filename_v2(
 );
 assert_filename_v2(
     is_string($app)
-    && str_contains($app, "appendTreeBodyIcon(templateBody, 'tree-body-icon tree-body-icon-filename-template');")
+    && str_contains($app, "'tree-body-icon tree-body-icon-filename-template tree-body-icon--inline'")
+    && str_contains($app, "templateHeader.className = 'filename-template-rule-header';")
+    && str_contains($app, "templateMoveActions.className = 'filename-template-rule-move-actions';")
+    && str_contains($app, 'templateHeader.appendChild(templateMoveActions);')
     && is_string($css)
     && preg_match(
         '/\.tree-body-icon-filename-template\s*\{[^}]*background-image:\s*url\([\'\"]?\/assets\/icons\/document\.svg[\'\"]?\);/s',
         $css
+    ) === 1
+    && preg_match(
+        '/\.filename-template-rule-header\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;/s',
+        $css
     ) === 1,
-    'Filnamnsregler ska använda den separata dokumentikonen.'
+    'Filnamnsregler ska använda dokumentikonen och ha flyttknapparna på samma kompakta rubrikrad.'
 );
 assert_filename_v2(
     is_string($css)
