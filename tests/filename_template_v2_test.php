@@ -269,12 +269,12 @@ assert_filename_v2(is_string($css) && str_contains($css, 'flex-wrap: nowrap') &&
 assert_filename_v2(is_string($css) && str_contains($css, '.filename-template-dom-token.is-affix-invalid'), 'Ogiltiga affix ska ha en visuell varningsstatus.');
 assert_filename_v2(
     is_string($css)
-    && preg_match('/\.filename-template-root-slot\.is-slot\s*\{[^}]*min-width:\s*8px;/s', $css) === 1
+    && preg_match('/\.filename-template-root-slot\.is-slot\s*\{[^}]*min-width:\s*2px;/s', $css) === 1
     && str_contains(
         $css,
         '.filename-template-dom-token.is-affix-linked:not(.is-affix-group-end) + .filename-template-root-slot'
     ),
-    'Separata chip ska ha luft emellan medan tomrummet endast kollapsar inne i en prefix-/suffixgrupp.'
+    'Separata chip ska ha en liten caret-yta emellan medan tomrummet kollapsar inne i en prefix-/suffixgrupp.'
 );
 assert_filename_v2(
     is_string($css)
@@ -338,6 +338,29 @@ assert_filename_v2(
     && str_contains($app, 'placeCaretFromPointerInSequence(slotEditable, event.clientX, event.clientY);')
     && str_contains($app, 'event.stopPropagation();'),
     'Nästlade filnamnsytor ska placera caret på närmaste logiska position utan att roteditorn tar över klicket.'
+);
+assert_filename_v2(
+    is_string($css)
+    && str_contains($css, '--filename-template-chip-padding-block: 4px;')
+    && str_contains($css, '--filename-template-chip-padding-inline: 5px;')
+    && preg_match('/\.filename-template-dom-token\s*\{[^}]*padding:\s*0;/s', $css) === 1
+    && str_contains($css, 'padding: 0 var(--filename-template-chip-padding-inline);')
+    && str_contains($css, 'padding: var(--filename-template-chip-padding-block) var(--filename-template-chip-padding-inline);')
+    && str_contains($css, 'padding-top: var(--filename-template-chip-padding-block);')
+    && str_contains($css, 'padding-bottom: var(--filename-template-chip-padding-block);')
+    && preg_match('/\.filename-template-chip\s*\{[^}]*padding:\s*5px 8px;/s', $css) === 1,
+    'Infogade chip ska ha samma effektiva textmarginal som chippen i verktygsraden.'
+);
+assert_filename_v2(
+    is_string($css)
+    && str_contains($css, '--filename-template-nested-field-padding-inline: 2px;')
+    && str_contains($css, 'padding: 2px var(--filename-template-nested-field-padding-inline);')
+    && str_contains($css, 'padding: 4px var(--filename-template-nested-field-padding-inline);')
+    && preg_match(
+        '/\.filename-template-inline-token-center--special \.filename-template-label-picker-flow\s*\{[^}]*padding-left:\s*var\(--filename-template-nested-field-padding-inline\);[^}]*padding-right:\s*var\(--filename-template-nested-field-padding-inline\);/s',
+        $css
+    ) === 1,
+    'Nästlade kandidat-, gren- och etikettfält ska dela samma kompakta horisontella padding.'
 );
 assert_filename_v2(
     is_string($app)

@@ -8877,6 +8877,9 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   --filename-template-affix-border: #cbd5e1;
   --filename-template-system-background: #e6efff;
   --filename-template-system-border: #8eafe0;
+  --filename-template-chip-padding-block: 4px;
+  --filename-template-chip-padding-inline: 5px;
+  --filename-template-nested-field-padding-inline: 2px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -8942,7 +8945,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .filename-template-root-slot.is-slot {
   display: inline-block;
   position: relative;
-  min-width: 8px;
+  min-width: 2px;
   min-height: 1.7em;
   padding: 0;
   line-height: 1.7;
@@ -9014,7 +9017,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .filename-template-dom-token {
   display: inline-flex;
   vertical-align: middle;
-  padding: 2px 0;
+  padding: 0;
   box-sizing: border-box;
   background: transparent;
 }
@@ -9133,7 +9136,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   gap: 4px;
   min-height: var(--filename-template-chip-inner-height);
   margin: -1px 0;
-  padding: 0 10px;
+  padding: 0 var(--filename-template-chip-padding-inline);
   border-radius: var(--filename-template-chip-corner-radius);
   box-shadow: inset 1px 0 0 rgba(148, 163, 184, .45), inset -1px 0 0 rgba(148, 163, 184, .45);
 }
@@ -9143,7 +9146,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .filename-template-inline-token-center--date {
   --filename-template-chip-corner-radius: 10px;
   gap: 1px;
-  padding: 4px 8px 5px;
+  padding: var(--filename-template-chip-padding-block) var(--filename-template-chip-padding-inline);
   border-radius: var(--filename-template-chip-corner-radius);
 }
 
@@ -9226,8 +9229,8 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   align-items: stretch;
   gap: 5px;
   min-width: 260px;
-  padding-top: 4px;
-  padding-bottom: 6px;
+  padding-top: var(--filename-template-chip-padding-block);
+  padding-bottom: var(--filename-template-chip-padding-block);
   border-radius: var(--filename-template-chip-corner-radius);
 }
 
@@ -9235,7 +9238,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   --filename-template-chip-corner-radius: 10px;
   gap: 1px;
   min-width: 0;
-  padding-bottom: 5px;
+  padding-bottom: var(--filename-template-chip-padding-block);
   border-radius: var(--filename-template-chip-corner-radius);
 }
 
@@ -9304,7 +9307,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
 .filename-template-inline-token-center .filename-template-inline-token-slot--candidates.is-slot {
   min-height: 22px;
   margin: 3px 0;
-  padding: 2px 8px;
+  padding: 2px var(--filename-template-nested-field-padding-inline);
   border: 1px solid rgba(100, 116, 139, .7);
   border-radius: var(--filename-template-chip-corner-radius);
   background: rgba(255, 255, 255, 0.88);
@@ -9315,7 +9318,7 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   min-height: 22px;
   width: 100%;
   margin: 0;
-  padding: 4px 8px;
+  padding: 4px var(--filename-template-nested-field-padding-inline);
   border: 1px solid rgba(100, 116, 139, .7);
   border-radius: var(--filename-template-chip-corner-radius);
   background: rgba(255, 255, 255, 0.88);
@@ -9386,6 +9389,11 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   border-radius: 8px;
   background: #fff;
   cursor: text;
+}
+
+.filename-template-inline-token-center--special .filename-template-label-picker-flow {
+  padding-left: var(--filename-template-nested-field-padding-inline);
+  padding-right: var(--filename-template-nested-field-padding-inline);
 }
 
 .filename-template-label-picker-flow:focus-within {
