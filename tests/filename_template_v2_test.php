@@ -312,6 +312,16 @@ assert_filename_v2(
     'Nästlade sekvenser ska använda separata redigerbara positioner och låta native caret målas ovanpå chippen.'
 );
 assert_filename_v2(
+    is_string($app)
+    && str_contains($app, 'const placeCaretFromPointerInSequence = (segmentedSequence, clientX, clientY) =>')
+    && str_contains($app, "scrollShell.addEventListener('pointerdown', (event) =>")
+    && str_contains($app, "event.target.closest('input, select, textarea, button, a, [contenteditable=\"true\"]')")
+    && str_contains($app, 'document.caretPositionFromPoint(pointX, pointY)')
+    && str_contains($app, 'placeCaretFromPointerInSequence(sequence, event.clientX, event.clientY);')
+    && str_contains($app, 'scrollShell.scrollWidth > scrollShell.clientWidth && event.clientY >= horizontalScrollbarTop'),
+    'Klick i filnamnsfältets tomma yta ska placera caret utan att stänga verktygsraden eller blockera en synlig scrollbar.'
+);
+assert_filename_v2(
     is_string($css)
     && preg_match(
         '/\.filename-template-root-slot\.is-slot\.is-active\s*\{[^}]*z-index:\s*10;[^}]*caret-color:\s*currentColor;/s',

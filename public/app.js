@@ -37686,6 +37686,60 @@ let activeEditable = null;
     sharedContext.insertPart = (part) => insertPartIntoEditable(editable, part);
   };
 
+  const placeCaretFromPointerInSequence = (segmentedSequence, clientX, clientY) => {
+    if (!(segmentedSequence instanceof HTMLElement)) {
+      return false;
+    }
+    const slots = Array.from(segmentedSequence.children).filter((child) => isRootTextSlot(child));
+    if (slots.length === 0) {
+      return false;
+    }
+    const horizontalDistance = (rect) => {
+      if (clientX < rect.left) return rect.left - clientX;
+      if (clientX > rect.right) return clientX - rect.right;
+      return 0;
+    };
+    const slot = slots.reduce((nearest, candidate) => {
+      if (!(nearest instanceof HTMLElement)) return candidate;
+      return horizontalDistance(candidate.getBoundingClientRect())
+        < horizontalDistance(nearest.getBoundingClientRect())
+        ? candidate
+        : nearest;
+    }, null);
+    if (!(slot instanceof HTMLElement)) {
+      return false;
+    }
+
+    setActiveEditable(slot);
+    slot.focus({ preventScroll: true });
+    const rect = slot.getBoundingClientRect();
+    const pointX = Math.max(rect.left, Math.min(clientX, rect.right));
+    const pointY = rect.height > 0
+      ? Math.max(rect.top + 1, Math.min(clientY, rect.bottom - 1))
+      : clientY;
+    const caretPosition = typeof document.caretPositionFromPoint === 'function'
+      ? document.caretPositionFromPoint(pointX, pointY)
+      : null;
+    const caretRange = !caretPosition && typeof document.caretRangeFromPoint === 'function'
+      ? document.caretRangeFromPoint(pointX, pointY)
+      : null;
+    const caretNode = caretPosition?.offsetNode || caretRange?.startContainer || null;
+    const caretOffset = caretPosition?.offset ?? caretRange?.startOffset ?? null;
+    if (caretNode instanceof Node && Number.isInteger(caretOffset)
+      && (caretNode === slot || slot.contains(caretNode))) {
+      const selection = window.getSelection();
+      if (selection) {
+        const range = document.createRange();
+        range.setStart(caretNode, caretOffset);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return true;
+      }
+    }
+    return setCaretAtEditableBoundary(slot, clientX <= rect.left + (rect.width / 2) ? 'back' : 'fwd');
+  };
+
   const rootSequenceSlotTextPart = (editable) => {
     if (!(editable instanceof HTMLElement)) {
       return null;
@@ -38722,6 +38776,27 @@ let activeEditable = null;
   if (isRootEditor) {
     const scrollShell = document.createElement('div');
     scrollShell.className = 'filename-template-inline-scroll';
+    scrollShell.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.isPrimary === false || !(event.target instanceof Element)) {
+        return;
+      }
+      const scrollRect = scrollShell.getBoundingClientRect();
+      const horizontalScrollbarTop = scrollRect.top + scrollShell.clientTop + scrollShell.clientHeight;
+      if (scrollShell.scrollWidth > scrollShell.clientWidth && event.clientY >= horizontalScrollbarTop) {
+        return;
+      }
+      if (event.target.closest('input, select, textarea, button, a, [contenteditable="true"]')) {
+        return;
+      }
+      const token = event.target.closest('.filename-template-dom-token');
+      if (token instanceof HTMLElement) {
+        event.preventDefault();
+        token.focus({ preventScroll: true });
+        return;
+      }
+      event.preventDefault();
+      placeCaretFromPointerInSequence(sequence, event.clientX, event.clientY);
+    });
     scrollShell.appendChild(sequence);
     const fieldLabel = options && typeof options.fieldLabel === 'string'
       ? options.fieldLabel.trim()
