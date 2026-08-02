@@ -39026,7 +39026,7 @@ function renderArchiveStructureEditor() {
       const templateRow = createTreeRow({ markerless: true });
       const templateBody = document.createElement('div');
       templateBody.className = 'tree-body category-body';
-      appendTreeBodyIcon(templateBody, 'tree-body-icon tree-body-icon-category');
+      appendTreeBodyIcon(templateBody, 'tree-body-icon tree-body-icon-filename-template');
 
       const templateActions = document.createElement('div');
       templateActions.className = 'tree-node-actions';

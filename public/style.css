@@ -7275,6 +7275,12 @@ body.is-dragging-settings-dialog .settings-dialog-titlebar-grab {
   background-image: url('/assets/icons/category.svg');
 }
 
+.tree-body-icon-filename-template {
+  width: 18px;
+  height: 18px;
+  background-image: url('/assets/icons/document.svg');
+}
+
 .tree-body-icon-zone {
   width: 18px;
   height: 18px;

@@ -322,6 +322,16 @@ assert_filename_v2(
     'Klick i filnamnsfältets tomma yta ska placera caret utan att stänga verktygsraden eller blockera en synlig scrollbar.'
 );
 assert_filename_v2(
+    is_string($app)
+    && str_contains($app, "appendTreeBodyIcon(templateBody, 'tree-body-icon tree-body-icon-filename-template');")
+    && is_string($css)
+    && preg_match(
+        '/\.tree-body-icon-filename-template\s*\{[^}]*background-image:\s*url\([\'\"]?\/assets\/icons\/document\.svg[\'\"]?\);/s',
+        $css
+    ) === 1,
+    'Filnamnsregler ska använda den separata dokumentikonen.'
+);
+assert_filename_v2(
     is_string($css)
     && preg_match(
         '/\.filename-template-root-slot\.is-slot\.is-active\s*\{[^}]*z-index:\s*10;[^}]*caret-color:\s*currentColor;/s',
