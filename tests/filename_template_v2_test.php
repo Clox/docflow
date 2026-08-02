@@ -295,6 +295,16 @@ assert_filename_v2(
 );
 assert_filename_v2(
     is_string($app)
+    && str_contains($app, 'const setCaretAtTextOffset = (editable, requestedOffset) =>')
+    && str_contains($app, 'const removeTokenBetweenRootSlots = (editable, token) =>')
+    && str_contains($app, 'const caretOffset = leftSlot instanceof HTMLElement')
+    && str_contains($app, "renderRootSequence(rootOwner, rootOwner._filenameTemplateTargetParts, rootOwner.dataset.placeholder || '');")
+    && str_contains($app, 'setCaretAtTextOffset(mergedSlot, caretOffset);')
+    && !str_contains($app, "event.preventDefault();\n        syncEditableFromDom(editable);\n        return;"),
+    'Backspace och Delete vid ett chip ska slå ihop textytorna och återställa caret vid samma textgräns.'
+);
+assert_filename_v2(
+    is_string($app)
     && str_contains($app, 'filename-template-segmented-sequence')
     && str_contains($app, 'renderRootSequence(slotEditable, targetParts, placeholder);')
     && str_contains($app, 'syncRootSequenceFromDom(parentSequence);')

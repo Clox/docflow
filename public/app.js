@@ -37118,6 +37118,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
         const prev = node.previousSibling;
         if (isTokenNode(prev)) {
           prev.remove();
+          syncEditableFromDom(editable);
           return true;
         }
       }
@@ -37125,6 +37126,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
         const next = node.nextSibling;
         if (isTokenNode(next)) {
           next.remove();
+          syncEditableFromDom(editable);
           return true;
         }
       }
@@ -37135,6 +37137,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
         const prev = node.childNodes[offset - 1];
         if (isTokenNode(prev)) {
           prev.remove();
+          syncEditableFromDom(editable);
           return true;
         }
       }
@@ -37142,6 +37145,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
         const next = node.childNodes[offset];
         if (isTokenNode(next)) {
           next.remove();
+          syncEditableFromDom(editable);
           return true;
         }
       }
@@ -37149,9 +37153,7 @@ function createFilenameTemplatePartsEditor(parts, onChange, depth = 0, context =
 
     if (isRootTextSlot(editable) && isCaretAtEditableBoundary(editable, direction)) {
       const adjacentToken = rootSlotAdjacentToken(editable, direction);
-      if (adjacentToken) {
-        adjacentToken.remove();
-        syncRootSequenceFromDom(editable._filenameTemplateRootOwner || null);
+      if (adjacentToken && removeTokenBetweenRootSlots(editable, adjacentToken)) {
         return true;
       }
     }
@@ -37191,6 +37193,34 @@ const setCaretAtEditableBoundary = (editable, direction) => {
   selection.removeAllRanges();
   selection.addRange(range);
   return true;
+};
+
+const setCaretAtTextOffset = (editable, requestedOffset) => {
+  if (!(editable instanceof HTMLElement)) {
+    return false;
+  }
+  editable.focus();
+  const selection = window.getSelection();
+  if (!selection) {
+    return false;
+  }
+  let remainingOffset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0);
+  const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT);
+  let textNode = walker.nextNode();
+  while (textNode) {
+    const textLength = (textNode.nodeValue || '').length;
+    if (remainingOffset <= textLength) {
+      const range = document.createRange();
+      range.setStart(textNode, remainingOffset);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return true;
+    }
+    remainingOffset -= textLength;
+    textNode = walker.nextNode();
+  }
+  return setCaretAtEditableBoundary(editable, 'fwd');
 };
 
 const isCaretAtEditableBoundary = (editable, direction) => {
@@ -38060,12 +38090,10 @@ let activeEditable = null;
       }
       if (event.key === 'Backspace' && removeAdjacentToken(editable, 'back')) {
         event.preventDefault();
-        syncEditableFromDom(editable);
         return;
       }
       if (event.key === 'Delete' && removeAdjacentToken(editable, 'fwd')) {
         event.preventDefault();
-        syncEditableFromDom(editable);
         return;
       }
       if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && moveCaretAcrossTokenBoundary(editable, event.key === 'ArrowLeft' ? 'back' : 'fwd')) {
@@ -38561,6 +38589,43 @@ let activeEditable = null;
       normalizedParts.length === 0 ? placeholder : ''
     ));
     decorateAffixSequence(rootSequence);
+  };
+
+  const removeTokenBetweenRootSlots = (editable, token) => {
+    const rootOwner = editable?._filenameTemplateRootOwner;
+    if (!(rootOwner instanceof HTMLElement) || !(token instanceof HTMLElement)
+      || token.parentElement !== rootOwner) {
+      return false;
+    }
+    const children = Array.from(rootOwner.children);
+    const tokenIndex = children.indexOf(token);
+    if (tokenIndex < 0) {
+      return false;
+    }
+    const precedingTokenCount = children
+      .slice(0, tokenIndex)
+      .filter((child) => isTokenNode(child))
+      .length;
+    const leftSlot = isRootTextSlot(token.previousElementSibling)
+      ? token.previousElementSibling
+      : null;
+    const caretOffset = leftSlot instanceof HTMLElement
+      ? readTextValueFromEditable(leftSlot).length
+      : 0;
+
+    token.remove();
+    const nextParts = buildRootSequencePartsFromDom(rootOwner);
+    replaceParts(rootOwner._filenameTemplateTargetParts, nextParts, rootOwner._filenameTemplateChipsOnly === true);
+    renderRootSequence(rootOwner, rootOwner._filenameTemplateTargetParts, rootOwner.dataset.placeholder || '');
+    syncRootSequenceFromDom(rootOwner);
+
+    const mergedSlots = Array.from(rootOwner.children).filter((child) => isRootTextSlot(child));
+    const mergedSlot = mergedSlots[precedingTokenCount] || mergedSlots[mergedSlots.length - 1] || null;
+    if (mergedSlot instanceof HTMLElement) {
+      setActiveEditable(mergedSlot);
+      setCaretAtTextOffset(mergedSlot, caretOffset);
+    }
+    return true;
   };
 
   const buildInsertedPartsFromEditable = (editable, part) => {
