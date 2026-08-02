@@ -38147,15 +38147,26 @@ let activeEditable = null;
     if (placeholder) {
       slotEditable.dataset.placeholder = placeholder;
     }
-    slotEditable.addEventListener('click', (event) => {
+    slotEditable.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.isPrimary === false || !(event.target instanceof Element)) {
+        return;
+      }
+      if (event.target.closest('input, select, textarea, button, a, [contenteditable="true"]')) {
+        return;
+      }
+      const directToken = event.target.closest('.filename-template-dom-token');
+      if (directToken instanceof HTMLElement && directToken.parentElement === slotEditable) {
+        event.preventDefault();
+        event.stopPropagation();
+        directToken.focus({ preventScroll: true });
+        return;
+      }
       if (event.target !== slotEditable) {
         return;
       }
-      const trailingSlot = Array.from(slotEditable.childNodes).reverse().find((child) => isRootTextSlot(child)) || null;
-      if (trailingSlot instanceof HTMLElement) {
-        setActiveEditable(trailingSlot);
-        setCaretToEnd(trailingSlot);
-      }
+      event.preventDefault();
+      event.stopPropagation();
+      placeCaretFromPointerInSequence(slotEditable, event.clientX, event.clientY);
     });
     renderRootSequence(slotEditable, targetParts, placeholder);
     return slotEditable;

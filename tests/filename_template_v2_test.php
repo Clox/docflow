@@ -333,6 +333,14 @@ assert_filename_v2(
 );
 assert_filename_v2(
     is_string($app)
+    && str_contains($app, "slotEditable.addEventListener('pointerdown', (event) =>")
+    && str_contains($app, 'directToken.parentElement === slotEditable')
+    && str_contains($app, 'placeCaretFromPointerInSequence(slotEditable, event.clientX, event.clientY);')
+    && str_contains($app, 'event.stopPropagation();'),
+    'Nästlade filnamnsytor ska placera caret på närmaste logiska position utan att roteditorn tar över klicket.'
+);
+assert_filename_v2(
+    is_string($app)
     && str_contains($app, "'tree-body-icon tree-body-icon-filename-template tree-body-icon--inline'")
     && str_contains($app, "templateHeader.className = 'filename-template-rule-header';")
     && str_contains($app, "templateMoveActions.className = 'filename-template-rule-move-actions';")
